@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Etiquefácil</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="auth" class="auth">
+      <section class="auth-panel">
+        <h1>Etiquefácil</h1>
+        <form id="loginForm" class="form">
+          <label>E-mail<input name="email" type="email" required /></label>
+          <label>Senha<input name="password" type="password" required /></label>
+          <button type="submit">Entrar</button>
+        </form>
+        <form id="registerForm" class="form secondary">
+          <label>Nome<input name="name" required /></label>
+          <label>E-mail<input name="email" type="email" required /></label>
+          <label>Senha<input name="password" type="password" required /></label>
+          <button type="submit">Criar conta</button>
+        </form>
+        <p id="authMessage" class="message"></p>
+      </section>
+    </main>
+
+    <main id="app" class="app hidden">
+      <header class="topbar">
+        <div>
+          <h1>Etiquefácil</h1>
+          <span id="userName"></span>
+        </div>
+        <button id="logoutButton" class="ghost">Sair</button>
+      </header>
+
+      <section class="upload-band">
+        <form id="uploadForm" class="upload-grid">
+          <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
+          <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
+          <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+          <label>Prefixo SKU<input name="skuPrefix" placeholder="AMZ04L" required /></label>
+          <button type="submit">Subir planilha</button>
+        </form>
+        <p id="uploadMessage" class="message"></p>
+      </section>
+
+      <nav class="tabs">
+        <button data-tab="lots" class="active">Lotes</button>
+        <button data-tab="search">Busca ML</button>
+      </nav>
+
+      <section id="lotsTab" class="layout">
+        <aside class="lot-list">
+          <h2>Planilhas</h2>
+          <div id="lots"></div>
+        </aside>
+        <section class="detail">
+          <div id="lotDetail" class="empty">Selecione um lote para conferir RZs e baixar arquivos do Bling.</div>
+        </section>
+      </section>
+
+      <section id="searchTab" class="search hidden">
+        <form id="searchForm" class="search-bar">
+          <input name="codigoMl" placeholder="Bipe ou digite o Código ML" required />
+          <button type="submit">Buscar</button>
+        </form>
+        <div id="searchResults"></div>
+      </section>
+    </main>
+
+    <template id="labelTemplate">
+      <section class="label-print">
+        <p class="label-desc"></p>
+        <svg class="label-barcode" role="img" aria-label="Código de barras"></svg>
+        <strong class="label-sku"></strong>
+        <strong class="label-price"></strong>
+      </section>
+    </template>
+
+    <section id="labelModal" class="label-modal hidden" aria-live="polite" tabindex="-1">
+      <div class="label-stage">
+        <div id="labelPreview"></div>
+        <div class="label-controls">
+          <button id="labelPrintButton">Imprimir etiqueta</button>
+          <button id="labelCloseButton" class="ghost">Fechar</button>
+          <span class="muted">Enter imprime</span>
+        </div>
+      </div>
+    </section>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

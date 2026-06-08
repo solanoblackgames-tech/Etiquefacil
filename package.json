@@ -1,0 +1,22 @@
+{
+  "name": "etiquefacil",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate:json-to-postgres": "node scripts/migrate-json-to-postgres.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "multer": "^2.1.1",
+    "pg": "^8.21.0",
+    "read-excel-file": "^9.0.10"
+  }
+}
