@@ -5,26 +5,40 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import "dotenv/config";
-import { buildBlingCsv, formatSku, importSpecialistWorkbook, roundMoney } from "./domain.js";
-import { createUser, ensureStore, getPgPool, hasPostgres, readDb, verifyUser, writeDb } from "./store.js";
+import { buildBlingCsv, importSpecialistWorkbook } from "./domain.js";
+import { buildRuntimeConfig } from "./config.js";
+import {
+  createExternalExcess,
+  createLabel,
+  createLotFromImport,
+  createUser,
+  ensureStore,
+  getLotBlingData,
+  getPgPool,
+  getStoreHealth,
+  getUserLotDetail,
+  getUserLotSummaries,
+  hasPostgres,
+  scanLotRz,
+  searchProducts,
+  verifyUser
+} from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
-const PORT = process.env.PORT || 3000;
+const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
-const downloadMode = process.env.DOWNLOAD_MODE || (process.env.NODE_ENV === "production" ? "browser" : "local");
 
-app.set("trust proxy", process.env.NODE_ENV === "production" ? 1 : 0);
+app.set("trust proxy", config.trustProxy);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "etiquefacil-dev-secret",
+    secret: config.sessionSecret,
     store: hasPostgres()
       ? new PostgresSessionStore({
           pool: getPgPool(),
@@ -36,7 +50,7 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: config.cookieSecure,
       maxAge: 1000 * 60 * 60 * 12
     }
   })
@@ -44,7 +58,15 @@ app.use(
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/api/config", (req, res) => {
-  res.json({ downloadMode });
+  res.json({ downloadMode: config.downloadMode });
+});
+
+app.get("/healthz", async (req, res) => {
+  try {
+    res.json(await getStoreHealth());
+  } catch (error) {
+    res.status(503).json({ ok: false, error: error.message });
+  }
 });
 
 app.get("/api/me", (req, res) => {
@@ -75,12 +97,7 @@ app.post("/api/logout", (req, res) => {
 });
 
 app.get("/api/lots", requireAuth, async (req, res) => {
-  const db = await readDb();
-  const lots = db.lots
-    .filter((lot) => lot.userId === req.session.user.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((lot) => summarizeLot(db, lot));
-  res.json({ lots });
+  res.json({ lots: await getUserLotSummaries(req.session.user.id) });
 });
 
 app.post("/api/lots", requireAuth, upload.single("file"), async (req, res) => {
@@ -94,204 +111,86 @@ app.post("/api/lots", requireAuth, upload.single("file"), async (req, res) => {
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
 
     const imported = await importSpecialistWorkbook(req.file.buffer, { auctionPercent, fornecedor, skuPrefix });
-    const db = await readDb();
-    const lot = {
-      id: randomUUID(),
+    const lot = await createLotFromImport({
       userId: req.session.user.id,
-      nomeArquivo: req.file.originalname,
-      percentualArremate: auctionPercent,
+      originalName: req.file.originalname,
+      auctionPercent,
       fornecedor,
-      prefixoSku: skuPrefix,
-      proximoSequencialSku: imported.nextSequence,
-      createdAt: new Date().toISOString()
-    };
-
-    const products = imported.products.map((product) => ({ ...product, lotId: lot.id }));
-    const rzItems = imported.items.map((item) => {
-      const product = products.find((candidate) => candidate.id === item.productTempId);
-      const { productTempId, ...cleanItem } = item;
-      return { ...cleanItem, lotId: lot.id, productId: product.id };
+      skuPrefix,
+      imported
     });
-
-    db.lots.push(lot);
-    db.products.push(...products);
-    db.rzItems.push(...rzItems);
-    await writeDb(db);
-    res.json({ lot: summarizeLot(db, lot) });
+    res.json({ lot });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
 app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
-  const db = await readDb();
-  const lot = getUserLot(db, req);
+  const lot = await getUserLotDetail(req.session.user.id, req.params.lotId);
   if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
-  res.json({ lot: summarizeLot(db, lot, true) });
+  res.json({ lot });
 });
 
 app.get("/api/lots/:lotId/bling/:kind", requireAuth, async (req, res) => {
-  const db = await readDb();
-  const lot = getUserLot(db, req);
-  if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
+  try {
+    const data = await getLotBlingData(req.session.user.id, req.params.lotId, req.params.kind);
+    if (!data) return res.status(404).json({ error: "Lote não encontrado." });
 
-  const products = getBlingProducts(db, lot, req.params.kind);
-  const csv = buildBlingCsv(products, lot);
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="${blingFileName(lot, req.params.kind)}"`);
-  res.send(`\uFEFF${csv}`);
+    const csv = buildBlingCsv(data.products, data.lot);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${blingFileName(data.lot, req.params.kind)}"`);
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, async (req, res) => {
   try {
-    const db = await readDb();
-    const lot = getUserLot(db, req);
-    if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
+    const data = await getLotBlingData(req.session.user.id, req.params.lotId, req.params.kind);
+    if (!data) return res.status(404).json({ error: "Lote não encontrado." });
 
-    const products = getBlingProducts(db, lot, req.params.kind);
-    const csv = buildBlingCsv(products, lot);
+    const csv = buildBlingCsv(data.products, data.lot);
     const downloadsDir = path.join(os.homedir(), "Downloads");
     await fs.mkdir(downloadsDir, { recursive: true });
-    const fileName = await uniqueDownloadName(downloadsDir, blingFileName(lot, req.params.kind));
+    const fileName = await uniqueDownloadName(downloadsDir, blingFileName(data.lot, req.params.kind));
     const filePath = path.join(downloadsDir, fileName);
     await fs.writeFile(filePath, `\uFEFF${csv}`, "utf8");
     revealFile(filePath);
-    res.json({ fileName, path: filePath, count: products.length });
+    res.json({ fileName, path: filePath, count: data.products.length });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
-    const db = await readDb();
-    const lot = getUserLot(db, req);
-    if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
-
     const codigoMl = String(req.body.codigoMl || "").trim();
     if (!codigoMl) throw new Error("Informe o Código ML.");
-
-    const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === req.params.codigoRz);
-    const sameRzItem = rzItems.find((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === codigoMl);
-    const scan = {
-      id: randomUUID(),
-      lotId: lot.id,
-      codigoRz: req.params.codigoRz,
-      codigoMl,
-      status: "ok",
-      createdAt: new Date().toISOString()
-    };
-
-    if (sameRzItem) {
-      sameRzItem.qtdConferida += 1;
-      const scannedProduct = db.products.find((product) => product.id === sameRzItem.productId);
-      if (scannedProduct?.origem === "excedente_externo") {
-        scannedProduct.qtdTotal += 1;
-      }
-      if (sameRzItem.qtdConferida > sameRzItem.qtdEsperada) {
-        sameRzItem.tipoItem = sameRzItem.tipoItem === "esperado" ? "excedente_outro_rz" : sameRzItem.tipoItem;
-        scan.status = "excedente";
-      }
-    } else {
-      const sameLotProduct = db.products.find((product) => product.lotId === lot.id && product.codigoMl === codigoMl);
-      if (sameLotProduct) {
-        scan.status = "outro_rz";
-      } else {
-        const history = findProductHistory(db, req.session.user.id, lot.id, codigoMl);
-        scan.status = history.length ? "historico" : "desconhecido";
-        scan.history = history.slice(0, 5);
-      }
-    }
-
-    db.scans.push(scan);
-    await writeDb(db);
-    res.json({ scan, lot: summarizeLot(db, lot, true) });
+    res.json(await scanLotRz({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
 app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
   try {
-    const db = await readDb();
-    const lot = getUserLot(db, req);
-    if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
-
     const codigoMl = String(req.body.codigoMl || "").trim();
-    const history = findProductHistory(db, req.session.user.id, lot.id, codigoMl)[0];
-    if (!history) throw new Error("Código ML não encontrado em outras planilhas deste usuário.");
-
-    const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === codigoMl);
-    if (existing) throw new Error("Este Código ML já existe no lote atual.");
-
-    const sku = formatSku(lot.prefixoSku, lot.proximoSequencialSku);
-    const product = {
-      id: randomUUID(),
-      lotId: lot.id,
-      codigoMl,
-      sku,
-      descricao: history.descricao,
-      valorUnit: history.valorUnit,
-      precoCusto: roundMoney(history.valorUnit * (lot.percentualArremate / 100)),
-      qtdTotal: 1,
-      categoria: history.categoria || "",
-      subcategoria: history.subcategoria || "",
-      origem: "excedente_externo",
-      createdAt: new Date().toISOString()
-    };
-    const item = {
-      id: randomUUID(),
-      lotId: lot.id,
-      productId: product.id,
-      codigoRz: req.params.codigoRz,
-      enderecoWms: "",
-      qtdEsperada: 0,
-      qtdConferida: 1,
-      condicaoGrade: "",
-      valorTotal: history.valorUnit,
-      tipoItem: "excedente_externo",
-      createdAt: new Date().toISOString()
-    };
-
-    lot.proximoSequencialSku += 1;
-    db.products.push(product);
-    db.rzItems.push(item);
-    await writeDb(db);
-    res.json({ product, lot: summarizeLot(db, lot, true) });
+    res.json(await createExternalExcess({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
 app.get("/api/search", requireAuth, async (req, res) => {
-  const db = await readDb();
   const codigoMl = String(req.query.codigoMl || "").trim();
-  const lotsById = new Map(db.lots.filter((lot) => lot.userId === req.session.user.id).map((lot) => [lot.id, lot]));
-  const results = db.products
-    .filter((product) => product.codigoMl === codigoMl && lotsById.has(product.lotId))
-    .map((product) => ({
-      ...product,
-      lot: lotsById.get(product.lotId),
-      rzs: db.rzItems.filter((item) => item.productId === product.id).map((item) => item.codigoRz)
-    }));
-  res.json({ results });
+  res.json({ results: await searchProducts(req.session.user.id, codigoMl) });
 });
 
 app.post("/api/labels", requireAuth, async (req, res) => {
-  const db = await readDb();
-  const product = db.products.find((item) => item.id === req.body.productId);
-  const lot = product && db.lots.find((item) => item.id === product.lotId && item.userId === req.session.user.id);
-  if (!product || !lot) return res.status(404).json({ error: "Produto não encontrado." });
-  const label = {
-    id: randomUUID(),
-    productId: product.id,
-    lotId: lot.id,
-    userId: req.session.user.id,
-    createdAt: new Date().toISOString()
-  };
-  db.labels.push(label);
-  await writeDb(db);
-  res.json({ label, product, lot });
+  const result = await createLabel(req.session.user.id, req.body.productId);
+  if (!result) return res.status(404).json({ error: "Produto não encontrado." });
+  res.json(result);
 });
 
 function requireAuth(req, res, next) {
@@ -299,92 +198,8 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function getUserLot(db, req) {
-  return db.lots.find((lot) => lot.id === req.params.lotId && lot.userId === req.session.user.id);
-}
-
-function summarizeLot(db, lot, includeItems = false) {
-  const products = db.products.filter((product) => product.lotId === lot.id);
-  const items = db.rzItems.filter((item) => item.lotId === lot.id);
-  const rzs = [...new Set(items.map((item) => item.codigoRz))]
-    .sort()
-    .map((codigoRz) => summarizeRz(db, lot, codigoRz));
-  const expectedQty = rzs.reduce((sum, rz) => sum + rz.expected, 0);
-  const checkedQty = rzs.reduce((sum, rz) => sum + rz.checked, 0);
-  const expectedValue = rzs.reduce((sum, rz) => sum + rz.expectedValue, 0);
-  const checkedValue = rzs.reduce((sum, rz) => sum + rz.checkedValue, 0);
-
-  const result = {
-    ...lot,
-    totalProducts: products.length,
-    totalItems: expectedQty,
-    totalExcessExternal: products.filter((product) => product.origem === "excedente_externo").length,
-    progress: {
-      expectedQty,
-      checkedQty,
-      qtyPercent: percent(checkedQty, expectedQty),
-      expectedValue: roundMoney(expectedValue),
-      checkedValue: roundMoney(checkedValue),
-      valuePercent: percent(checkedValue, expectedValue)
-    },
-    rzs
-  };
-
-  if (includeItems) {
-    result.products = products;
-    result.items = items.map((item) => ({
-      ...item,
-      product: products.find((product) => product.id === item.productId)
-    }));
-  }
-
-  return result;
-}
-
-function summarizeRz(db, lot, codigoRz) {
-  const items = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
-  const products = db.products.filter((product) => product.lotId === lot.id);
-  const enriched = items.map((item) => ({ ...item, product: products.find((product) => product.id === item.productId) }));
-  const expected = enriched.reduce((sum, item) => sum + item.qtdEsperada, 0);
-  const checked = enriched.reduce((sum, item) => sum + item.qtdConferida, 0);
-  const expectedValue = enriched.reduce((sum, item) => sum + item.qtdEsperada * (item.product?.valorUnit || 0), 0);
-  const checkedValue = enriched.reduce((sum, item) => {
-    const checkedQty = item.tipoItem === "excedente_externo" ? 0 : Math.min(item.qtdConferida, item.qtdEsperada);
-    return sum + checkedQty * (item.product?.valorUnit || 0);
-  }, 0);
-  const missingValue = enriched.reduce((sum, item) => {
-    return sum + Math.max(0, item.qtdEsperada - item.qtdConferida) * (item.product?.valorUnit || 0);
-  }, 0);
-  const excessValue = enriched.reduce((sum, item) => {
-    const excess = item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada);
-    return sum + excess * (item.product?.valorUnit || 0);
-  }, 0);
-  return {
-    codigoRz,
-    expected,
-    checked,
-    qtyPercent: percent(checked, expected),
-    expectedValue: roundMoney(expectedValue),
-    checkedValue: roundMoney(checkedValue),
-    valuePercent: percent(checkedValue, expectedValue),
-    missing: enriched.reduce((sum, item) => sum + Math.max(0, item.qtdEsperada - item.qtdConferida), 0),
-    excess: enriched.reduce((sum, item) => sum + (item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada)), 0),
-    missingValue: roundMoney(missingValue),
-    excessValue: roundMoney(excessValue)
-  };
-}
-
-function percent(value, total) {
-  if (!total) return 0;
-  return roundMoney((value / total) * 100);
-}
-
-function findProductHistory(db, userId, currentLotId, codigoMl) {
-  const userLots = new Map(db.lots.filter((lot) => lot.userId === userId && lot.id !== currentLotId).map((lot) => [lot.id, lot]));
-  return db.products
-    .filter((product) => product.codigoMl === codigoMl && userLots.has(product.lotId))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((product) => ({ ...product, lot: userLots.get(product.lotId) }));
+function sendError(res, error) {
+  res.status(error.status || 400).json({ error: error.message });
 }
 
 function safeFileName(value) {
@@ -393,13 +208,6 @@ function safeFileName(value) {
 
 function blingFileName(lot, kind) {
   return `${safeFileName(lot.prefixoSku)}-${kind}-bling.csv`;
-}
-
-function getBlingProducts(db, lot, kind) {
-  let products = db.products.filter((product) => product.lotId === lot.id);
-  if (kind === "complete") return products.filter((product) => product.origem === "planilha");
-  if (kind === "excess") return products.filter((product) => product.origem === "excedente_externo");
-  throw new Error("Tipo de exportação inválido.");
 }
 
 async function uniqueDownloadName(directory, fileName) {
@@ -433,6 +241,6 @@ function revealFile(filePath) {
 }
 
 await ensureStore();
-app.listen(PORT, () => {
-  console.log(`Etiquefácil rodando em http://localhost:${PORT}`);
+app.listen(config.port, () => {
+  console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
 });

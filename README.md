@@ -19,12 +19,34 @@ Copie `.env.example` e configure no provedor:
 
 ```bash
 DATABASE_URL=postgres://...
-SESSION_SECRET=uma-chave-grande
+SESSION_SECRET=uma-chave-grande-com-32-caracteres-ou-mais
 NODE_ENV=production
 DOWNLOAD_MODE=browser
 ```
 
-Com `DATABASE_URL`, o app cria automaticamente as tabelas PostgreSQL ao iniciar.
+Com `DATABASE_URL`, o app cria automaticamente as tabelas PostgreSQL ao iniciar. Em produção, `DATABASE_URL` e `SESSION_SECRET` são obrigatórios.
+
+O banco remoto atual não aceita SSL, então configure também:
+
+```bash
+PGSSL=false
+```
+
+Se trocar para um provedor com SSL gerenciado, remova `PGSSL=false`.
+
+## Health check
+
+Use o endpoint abaixo no provedor:
+
+```bash
+GET /healthz
+```
+
+Resposta esperada com PostgreSQL ativo:
+
+```json
+{"ok":true,"storage":"postgres"}
+```
 
 ## Migrar dados locais para PostgreSQL
 
@@ -40,11 +62,31 @@ Por padrão, migra `data/db.json`. Também é possível informar outro caminho:
 npm run migrate:json-to-postgres -- C:\caminho\db.json
 ```
 
+Para este ambiente:
+
+```bash
+npm run migrate:json-to-postgres -- /Users/caio/Downloads/db.json
+```
+
+Valide as contagens após a migração:
+
+```text
+users=8
+lots=11
+products=13418
+rz_items=14904
+scans=7
+labels=1
+```
+
 ## Deploy sugerido
 
 1. Subir este projeto para GitHub.
 2. Criar um PostgreSQL no Render, Railway ou provedor equivalente.
 3. Criar um serviço Node.js apontando para o repositório.
 4. Configurar as variáveis de ambiente acima.
-5. Build command: `npm install`.
+5. Build command: `npm ci`.
 6. Start command: `npm start`.
+7. Health check path: `/healthz`.
+
+Após validar em produção, rotacione a senha do PostgreSQL se a URL do banco tiver sido compartilhada.
