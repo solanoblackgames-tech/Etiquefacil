@@ -41,6 +41,10 @@ button.ghost {
   color: var(--ink);
 }
 
+button.danger {
+  background: var(--danger);
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -373,6 +377,84 @@ h3 {
   padding: 12px;
 }
 
+.admin-shell {
+  display: grid;
+  gap: 18px;
+  padding: 22px 24px;
+}
+
+.admin-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.admin-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  margin-top: 14px;
+}
+
+.admin-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.admin-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.admin-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1.5fr) 0.5fr 0.5fr 0.7fr minmax(360px, 1.4fr);
+  padding: 12px;
+}
+
+.admin-row:last-child {
+  border-bottom: 0;
+}
+
+.admin-row-head {
+  background: #e7edef;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-row strong,
+.admin-row .muted {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-actions,
+.password-form {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.password-form {
+  flex: 1;
+}
+
+.password-form input {
+  min-width: 130px;
+}
+
 .label-modal {
   background: rgb(0 0 0 / 0.42);
   display: grid;
@@ -450,8 +532,17 @@ h3 {
   .rz-search,
   .scan-box,
   .item-row,
-  .result-card {
+  .result-card,
+  .admin-form,
+  .admin-row {
     grid-template-columns: 1fr;
+  }
+
+  .admin-actions,
+  .password-form,
+  .admin-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

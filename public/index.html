@@ -4,7 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Etiquefácil</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      if (window.location.protocol === "file:") {
+        window.location.replace("http://localhost:3105/");
+      }
+    </script>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -69,6 +74,37 @@
       </section>
     </main>
 
+    <main id="adminApp" class="app hidden">
+      <header class="topbar">
+        <div>
+          <h1>Back office</h1>
+          <span id="adminName"></span>
+        </div>
+        <button id="adminLogoutButton" class="ghost">Sair</button>
+      </header>
+
+      <section class="admin-shell">
+        <section class="admin-panel">
+          <h2>Gestao de usuarios</h2>
+          <form id="adminCreateUserForm" class="admin-form">
+            <label>Nome<input name="name" required /></label>
+            <label>E-mail<input name="email" type="email" required /></label>
+            <label>Senha<input name="password" type="password" required /></label>
+            <button type="submit">Criar usuario</button>
+          </form>
+          <p id="adminMessage" class="message"></p>
+        </section>
+
+        <section class="admin-panel">
+          <div class="admin-heading">
+            <h2>Usuarios cadastrados</h2>
+            <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
+          </div>
+          <div id="adminUsers" class="admin-users"></div>
+        </section>
+      </section>
+    </main>
+
     <template id="labelTemplate">
       <section class="label-print">
         <p class="label-desc"></p>
@@ -89,6 +125,6 @@
       </div>
     </section>
 
-    <script src="/app.js" type="module"></script>
+    <script src="app.js" type="module"></script>
   </body>
 </html>

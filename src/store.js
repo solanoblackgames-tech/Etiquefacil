@@ -132,6 +132,93 @@ export function sanitizeUser(user) {
   return { id: user.id, name: user.name, email: user.email };
 }
 
+export async function listUsersForAdmin() {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select
+          u.id,
+          u.name,
+          u.email,
+          u.created_at,
+          count(distinct l.id)::int as total_lots,
+          count(distinct p.id)::int as total_products
+        from users u
+        left join lots l on l.user_id = u.id
+        left join products p on p.lot_id = l.id
+        group by u.id
+        order by u.created_at desc
+      `
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      createdAt: iso(row.created_at),
+      totalLots: Number(row.total_lots || 0),
+      totalProducts: Number(row.total_products || 0)
+    }));
+  }
+
+  const db = await readDb();
+  return db.users
+    .map((user) => {
+      const lots = db.lots.filter((lot) => lot.userId === user.id);
+      const lotIds = new Set(lots.map((lot) => lot.id));
+      return {
+        ...sanitizeUser(user),
+        createdAt: user.createdAt,
+        totalLots: lots.length,
+        totalProducts: db.products.filter((product) => lotIds.has(product.lotId)).length
+      };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function updateUserPassword(userId, password) {
+  await ensureStore();
+  const normalizedPassword = String(password || "");
+  if (normalizedPassword.length < 4) throw new Error("Informe uma senha com pelo menos 4 caracteres.");
+  const passwordHash = await bcrypt.hash(normalizedPassword, 10);
+
+  if (hasPostgres()) {
+    const result = await query("update users set password_hash = $1 where id = $2 returning id", [passwordHash, userId]);
+    if (!result.rows.length) throw notFound("Usuário não encontrado.");
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuário não encontrado.");
+  user.passwordHash = passwordHash;
+  await writeDb(db);
+  return { ok: true };
+}
+
+export async function deleteUser(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("delete from users where id = $1 returning id", [userId]);
+    if (!result.rows.length) throw notFound("Usuário não encontrado.");
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuário não encontrado.");
+  const lotIds = new Set(db.lots.filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const productIds = new Set(db.products.filter((product) => lotIds.has(product.lotId)).map((product) => product.id));
+  db.users = db.users.filter((item) => item.id !== userId);
+  db.lots = db.lots.filter((lot) => lot.userId !== userId);
+  db.products = db.products.filter((product) => !lotIds.has(product.lotId));
+  db.rzItems = db.rzItems.filter((item) => !lotIds.has(item.lotId) && !productIds.has(item.productId));
+  db.scans = db.scans.filter((scan) => !lotIds.has(scan.lotId));
+  db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
+  await writeDb(db);
+  return { ok: true };
+}
+
 export async function getStoreHealth() {
   await ensureStore();
   if (!hasPostgres()) return { ok: true, storage: "json" };

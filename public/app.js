@@ -1,5 +1,6 @@
 const state = {
   user: null,
+  adminUsers: [],
   lots: [],
   selectedLotId: null,
   selectedRz: null,
@@ -13,6 +14,7 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const formatDate = (value) => new Date(value).toLocaleDateString("pt-BR");
 
 await bootstrap();
 
@@ -36,8 +38,26 @@ function bindEvents() {
   });
 
   $("#logoutButton").addEventListener("click", async () => {
-    await api("/api/logout", { method: "POST" });
-    location.reload();
+    await logout();
+  });
+
+  $("#adminLogoutButton").addEventListener("click", async () => {
+    await logout();
+  });
+
+  $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
+
+  $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
+
+  $("#adminUsers").addEventListener("click", handleAdminUsersClick);
+
+  $("#adminUsers").addEventListener("submit", handleAdminPasswordSubmit);
+
+  $("#adminUsers").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.matches('input[name="password"]')) {
+      event.preventDefault();
+      event.target.closest("form")?.requestSubmit();
+    }
   });
 
   $("#uploadForm").addEventListener("submit", uploadLot);
@@ -93,6 +113,15 @@ async function uploadLot(event) {
 async function showApp(user) {
   state.user = user;
   $("#auth").classList.add("hidden");
+  if (user.role === "admin") {
+    $("#app").classList.add("hidden");
+    $("#adminApp").classList.remove("hidden");
+    $("#adminName").textContent = `${user.name} (${user.email})`;
+    await loadAdminUsers();
+    return;
+  }
+
+  $("#adminApp").classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
   await loadLots();
@@ -101,6 +130,130 @@ async function showApp(user) {
 function showAuth() {
   $("#auth").classList.remove("hidden");
   $("#app").classList.add("hidden");
+  $("#adminApp").classList.add("hidden");
+}
+
+async function logout() {
+  await api("/api/logout", { method: "POST" });
+  location.reload();
+}
+
+async function loadAdminUsers() {
+  const response = await api("/api/admin/users");
+  state.adminUsers = response.users;
+  renderAdminUsers();
+}
+
+async function createAdminUser(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#adminMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const payload = Object.fromEntries(new FormData(form));
+    await api("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    form.reset();
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = "Usuario criado.";
+    await loadAdminUsers();
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderAdminUsers() {
+  const wrapper = $("#adminUsers");
+  if (!state.adminUsers.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum usuario cadastrado ainda.</p>';
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row admin-row-head">
+        <span>Usuario</span>
+        <span>Lotes</span>
+        <span>Produtos</span>
+        <span>Criado em</span>
+        <span>Acoes</span>
+      </div>
+      ${state.adminUsers.map(adminUserRow).join("")}
+    </div>
+  `;
+}
+
+function adminUserRow(user) {
+  return `
+    <article class="admin-row" data-user-id="${escapeHtml(user.id)}">
+      <div>
+        <strong>${escapeHtml(user.name)}</strong>
+        <span class="muted">${escapeHtml(user.email)}</span>
+      </div>
+      <span>${user.totalLots}</span>
+      <span>${user.totalProducts}</span>
+      <span>${formatDate(user.createdAt)}</span>
+      <div class="admin-actions">
+        <form class="password-form">
+          <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
+          <button type="submit">Salvar senha</button>
+        </form>
+        <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
+      </div>
+    </article>
+  `;
+}
+
+async function handleAdminPasswordSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+  if (!form.matches(".password-form")) return;
+  const row = form.closest(".admin-row");
+  const password = new FormData(form).get("password");
+  const button = form.querySelector("button");
+  button.disabled = true;
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(row.dataset.userId)}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    form.reset();
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = "Senha atualizada.";
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleAdminUsersClick(event) {
+  const button = event.target.closest("[data-delete-user]");
+  if (!button) return;
+  const user = state.adminUsers.find((item) => item.id === button.dataset.deleteUser);
+  if (!user || !confirm(`Excluir ${user.name}? Esta acao apaga tambem os lotes deste usuario.`)) return;
+
+  button.disabled = true;
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = "Usuario excluido.";
+    await loadAdminUsers();
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadLots(selectId = state.selectedLotId) {

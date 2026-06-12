@@ -15,6 +15,7 @@ import {
   createLabel,
   createLotFromImport,
   createUser,
+  deleteUser,
   ensureStore,
   getLotBlingData,
   getPgPool,
@@ -22,8 +23,10 @@ import {
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
+  listUsersForAdmin,
   scanLotRz,
   searchProducts,
+  updateUserPassword,
   verifyUser
 } from "./store.js";
 
@@ -32,6 +35,14 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
+const ADMIN_EMAIL = "lucassolano@jz";
+const ADMIN_PASSWORD = "Jz2026";
+const ADMIN_USER = {
+  id: "backoffice-admin",
+  name: "Back Office",
+  email: ADMIN_EMAIL,
+  role: "admin"
+};
 
 app.set("trust proxy", config.trustProxy);
 app.use(express.json());
@@ -86,6 +97,11 @@ app.post("/api/register", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
+  if (isAdminLogin(req.body.email, req.body.password)) {
+    req.session.user = ADMIN_USER;
+    return res.json({ user: ADMIN_USER });
+  }
+
   const user = await verifyUser(req.body.email || "", req.body.password || "");
   if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
   req.session.user = user;
@@ -94,6 +110,37 @@ app.post("/api/login", async (req, res) => {
 
 app.post("/api/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
+});
+
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  res.json({ users: await listUsersForAdmin() });
+});
+
+app.post("/api/admin/users", requireAdmin, async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
+    const user = await createUser({ name, email, password });
+    res.json({ user });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch("/api/admin/users/:userId/password", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserPassword(req.params.userId, req.body.password));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
+  try {
+    res.json(await deleteUser(req.params.userId));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/lots", requireAuth, async (req, res) => {
@@ -196,6 +243,15 @@ app.post("/api/labels", requireAuth, async (req, res) => {
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Faça login para continuar." });
   next();
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session.user?.role !== "admin") return res.status(403).json({ error: "Acesso restrito ao back office." });
+  next();
+}
+
+function isAdminLogin(email, password) {
+  return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
 }
 
 function sendError(res, error) {
