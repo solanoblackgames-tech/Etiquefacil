@@ -219,6 +219,27 @@ export async function deleteUser(userId) {
   return { ok: true };
 }
 
+export async function deleteUserLot(userId, lotId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("delete from lots where id = $1 and user_id = $2 returning id", [lotId, userId]);
+    if (!result.rows.length) throw notFound("Lote nÃ£o encontrado.");
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nÃ£o encontrado.");
+  const productIds = new Set(db.products.filter((product) => product.lotId === lot.id).map((product) => product.id));
+  db.lots = db.lots.filter((item) => item.id !== lot.id);
+  db.products = db.products.filter((product) => product.lotId !== lot.id);
+  db.rzItems = db.rzItems.filter((item) => item.lotId !== lot.id && !productIds.has(item.productId));
+  db.scans = db.scans.filter((scan) => scan.lotId !== lot.id);
+  db.labels = db.labels.filter((label) => label.lotId !== lot.id && !productIds.has(label.productId));
+  await writeDb(db);
+  return { ok: true };
+}
+
 export async function getStoreHealth() {
   await ensureStore();
   if (!hasPostgres()) return { ok: true, storage: "json" };

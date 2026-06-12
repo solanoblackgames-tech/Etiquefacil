@@ -111,11 +111,17 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
   let rows;
   try {
     const result = await readXlsxFile(buffer, { getSheets: true });
-    if (Array.isArray(result) && result[0]?.name) {
+    if (Array.isArray(result) && result.some((sheet) => sheet?.data || sheet?.name || sheet?.sheet)) {
       const sheetRows = [];
       for (const sheet of result) {
-        const candidate = await readXlsxFile(buffer, { sheet: sheet.name });
-        sheetRows.push({ sheet: sheet.name, data: Array.isArray(candidate?.[0]?.data) ? candidate[0].data : candidate });
+        if (Array.isArray(sheet.data)) {
+          sheetRows.push({ sheet: sheet.name || sheet.sheet, data: sheet.data });
+          continue;
+        }
+
+        const sheetName = sheet.name || sheet.sheet;
+        const candidate = await readXlsxFile(buffer, { sheet: sheetName });
+        sheetRows.push({ sheet: sheetName, data: Array.isArray(candidate?.[0]?.data) ? candidate[0].data : candidate });
       }
       rows = findImportableSheet(sheetRows)?.data;
     } else {
@@ -188,7 +194,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     });
   }
 
-  if (!byMl.size) throw new Error("Nenhum item válido foi encontrado na aba Especialista.");
+  if (!byMl.size) throw new Error("Nenhum item válido foi encontrado na aba importada.");
 
   return {
     products: [...byMl.values()],
@@ -198,6 +204,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
 }
 
 function findImportableSheet(sheets) {
+  // Sheet names vary between suppliers; the importable sheet is identified by its columns.
   return sheets.find((sheet) => {
     const rows = sheet.data || [];
     return rows.some((row) => {

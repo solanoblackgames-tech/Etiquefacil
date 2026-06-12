@@ -16,6 +16,7 @@ import {
   createLotFromImport,
   createUser,
   deleteUser,
+  deleteUserLot,
   ensureStore,
   getLotBlingData,
   getPgPool,
@@ -176,6 +177,14 @@ app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
   const lot = await getUserLotDetail(req.session.user.id, req.params.lotId);
   if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
   res.json({ lot });
+});
+
+app.delete("/api/lots/:lotId", requireAuth, async (req, res) => {
+  try {
+    res.json(await deleteUserLot(req.session.user.id, req.params.lotId));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/lots/:lotId/bling/:kind", requireAuth, async (req, res) => {

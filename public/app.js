@@ -259,8 +259,19 @@ async function handleAdminUsersClick(event) {
 async function loadLots(selectId = state.selectedLotId) {
   const response = await api("/api/lots");
   state.lots = response.lots;
+  if (!selectId || !state.lots.some((lot) => lot.id === selectId)) {
+    selectId = null;
+    state.selectedLotId = null;
+    state.selectedRz = null;
+    clearLotDetail();
+  }
   renderLots();
   if (selectId) await selectLot(selectId);
+}
+
+function clearLotDetail() {
+  $("#lotDetail").classList.add("empty");
+  $("#lotDetail").textContent = "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
 }
 
 function renderLots() {
@@ -295,11 +306,13 @@ async function selectLot(lotId) {
 
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
+  detail.classList.remove("empty");
   detail.innerHTML = `
     <h2>${escapeHtml(lot.nomeArquivo)}</h2>
     <div class="actions">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
+      <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
     </div>
     <p id="downloadMessage" class="message"></p>
     <div class="summary-grid">
@@ -329,6 +342,7 @@ function renderLotDetail(lot) {
   detail.querySelectorAll("button[data-download]").forEach((button) => {
     button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
   });
+  $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
   $("#rzSearchButton").addEventListener("click", () => openRzFromSearch(lot));
   $("#rzSearchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
@@ -336,6 +350,25 @@ function renderLotDetail(lot) {
   detail.querySelectorAll(".rz-card").forEach((card) => {
     card.addEventListener("click", () => renderRz(lot, card.dataset.rz));
   });
+}
+
+async function deleteLot(lot) {
+  if (!confirm(`Excluir o lote ${lot.nomeArquivo}? Esta acao apaga tambem os produtos, RZs, bipagens e etiquetas deste lote.`)) return;
+
+  const button = $("#deleteLotButton");
+  button.disabled = true;
+  try {
+    await api(`/api/lots/${encodeURIComponent(lot.id)}`, { method: "DELETE" });
+    state.selectedLotId = null;
+    state.selectedRz = null;
+    await loadLots(null);
+  } catch (error) {
+    const message = $("#downloadMessage");
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function openRzFromSearch(lot) {
@@ -738,10 +771,14 @@ function progressMetric(label, percent, detail) {
 
 function rzCard(rz) {
   return `
-    <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}">
+    <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="Esperado ${rz.expected} · Conferido ${rz.checked} · Faltante ${rz.missing} · Excedente ${rz.excess}">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
-      <div class="muted">Esperado ${rz.expected} · Conferido ${rz.checked}</div>
-      <div class="muted">Faltante ${rz.missing} · Excedente ${rz.excess}</div>
+      <div class="rz-card-details">
+        <span>Esp. ${rz.expected}</span>
+        <span>Conf. ${rz.checked}</span>
+        <span>Falt. ${rz.missing}</span>
+        <span>Exc. ${rz.excess}</span>
+      </div>
     </article>
   `;
 }
