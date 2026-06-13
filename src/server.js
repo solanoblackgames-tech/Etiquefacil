@@ -7,6 +7,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import PDFDocument from "pdfkit";
+import XLSX from "xlsx";
 import "dotenv/config";
 import { buildBlingCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
@@ -238,6 +240,37 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
   }
 });
 
+app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, async (req, res) => {
+  try {
+    const lot = await getUserLotDetail(req.session.user.id, req.params.lotId);
+    if (!lot) return res.status(404).json({ error: "Lote nÃ£o encontrado." });
+
+    const pallet = buildPalletReport(lot, req.params.codigoRz);
+    if (!pallet) return res.status(404).json({ error: "RZ nÃ£o encontrado neste lote." });
+
+    const format = String(req.params.format || "").toLowerCase();
+    const fileBase = `${safeFileName(lot.prefixoSku)}-${safeFileName(pallet.rz.codigoRz)}-pallet`;
+    if (format === "xlsx") {
+      const workbook = buildPalletWorkbook(pallet);
+      const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileBase}.xlsx"`);
+      return res.send(buffer);
+    }
+
+    if (format === "pdf") {
+      const buffer = await buildPalletPdf(pallet);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileBase}.pdf"`);
+      return res.send(buffer);
+    }
+
+    res.status(400).json({ error: "Formato invÃ¡lido." });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/search", requireAuth, async (req, res) => {
   const codigoMl = String(req.query.codigoMl || "").trim();
   res.json({ results: await searchProducts(req.session.user.id, codigoMl) });
@@ -273,6 +306,125 @@ function safeFileName(value) {
 
 function blingFileName(lot, kind) {
   return `${safeFileName(lot.prefixoSku)}-${kind}-bling.csv`;
+}
+
+function buildPalletReport(lot, codigoRz) {
+  const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
+  if (!rz) return null;
+
+  const items = lot.items
+    .filter((item) => item.codigoRz === codigoRz)
+    .map((item) => {
+      const product = item.product || {};
+      const missing = Math.max(0, item.qtdEsperada - item.qtdConferida);
+      const excess = item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada);
+      return {
+        sku: product.sku || "",
+        codigoMl: product.codigoMl || "",
+        descricao: product.descricao || "",
+        categoria: product.categoria || "",
+        subcategoria: product.subcategoria || "",
+        origem: product.origem || "",
+        enderecoWms: item.enderecoWms || "",
+        tipoItem: item.tipoItem || "",
+        condicaoGrade: item.condicaoGrade || "",
+        qtdEsperada: item.qtdEsperada || 0,
+        qtdConferida: item.qtdConferida || 0,
+        qtdTotal: product.qtdTotal || 0,
+        faltante: missing,
+        excedente: excess,
+        valorUnit: Number(product.valorUnit || 0),
+        precoCusto: Number(product.precoCusto || 0),
+        valorTotalItem: Number(item.valorTotal || 0),
+        valorEsperado: Number(item.qtdEsperada || 0) * Number(product.valorUnit || 0),
+        valorConferido: Number(item.qtdConferida || 0) * Number(product.valorUnit || 0)
+      };
+    });
+
+  const status = rz.missing === 0 && rz.excess === 0 ? "Concluido" : rz.checked > 0 ? "Em andamento" : "Pendente";
+  return { lot, rz, status, items };
+}
+
+function buildPalletWorkbook(pallet) {
+  const summaryRows = [
+    ["Lote", pallet.lot.nomeArquivo],
+    ["RZ", pallet.rz.codigoRz],
+    ["Status", pallet.status],
+    ["Itens esperados", pallet.rz.expected],
+    ["Conferido", pallet.rz.checked],
+    ["Faltante", pallet.rz.missing],
+    ["Excedente", pallet.rz.excess],
+    ["Venda total", pallet.rz.expectedValue],
+    ["Venda conferida", pallet.rz.checkedValue],
+    ["Valor faltante", pallet.rz.missingValue],
+    ["Valor excedente", pallet.rz.excessValue]
+  ];
+  const itemRows = pallet.items.map((item) => ({
+    SKU: item.sku,
+    "Codigo ML": item.codigoMl,
+    Descricao: item.descricao,
+    "Endereco WMS": item.enderecoWms,
+    Tipo: item.tipoItem,
+    Grade: item.condicaoGrade,
+    Categoria: item.categoria,
+    Subcategoria: item.subcategoria,
+    Origem: item.origem,
+    "Estoque total": item.qtdTotal,
+    Esperado: item.qtdEsperada,
+    Conferido: item.qtdConferida,
+    Faltante: item.faltante,
+    Excedente: item.excedente,
+    "Valor unitario": item.valorUnit,
+    "Preco custo": item.precoCusto,
+    "Valor total item": item.valorTotalItem,
+    "Venda esperada": item.valorEsperado,
+    "Venda conferida": item.valorConferido
+  }));
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), "Resumo");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), "Itens");
+  return workbook;
+}
+
+function buildPalletPdf(pallet) {
+  return new Promise((resolve, reject) => {
+    const document = new PDFDocument({ margin: 36, size: "A4" });
+    const chunks = [];
+    document.on("data", (chunk) => chunks.push(chunk));
+    document.on("end", () => resolve(Buffer.concat(chunks)));
+    document.on("error", reject);
+
+    document.fontSize(18).text(`Relatorio do pallet ${pallet.rz.codigoRz}`, { underline: true });
+    document.moveDown(0.5);
+    document.fontSize(10).text(`Lote: ${pallet.lot.nomeArquivo}`);
+    document.text(`Status: ${pallet.status}`);
+    document.text(`Itens: ${pallet.rz.expected} | Conferido: ${pallet.rz.checked} | Faltante: ${pallet.rz.missing} | Excedente: ${pallet.rz.excess}`);
+    document.text(`Venda total: ${formatCurrency(pallet.rz.expectedValue)} | Venda conferida: ${formatCurrency(pallet.rz.checkedValue)}`);
+    document.text(`Valor faltante: ${formatCurrency(pallet.rz.missingValue)} | Valor excedente: ${formatCurrency(pallet.rz.excessValue)}`);
+    document.moveDown();
+
+    document.fontSize(12).text("Itens do pallet");
+    document.moveDown(0.4);
+    for (const item of pallet.items) {
+      if (document.y > 735) document.addPage();
+      document
+        .fontSize(9)
+        .text(`${item.sku} | ML ${item.codigoMl} | ${item.descricao}`, { continued: false })
+        .fontSize(8)
+        .fillColor("#555")
+        .text(`End: ${item.enderecoWms || "-"} | Esp: ${item.qtdEsperada} | Conf: ${item.qtdConferida} | Falt: ${item.faltante} | Exc: ${item.excedente} | Venda: ${formatCurrency(item.valorEsperado)}`)
+        .text(`Tipo: ${item.tipoItem || "-"} | Grade: ${item.condicaoGrade || "-"} | Origem: ${item.origem || "-"} | Categoria: ${item.categoria || "-"} / ${item.subcategoria || "-"} | Custo: ${formatCurrency(item.precoCusto)} | Estoque: ${item.qtdTotal}`)
+        .fillColor("#111");
+      document.moveDown(0.35);
+    }
+
+    document.end();
+  });
+}
+
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 async function uniqueDownloadName(directory, fileName) {

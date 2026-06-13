@@ -386,8 +386,11 @@ function renderLotDetail(lot) {
   $("#rzSearchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
-  detail.querySelectorAll(".rz-card").forEach((card) => {
-    card.addEventListener("click", () => renderRz(lot, card.dataset.rz));
+  detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
+    button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
+  });
+  detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
+    button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
 }
 
@@ -510,6 +513,63 @@ function renderRz(lot, codigoRz) {
     if (event.key === "Enter") scanCurrent(lot.id, codigoRz);
   });
   $("#scanInput").focus();
+}
+
+function renderPallet(lot, codigoRz) {
+  state.selectedRz = codigoRz;
+  document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
+  const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
+  if (!rz) return;
+
+  const items = lot.items.filter((item) => item.codigoRz === codigoRz);
+  const status = rz.missing === 0 && rz.excess === 0 ? "Concluido" : rz.checked > 0 ? "Em andamento" : "Pendente";
+  const baseUrl = `/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/pallet`;
+  $("#rzDetail").innerHTML = `
+    <section class="pallet-panel">
+      <div class="pallet-heading">
+        <div>
+          <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
+          <h2>Pallet ${escapeHtml(codigoRz)}</h2>
+        </div>
+        <div class="pallet-actions">
+          <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
+          <a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>
+          <a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>
+        </div>
+      </div>
+      <div class="summary-grid">
+        ${metric("Status", status)}
+        ${metric("Itens", rz.expected)}
+        ${metric("Conferido", rz.checked)}
+        ${metric("Faltante", rz.missing)}
+      </div>
+      <div class="summary-grid">
+        ${metric("Excedente", rz.excess)}
+        ${metric("Venda total", money(rz.expectedValue))}
+        ${metric("Venda conferida", money(rz.checkedValue))}
+        ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+      </div>
+      <h3 class="section-title">Progresso do pallet</h3>
+      <div class="summary-grid">
+        ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
+        ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
+        ${metric("Valor faltante", money(rz.missingValue))}
+        ${metric("Valor excedente", money(rz.excessValue))}
+      </div>
+      <div class="pallet-table">
+        <div class="pallet-row pallet-row-head">
+          <span>SKU / ML</span>
+          <span>Produto</span>
+          <span>Endereco</span>
+          <span>Qtd</span>
+          <span>Valores</span>
+          <span>Status</span>
+        </div>
+        ${items.map(palletRow).join("")}
+      </div>
+    </section>
+  `;
+  $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -994,6 +1054,10 @@ function rzCard(rz) {
         <span>Faltante</span><strong>${rz.missing}</strong>
         <span>Excedente</span><strong>${rz.excess}</strong>
       </div>
+      <div class="rz-card-actions">
+        <button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>
+        <button type="button" class="ghost" data-pallet-rz="${escapeHtml(rz.codigoRz)}">Exibir pallet</button>
+      </div>
     </article>
   `;
 }
@@ -1008,6 +1072,24 @@ function itemRow(item) {
       <span>${escapeHtml(product.codigoMl || "")}</span>
       <span>${item.qtdConferida}/${item.qtdEsperada}</span>
       ${badge}
+    </article>
+  `;
+}
+
+function palletRow(item) {
+  const product = item.product || {};
+  const missing = Math.max(0, item.qtdEsperada - item.qtdConferida);
+  const excess = item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada);
+  const value = Number(product.valorUnit || 0);
+  const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
+  return `
+    <article class="pallet-row">
+      <span><strong>${escapeHtml(product.sku || "")}</strong><small>${escapeHtml(product.codigoMl || "")}</small></span>
+      <span>${escapeHtml(product.descricao || "")}<small>${escapeHtml(item.tipoItem || "")} ${escapeHtml(item.condicaoGrade || "")}</small><small>${escapeHtml(product.origem || "")} · ${escapeHtml(product.categoria || "")} / ${escapeHtml(product.subcategoria || "")}</small></span>
+      <span>${escapeHtml(item.enderecoWms || "-")}</span>
+      <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
+      <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small><small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small></span>
+      <span><span class="badge">${rowStatus}</span></span>
     </article>
   `;
 }

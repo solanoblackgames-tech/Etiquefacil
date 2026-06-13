@@ -287,7 +287,7 @@ h3 {
 .rz-grid {
   display: grid;
   gap: 6px;
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
 }
 
 .rz-search {
@@ -301,8 +301,7 @@ h3 {
 }
 
 .rz-card {
-  cursor: pointer;
-  min-height: 38px;
+  min-height: 128px;
   overflow: hidden;
   padding: 8px 10px;
   position: relative;
@@ -350,6 +349,18 @@ h3 {
 .rz-card.selected .rz-card-details {
   max-height: 88px;
   opacity: 1;
+}
+
+.rz-card-actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.rz-card-actions button {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 8px;
 }
 
 .rz-card.selected {
@@ -400,6 +411,84 @@ h3 {
 .scan-heading h2 {
   font-size: 30px;
   margin-top: 4px;
+}
+
+.pallet-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.pallet-heading {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.pallet-heading h2 {
+  font-size: 28px;
+  margin-top: 4px;
+}
+
+.pallet-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.button-link {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 700;
+  min-height: 40px;
+  padding: 0 14px;
+  text-decoration: none;
+}
+
+.pallet-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pallet-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 2fr 0.9fr 1.1fr 1fr 0.8fr;
+  padding: 10px;
+}
+
+.pallet-row:last-child {
+  border-bottom: 0;
+}
+
+.pallet-row-head {
+  background: #e7edef;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pallet-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pallet-row small {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 3px;
 }
 
 .scan-box {
@@ -689,6 +778,7 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
+  .pallet-row,
   .result-card,
   .admin-form,
   .admin-row {
@@ -697,7 +787,9 @@ h3 {
 
   .admin-actions,
   .password-form,
-  .admin-heading {
+  .admin-heading,
+  .pallet-heading,
+  .pallet-actions {
     align-items: stretch;
     flex-direction: column;
   }
