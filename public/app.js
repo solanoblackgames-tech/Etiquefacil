@@ -4,11 +4,14 @@ const state = {
   lots: [],
   selectedLotId: null,
   selectedRz: null,
+  scanOnly: false,
   labelProduct: null,
   config: { downloadMode: "local" },
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
-    includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false"
+    includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false",
+    includeText: localStorage.getItem("etiquefacil.includeText") === "true",
+    customText: localStorage.getItem("etiquefacil.customText") || ""
   }
 };
 
@@ -124,13 +127,49 @@ async function showApp(user) {
   $("#adminApp").classList.add("hidden");
   $("#app").classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
+  const scanRequest = getScanRequest();
+  if (scanRequest) {
+    await showScanOnly(scanRequest);
+    return;
+  }
   await loadLots();
 }
 
 function showAuth() {
+  document.body.classList.remove("scan-only");
   $("#auth").classList.remove("hidden");
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
+}
+
+function getScanRequest() {
+  const params = new URLSearchParams(window.location.search);
+  const lotId = params.get("scanLot");
+  const codigoRz = params.get("scanRz");
+  if (!lotId || !codigoRz) return null;
+  return { lotId, codigoRz };
+}
+
+async function showScanOnly({ lotId, codigoRz }) {
+  state.scanOnly = true;
+  state.selectedLotId = lotId;
+  state.selectedRz = codigoRz;
+  document.body.classList.add("scan-only");
+  $("#app .topbar h1").textContent = "Bipagem";
+  $("#uploadForm").closest(".upload-band").classList.add("hidden");
+  $(".tabs").classList.add("hidden");
+  $("#lotsTab").classList.remove("hidden");
+  $("#searchTab").classList.add("hidden");
+  $("#lotDetail").classList.remove("empty");
+  $("#lotDetail").innerHTML = '<p class="muted">Carregando bipagem...</p>';
+
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
+    renderScanPage(response.lot, codigoRz);
+  } catch (error) {
+    $("#lotDetail").classList.add("empty");
+    $("#lotDetail").textContent = error.message;
+  }
 }
 
 async function logout() {
@@ -415,6 +454,20 @@ async function downloadBling(lotId, kind) {
 function renderRz(lot, codigoRz) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
+  const opened = openScanWindow(lot.id, codigoRz);
+  const rzDetail = $("#rzDetail");
+  if (rzDetail) {
+    rzDetail.innerHTML = `
+      <div class="scan-opened">
+        <strong>Bipagem aberta em uma nova janela.</strong>
+        <span class="muted">Voce pode continuar navegando neste sistema enquanto o operador bipa o ${escapeHtml(codigoRz)}.</span>
+        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
+      </div>
+    `;
+    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, codigoRz));
+  }
+  if (!opened) alert("O navegador bloqueou a janela de bipagem. Permita pop-ups para o Etiquefacil.");
+  return;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   $("#rzDetail").innerHTML = `
@@ -423,6 +476,8 @@ function renderRz(lot, codigoRz) {
       <button id="scanButton">Bipar</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Abrir impressão ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
+      <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
+      ${labelTextControls()}
     </div>
     <div class="summary-grid">
       ${metric("Conferido", rz.checked)}
@@ -457,6 +512,102 @@ function renderRz(lot, codigoRz) {
   $("#scanInput").focus();
 }
 
+function openScanWindow(lotId, codigoRz) {
+  const url = `${window.location.pathname}?scanLot=${encodeURIComponent(lotId)}&scanRz=${encodeURIComponent(codigoRz)}`;
+  const target = `etiquefacil-bipagem-${String(lotId).replace(/\W/g, "")}-${String(codigoRz).replace(/\W/g, "")}`;
+  const scanWindow = window.open(url, target, "width=1180,height=760");
+  if (scanWindow) scanWindow.focus();
+  return Boolean(scanWindow);
+}
+
+function renderScanPage(lot, codigoRz) {
+  state.selectedLotId = lot.id;
+  state.selectedRz = codigoRz;
+  const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
+  if (!rz) {
+    $("#lotDetail").classList.add("empty");
+    $("#lotDetail").textContent = "RZ nao encontrado neste lote.";
+    return;
+  }
+
+  const items = lot.items.filter((item) => item.codigoRz === codigoRz);
+  document.title = `Bipagem ${codigoRz}`;
+  $("#lotDetail").classList.remove("empty");
+  $("#lotDetail").innerHTML = `
+    <section class="scan-page">
+      <div class="scan-heading">
+        <div>
+          <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
+          <h2>${escapeHtml(codigoRz)}</h2>
+        </div>
+      </div>
+      <div class="scan-box">
+        <input id="scanInput" placeholder="Bipe o Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
+        <button id="scanButton">Bipar</button>
+        <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Abrir impressao ao bipar</label>
+        <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+        <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
+        ${labelTextControls()}
+      </div>
+      <div class="summary-grid">
+        ${metric("Conferido", rz.checked)}
+        ${metric("Faltante", rz.missing)}
+        ${metric("Excedente", rz.excess)}
+        ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+      </div>
+      <h3 class="section-title">Progresso do RZ</h3>
+      <div class="summary-grid">
+        ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
+        ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
+        ${metric("Valor faltante", money(rz.missingValue))}
+        ${metric("Valor excedente", money(rz.excessValue))}
+      </div>
+      <div id="scanMessage" class="message"></div>
+      <div class="items">
+        ${items.map(itemRow).join("")}
+      </div>
+    </section>
+  `;
+  bindScanControls(lot.id, codigoRz);
+}
+
+function bindScanControls(lotId, codigoRz) {
+  $("#scanButton").addEventListener("click", () => scanCurrent(lotId, codigoRz));
+  $("#autoPrintToggle").addEventListener("change", (event) => {
+    state.labelOptions.autoPrint = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
+  });
+  $("#includePriceToggle").addEventListener("change", (event) => {
+    state.labelOptions.includePrice = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
+  });
+  bindLabelTextControls();
+  $("#scanInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") scanCurrent(lotId, codigoRz);
+  });
+  $("#scanInput").focus();
+}
+
+function bindLabelTextControls() {
+  const includeTextToggle = $("#includeTextToggle");
+  const customTextInput = $("#customTextInput");
+  const customTextRow = $("#customTextRow");
+
+  if (!includeTextToggle || !customTextInput || !customTextRow) return;
+
+  includeTextToggle.addEventListener("change", (event) => {
+    state.labelOptions.includeText = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.includeText", String(state.labelOptions.includeText));
+    customTextRow.classList.toggle("hidden", !state.labelOptions.includeText);
+    if (state.labelOptions.includeText) customTextInput.focus();
+  });
+
+  customTextInput.addEventListener("input", (event) => {
+    state.labelOptions.customText = event.currentTarget.value;
+    localStorage.setItem("etiquefacil.customText", state.labelOptions.customText);
+  });
+}
+
 async function scanCurrent(lotId, codigoRz) {
   const input = $("#scanInput");
   const codigoMl = input.value.trim();
@@ -486,8 +637,12 @@ async function scanCurrent(lotId, codigoRz) {
     } else {
       message.textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       const scannedProduct = findScannedProduct(response.lot, codigoRz, codigoMl);
-      renderLotDetail(response.lot);
-      renderRz(response.lot, codigoRz);
+      if (state.scanOnly) {
+        renderScanPage(response.lot, codigoRz);
+        $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
+      } else {
+        renderLotDetail(response.lot);
+      }
       if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true, printWindow });
       else printWindow?.close();
     }
@@ -505,8 +660,12 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ codigoMl })
     });
-    renderLotDetail(response.lot);
-    renderRz(response.lot, codigoRz);
+    if (state.scanOnly) {
+      renderScanPage(response.lot, codigoRz);
+      $("#scanMessage").textContent = "Excedente externo cadastrado.";
+    } else {
+      renderLotDetail(response.lot);
+    }
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, printWindow });
     else printWindow?.close();
   } catch (error) {
@@ -647,6 +806,8 @@ function openLabelPrintWindow() {
 
 function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
   const price = state.labelOptions.includePrice ? money(product.valorUnit) : "";
+  const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
+  const hasCustomText = Boolean(customText);
   printWindow.document.open();
   printWindow.document.write(`
     <!doctype html>
@@ -686,6 +847,11 @@ function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
             width: 60mm;
           }
 
+          .label-print.has-note {
+            grid-template-rows: 8mm 12mm 3.5mm 6mm 5.5mm;
+            padding-bottom: 2mm;
+          }
+
           .label-desc {
             font-size: 8.5px;
             font-weight: 700;
@@ -694,12 +860,21 @@ function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
             overflow: hidden;
           }
 
+          .has-note .label-desc {
+            font-size: 7.6px;
+            line-height: 1.12;
+          }
+
           .label-barcode {
             align-self: end;
             fill: #111;
             height: 15mm;
             justify-self: center;
             width: 49mm;
+          }
+
+          .has-note .label-barcode {
+            height: 11.5mm;
           }
 
           .label-sku {
@@ -711,12 +886,37 @@ function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
             line-height: 1;
           }
 
+          .has-note .label-sku {
+            font-size: 7.4px;
+          }
+
           .label-price {
             align-self: end;
             font-family: "Arial Black", Arial, sans-serif;
             font-size: 18px;
             line-height: 1;
             white-space: nowrap;
+          }
+
+          .has-note .label-price {
+            font-size: 15.5px;
+          }
+
+          .label-note {
+            border-top: 1px solid #111;
+            display: none;
+            font-family: Arial, sans-serif;
+            font-size: 6.8px;
+            font-weight: 700;
+            line-height: 1.15;
+            margin: 0;
+            overflow: hidden;
+            padding-top: 0.8mm;
+            text-transform: uppercase;
+          }
+
+          .has-note .label-note {
+            display: block;
           }
 
           @media screen {
@@ -737,11 +937,12 @@ function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
         </style>
       </head>
       <body>
-        <section class="label-print">
+        <section class="label-print ${hasCustomText ? "has-note" : ""}">
           <p class="label-desc">${escapeHtml(product.descricao)}</p>
           ${code39Svg(product.sku)}
           <strong class="label-sku">${escapeHtml(product.sku)}</strong>
           <strong class="label-price">${escapeHtml(price)}</strong>
+          <strong class="label-note">${escapeHtml(customText)}</strong>
         </section>
         <script>
           ${autoPrint ? "window.addEventListener('load', () => setTimeout(() => window.print(), 150));" : ""}
@@ -751,6 +952,17 @@ function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
   `);
   printWindow.document.close();
   printWindow.focus();
+}
+
+function labelTextControls() {
+  return `
+    <div id="customTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
+      <label>Texto que sera impresso abaixo do preco
+        <input id="customTextInput" maxlength="48" value="${escapeHtml(state.labelOptions.customText)}" placeholder="Ex: CONFERIDO - SEM TROCA" />
+      </label>
+      <strong>Ativo para as proximas etiquetas</strong>
+    </div>
+  `;
 }
 
 function metric(label, value) {
@@ -770,14 +982,17 @@ function progressMetric(label, percent, detail) {
 }
 
 function rzCard(rz) {
+  const title = `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
   return `
-    <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="Esperado ${rz.expected} · Conferido ${rz.checked} · Faltante ${rz.missing} · Excedente ${rz.excess}">
+    <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
       <div class="rz-card-details">
-        <span>Esp. ${rz.expected}</span>
-        <span>Conf. ${rz.checked}</span>
-        <span>Falt. ${rz.missing}</span>
-        <span>Exc. ${rz.excess}</span>
+        <span>Itens</span><strong>${rz.expected}</strong>
+        <span>Conferido</span><strong>${rz.checked}</strong>
+        <span>Venda total</span><strong>${money(rz.expectedValue)}</strong>
+        <span>Venda conf.</span><strong>${money(rz.checkedValue)}</strong>
+        <span>Faltante</span><strong>${rz.missing}</strong>
+        <span>Excedente</span><strong>${rz.excess}</strong>
       </div>
     </article>
   `;

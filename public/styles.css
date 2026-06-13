@@ -322,8 +322,8 @@ h3 {
   color: var(--muted);
   display: grid;
   font-size: 11px;
-  gap: 2px 6px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
   line-height: 14px;
   margin-top: 4px;
   max-height: 0;
@@ -332,10 +332,23 @@ h3 {
   transition: max-height 0.15s ease, opacity 0.15s ease;
 }
 
+.rz-card-details span {
+  text-align: left;
+}
+
+.rz-card-details strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .rz-card:hover .rz-card-details,
 .rz-card:focus-within .rz-card-details,
 .rz-card.selected .rz-card-details {
-  max-height: 34px;
+  max-height: 88px;
   opacity: 1;
 }
 
@@ -344,12 +357,57 @@ h3 {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.scan-opened {
+  align-items: center;
+  background: #dfe8eb;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 18px 0;
+  padding: 14px;
+}
+
+.scan-opened .muted {
+  flex: 1;
+  min-width: 260px;
+}
+
+.scan-only .layout {
+  grid-template-columns: 1fr;
+  min-height: calc(100vh - 73px);
+}
+
+.scan-only .lot-list {
+  display: none;
+}
+
+.scan-only .detail {
+  padding: 18px;
+}
+
+.scan-page {
+  display: grid;
+  gap: 14px;
+}
+
+.scan-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.scan-heading h2 {
+  font-size: 30px;
+  margin-top: 4px;
+}
+
 .scan-box {
   background: #dfe8eb;
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   margin: 18px 0;
   padding: 14px;
 }
@@ -366,6 +424,31 @@ h3 {
 .check-option input {
   min-height: auto;
   width: auto;
+}
+
+.custom-text-row {
+  align-items: end;
+  background: #eef4f5;
+  border: 1px solid #cddadd;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  padding: 12px;
+}
+
+.custom-text-row label {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.custom-text-row strong {
+  color: #075e57;
+  font-size: 13px;
 }
 
 .items {
@@ -519,6 +602,11 @@ h3 {
   width: 60mm;
 }
 
+.label-print.has-note {
+  grid-template-rows: 8mm 12mm 3.5mm 6mm 5.5mm;
+  padding-bottom: 2mm;
+}
+
 .label-desc {
   font-family: Arial, sans-serif;
   font-size: 8.5px;
@@ -528,12 +616,21 @@ h3 {
   overflow: hidden;
 }
 
+.has-note .label-desc {
+  font-size: 7.6px;
+  line-height: 1.12;
+}
+
 .label-barcode {
   fill: #111;
   height: 15mm;
   justify-self: center;
   margin-top: 2px;
   width: 49mm;
+}
+
+.has-note .label-barcode {
+  height: 11.5mm;
 }
 
 .label-sku {
@@ -545,10 +642,35 @@ h3 {
   margin-top: -2px;
 }
 
+.has-note .label-sku {
+  font-size: 7.4px;
+}
+
 .label-price {
   font-family: Arial Black, Arial, sans-serif;
   font-size: 18px;
   line-height: 1;
+}
+
+.has-note .label-price {
+  font-size: 15.5px;
+}
+
+.label-note {
+  border-top: 1px solid #111;
+  display: none;
+  font-family: Arial, sans-serif;
+  font-size: 6.8px;
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0;
+  overflow: hidden;
+  padding-top: 0.8mm;
+  text-transform: uppercase;
+}
+
+.has-note .label-note {
+  display: block;
 }
 
 .label-controls {
@@ -565,6 +687,7 @@ h3 {
   .summary-grid,
   .rz-search,
   .scan-box,
+  .custom-text-row,
   .item-row,
   .result-card,
   .admin-form,
