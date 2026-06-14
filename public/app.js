@@ -75,6 +75,22 @@ function bindEvents() {
   });
 
   $("#searchForm").addEventListener("submit", searchMl);
+
+  $("#labelPrintButton").addEventListener("click", printCurrentLabel);
+  $("#labelCloseButton").addEventListener("click", () => hideLabelPreview());
+  $("#labelModal").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      printCurrentLabel();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideLabelPreview();
+    }
+  });
+  window.addEventListener("afterprint", () => {
+    hideLabelPreview();
+  });
 }
 
 async function submitAuth(url, form) {
@@ -477,7 +493,7 @@ function renderRz(lot, codigoRz) {
     <div class="scan-box">
       <input id="scanInput" placeholder="Bipe o Código ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
-      <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Abrir impressão ao bipar</label>
+      <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelTextControls()}
@@ -604,7 +620,7 @@ function renderScanPage(lot, codigoRz) {
       <div class="scan-box">
         <input id="scanInput" placeholder="Bipe o Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
-        <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Abrir impressao ao bipar</label>
+        <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
         <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelTextControls()}
@@ -672,7 +688,6 @@ async function scanCurrent(lotId, codigoRz) {
   const input = $("#scanInput");
   const codigoMl = input.value.trim();
   if (!codigoMl) return;
-  const printWindow = state.labelOptions.autoPrint ? openLabelPrintWindow() : null;
 
   try {
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
@@ -703,17 +718,14 @@ async function scanCurrent(lotId, codigoRz) {
       } else {
         renderLotDetail(response.lot);
       }
-      if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true, printWindow });
-      else printWindow?.close();
+      if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true });
     }
   } catch (error) {
-    printWindow?.close();
     $("#scanMessage").textContent = error.message;
   }
 }
 
 async function createExternalExcess(lotId, codigoRz, codigoMl) {
-  const printWindow = state.labelOptions.autoPrint ? openLabelPrintWindow() : null;
   try {
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/external-excess`, {
       method: "POST",
@@ -726,10 +738,8 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     } else {
       renderLotDetail(response.lot);
     }
-    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, printWindow });
-    else printWindow?.close();
+    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
   } catch (error) {
-    printWindow?.close();
     $("#scanMessage").textContent = error.message;
   }
 }
@@ -759,16 +769,14 @@ async function searchMl(event) {
 }
 
 async function printLabel(productId) {
-  const printWindow = openLabelPrintWindow();
   try {
     const response = await api("/api/labels", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ productId })
     });
-    showLabel(response.product, { autoPrint: true, printWindow });
+    showLabel(response.product, { autoPrint: true });
   } catch (error) {
-    printWindow?.close();
     alert(error.message);
   }
 }
@@ -777,15 +785,12 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   return lot.items.find((item) => item.codigoRz === codigoRz && item.product?.codigoMl === codigoMl)?.product || null;
 }
 
-function showLabel(product, { autoPrint = false, printWindow = null } = {}) {
+function showLabel(product, { autoPrint = false } = {}) {
   state.labelProduct = product;
-  const target = printWindow || openLabelPrintWindow();
-  if (!target) {
-    alert("O navegador bloqueou a nova guia de impressão. Permita pop-ups para o Etiquefácil.");
-    return;
-  }
-  writeLabelPrintWindow(target, product, { autoPrint });
-  $("#scanInput")?.focus();
+  $("#labelPreview").innerHTML = labelMarkup(product);
+  $("#labelModal").classList.remove("hidden");
+  $("#labelModal").focus();
+  if (autoPrint) setTimeout(printCurrentLabel, 120);
 }
 
 function code39Svg(value) {
@@ -858,160 +863,31 @@ function code39Svg(value) {
   return `<svg class="label-barcode" viewBox="0 0 ${x} ${height}" role="img" aria-label="Código de barras">${bars}</svg>`;
 }
 
-function openLabelPrintWindow() {
-  const printWindow = window.open("", "_blank");
-  if (printWindow) printWindow.opener = null;
-  return printWindow;
-}
-
-function writeLabelPrintWindow(printWindow, product, { autoPrint }) {
+function labelMarkup(product) {
   const price = state.labelOptions.includePrice ? money(product.valorUnit) : "";
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
   const hasCustomText = Boolean(customText);
-  printWindow.document.open();
-  printWindow.document.write(`
-    <!doctype html>
-    <html lang="pt-BR">
-      <head>
-        <meta charset="utf-8" />
-        <title>Etiqueta ${escapeHtml(product.sku)}</title>
-        <style>
-          @page {
-            margin: 0;
-            size: 60mm 40mm;
-          }
+  return `
+    <section class="label-print ${hasCustomText ? "has-note" : ""}">
+      <p class="label-desc">${escapeHtml(product.descricao)}</p>
+      ${code39Svg(product.sku)}
+      <strong class="label-sku">${escapeHtml(product.sku)}</strong>
+      <strong class="label-price">${escapeHtml(price)}</strong>
+      <strong class="label-note">${escapeHtml(customText)}</strong>
+    </section>
+  `;
+}
 
-          * {
-            box-sizing: border-box;
-          }
+function printCurrentLabel() {
+  if (!state.labelProduct || $("#labelModal").classList.contains("hidden")) return;
+  window.print();
+}
 
-          html,
-          body {
-            background: #fff;
-            height: 40mm;
-            margin: 0;
-            width: 60mm;
-          }
-
-          body {
-            color: #111;
-            font-family: Arial, sans-serif;
-          }
-
-          .label-print {
-            display: grid;
-            grid-template-rows: 9.5mm 16mm 4mm 7mm;
-            height: 40mm;
-            overflow: hidden;
-            padding: 3mm 4mm 2.5mm;
-            width: 60mm;
-          }
-
-          .label-print.has-note {
-            grid-template-rows: 8mm 12mm 3.5mm 6mm 5.5mm;
-            padding-bottom: 2mm;
-          }
-
-          .label-desc {
-            font-size: 8.5px;
-            font-weight: 700;
-            line-height: 1.15;
-            margin: 0;
-            overflow: hidden;
-          }
-
-          .has-note .label-desc {
-            font-size: 7.6px;
-            line-height: 1.12;
-          }
-
-          .label-barcode {
-            align-self: end;
-            fill: #111;
-            height: 15mm;
-            justify-self: center;
-            width: 49mm;
-          }
-
-          .has-note .label-barcode {
-            height: 11.5mm;
-          }
-
-          .label-sku {
-            align-self: center;
-            font-size: 8px;
-            font-weight: 500;
-            justify-self: center;
-            letter-spacing: 3.2px;
-            line-height: 1;
-          }
-
-          .has-note .label-sku {
-            font-size: 7.4px;
-          }
-
-          .label-price {
-            align-self: end;
-            font-family: "Arial Black", Arial, sans-serif;
-            font-size: 18px;
-            line-height: 1;
-            white-space: nowrap;
-          }
-
-          .has-note .label-price {
-            font-size: 15.5px;
-          }
-
-          .label-note {
-            border-top: 1px solid #111;
-            display: none;
-            font-family: Arial, sans-serif;
-            font-size: 6.8px;
-            font-weight: 700;
-            line-height: 1.15;
-            margin: 0;
-            overflow: hidden;
-            padding-top: 0.8mm;
-            text-transform: uppercase;
-          }
-
-          .has-note .label-note {
-            display: block;
-          }
-
-          @media screen {
-            body {
-              align-items: center;
-              background: #eef2f4;
-              display: flex;
-              height: 100vh;
-              justify-content: center;
-              width: 100vw;
-            }
-
-            .label-print {
-              background: #fff;
-              box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <section class="label-print ${hasCustomText ? "has-note" : ""}">
-          <p class="label-desc">${escapeHtml(product.descricao)}</p>
-          ${code39Svg(product.sku)}
-          <strong class="label-sku">${escapeHtml(product.sku)}</strong>
-          <strong class="label-price">${escapeHtml(price)}</strong>
-          <strong class="label-note">${escapeHtml(customText)}</strong>
-        </section>
-        <script>
-          ${autoPrint ? "window.addEventListener('load', () => setTimeout(() => window.print(), 150));" : ""}
-        </script>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
-  printWindow.focus();
+function hideLabelPreview() {
+  $("#labelModal").classList.add("hidden");
+  $("#labelPreview").innerHTML = "";
+  state.labelProduct = null;
+  setTimeout(() => $("#scanInput")?.focus(), 0);
 }
 
 function labelTextControls() {
@@ -1069,7 +945,7 @@ function itemRow(item) {
     <article class="item-row">
       <strong>${escapeHtml(product.sku || "")}</strong>
       <span>${escapeHtml(product.descricao || "")}</span>
-      <span>${escapeHtml(product.codigoMl || "")}</span>
+      <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span>${item.qtdConferida}/${item.qtdEsperada}</span>
       ${badge}
     </article>
@@ -1084,7 +960,7 @@ function palletRow(item) {
   const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
   return `
     <article class="pallet-row">
-      <span><strong>${escapeHtml(product.sku || "")}</strong><small>${escapeHtml(product.codigoMl || "")}</small></span>
+      <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
       <span>${escapeHtml(product.descricao || "")}<small>${escapeHtml(item.tipoItem || "")} ${escapeHtml(item.condicaoGrade || "")}</small><small>${escapeHtml(product.origem || "")} · ${escapeHtml(product.categoria || "")} / ${escapeHtml(product.subcategoria || "")}</small></span>
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
       <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
