@@ -89,6 +89,7 @@ function bindEvents() {
     }
   });
   window.addEventListener("afterprint", () => {
+    cleanupLabelPrintRoot();
     hideLabelPreview();
   });
 }
@@ -880,7 +881,18 @@ function labelMarkup(product) {
 
 function printCurrentLabel() {
   if (!state.labelProduct || $("#labelModal").classList.contains("hidden")) return;
+  cleanupLabelPrintRoot();
+  const printRoot = document.createElement("div");
+  printRoot.id = "labelPrintRoot";
+  printRoot.innerHTML = $("#labelPreview").innerHTML;
+  document.body.appendChild(printRoot);
+  document.body.classList.add("printing-label");
   window.print();
+}
+
+function cleanupLabelPrintRoot() {
+  document.body.classList.remove("printing-label");
+  $("#labelPrintRoot")?.remove();
 }
 
 function hideLabelPreview() {

@@ -695,19 +695,20 @@ h3 {
 .label-print {
   background: #fff;
   border: 1px solid #cfd6dc;
+  box-sizing: border-box;
   color: #111;
   display: grid;
   gap: 2px;
-  grid-template-rows: 9.5mm 16mm 4mm 7mm;
+  grid-template-rows: 10mm 13mm 3.5mm 6mm;
   height: 40mm;
   overflow: hidden;
-  padding: 3mm 4mm 2.5mm;
+  padding: 2.5mm 4mm 1.8mm;
   width: 60mm;
 }
 
 .label-print.has-note {
-  grid-template-rows: 8mm 12mm 3.5mm 6mm 5.5mm;
-  padding-bottom: 2mm;
+  grid-template-rows: 8mm 10.5mm 3mm 5mm 4.5mm;
+  padding-bottom: 1.5mm;
 }
 
 .label-desc {
@@ -755,13 +756,13 @@ h3 {
 .label-price {
   align-self: end;
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
   white-space: nowrap;
 }
 
 .has-note .label-price {
-  font-size: 15.5px;
+  font-size: 14.5px;
 }
 
 .label-note {
@@ -786,6 +787,10 @@ h3 {
   display: flex;
   gap: 10px;
   justify-content: center;
+}
+
+#labelPrintRoot {
+  display: none;
 }
 
 @media (max-width: 900px) {
@@ -820,19 +825,36 @@ h3 {
     size: 60mm 40mm;
   }
 
-  body * {
-    visibility: hidden;
+  html,
+  body {
+    height: 40mm;
+    margin: 0;
+    overflow: hidden;
+    width: 60mm;
   }
 
-  #labelPreview,
-  #labelPreview * {
-    visibility: visible;
+  body > :not(#labelModal) {
+    display: none !important;
+  }
+
+  body.printing-label > :not(#labelPrintRoot) {
+    display: none !important;
+  }
+
+  body.printing-label #labelPrintRoot {
+    display: block !important;
+    height: 40mm;
+    left: 0;
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    width: 60mm;
   }
 
   #labelPreview {
-    left: 0;
-    position: absolute;
-    top: 0;
+    display: block;
+    height: 40mm;
+    width: 60mm;
   }
 
   .label-modal,
@@ -840,8 +862,23 @@ h3 {
     background: transparent;
     box-shadow: none;
     display: block;
+    height: 40mm;
     inset: auto;
     padding: 0;
     position: static;
+    width: 60mm;
+  }
+
+  .label-print {
+    border: 0;
+    height: 40mm;
+    page-break-after: avoid;
+    page-break-before: avoid;
+    page-break-inside: avoid;
+    width: 60mm;
+  }
+
+  .label-controls {
+    display: none;
   }
 }
