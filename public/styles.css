@@ -587,10 +587,6 @@ h3 {
   grid-template-columns: 1fr auto;
 }
 
-#diverseScanForm {
-  grid-template-columns: 180px 1fr auto;
-}
-
 .result-card {
   align-items: center;
   display: grid;
@@ -634,6 +630,46 @@ h3 {
   margin-top: 12px;
 }
 
+.diverse-rz-form {
+  align-items: center;
+  background: #dfe8eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 180px auto 1fr auto;
+  margin: 10px 0;
+  padding: 12px;
+}
+
+.diverse-rz-form strong {
+  color: #075e57;
+  overflow-wrap: anywhere;
+}
+
+.diverse-rz-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.diverse-rz-list button {
+  background: #dfe7e9;
+  color: var(--ink);
+  min-height: 34px;
+}
+
+.diverse-rz-list button.active {
+  background: #d7ece9;
+  color: #075e57;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.diverse-rz-list span {
+  color: var(--muted);
+  margin-left: 6px;
+}
+
 .diverse-label-options {
   background: #dfe8eb;
   border-radius: 8px;
@@ -662,6 +698,15 @@ h3 {
   gap: 10px;
   grid-template-columns: 0.65fr 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr 0.8fr;
   padding: 10px;
+}
+
+.diverse-rz-divider {
+  background: #eef4f5;
+  border-bottom: 1px solid var(--line);
+  color: #075e57;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 8px 10px;
 }
 
 .diverse-row button {
@@ -894,7 +939,7 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
-  #diverseScanForm,
+  .diverse-rz-form,
   .diverse-label-options,
   .diverse-form,
   .diverse-row,

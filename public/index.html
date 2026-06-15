@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260614-label-print-2" />
+    <link rel="stylesheet" href="styles.css?v=20260615-diverse-rz-bling" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -93,8 +93,14 @@
               </div>
               <button type="button" id="diverseDownloadButton">Baixar Bling</button>
             </div>
+            <form id="diverseRzForm" class="diverse-rz-form">
+              <input name="codigoRz" placeholder="Novo RZ" autocomplete="off" required />
+              <button type="submit">Criar/usar RZ</button>
+              <strong id="diverseActiveRz">Nenhum RZ ativo</strong>
+              <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling do RZ</button>
+            </form>
+            <div id="diverseRzList" class="diverse-rz-list"></div>
             <form id="diverseScanForm" class="search-bar">
-              <input name="codigoRz" placeholder="RZ" autocomplete="off" required />
               <input name="codigoMl" placeholder="Bipe o codigo para buscar no historico" autocomplete="off" required />
               <button type="submit">Adicionar</button>
             </form>
@@ -157,6 +163,6 @@
       </div>
     </section>
 
-    <script src="app.js?v=20260614-label-print-2" type="module"></script>
+    <script src="app.js?v=20260615-diverse-rz-bling" type="module"></script>
   </body>
 </html>

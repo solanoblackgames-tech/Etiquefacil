@@ -5,6 +5,7 @@ const state = {
   selectedLotId: null,
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
+  selectedDiverseRz: null,
   selectedRz: null,
   scanOnly: false,
   labelProduct: null,
@@ -78,10 +79,15 @@ function bindEvents() {
   });
 
   $("#diverseLotForm").addEventListener("submit", createDiverseLot);
+  $("#diverseRzForm").addEventListener("submit", createDiverseRz);
+  $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#diverseDownloadButton").addEventListener("click", () => {
     if (state.selectedDiverseLotId) downloadBling(state.selectedDiverseLotId, "complete", "#diverseScanMessage");
+  });
+  $("#diverseDownloadRzButton").addEventListener("click", () => {
+    if (state.selectedDiverseLotId && state.selectedDiverseRz) downloadDiverseRzBling(state.selectedDiverseLotId, state.selectedDiverseRz);
   });
   $("#searchForm").addEventListener("submit", searchMl);
 
@@ -157,7 +163,7 @@ async function createDiverseLot(event) {
     $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
-    $("#diverseScanForm input[name='codigoMl']").focus();
+    $("#diverseRzForm input[name='codigoRz']").focus();
   } catch (error) {
     $("#diverseLotMessage").style.color = "";
     $("#diverseLotMessage").textContent = error.message;
@@ -171,10 +177,9 @@ async function addDiverseItem(event) {
   if (!state.selectedDiverseLotId) return;
   const form = event.currentTarget;
   const input = form.querySelector("input[name='codigoMl']");
-  const rzInput = form.querySelector("input[name='codigoRz']");
   const button = form.querySelector("button");
   const codigoMl = input.value.trim();
-  const codigoRz = rzInput.value.trim().toUpperCase();
+  const codigoRz = state.selectedDiverseRz;
   if (!codigoMl || !codigoRz) return;
 
   $("#diverseScanMessage").textContent = "";
@@ -202,14 +207,95 @@ async function addDiverseItem(event) {
   }
 }
 
+function createDiverseRz(event) {
+  event.preventDefault();
+  const input = event.currentTarget.querySelector("input[name='codigoRz']");
+  const codigoRz = normalizeCode(input.value);
+  if (!codigoRz) return;
+  setDiverseRz(codigoRz);
+  input.value = "";
+  $("#diverseScanMessage").style.color = "#0f766e";
+  $("#diverseScanMessage").textContent = `RZ ${codigoRz} ativo.`;
+  $("#diverseScanForm input[name='codigoMl']").focus();
+}
+
+function handleDiverseRzClick(event) {
+  const button = event.target.closest("[data-diverse-rz]");
+  if (!button) return;
+  setDiverseRz(button.dataset.diverseRz);
+  $("#diverseScanMessage").style.color = "#0f766e";
+  $("#diverseScanMessage").textContent = `RZ ${button.dataset.diverseRz} ativo.`;
+  $("#diverseScanForm input[name='codigoMl']").focus();
+}
+
+function setDiverseRz(codigoRz) {
+  state.selectedDiverseRz = normalizeCode(codigoRz);
+  renderDiverseRzControls(state.selectedDiverseLot);
+}
+
 function renderDiverseLot(lot) {
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
+  const rzs = diverseRzs(lot);
+  if (state.selectedDiverseRz && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
+  if (!state.selectedDiverseRz && rzs.length) state.selectedDiverseRz = rzs[0].codigoRz;
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
+  renderDiverseRzControls(lot);
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
+}
+
+function renderDiverseRzControls(lot) {
+  const active = state.selectedDiverseRz;
+  $("#diverseActiveRz").textContent = active ? `RZ ativo: ${active}` : "Nenhum RZ ativo";
+  $("#diverseDownloadRzButton").disabled = !active;
+  $("#diverseScanForm input[name='codigoMl']").disabled = !active;
+  $("#diverseScanForm button").disabled = !active;
+  $("#diverseRzList").innerHTML = diverseRzs(lot)
+    .map((rz) => `
+      <button type="button" class="${rz.codigoRz === active ? "active" : ""}" data-diverse-rz="${escapeHtml(rz.codigoRz)}">
+        ${escapeHtml(rz.codigoRz)} <span>${rz.items}</span>
+      </button>
+    `)
+    .join("");
+}
+
+function diverseRzs(lot) {
+  const byRz = new Map();
+  for (const item of lot?.items || []) {
+    if (item.tipoItem !== "entrada_diversos") continue;
+    const current = byRz.get(item.codigoRz) || { codigoRz: item.codigoRz, items: 0 };
+    current.items += item.qtdEsperada || 0;
+    byRz.set(item.codigoRz, current);
+  }
+  return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz));
+}
+
+async function downloadDiverseRzBling(lotId, codigoRz) {
+  const message = $("#diverseScanMessage");
+  message.textContent = "";
+  try {
+    if (state.config.downloadMode === "browser") {
+      window.location.href = `/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling`;
+      message.style.color = "#0f766e";
+      message.textContent = "Download do RZ enviado para o navegador.";
+      return;
+    }
+
+    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling/save`, { method: "POST" });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "Nao foi possivel gerar o arquivo Bling do RZ.");
+    }
+    const payload = await response.json();
+    message.style.color = "#0f766e";
+    message.innerHTML = `Arquivo do RZ salvo: <strong>${escapeHtml(payload.path)}</strong>`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  }
 }
 
 function diverseScanStatusMessage(response, codigoRz, parent) {
@@ -688,6 +774,7 @@ function renderPallet(lot, codigoRz) {
         </div>
         <div class="pallet-actions">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
+          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling RZ</a>
           <a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>
           <a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>
         </div>
@@ -1105,6 +1192,11 @@ function itemRow(item) {
 function diverseItemsTable(lot) {
   const items = (lot.items || []).filter((item) => item.tipoItem === "entrada_diversos");
   if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
+  const sortedItems = [...items].sort((a, b) => {
+    const byRz = String(a.codigoRz || "").localeCompare(String(b.codigoRz || ""));
+    if (byRz) return byRz;
+    return String(a.product?.sku || "").localeCompare(String(b.product?.sku || ""));
+  });
 
   return `
     <div class="diverse-table">
@@ -1118,20 +1210,21 @@ function diverseItemsTable(lot) {
         <span>Custo</span>
         <span>Etiqueta</span>
       </div>
-      ${items.map(diverseItemRow).join("")}
+      ${sortedItems.map((item, index) => diverseItemRow(item, sortedItems[index - 1]?.codigoRz !== item.codigoRz)).join("")}
     </div>
   `;
 }
 
-function diverseItemRow(item) {
+function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
   return `
+    ${startsRz ? `<div class="diverse-rz-divider">RZ ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
       <span>${escapeHtml(item.codigoRz || "")}</span>
       <strong>${escapeHtml(product.sku || "")}</strong>
       <span>${escapeHtml(product.codigoMl || "")}</span>
       <span>${escapeHtml(product.descricao || "")}</span>
-      <span>${product.qtdTotal || item.qtdEsperada || 0}</span>
+      <span>${item.qtdEsperada || 0}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
       <span><button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Imprimir</button></span>

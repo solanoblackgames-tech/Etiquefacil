@@ -246,6 +246,38 @@ app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, async (req, res) => {
+  try {
+    const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    if (!data) return res.status(404).json({ error: "RZ nÃ£o encontrado neste lote." });
+
+    const csv = buildBlingCsv(data.products, data.lot);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${rzBlingFileName(data.lot, data.codigoRz)}"`);
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, res) => {
+  try {
+    const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    if (!data) return res.status(404).json({ error: "RZ nÃ£o encontrado neste lote." });
+
+    const csv = buildBlingCsv(data.products, data.lot);
+    const downloadsDir = path.join(os.homedir(), "Downloads");
+    await fs.mkdir(downloadsDir, { recursive: true });
+    const fileName = await uniqueDownloadName(downloadsDir, rzBlingFileName(data.lot, data.codigoRz));
+    const filePath = path.join(downloadsDir, fileName);
+    await fs.writeFile(filePath, `\uFEFF${csv}`, "utf8");
+    revealFile(filePath);
+    res.json({ fileName, path: filePath, count: data.products.length });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim();
@@ -341,6 +373,31 @@ function safeFileName(value) {
 
 function blingFileName(lot, kind) {
   return `${safeFileName(lot.prefixoSku)}-${kind}-bling.csv`;
+}
+
+function rzBlingFileName(lot, codigoRz) {
+  return `${safeFileName(lot.prefixoSku)}-${safeFileName(codigoRz)}-bling.csv`;
+}
+
+async function getRzBlingData(userId, lotId, codigoRz) {
+  const lot = await getUserLotDetail(userId, lotId);
+  if (!lot) return null;
+
+  const productsById = new Map();
+  for (const item of lot.items || []) {
+    if (item.codigoRz !== codigoRz || !item.product) continue;
+    if (item.product.origem !== "planilha" && item.product.origem !== "entrada_diversos") continue;
+    const existing = productsById.get(item.product.id);
+    const qtdTotal = Number(item.qtdEsperada || 0);
+    if (existing) {
+      existing.qtdTotal += qtdTotal;
+    } else {
+      productsById.set(item.product.id, { ...item.product, qtdTotal });
+    }
+  }
+
+  if (!productsById.size) return null;
+  return { lot, codigoRz, products: [...productsById.values()] };
 }
 
 function buildPalletReport(lot, codigoRz) {
