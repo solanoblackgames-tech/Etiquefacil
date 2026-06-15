@@ -268,7 +268,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
 app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim();
-    res.json(await addDiverseLotItem({ userId: req.session.user.id, lotId: req.params.lotId, codigoMl }));
+    const codigoRz = String(req.body.codigoRz || "").trim();
+    res.json(await addDiverseLotItem({ userId: req.session.user.id, lotId: req.params.lotId, codigoMl, codigoRz }));
   } catch (error) {
     sendError(res, error);
   }

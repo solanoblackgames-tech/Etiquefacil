@@ -171,9 +171,11 @@ async function addDiverseItem(event) {
   if (!state.selectedDiverseLotId) return;
   const form = event.currentTarget;
   const input = form.querySelector("input[name='codigoMl']");
+  const rzInput = form.querySelector("input[name='codigoRz']");
   const button = form.querySelector("button");
   const codigoMl = input.value.trim();
-  if (!codigoMl) return;
+  const codigoRz = rzInput.value.trim().toUpperCase();
+  if (!codigoMl || !codigoRz) return;
 
   $("#diverseScanMessage").textContent = "";
   button.disabled = true;
@@ -181,14 +183,13 @@ async function addDiverseItem(event) {
     const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl })
+      body: JSON.stringify({ codigoMl, codigoRz })
     });
     input.value = "";
     renderDiverseLot(response.lot);
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
     $("#diverseScanMessage").style.color = "#0f766e";
-    $("#diverseScanMessage").textContent =
-      response.status === "duplicado" ? "Quantidade somada ao item ja bipado." : `SKU ${response.product.sku} gerado.${parent}`;
+    $("#diverseScanMessage").textContent = diverseScanStatusMessage(response, codigoRz, parent);
     await loadLots(response.lot.id);
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
     input.focus();
@@ -209,6 +210,12 @@ function renderDiverseLot(lot) {
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
+}
+
+function diverseScanStatusMessage(response, codigoRz, parent) {
+  if (response.status === "duplicado_rz") return `Quantidade somada no RZ ${codigoRz}.`;
+  if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado no RZ ${codigoRz}.`;
+  return `SKU ${response.product.sku} gerado no RZ ${codigoRz}.${parent}`;
 }
 
 function diverseLabelOptionsMarkup() {
@@ -1102,6 +1109,7 @@ function diverseItemsTable(lot) {
   return `
     <div class="diverse-table">
       <div class="diverse-row diverse-row-head">
+        <span>RZ</span>
         <span>SKU</span>
         <span>Codigo</span>
         <span>Produto</span>
@@ -1119,6 +1127,7 @@ function diverseItemRow(item) {
   const product = item.product || {};
   return `
     <article class="diverse-row">
+      <span>${escapeHtml(item.codigoRz || "")}</span>
       <strong>${escapeHtml(product.sku || "")}</strong>
       <span>${escapeHtml(product.codigoMl || "")}</span>
       <span>${escapeHtml(product.descricao || "")}</span>

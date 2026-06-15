@@ -440,11 +440,13 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function addDiverseLotItem({ userId, lotId, codigoMl }) {
+export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz }) {
   await ensureStore();
   const normalizedMl = String(codigoMl || "").trim();
+  const normalizedRz = String(codigoRz || "").trim().toUpperCase();
   if (!normalizedMl) throw new Error("Informe o CÃ³digo ML.");
-  if (hasPostgres()) return addDiverseLotItemPg({ userId, lotId, codigoMl: normalizedMl });
+  if (!normalizedRz) throw new Error("Informe o RZ.");
+  if (hasPostgres()) return addDiverseLotItemPg({ userId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -452,20 +454,22 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl }) {
 
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing) {
-    existing.qtdTotal += 1;
-    const item = db.rzItems.find((candidate) => candidate.productId === existing.id);
+    const item = db.rzItems.find((candidate) => candidate.productId === existing.id && candidate.codigoRz === normalizedRz);
     if (item) {
       item.qtdEsperada += 1;
       item.valorTotal = roundMoney(item.qtdEsperada * existing.valorUnit);
+    } else {
+      db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz));
     }
+    existing.qtdTotal += 1;
     await writeDb(db);
-    return { status: "duplicado", product: existing, lot: summarizeLot(db, lot, true) };
+    return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, lot: summarizeLot(db, lot, true) };
   }
 
   const history = findProductHistory(db, userId, lot.id, normalizedMl)[0];
   if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
 
-  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl);
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz);
   lot.proximoSequencialSku += 1;
   db.products.push(product);
   db.rzItems.push(item);
@@ -954,7 +958,7 @@ async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function addDiverseLotItemPg({ userId, lotId, codigoMl }) {
+async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -966,22 +970,28 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl }) {
     const existingResult = await client.query("select * from products where lot_id = $1 and codigo_ml = $2 limit 1 for update", [lot.id, codigoMl]);
     const existing = existingResult.rows[0] && productFromRow(existingResult.rows[0]);
     if (existing) {
+      const itemResult = await client.query("select * from rz_items where product_id = $1 and codigo_rz = $2 limit 1 for update", [existing.id, codigoRz]);
+      const existingItem = itemResult.rows[0];
+      if (existingItem) {
+        await client.query(
+          `
+            update rz_items
+            set qtd_esperada = qtd_esperada + 1,
+                valor_total = valor_total + $2
+            where id = $1
+          `,
+          [existingItem.id, existing.valorUnit]
+        );
+      } else {
+        await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz)] });
+      }
       await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [existing.id]);
-      await client.query(
-        `
-          update rz_items
-          set qtd_esperada = qtd_esperada + 1,
-              valor_total = valor_total + $2
-          where product_id = $1
-        `,
-        [existing.id, existing.valorUnit]
-      );
-      result = { status: "duplicado", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
+      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
     } else {
       const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
       if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
 
-      const records = buildDiverseLotRecords(lot, history, codigoMl);
+      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz);
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
       result = { status: "criado", product: records.product, parent: history };
@@ -1058,7 +1068,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
   return { product, item };
 }
 
-function buildDiverseLotRecords(lot, history, codigoMl) {
+function buildDiverseLotRecords(lot, history, codigoMl, codigoRz) {
   const product = {
     id: randomUUID(),
     lotId: lot.id,
@@ -1073,11 +1083,16 @@ function buildDiverseLotRecords(lot, history, codigoMl) {
     origem: "entrada_diversos",
     createdAt: new Date().toISOString()
   };
-  const item = {
+  const item = buildDiverseRzItem(lot, product, codigoRz);
+  return { product, item };
+}
+
+function buildDiverseRzItem(lot, product, codigoRz) {
+  return {
     id: randomUUID(),
     lotId: lot.id,
     productId: product.id,
-    codigoRz: "DIVERSOS",
+    codigoRz,
     enderecoWms: "",
     qtdEsperada: 1,
     qtdConferida: 0,
@@ -1086,7 +1101,6 @@ function buildDiverseLotRecords(lot, history, codigoMl) {
     tipoItem: "entrada_diversos",
     createdAt: new Date().toISOString()
   };
-  return { product, item };
 }
 
 function getUserLotFromDb(db, userId, lotId) {

@@ -587,6 +587,10 @@ h3 {
   grid-template-columns: 1fr auto;
 }
 
+#diverseScanForm {
+  grid-template-columns: 180px 1fr auto;
+}
+
 .result-card {
   align-items: center;
   display: grid;
@@ -656,7 +660,7 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr 0.8fr;
+  grid-template-columns: 0.65fr 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr 0.8fr;
   padding: 10px;
 }
 
@@ -890,6 +894,7 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
+  #diverseScanForm,
   .diverse-label-options,
   .diverse-form,
   .diverse-row,
