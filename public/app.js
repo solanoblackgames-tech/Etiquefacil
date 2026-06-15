@@ -3,6 +3,7 @@ const state = {
   adminUsers: [],
   lots: [],
   selectedLotId: null,
+  selectedDiverseLotId: null,
   selectedRz: null,
   scanOnly: false,
   labelProduct: null,
@@ -70,10 +71,16 @@ function bindEvents() {
       document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       $("#lotsTab").classList.toggle("hidden", button.dataset.tab !== "lots");
+      $("#diverseTab").classList.toggle("hidden", button.dataset.tab !== "diverse");
       $("#searchTab").classList.toggle("hidden", button.dataset.tab !== "search");
     });
   });
 
+  $("#diverseLotForm").addEventListener("submit", createDiverseLot);
+  $("#diverseScanForm").addEventListener("submit", addDiverseItem);
+  $("#diverseDownloadButton").addEventListener("click", () => {
+    if (state.selectedDiverseLotId) downloadBling(state.selectedDiverseLotId, "complete", "#diverseScanMessage");
+  });
   $("#searchForm").addEventListener("submit", searchMl);
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
@@ -128,6 +135,74 @@ async function uploadLot(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+async function createDiverseLot(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#diverseLotMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const payload = Object.fromEntries(new FormData(form));
+    const response = await api("/api/diverse-lots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    state.selectedDiverseLotId = response.lot.id;
+    $("#diverseLotMessage").style.color = "#0f766e";
+    $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
+    renderDiverseLot(response.lot);
+    await loadLots(response.lot.id);
+    $("#diverseScanForm input[name='codigoMl']").focus();
+  } catch (error) {
+    $("#diverseLotMessage").style.color = "";
+    $("#diverseLotMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function addDiverseItem(event) {
+  event.preventDefault();
+  if (!state.selectedDiverseLotId) return;
+  const form = event.currentTarget;
+  const input = form.querySelector("input[name='codigoMl']");
+  const button = form.querySelector("button");
+  const codigoMl = input.value.trim();
+  if (!codigoMl) return;
+
+  $("#diverseScanMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl })
+    });
+    input.value = "";
+    renderDiverseLot(response.lot);
+    const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
+    $("#diverseScanMessage").style.color = "#0f766e";
+    $("#diverseScanMessage").textContent =
+      response.status === "duplicado" ? "Quantidade somada ao item ja bipado." : `SKU ${response.product.sku} gerado.${parent}`;
+    await loadLots(response.lot.id);
+    input.focus();
+  } catch (error) {
+    $("#diverseScanMessage").style.color = "";
+    $("#diverseScanMessage").textContent = error.message;
+    input.select();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderDiverseLot(lot) {
+  state.selectedDiverseLotId = lot.id;
+  $("#diverseScanPanel").classList.remove("hidden");
+  $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
+  $("#diverseItems").innerHTML = diverseItemsTable(lot);
 }
 
 async function showApp(user) {
@@ -446,8 +521,8 @@ function openRzFromSearch(lot) {
   renderRz(lot, rz.codigoRz);
 }
 
-async function downloadBling(lotId, kind) {
-  const message = $("#downloadMessage");
+async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") {
+  const message = $(messageSelector);
   message.textContent = "";
   try {
     if (state.config.downloadMode === "browser") {
@@ -960,6 +1035,39 @@ function itemRow(item) {
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span>${item.qtdConferida}/${item.qtdEsperada}</span>
       ${badge}
+    </article>
+  `;
+}
+
+function diverseItemsTable(lot) {
+  const items = (lot.items || []).filter((item) => item.tipoItem === "entrada_diversos");
+  if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
+
+  return `
+    <div class="diverse-table">
+      <div class="diverse-row diverse-row-head">
+        <span>SKU</span>
+        <span>Codigo</span>
+        <span>Produto</span>
+        <span>Qtd</span>
+        <span>Venda</span>
+        <span>Custo</span>
+      </div>
+      ${items.map(diverseItemRow).join("")}
+    </div>
+  `;
+}
+
+function diverseItemRow(item) {
+  const product = item.product || {};
+  return `
+    <article class="diverse-row">
+      <strong>${escapeHtml(product.sku || "")}</strong>
+      <span>${escapeHtml(product.codigoMl || "")}</span>
+      <span>${escapeHtml(product.descricao || "")}</span>
+      <span>${product.qtdTotal || item.qtdEsperada || 0}</span>
+      <span>${money(product.valorUnit)}</span>
+      <span>${money(product.precoCusto)}</span>
     </article>
   `;
 }

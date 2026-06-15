@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeLot } from "../src/lots.js";
+import { getBlingProducts, summarizeLot } from "../src/lots.js";
 
 test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   const db = {
@@ -54,4 +54,21 @@ test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   assert.equal(summary.rzs[0].codigoRz, "RZ-1");
   assert.equal(summary.rzs[0].missing, 1);
   assert.equal(summary.items[0].product.codigoMl, "ML1");
+});
+
+test("getBlingProducts includes diverse entry items in complete export", () => {
+  const lot = { id: "lot-1" };
+  const db = {
+    products: [
+      { id: "product-1", lotId: "lot-1", origem: "planilha" },
+      { id: "product-2", lotId: "lot-1", origem: "entrada_diversos" },
+      { id: "product-3", lotId: "lot-1", origem: "excedente_externo" },
+      { id: "product-4", lotId: "lot-2", origem: "entrada_diversos" }
+    ]
+  };
+
+  assert.deepEqual(
+    getBlingProducts(db, lot, "complete").map((product) => product.id),
+    ["product-1", "product-2"]
+  );
 });

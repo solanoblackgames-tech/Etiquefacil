@@ -48,7 +48,7 @@ export function findProductHistory(db, userId, currentLotId, codigoMl) {
 
 export function getBlingProducts(db, lot, kind) {
   const products = db.products.filter((product) => product.lotId === lot.id);
-  if (kind === "complete") return products.filter((product) => product.origem === "planilha");
+  if (kind === "complete") return products.filter((product) => product.origem === "planilha" || product.origem === "entrada_diversos");
   if (kind === "excess") return products.filter((product) => product.origem === "excedente_externo");
   throw new Error("Tipo de exportação inválido.");
 }

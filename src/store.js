@@ -306,6 +306,41 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
   return summarizeLot(db, lot);
 }
 
+export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence }) {
+  await ensureStore();
+  const sequence = Math.max(1, Number.parseInt(startSequence, 10) || 1);
+  const lot = {
+    id: randomUUID(),
+    userId,
+    nomeArquivo: name,
+    percentualArremate: 0,
+    fornecedor,
+    prefixoSku: skuPrefix,
+    proximoSequencialSku: sequence,
+    createdAt: new Date().toISOString()
+  };
+
+  if (hasPostgres()) {
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      await insertLotRows(client, { lots: [lot] });
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return summarizeLot({ ...emptyDb(), lots: [lot] }, lot, true);
+  }
+
+  const db = await readDb();
+  db.lots.push(lot);
+  await writeDb(db);
+  return summarizeLot(db, lot, true);
+}
+
 export async function getUserLotDetail(userId, lotId) {
   await ensureStore();
   if (hasPostgres()) {
@@ -325,8 +360,8 @@ export async function getLotBlingData(userId, lotId, kind) {
     const lotResult = await query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
     if (!lot) return null;
-    const origin = blingOriginForKind(kind);
-    const products = await query("select * from products where lot_id = $1 and origem = $2 order by created_at asc", [lot.id, origin]);
+    const origins = blingOriginsForKind(kind);
+    const products = await query("select * from products where lot_id = $1 and origem = any($2::text[]) order by created_at asc", [lot.id, origins]);
     return { lot, products: products.rows.map(productFromRow) };
   }
 
@@ -403,6 +438,39 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   db.rzItems.push(item);
   await writeDb(db);
   return { product, lot: summarizeLot(db, lot, true) };
+}
+
+export async function addDiverseLotItem({ userId, lotId, codigoMl }) {
+  await ensureStore();
+  const normalizedMl = String(codigoMl || "").trim();
+  if (!normalizedMl) throw new Error("Informe o CÃ³digo ML.");
+  if (hasPostgres()) return addDiverseLotItemPg({ userId, lotId, codigoMl: normalizedMl });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nÃ£o encontrado.");
+
+  const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
+  if (existing) {
+    existing.qtdTotal += 1;
+    const item = db.rzItems.find((candidate) => candidate.productId === existing.id);
+    if (item) {
+      item.qtdEsperada += 1;
+      item.valorTotal = roundMoney(item.qtdEsperada * existing.valorUnit);
+    }
+    await writeDb(db);
+    return { status: "duplicado", product: existing, lot: summarizeLot(db, lot, true) };
+  }
+
+  const history = findProductHistory(db, userId, lot.id, normalizedMl)[0];
+  if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
+
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl);
+  lot.proximoSequencialSku += 1;
+  db.products.push(product);
+  db.rzItems.push(item);
+  await writeDb(db);
+  return { status: "criado", product, parent: history, lot: summarizeLot(db, lot, true) };
 }
 
 export async function searchProducts(userId, codigoMl) {
@@ -886,6 +954,50 @@ async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
+async function addDiverseLotItemPg({ userId, lotId, codigoMl }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nÃ£o encontrado.");
+
+    const existingResult = await client.query("select * from products where lot_id = $1 and codigo_ml = $2 limit 1 for update", [lot.id, codigoMl]);
+    const existing = existingResult.rows[0] && productFromRow(existingResult.rows[0]);
+    if (existing) {
+      await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [existing.id]);
+      await client.query(
+        `
+          update rz_items
+          set qtd_esperada = qtd_esperada + 1,
+              valor_total = valor_total + $2
+          where product_id = $1
+        `,
+        [existing.id, existing.valorUnit]
+      );
+      result = { status: "duplicado", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
+    } else {
+      const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
+      if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
+
+      const records = buildDiverseLotRecords(lot, history, codigoMl);
+      await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
+      await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+      result = { status: "criado", product: records.product, parent: history };
+    }
+
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getUserLotDetail(userId, lotId) };
+}
+
 async function findPgProductHistory(client, userId, currentLotId, codigoMl, limit) {
   const result = await client.query(
     `
@@ -946,13 +1058,44 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
   return { product, item };
 }
 
+function buildDiverseLotRecords(lot, history, codigoMl) {
+  const product = {
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoMl,
+    sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
+    descricao: history.descricao,
+    valorUnit: history.valorUnit,
+    precoCusto: history.precoCusto,
+    qtdTotal: 1,
+    categoria: history.categoria || "",
+    subcategoria: history.subcategoria || "",
+    origem: "entrada_diversos",
+    createdAt: new Date().toISOString()
+  };
+  const item = {
+    id: randomUUID(),
+    lotId: lot.id,
+    productId: product.id,
+    codigoRz: "DIVERSOS",
+    enderecoWms: "",
+    qtdEsperada: 1,
+    qtdConferida: 0,
+    condicaoGrade: "",
+    valorTotal: product.valorUnit,
+    tipoItem: "entrada_diversos",
+    createdAt: new Date().toISOString()
+  };
+  return { product, item };
+}
+
 function getUserLotFromDb(db, userId, lotId) {
   return db.lots.find((lot) => lot.id === lotId && lot.userId === userId);
 }
 
-function blingOriginForKind(kind) {
-  if (kind === "complete") return "planilha";
-  if (kind === "excess") return "excedente_externo";
+function blingOriginsForKind(kind) {
+  if (kind === "complete") return ["planilha", "entrada_diversos"];
+  if (kind === "excess") return ["excedente_externo"];
   throw new Error("Tipo de exportação inválido.");
 }
 

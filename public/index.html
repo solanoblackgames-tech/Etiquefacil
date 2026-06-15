@@ -52,6 +52,7 @@
 
       <nav class="tabs">
         <button data-tab="lots" class="active">Lotes</button>
+        <button data-tab="diverse">Gerar lote de entrada diversos</button>
         <button data-tab="search">Busca ML</button>
       </nav>
 
@@ -71,6 +72,35 @@
           <button type="submit">Buscar</button>
         </form>
         <div id="searchResults"></div>
+      </section>
+
+      <section id="diverseTab" class="search hidden">
+        <section class="diverse-shell">
+          <form id="diverseLotForm" class="diverse-form">
+            <label>Nome do lote<input name="name" placeholder="Entrada diversos" /></label>
+            <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+            <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
+            <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+            <button type="submit">Criar lote</button>
+          </form>
+          <p id="diverseLotMessage" class="message"></p>
+
+          <section id="diverseScanPanel" class="hidden">
+            <div class="diverse-heading">
+              <div>
+                <span class="muted">Lote ativo</span>
+                <h2 id="diverseLotTitle"></h2>
+              </div>
+              <button type="button" id="diverseDownloadButton">Baixar Bling</button>
+            </div>
+            <form id="diverseScanForm" class="search-bar">
+              <input name="codigoMl" placeholder="Bipe o codigo para buscar no historico" autocomplete="off" required />
+              <button type="submit">Adicionar</button>
+            </form>
+            <p id="diverseScanMessage" class="message"></p>
+            <div id="diverseItems" class="diverse-items"></div>
+          </section>
+        </section>
       </section>
     </main>
 

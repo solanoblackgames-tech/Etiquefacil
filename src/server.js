@@ -13,7 +13,9 @@ import "dotenv/config";
 import { buildBlingCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
+  addDiverseLotItem,
   createExternalExcess,
+  createDiverseLot,
   createLabel,
   createLotFromImport,
   createUser,
@@ -189,6 +191,29 @@ app.delete("/api/lots/:lotId", requireAuth, async (req, res) => {
   }
 });
 
+app.post("/api/diverse-lots", requireAuth, async (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim() || `Entrada diversos ${new Date().toLocaleDateString("pt-BR")}`;
+    const fornecedor = String(req.body.fornecedor || "").trim();
+    const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
+    const startSequence = Number(req.body.startSequence);
+    if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
+    if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
+    if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
+
+    const lot = await createDiverseLot({
+      userId: req.session.user.id,
+      name,
+      fornecedor,
+      skuPrefix,
+      startSequence
+    });
+    res.json({ lot });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/lots/:lotId/bling/:kind", requireAuth, async (req, res) => {
   try {
     const data = await getLotBlingData(req.session.user.id, req.params.lotId, req.params.kind);
@@ -235,6 +260,15 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
   try {
     const codigoMl = String(req.body.codigoMl || "").trim();
     res.json(await createExternalExcess({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
+  try {
+    const codigoMl = String(req.body.codigoMl || "").trim();
+    res.json(await addDiverseLotItem({ userId: req.session.user.id, lotId: req.params.lotId, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }

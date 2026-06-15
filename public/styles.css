@@ -596,6 +596,74 @@ h3 {
   padding: 12px;
 }
 
+.diverse-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.diverse-form {
+  align-items: end;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1.4fr 1fr 0.8fr 0.8fr auto;
+  padding: 14px;
+}
+
+.diverse-heading {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.diverse-heading h2 {
+  font-size: 24px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.diverse-items {
+  margin-top: 12px;
+}
+
+.diverse-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diverse-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr;
+  padding: 10px;
+}
+
+.diverse-row:last-child {
+  border-bottom: 0;
+}
+
+.diverse-row-head {
+  background: #e7edef;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.diverse-row span,
+.diverse-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .admin-shell {
   display: grid;
   gap: 18px;
@@ -802,6 +870,8 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
+  .diverse-form,
+  .diverse-row,
   .pallet-row,
   .result-card,
   .admin-form,
