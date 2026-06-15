@@ -4,6 +4,7 @@ const state = {
   lots: [],
   selectedLotId: null,
   selectedDiverseLotId: null,
+  selectedDiverseLot: null,
   selectedRz: null,
   scanOnly: false,
   labelProduct: null,
@@ -78,6 +79,7 @@ function bindEvents() {
 
   $("#diverseLotForm").addEventListener("submit", createDiverseLot);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
+  $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#diverseDownloadButton").addEventListener("click", () => {
     if (state.selectedDiverseLotId) downloadBling(state.selectedDiverseLotId, "complete", "#diverseScanMessage");
   });
@@ -188,6 +190,7 @@ async function addDiverseItem(event) {
     $("#diverseScanMessage").textContent =
       response.status === "duplicado" ? "Quantidade somada ao item ja bipado." : `SKU ${response.product.sku} gerado.${parent}`;
     await loadLots(response.lot.id);
+    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
     input.focus();
   } catch (error) {
     $("#diverseScanMessage").style.color = "";
@@ -200,9 +203,62 @@ async function addDiverseItem(event) {
 
 function renderDiverseLot(lot) {
   state.selectedDiverseLotId = lot.id;
+  state.selectedDiverseLot = lot;
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
+  $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
+  bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
+}
+
+function diverseLabelOptionsMarkup() {
+  return `
+    <div class="diverse-label-options">
+      <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
+      <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+      <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
+      <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
+        <label>Texto que sera impresso abaixo do preco
+          <input id="diverseCustomTextInput" maxlength="48" value="${escapeHtml(state.labelOptions.customText)}" placeholder="Ex: CONFERIDO - SEM TROCA" />
+        </label>
+        <strong>Ativo para as proximas etiquetas</strong>
+      </div>
+    </div>
+  `;
+}
+
+function bindDiverseLabelOptions() {
+  $("#diverseAutoPrintToggle").addEventListener("change", (event) => {
+    state.labelOptions.autoPrint = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
+  });
+  $("#diverseIncludePriceToggle").addEventListener("change", (event) => {
+    state.labelOptions.includePrice = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
+  });
+  $("#diverseIncludeTextToggle").addEventListener("change", (event) => {
+    state.labelOptions.includeText = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.includeText", String(state.labelOptions.includeText));
+    $("#diverseCustomTextRow").classList.toggle("hidden", !state.labelOptions.includeText);
+    if (state.labelOptions.includeText) $("#diverseCustomTextInput").focus();
+  });
+  $("#diverseCustomTextInput").addEventListener("input", (event) => {
+    state.labelOptions.customText = event.currentTarget.value;
+    localStorage.setItem("etiquefacil.customText", state.labelOptions.customText);
+  });
+}
+
+function handleDiverseItemsClick(event) {
+  const button = event.target.closest("[data-diverse-label]");
+  if (!button) return;
+  const product = findDiverseProduct(button.dataset.diverseLabel);
+  if (product) showLabel(product, { autoPrint: true });
+}
+
+function findDiverseProduct(productId) {
+  const lot = state.selectedDiverseLot;
+  if (!lot?.items) return null;
+  return lot.items.find((item) => item.product?.id === productId)?.product || null;
 }
 
 async function showApp(user) {
@@ -1052,6 +1108,7 @@ function diverseItemsTable(lot) {
         <span>Qtd</span>
         <span>Venda</span>
         <span>Custo</span>
+        <span>Etiqueta</span>
       </div>
       ${items.map(diverseItemRow).join("")}
     </div>
@@ -1068,6 +1125,7 @@ function diverseItemRow(item) {
       <span>${product.qtdTotal || item.qtdEsperada || 0}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
+      <span><button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Imprimir</button></span>
     </article>
   `;
 }

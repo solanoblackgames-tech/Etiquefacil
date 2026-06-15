@@ -630,6 +630,20 @@ h3 {
   margin-top: 12px;
 }
 
+.diverse-label-options {
+  background: #dfe8eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto auto auto 1fr;
+  margin: 10px 0 4px;
+  padding: 12px;
+}
+
+.diverse-label-options .custom-text-row {
+  grid-column: 1 / -1;
+}
+
 .diverse-table {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -642,8 +656,14 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr;
+  grid-template-columns: 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr 0.8fr;
   padding: 10px;
+}
+
+.diverse-row button {
+  font-size: 12px;
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .diverse-row:last-child {
@@ -870,6 +890,7 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
+  .diverse-label-options,
   .diverse-form,
   .diverse-row,
   .pallet-row,
