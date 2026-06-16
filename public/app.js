@@ -215,7 +215,7 @@ function createDiverseRz(event) {
   setDiverseRz(codigoRz);
   input.value = "";
   $("#diverseScanMessage").style.color = "#0f766e";
-  $("#diverseScanMessage").textContent = `RZ ${codigoRz} ativo.`;
+  $("#diverseScanMessage").textContent = `Remessa ${codigoRz} ativa.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
 }
 
@@ -224,7 +224,7 @@ function handleDiverseRzClick(event) {
   if (!button) return;
   setDiverseRz(button.dataset.diverseRz);
   $("#diverseScanMessage").style.color = "#0f766e";
-  $("#diverseScanMessage").textContent = `RZ ${button.dataset.diverseRz} ativo.`;
+  $("#diverseScanMessage").textContent = `Remessa ${button.dataset.diverseRz} ativa.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
 }
 
@@ -249,7 +249,7 @@ function renderDiverseLot(lot) {
 
 function renderDiverseRzControls(lot) {
   const active = state.selectedDiverseRz;
-  $("#diverseActiveRz").textContent = active ? `RZ ativo: ${active}` : "Nenhum RZ ativo";
+  $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
   $("#diverseDownloadRzButton").disabled = !active;
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
   $("#diverseScanForm button").disabled = !active;
@@ -280,18 +280,18 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
     if (state.config.downloadMode === "browser") {
       window.location.href = `/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling`;
       message.style.color = "#0f766e";
-      message.textContent = "Download do RZ enviado para o navegador.";
+      message.textContent = "Download da remessa enviado para o navegador.";
       return;
     }
 
     const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling/save`, { method: "POST" });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || "Nao foi possivel gerar o arquivo Bling do RZ.");
+      throw new Error(payload.error || "Nao foi possivel gerar o arquivo Bling da remessa.");
     }
     const payload = await response.json();
     message.style.color = "#0f766e";
-    message.innerHTML = `Arquivo do RZ salvo: <strong>${escapeHtml(payload.path)}</strong>`;
+    message.innerHTML = `Arquivo da remessa salvo: <strong>${escapeHtml(payload.path)}</strong>`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -299,9 +299,9 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
 }
 
 function diverseScanStatusMessage(response, codigoRz, parent) {
-  if (response.status === "duplicado_rz") return `Quantidade somada no RZ ${codigoRz}.`;
-  if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado no RZ ${codigoRz}.`;
-  return `SKU ${response.product.sku} gerado no RZ ${codigoRz}.${parent}`;
+  if (response.status === "duplicado_rz") return `Quantidade somada na remessa ${codigoRz}.`;
+  if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado na remessa ${codigoRz}.`;
+  return `SKU ${response.product.sku} gerado na remessa ${codigoRz}.${parent}`;
 }
 
 function diverseLabelOptionsMarkup() {
@@ -774,7 +774,7 @@ function renderPallet(lot, codigoRz) {
         </div>
         <div class="pallet-actions">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
-          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling RZ</a>
+          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>
           <a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>
           <a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>
         </div>
@@ -1201,7 +1201,7 @@ function diverseItemsTable(lot) {
   return `
     <div class="diverse-table">
       <div class="diverse-row diverse-row-head">
-        <span>RZ</span>
+        <span>Remessa</span>
         <span>SKU</span>
         <span>Codigo</span>
         <span>Produto</span>
@@ -1218,7 +1218,7 @@ function diverseItemsTable(lot) {
 function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
   return `
-    ${startsRz ? `<div class="diverse-rz-divider">RZ ${escapeHtml(item.codigoRz || "")}</div>` : ""}
+    ${startsRz ? `<div class="diverse-rz-divider">Remessa ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
       <span>${escapeHtml(item.codigoRz || "")}</span>
       <strong>${escapeHtml(product.sku || "")}</strong>

@@ -249,7 +249,7 @@ app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, async (req, res) => {
 app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, async (req, res) => {
   try {
     const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
-    if (!data) return res.status(404).json({ error: "RZ nÃ£o encontrado neste lote." });
+    if (!data) return res.status(404).json({ error: "Remessa nÃ£o encontrada neste lote." });
 
     const csv = buildBlingCsv(data.products, data.lot);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -263,7 +263,7 @@ app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, async (req, res) => 
 app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, res) => {
   try {
     const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
-    if (!data) return res.status(404).json({ error: "RZ nÃ£o encontrado neste lote." });
+    if (!data) return res.status(404).json({ error: "Remessa nÃ£o encontrada neste lote." });
 
     const csv = buildBlingCsv(data.products, data.lot);
     const downloadsDir = path.join(os.homedir(), "Downloads");
