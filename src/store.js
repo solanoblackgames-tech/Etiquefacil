@@ -20,7 +20,8 @@ const emptyDb = () => ({
   products: [],
   rzItems: [],
   scans: [],
-  labels: []
+  labels: [],
+  catalogProducts: []
 });
 
 export function hasPostgres() {
@@ -247,6 +248,33 @@ export async function getStoreHealth() {
   return { ok: true, storage: "postgres" };
 }
 
+export async function replaceCatalogProducts(products) {
+  await ensureStore();
+  const now = new Date().toISOString();
+  const normalized = normalizeCatalogProducts(products, now);
+
+  if (hasPostgres()) {
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      await client.query("delete from catalog_products");
+      await insertCatalogProductRows(client, normalized);
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { count: normalized.length };
+  }
+
+  const db = await readDb();
+  db.catalogProducts = normalized;
+  await writeDb(db);
+  return { count: normalized.length };
+}
+
 export async function getUserLotSummaries(userId) {
   await ensureStore();
   if (hasPostgres()) {
@@ -467,6 +495,15 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz }) {
   }
 
   const history = findProductHistory(db, userId, lot.id, normalizedMl)[0];
+  const source = history || findCatalogProduct(db, normalizedMl);
+  if (!history && source) {
+    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz);
+    lot.proximoSequencialSku += 1;
+    db.products.push(product);
+    db.rzItems.push(item);
+    await writeDb(db);
+    return { status: "criado", product, parent: null, source: "catalogo_oculto", lot: summarizeLot(db, lot, true) };
+  }
   if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
 
   const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz);
@@ -614,6 +651,18 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists catalog_products (
+      id text primary key,
+      codigo_ml text not null unique,
+      descricao text not null,
+      valor_unit numeric not null default 0,
+      preco_custo numeric not null default 0,
+      categoria text not null default '',
+      subcategoria text not null default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     create table if not exists rz_items (
       id text primary key,
       lot_id text not null references lots(id) on delete cascade,
@@ -650,6 +699,7 @@ async function ensurePgStore() {
     create index if not exists products_lot_id_idx on products(lot_id);
     create index if not exists products_codigo_ml_idx on products(codigo_ml);
     create index if not exists products_lot_codigo_ml_idx on products(lot_id, codigo_ml);
+    create index if not exists catalog_products_codigo_ml_idx on catalog_products(codigo_ml);
     create index if not exists rz_items_lot_id_idx on rz_items(lot_id);
     create index if not exists rz_items_product_id_idx on rz_items(product_id);
     create index if not exists rz_items_lot_codigo_rz_idx on rz_items(lot_id, codigo_rz);
@@ -661,13 +711,14 @@ async function ensurePgStore() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, catalogProducts] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
     query("select * from rz_items order by created_at asc"),
     query("select * from scans order by created_at asc"),
-    query("select * from labels order by created_at asc")
+    query("select * from labels order by created_at asc"),
+    query("select * from catalog_products order by codigo_ml asc")
   ]);
 
   return {
@@ -676,7 +727,8 @@ async function readPgDb() {
     products: products.rows.map(productFromRow),
     rzItems: rzItems.rows.map(rzItemFromRow),
     scans: scans.rows.map(scanFromRow),
-    labels: labels.rows.map(labelFromRow)
+    labels: labels.rows.map(labelFromRow),
+    catalogProducts: catalogProducts.rows.map(catalogProductFromRow)
   };
 }
 
@@ -690,6 +742,7 @@ async function writePgDb(db) {
     await client.query("delete from products");
     await client.query("delete from lots");
     await client.query("delete from users");
+    await client.query("delete from catalog_products");
 
     await insertRows(
       client,
@@ -769,6 +822,7 @@ async function writePgDb(db) {
       ["id", "product_id", "lot_id", "user_id", "created_at"],
       (db.labels || []).map((label) => [label.id, label.productId, label.lotId, label.userId, label.createdAt])
     );
+    await insertCatalogProductRows(client, db.catalogProducts || []);
 
     await client.query("commit");
   } catch (error) {
@@ -853,6 +907,25 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       item.valorTotal || 0,
       item.tipoItem || "esperado",
       item.createdAt
+    ])
+  );
+}
+
+async function insertCatalogProductRows(client, products = []) {
+  await insertRows(
+    client,
+    "catalog_products",
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "created_at", "updated_at"],
+    products.map((product) => [
+      product.id,
+      product.codigoMl,
+      product.descricao,
+      product.valorUnit,
+      product.precoCusto,
+      product.categoria || "",
+      product.subcategoria || "",
+      product.createdAt,
+      product.updatedAt || product.createdAt
     ])
   );
 }
@@ -988,7 +1061,7 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz }) {
       await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [existing.id]);
       result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
     } else {
-      const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
+      const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0] || (await findPgCatalogProduct(client, codigoMl));
       if (!history) throw new Error("CÃ³digo nÃ£o encontrado nos lotes jÃ¡ cadastrados.");
 
       const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz);
@@ -1034,6 +1107,15 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
     ...productFromRow(row),
     lot: lotFromPrefixedRow(row, "lot__")
   }));
+}
+
+function findCatalogProduct(db, codigoMl) {
+  return (db.catalogProducts || []).find((product) => product.codigoMl === codigoMl) || null;
+}
+
+async function findPgCatalogProduct(client, codigoMl) {
+  const result = await client.query("select * from catalog_products where codigo_ml = $1 limit 1", [codigoMl]);
+  return result.rows[0] ? catalogProductFromRow(result.rows[0]) : null;
 }
 
 function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
@@ -1113,6 +1195,27 @@ function blingOriginsForKind(kind) {
   throw new Error("Tipo de exportação inválido.");
 }
 
+function normalizeCatalogProducts(products, now) {
+  const byCode = new Map();
+  for (const input of products || []) {
+    const codigoMl = String(input.codigoMl || "").trim();
+    const descricao = String(input.descricao || "").trim();
+    if (!codigoMl || !descricao) continue;
+    byCode.set(codigoMl, {
+      id: input.id || randomUUID(),
+      codigoMl,
+      descricao,
+      valorUnit: Number(input.valorUnit || 0),
+      precoCusto: Number(input.precoCusto || 0),
+      categoria: String(input.categoria || "").trim(),
+      subcategoria: String(input.subcategoria || "").trim(),
+      createdAt: input.createdAt || now,
+      updatedAt: now
+    });
+  }
+  return [...byCode.values()].sort((a, b) => a.codigoMl.localeCompare(b.codigoMl));
+}
+
 function notFound(message) {
   const error = new Error(message);
   error.status = 404;
@@ -1173,6 +1276,20 @@ function productFromRow(row) {
     subcategoria: row.subcategoria || "",
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
+  };
+}
+
+function catalogProductFromRow(row) {
+  return {
+    id: row.id,
+    codigoMl: row.codigo_ml,
+    descricao: row.descricao,
+    valorUnit: num(row.valor_unit),
+    precoCusto: num(row.preco_custo),
+    categoria: row.categoria || "",
+    subcategoria: row.subcategoria || "",
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at || row.created_at)
   };
 }
 

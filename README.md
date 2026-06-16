@@ -79,6 +79,17 @@ scans=7
 labels=1
 ```
 
+## Importar base oculta de produtos
+
+A base oculta e usada na criacao de remessas dentro de lotes diversos quando o Codigo ML nao existe nos lotes normais.
+
+```bash
+npm run import:catalog -- C:\caminho\base-oculta.xlsx
+```
+
+Colunas aceitas: `Marca` ou `Codigo ML` para o codigo bipado, `Descricao`, `Preco`, `Preco de custo`, `Categoria` e `Subcategoria`.
+Ao importar, a base oculta anterior e substituida.
+
 ## Deploy sugerido
 
 1. Subir este projeto para GitHub.
