@@ -8,6 +8,8 @@ const state = {
   selectedDiverseRz: null,
   selectedRz: null,
   scanOnly: false,
+  pendingScan: false,
+  pendingDecrement: false,
   labelProduct: null,
   config: { downloadMode: "local" },
   labelOptions: {
@@ -105,7 +107,6 @@ function bindEvents() {
   });
   window.addEventListener("afterprint", () => {
     cleanupLabelPrintRoot();
-    hideLabelPreview();
   });
 }
 
@@ -718,6 +719,7 @@ function renderRz(lot, codigoRz) {
     <div class="scan-box">
       <input id="scanInput" placeholder="Bipe o Código ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
+      <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
@@ -742,6 +744,7 @@ function renderRz(lot, codigoRz) {
     </div>
   `;
   $("#scanButton").addEventListener("click", () => scanCurrent(lot.id, codigoRz));
+  $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lot.id, codigoRz));
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
@@ -846,6 +849,7 @@ function renderScanPage(lot, codigoRz) {
       <div class="scan-box">
         <input id="scanInput" placeholder="Bipe o Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
+        <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
         <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
@@ -875,6 +879,10 @@ function renderScanPage(lot, codigoRz) {
 
 function bindScanControls(lotId, codigoRz) {
   $("#scanButton").addEventListener("click", () => scanCurrent(lotId, codigoRz));
+  $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lotId, codigoRz));
+  document.querySelectorAll("[data-decrement-ml]").forEach((button) => {
+    button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
+  });
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
@@ -911,11 +919,14 @@ function bindLabelTextControls() {
 }
 
 async function scanCurrent(lotId, codigoRz) {
+  if (state.pendingScan) return;
   const input = $("#scanInput");
   const codigoMl = input.value.trim();
   if (!codigoMl) return;
 
   try {
+    state.pendingScan = true;
+    $("#scanButton").disabled = true;
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -948,6 +959,40 @@ async function scanCurrent(lotId, codigoRz) {
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
+  } finally {
+    state.pendingScan = false;
+    const scanButton = $("#scanButton");
+    if (scanButton) scanButton.disabled = false;
+  }
+}
+
+async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
+  if (state.pendingDecrement) return;
+  const input = $("#scanInput");
+  const codigoMl = String(codigoMlFromButton || input?.value || "").trim();
+  if (!codigoMl) return;
+
+  try {
+    state.pendingDecrement = true;
+    $("#decrementScanButton").disabled = true;
+    const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan/decrement`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl })
+    });
+    if (input && !codigoMlFromButton) input.value = "";
+    if (state.scanOnly) {
+      renderScanPage(response.lot, codigoRz);
+      $("#scanMessage").textContent = "Quantidade bipada diminuida.";
+    } else {
+      renderLotDetail(response.lot);
+    }
+  } catch (error) {
+    $("#scanMessage").textContent = error.message;
+  } finally {
+    state.pendingDecrement = false;
+    const decrementButton = $("#decrementScanButton");
+    if (decrementButton) decrementButton.disabled = false;
   }
 }
 
@@ -1185,6 +1230,7 @@ function itemRow(item) {
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span>${item.qtdConferida}/${item.qtdEsperada}</span>
       ${badge}
+      <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
     </article>
   `;
 }

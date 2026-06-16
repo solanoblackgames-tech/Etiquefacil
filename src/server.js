@@ -21,6 +21,7 @@ import {
   createUser,
   deleteUser,
   deleteUserLot,
+  decrementLotRzScan,
   ensureStore,
   getLotBlingData,
   getPgPool,
@@ -283,6 +284,16 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => 
     const codigoMl = String(req.body.codigoMl || "").trim();
     if (!codigoMl) throw new Error("Informe o Código ML.");
     res.json(await scanLotRz({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
+  try {
+    const codigoMl = String(req.body.codigoMl || "").trim();
+    if (!codigoMl) throw new Error("Informe o Código ML para diminuir.");
+    res.json(await decrementLotRzScan({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }

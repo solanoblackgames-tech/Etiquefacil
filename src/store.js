@@ -445,6 +445,42 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: summarizeLot(db, lot, true) };
 }
 
+export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) {
+  await ensureStore();
+  const normalizedMl = String(codigoMl || "").trim();
+  if (!normalizedMl) throw new Error("Informe o Código ML para diminuir.");
+
+  if (hasPostgres()) return decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote não encontrado.");
+
+  const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
+  const sameRzItem = rzItems.find((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  if (!sameRzItem) throw notFound("Código ML não encontrado neste RZ.");
+  if (sameRzItem.qtdConferida <= 0) throw new Error("Este Código ML já está com quantidade conferida zerada.");
+
+  sameRzItem.qtdConferida -= 1;
+  const product = db.products.find((item) => item.id === sameRzItem.productId);
+  if (product?.origem === "excedente_externo") product.qtdTotal = Math.max(0, Number(product.qtdTotal || 0) - 1);
+  if (sameRzItem.tipoItem === "excedente_outro_rz" && sameRzItem.qtdConferida <= sameRzItem.qtdEsperada) {
+    sameRzItem.tipoItem = "esperado";
+  }
+
+  const scan = {
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz,
+    codigoMl: normalizedMl,
+    status: "diminuido",
+    createdAt: new Date().toISOString()
+  };
+  db.scans.push(scan);
+  await writeDb(db);
+  return { scan, lot: summarizeLot(db, lot, true) };
+}
+
 export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
   const normalizedMl = String(codigoMl || "").trim();
@@ -989,6 +1025,70 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
       `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
        values ($1, $2, $3, $4, $5, $6, $7)`,
       [scan.id, scan.lotId, scan.codigoRz, scan.codigoMl, scan.status, scan.history ? JSON.stringify(scan.history) : null, scan.createdAt]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { scan, lot: await getUserLotDetail(userId, lotId) };
+}
+
+async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
+  const client = await getPgPool().connect();
+  let scan;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote não encontrado.");
+
+    const sameRzResult = await client.query(
+      `
+        select
+          ri.*,
+          p.origem as product_origem
+        from rz_items ri
+        join products p on p.id = ri.product_id
+        where ri.lot_id = $1 and ri.codigo_rz = $2 and p.codigo_ml = $3
+        order by ri.created_at asc
+        limit 1
+        for update of ri
+      `,
+      [lot.id, codigoRz, codigoMl]
+    );
+
+    const sameRzItem = sameRzResult.rows[0];
+    if (!sameRzItem) throw notFound("Código ML não encontrado neste RZ.");
+    if (Number(sameRzItem.qtd_conferida) <= 0) throw new Error("Este Código ML já está com quantidade conferida zerada.");
+
+    const nextQtdConferida = Number(sameRzItem.qtd_conferida) - 1;
+    const nextTipoItem =
+      sameRzItem.tipo_item === "excedente_outro_rz" && nextQtdConferida <= Number(sameRzItem.qtd_esperada) ? "esperado" : sameRzItem.tipo_item;
+    await client.query("update rz_items set qtd_conferida = $1, tipo_item = $2 where id = $3", [
+      nextQtdConferida,
+      nextTipoItem,
+      sameRzItem.id
+    ]);
+    if (sameRzItem.product_origem === "excedente_externo") {
+      await client.query("update products set qtd_total = greatest(qtd_total - 1, 0) where id = $1", [sameRzItem.product_id]);
+    }
+
+    scan = {
+      id: randomUUID(),
+      lotId: lot.id,
+      codigoRz,
+      codigoMl,
+      status: "diminuido",
+      createdAt: new Date().toISOString()
+    };
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [scan.id, scan.lotId, scan.codigoRz, scan.codigoMl, scan.status, null, scan.createdAt]
     );
     await client.query("commit");
   } catch (error) {
