@@ -18,6 +18,7 @@ import {
   createDiverseLot,
   createLabel,
   createLotFromImport,
+  createManualExternalExcess,
   createUser,
   deleteCatalogProductForAdmin,
   deleteUser,
@@ -340,6 +341,23 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
   try {
     const codigoMl = String(req.body.codigoMl || "").trim();
     res.json(await createExternalExcess({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, async (req, res) => {
+  try {
+    const codigoMl = String(req.body.codigoMl || "").trim();
+    res.json(
+      await createManualExternalExcess({
+        userId: req.session.user.id,
+        lotId: req.params.lotId,
+        codigoRz: req.params.codigoRz,
+        codigoMl,
+        manualProduct: req.body.manualProduct
+      })
+    );
   } catch (error) {
     sendError(res, error);
   }

@@ -263,8 +263,8 @@ async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitO
   });
 }
 
-function promptManualProduct(codigoMl) {
-  return askManualProduct(codigoMl);
+function promptManualProduct(codigoMl, focusSelector) {
+  return askManualProduct(codigoMl, focusSelector);
 }
 
 function parseMoneyInput(value) {
@@ -295,11 +295,11 @@ function askPriceSuggestion({ codigoMl, product }) {
   });
 }
 
-function askManualProduct(codigoMl) {
-  return openManualProductModal(codigoMl);
+function askManualProduct(codigoMl, focusSelector) {
+  return openManualProductModal(codigoMl, focusSelector);
 }
 
-function openManualProductModal(codigoMl) {
+function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']") {
   return new Promise((resolve) => {
     const modal = $("#manualProductModal");
     const form = $("#manualProductForm");
@@ -318,7 +318,7 @@ function openManualProductModal(codigoMl) {
       modal.onkeydown = null;
       form.reset();
       error.textContent = "";
-      setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
+      setTimeout(() => $(focusSelector)?.focus(), 0);
     };
 
     code.textContent = codigoMl;
@@ -1380,6 +1380,10 @@ async function scanCurrent(lotId, codigoRz) {
     });
     input.value = "";
     const message = $("#scanMessage");
+    if (response.scan.status === "desconhecido") {
+      await createManualExternalExcessFromScan(lotId, codigoRz, codigoMl);
+      return;
+    }
     if (response.scan.status === "historico") {
       const history = response.scan.history[0];
       message.innerHTML = `
@@ -1409,6 +1413,38 @@ async function scanCurrent(lotId, codigoRz) {
     state.pendingScan = false;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = false;
+  }
+}
+
+async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
+  const message = $("#scanMessage");
+  const input = $("#scanInput");
+  try {
+    const manualProduct = await promptManualProduct(codigoMl, "#scanInput");
+    if (!manualProduct) {
+      message.textContent = "ML nao encontrado neste lote nem no historico do usuario.";
+      input?.select();
+      return;
+    }
+
+    const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/external-excess/manual`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl, manualProduct })
+    });
+
+    const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.`;
+    if (state.scanOnly) {
+      renderScanPage(response.lot, codigoRz);
+      $("#scanMessage").textContent = successMessage;
+    } else {
+      renderLotDetail(response.lot);
+      $("#scanMessage").textContent = successMessage;
+    }
+    if (response.product && state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+  } catch (error) {
+    message.textContent = error.message;
+    input?.select();
   }
 }
 

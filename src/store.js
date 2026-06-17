@@ -525,6 +525,37 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
+export async function createManualExternalExcess({ userId, lotId, codigoRz, codigoMl, manualProduct }) {
+  await ensureStore();
+  const normalizedMl = String(codigoMl || "").trim();
+  if (!normalizedMl) throw new Error("Informe o Codigo ML.");
+  if (hasPostgres()) return createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl, manualProduct });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
+  if (existing) throw new Error("Este Codigo ML ja existe no lote atual.");
+
+  const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
+  const { product, item } = buildExternalExcessRecords(lot, sourceManual, codigoRz, normalizedMl);
+  lot.proximoSequencialSku += 1;
+  db.products.push(product);
+  db.rzItems.push(item);
+  db.catalogRequests.push(buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
+  db.scans.push({
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz,
+    codigoMl: normalizedMl,
+    status: "cadastro_manual",
+    createdAt: new Date().toISOString()
+  });
+  await writeDb(db);
+  return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
+}
+
 export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   await ensureStore();
   const normalizedMl = String(codigoMl || "").trim();
@@ -1347,6 +1378,40 @@ async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
+async function createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl, manualProduct }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nao encontrado.");
+
+    const existing = await client.query("select id from products where lot_id = $1 and codigo_ml = $2 limit 1", [lot.id, codigoMl]);
+    if (existing.rows.length) throw new Error("Este Codigo ML ja existe no lote atual.");
+
+    const source = normalizeManualProduct(manualProduct, codigoMl);
+    const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl);
+    await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
+    await insertCatalogRequestRows(client, [buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source })]);
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [randomUUID(), lot.id, codigoRz, codigoMl, "cadastro_manual", null, new Date().toISOString()]
+    );
+    await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+    result = { status: "cadastro_manual", product: records.product };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getUserLotDetail(userId, lotId) };
+}
+
 async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   const client = await getPgPool().connect();
   let result;
@@ -1526,7 +1591,8 @@ async function reviewCatalogRequestPg(requestId, action) {
   }
 }
 
-function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
+function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = {}) {
+  const valorUnit = roundMoney(history.valorUnit);
   const sku = formatSku(lot.prefixoSku, lot.proximoSequencialSku);
   const product = {
     id: randomUUID(),
@@ -1534,12 +1600,12 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
     codigoMl,
     sku,
     descricao: history.descricao,
-    valorUnit: history.valorUnit,
-    precoCusto: roundMoney(history.valorUnit * (lot.percentualArremate / 100)),
+    valorUnit,
+    precoCusto: roundMoney(history.precoCusto || valorUnit * (lot.percentualArremate / 100)),
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
-    origem: "excedente_externo",
+    origem: options.origem || "excedente_externo",
     createdAt: new Date().toISOString()
   };
   const item = {
@@ -1551,7 +1617,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl) {
     qtdEsperada: 0,
     qtdConferida: 1,
     condicaoGrade: "",
-    valorTotal: history.valorUnit,
+    valorTotal: valorUnit,
     tipoItem: "excedente_externo",
     createdAt: new Date().toISOString()
   };
