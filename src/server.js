@@ -19,6 +19,7 @@ import {
   createLabel,
   createLotFromImport,
   createUser,
+  deleteCatalogProductForAdmin,
   deleteUser,
   deleteUserLot,
   decrementLotRzScan,
@@ -29,9 +30,13 @@ import {
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
+  listCatalogProductsForAdmin,
+  listCatalogRequestsForAdmin,
   listUsersForAdmin,
+  reviewCatalogRequest,
   scanLotRz,
   searchProducts,
+  suggestCatalogUpdate,
   updateUserPassword,
   verifyUser
 } from "./store.js";
@@ -43,6 +48,7 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
+const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
   id: "backoffice-admin",
   name: "Back Office",
@@ -56,7 +62,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
     secret: config.sessionSecret,
-    store: hasPostgres()
+    store: usePgSessionStore
       ? new PostgresSessionStore({
           pool: getPgPool(),
           createTableIfMissing: true
@@ -103,15 +109,19 @@ app.post("/api/register", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
-  if (isAdminLogin(req.body.email, req.body.password)) {
-    req.session.user = ADMIN_USER;
-    return res.json({ user: ADMIN_USER });
-  }
+  try {
+    if (isAdminLogin(req.body.email, req.body.password)) {
+      req.session.user = ADMIN_USER;
+      return res.json({ user: ADMIN_USER });
+    }
 
-  const user = await verifyUser(req.body.email || "", req.body.password || "");
-  if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
-  req.session.user = user;
-  res.json({ user });
+    const user = await verifyUser(req.body.email || "", req.body.password || "");
+    if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
+    req.session.user = user;
+    res.json({ user });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post("/api/logout", (req, res) => {
@@ -120,6 +130,30 @@ app.post("/api/logout", (req, res) => {
 
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   res.json({ users: await listUsersForAdmin() });
+});
+
+app.get("/api/admin/catalog-requests", requireAdmin, async (req, res) => {
+  res.json({ requests: await listCatalogRequestsForAdmin() });
+});
+
+app.get("/api/admin/catalog-products", requireAdmin, async (req, res) => {
+  res.json({ products: await listCatalogProductsForAdmin(req.query.q) });
+});
+
+app.delete("/api/admin/catalog-products/:productId", requireAdmin, async (req, res) => {
+  try {
+    res.json(await deleteCatalogProductForAdmin(req.params.productId));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/admin/catalog-requests/:requestId/:action", requireAdmin, async (req, res) => {
+  try {
+    res.json(await reviewCatalogRequest(req.params.requestId, req.params.action));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post("/api/admin/users", requireAdmin, async (req, res) => {
@@ -194,20 +228,23 @@ app.delete("/api/lots/:lotId", requireAuth, async (req, res) => {
 
 app.post("/api/diverse-lots", requireAuth, async (req, res) => {
   try {
-    const name = String(req.body.name || "").trim() || `Entrada diversos ${new Date().toLocaleDateString("pt-BR")}`;
+    const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
     const startSequence = Number(req.body.startSequence);
+    const averageCost = Number(req.body.averageCost);
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
     if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
+    if (!Number.isFinite(averageCost) || averageCost <= 0) throw new Error("Informe o custo medio por unidade.");
 
     const lot = await createDiverseLot({
       userId: req.session.user.id,
       name,
       fornecedor,
       skuPrefix,
-      startSequence
+      startSequence,
+      averageCost
     });
     res.json({ lot });
   } catch (error) {
@@ -312,7 +349,25 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim();
     const codigoRz = String(req.body.codigoRz || "").trim();
-    res.json(await addDiverseLotItem({ userId: req.session.user.id, lotId: req.params.lotId, codigoMl, codigoRz }));
+    res.json(
+      await addDiverseLotItem({
+        userId: req.session.user.id,
+        lotId: req.params.lotId,
+        codigoMl,
+        codigoRz,
+        manualProduct: req.body.manualProduct,
+        valorUnitOverride: req.body.valorUnitOverride,
+        preview: Boolean(req.body.preview)
+      })
+    );
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/products/:productId/catalog-suggestion", requireAuth, async (req, res) => {
+  try {
+    res.json(await suggestCatalogUpdate({ userId: req.session.user.id, lotId: req.params.lotId, productId: req.params.productId, payload: req.body }));
   } catch (error) {
     sendError(res, error);
   }
@@ -360,6 +415,15 @@ app.post("/api/labels", requireAuth, async (req, res) => {
   res.json(result);
 });
 
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Rota da API nao encontrada." });
+});
+
+app.use((error, req, res, next) => {
+  if (!req.path.startsWith("/api")) return next(error);
+  sendError(res, error);
+});
+
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Faça login para continuar." });
   next();
@@ -375,7 +439,7 @@ function isAdminLogin(email, password) {
 }
 
 function sendError(res, error) {
-  res.status(error.status || 400).json({ error: error.message });
+  res.status(error.status || 400).json({ error: error.message, code: error.code });
 }
 
 function safeFileName(value) {
@@ -397,7 +461,7 @@ async function getRzBlingData(userId, lotId, codigoRz) {
   const productsById = new Map();
   for (const item of lot.items || []) {
     if (item.codigoRz !== codigoRz || !item.product) continue;
-    if (item.product.origem !== "planilha" && item.product.origem !== "entrada_diversos") continue;
+    if (!["planilha", "entrada_diversos", "lote_sem_planilha", "lote_sem_planilha_manual"].includes(item.product.origem)) continue;
     const existing = productsById.get(item.product.id);
     const qtdTotal = Number(item.qtdEsperada || 0);
     if (existing) {
@@ -560,7 +624,10 @@ function revealFile(filePath) {
   }
 }
 
-await ensureStore();
+ensureStore().catch((error) => {
+  console.error("Falha ao inicializar o banco:", error);
+});
+
 app.listen(config.port, () => {
   console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
 });

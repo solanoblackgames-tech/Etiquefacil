@@ -20,7 +20,7 @@ export function buildRuntimeConfig(env = process.env) {
     databaseUrl,
     sessionSecret,
     downloadMode: env.DOWNLOAD_MODE || (isProduction ? "browser" : "local"),
-    cookieSecure: isProduction,
+    cookieSecure: env.COOKIE_SECURE === undefined ? isProduction : env.COOKIE_SECURE === "true",
     trustProxy: isProduction ? 1 : 0
   };
 }

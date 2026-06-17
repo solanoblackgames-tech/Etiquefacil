@@ -1,6 +1,8 @@
 const state = {
   user: null,
   adminUsers: [],
+  adminCatalogRequests: [],
+  adminCatalogProducts: [],
   lots: [],
   selectedLotId: null,
   selectedDiverseLotId: null,
@@ -15,6 +17,7 @@ const state = {
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
     includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false",
+    suggestPrice: localStorage.getItem("etiquefacil.suggestPrice") === "true",
     includeText: localStorage.getItem("etiquefacil.includeText") === "true",
     customText: localStorage.getItem("etiquefacil.customText") || ""
   }
@@ -56,8 +59,16 @@ function bindEvents() {
   $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
 
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
+  $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogRequests);
+  $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
+  $("#adminCatalogRequests").addEventListener("click", handleAdminCatalogRequestsClick);
+  $("#adminCatalogProducts").addEventListener("click", handleAdminCatalogProductsClick);
+
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAdminTab(button.dataset.adminTab));
+  });
 
   $("#adminUsers").addEventListener("submit", handleAdminPasswordSubmit);
 
@@ -75,7 +86,6 @@ function bindEvents() {
       document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       $("#lotsTab").classList.toggle("hidden", button.dataset.tab !== "lots");
-      $("#diverseTab").classList.toggle("hidden", button.dataset.tab !== "diverse");
       $("#searchTab").classList.toggle("hidden", button.dataset.tab !== "search");
     });
   });
@@ -186,11 +196,17 @@ async function addDiverseItem(event) {
   $("#diverseScanMessage").textContent = "";
   button.disabled = true;
   try {
-    const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl, codigoRz })
-    });
+    let valorUnitOverride;
+    if (state.labelOptions.suggestPrice) {
+      const preview = await previewDiverseItem(codigoMl, codigoRz);
+      if (preview.status === "preview") {
+        const product = preview.product || {};
+        valorUnitOverride = await askPriceSuggestion({ codigoMl, product });
+        if (valorUnitOverride === null) return;
+      }
+    }
+
+    const response = await createDiverseItem({ codigoMl, codigoRz, valorUnitOverride });
     input.value = "";
     renderDiverseLot(response.lot);
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
@@ -200,12 +216,259 @@ async function addDiverseItem(event) {
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
     input.focus();
   } catch (error) {
+    if (error.code === "manual_required" || error.status === 404) {
+      try {
+        const manualProduct = await promptManualProduct(codigoMl);
+        if (!manualProduct) {
+          input.select();
+          return;
+        }
+        const response = await createDiverseItem({ codigoMl, codigoRz, manualProduct });
+        input.value = "";
+        renderDiverseLot(response.lot);
+        $("#diverseScanMessage").style.color = "#0f766e";
+        $("#diverseScanMessage").textContent = `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
+        await loadLots(response.lot.id);
+        if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+        input.focus();
+        return;
+      } catch (manualError) {
+        $("#diverseScanMessage").style.color = "";
+        $("#diverseScanMessage").textContent = manualError.message;
+        input.select();
+        return;
+      }
+    }
     $("#diverseScanMessage").style.color = "";
     $("#diverseScanMessage").textContent = error.message;
     input.select();
   } finally {
     button.disabled = false;
   }
+}
+
+async function previewDiverseItem(codigoMl, codigoRz) {
+  return api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigoMl, codigoRz, preview: true })
+  });
+}
+
+async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitOverride }) {
+  return api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigoMl, codigoRz, manualProduct, valorUnitOverride })
+  });
+}
+
+function promptManualProduct(codigoMl) {
+  return askManualProduct(codigoMl);
+}
+
+function parseMoneyInput(value) {
+  return Number(String(value || "").trim().replace(/\./g, "").replace(",", "."));
+}
+
+function askPriceSuggestion({ codigoMl, product }) {
+  return openDecisionModal({
+    title: "Conferir preco",
+    rows: [
+      ["Codigo ML", codigoMl],
+      ["Produto", product.descricao || "Descricao nao encontrada"],
+      ["Preco atual do banco", money(product.valorUnit)]
+    ],
+    fields: [{ name: "valorUnit", label: "Novo preco para este lote/usuario", value: String(product.valorUnit || "").replace(".", ","), hidden: true }],
+    actions: [
+      { id: "no", label: "Nao alterar", primary: true, value: { changed: false } },
+      { id: "yes", label: "Alterar preco", value: { changed: true }, showFields: ["valorUnit"] },
+      { id: "cancel", label: "Cancelar", value: null }
+    ],
+    onSubmit: (action, values) => {
+      if (action === null) return null;
+      if (!action.changed) return undefined;
+      const price = parseMoneyInput(values.valorUnit);
+      if (!Number.isFinite(price) || price <= 0) throw new Error("Preco informado invalido.");
+      return price;
+    }
+  });
+}
+
+function askManualProduct(codigoMl) {
+  return openManualProductModal(codigoMl);
+}
+
+function openManualProductModal(codigoMl) {
+  return new Promise((resolve) => {
+    const modal = $("#manualProductModal");
+    const form = $("#manualProductForm");
+    const code = $("#manualProductCode");
+    const description = $("#manualProductDescription");
+    const price = $("#manualProductPrice");
+    const link = $("#manualProductLink");
+    const photo = $("#manualProductPhoto");
+    const error = $("#manualProductError");
+    const cancel = $("#manualProductCancel");
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      form.onsubmit = null;
+      cancel.onclick = null;
+      modal.onkeydown = null;
+      form.reset();
+      error.textContent = "";
+      setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
+    };
+
+    code.textContent = codigoMl;
+    form.reset();
+    error.textContent = "";
+    modal.classList.remove("hidden");
+
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const descricao = description.value.trim();
+      const valorUnit = parseMoneyInput(price.value);
+      if (!descricao) {
+        error.textContent = "Informe o nome/descricao do produto.";
+        description.focus();
+        return;
+      }
+      if (!Number.isFinite(valorUnit) || valorUnit <= 0) {
+        error.textContent = "Informe um preco valido.";
+        price.focus();
+        return;
+      }
+      const result = {
+        descricao,
+        valorUnit,
+        link: link.value.trim(),
+        foto: photo.value.trim()
+      };
+      cleanup();
+      resolve(result);
+    };
+
+    cancel.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    modal.onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    setTimeout(() => description.focus(), 0);
+  });
+}
+
+function openDecisionModal({ title, rows = [], fields = [], actions = [], onSubmit }) {
+  return new Promise((resolve) => {
+    const modal = $("#decisionModal");
+    const titleEl = $("#decisionTitle");
+    const bodyEl = $("#decisionBody");
+    const fieldsEl = $("#decisionFields");
+    const actionsEl = $("#decisionActions");
+    let activeAction = actions.find((action) => action.primary) || actions[0];
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      modal.onkeydown = null;
+      actionsEl.onclick = null;
+      fieldsEl.oninput = null;
+      titleEl.textContent = "";
+      bodyEl.innerHTML = "";
+      fieldsEl.innerHTML = "";
+      actionsEl.innerHTML = "";
+      setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
+    };
+
+    const submit = (action) => {
+      try {
+        const values = Object.fromEntries([...fieldsEl.querySelectorAll("input")].map((input) => [input.name, input.value]));
+        const result = onSubmit ? onSubmit(action.value, values) : action.value;
+        cleanup();
+        resolve(result);
+      } catch (error) {
+        const message = fieldsEl.querySelector(".message") || document.createElement("p");
+        message.className = "message";
+        message.textContent = error.message;
+        fieldsEl.appendChild(message);
+      }
+    };
+
+    titleEl.textContent = title;
+    bodyEl.innerHTML = rows
+      .map(([label, value]) => `
+        <div class="decision-body-row">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `)
+      .join("");
+    fieldsEl.innerHTML = fields
+      .map((field) => `
+        <label class="${field.hidden ? "hidden" : ""}" data-field-name="${escapeHtml(field.name)}">
+          ${escapeHtml(field.label)}
+          <input name="${escapeHtml(field.name)}" value="${escapeHtml(field.value || "")}" placeholder="${escapeHtml(field.placeholder || "")}" ${field.required ? "required" : ""} />
+        </label>
+      `)
+      .join("");
+    actionsEl.innerHTML = actions
+      .map((action) => `<button type="button" class="${action.primary ? "" : "ghost"}" data-decision-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`)
+      .join("");
+
+    const updateVisibleFields = () => {
+      const visible = new Set(activeAction?.showFields || []);
+      fields.forEach((field) => {
+        const wrapper = [...fieldsEl.querySelectorAll("[data-field-name]")].find((item) => item.dataset.fieldName === field.name);
+        wrapper?.classList.toggle("hidden", !visible.has(field.name) && field.hidden);
+      });
+    };
+
+    actionsEl.onclick = (event) => {
+      const button = event.target.closest("[data-decision-action]");
+      if (!button) return;
+      const action = actions.find((item) => item.id === button.dataset.decisionAction);
+      if (!action) return;
+      if (action.showFields && activeAction?.id !== action.id) {
+        activeAction = action;
+        updateVisibleFields();
+        fieldsEl.querySelector(`[name="${action.showFields[0]}"]`)?.focus();
+        return;
+      }
+      submit(action);
+    };
+
+    modal.onkeydown = (event) => {
+      if (event.key === "Enter") {
+        const target = event.target;
+        if (target?.tagName === "INPUT") {
+          const visibleRequired = [...fieldsEl.querySelectorAll("label:not(.hidden) input[required]")];
+          const hasEmptyRequired = visibleRequired.some((input) => !String(input.value || "").trim());
+          if (hasEmptyRequired) return;
+        }
+        event.preventDefault();
+        submit(activeAction);
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        submit({ value: null });
+      }
+    };
+
+    updateVisibleFields();
+    modal.classList.remove("hidden");
+    modal.focus();
+    const firstVisibleInput = fieldsEl.querySelector("label:not(.hidden) input");
+    const primaryButton = actionsEl.querySelector("[data-decision-action]");
+    (firstVisibleInput || primaryButton)?.focus();
+  });
 }
 
 function createDiverseRz(event) {
@@ -248,6 +511,21 @@ function renderDiverseLot(lot) {
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
 }
 
+function hideNoSheetPanel() {
+  state.selectedDiverseLotId = null;
+  state.selectedDiverseLot = null;
+  state.selectedDiverseRz = null;
+  $("#diverseScanPanel")?.classList.add("hidden");
+  const message = $("#diverseLotMessage");
+  if (message) message.textContent = "";
+}
+
+function isNoSheetLot(lot) {
+  if (!lot) return false;
+  if (Number(lot.custoMedioUnitario || 0) > 0 && Number(lot.percentualArremate || 0) === 0) return true;
+  return (lot.products || []).some((product) => product.origem === "lote_sem_planilha" || product.origem === "lote_sem_planilha_manual" || product.origem === "entrada_diversos");
+}
+
 function renderDiverseRzControls(lot) {
   const active = state.selectedDiverseRz;
   $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
@@ -266,7 +544,7 @@ function renderDiverseRzControls(lot) {
 function diverseRzs(lot) {
   const byRz = new Map();
   for (const item of lot?.items || []) {
-    if (item.tipoItem !== "entrada_diversos") continue;
+    if (!isNoSheetItem(item)) continue;
     const current = byRz.get(item.codigoRz) || { codigoRz: item.codigoRz, items: 0 };
     current.items += item.qtdEsperada || 0;
     byRz.set(item.codigoRz, current);
@@ -302,6 +580,7 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
 function diverseScanStatusMessage(response, codigoRz, parent) {
   if (response.status === "duplicado_rz") return `Quantidade somada na remessa ${codigoRz}.`;
   if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado na remessa ${codigoRz}.`;
+  if (response.status === "cadastro_manual") return `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
   return `SKU ${response.product.sku} gerado na remessa ${codigoRz}.${parent}`;
 }
 
@@ -310,6 +589,7 @@ function diverseLabelOptionsMarkup() {
     <div class="diverse-label-options">
       <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+      <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
         <label>Texto que sera impresso abaixo do preco
@@ -329,6 +609,10 @@ function bindDiverseLabelOptions() {
   $("#diverseIncludePriceToggle").addEventListener("change", (event) => {
     state.labelOptions.includePrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
+  });
+  $("#diverseSuggestPriceToggle").addEventListener("change", (event) => {
+    state.labelOptions.suggestPrice = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.suggestPrice", String(state.labelOptions.suggestPrice));
   });
   $("#diverseIncludeTextToggle").addEventListener("change", (event) => {
     state.labelOptions.includeText = event.currentTarget.checked;
@@ -363,6 +647,8 @@ async function showApp(user) {
     $("#adminApp").classList.remove("hidden");
     $("#adminName").textContent = `${user.name} (${user.email})`;
     await loadAdminUsers();
+    await loadAdminCatalogRequests();
+    await loadAdminCatalogProducts();
     return;
   }
 
@@ -425,6 +711,26 @@ async function loadAdminUsers() {
   renderAdminUsers();
 }
 
+async function loadAdminCatalogRequests() {
+  const response = await api("/api/admin/catalog-requests");
+  state.adminCatalogRequests = response.requests;
+  renderAdminCatalogRequests();
+}
+
+async function loadAdminCatalogProducts(event) {
+  if (event) event.preventDefault();
+  const query = $("#adminCatalogSearchForm") ? new FormData($("#adminCatalogSearchForm")).get("q") : "";
+  const response = await api(`/api/admin/catalog-products?q=${encodeURIComponent(query || "")}`);
+  state.adminCatalogProducts = response.products;
+  renderAdminCatalogProducts();
+}
+
+function setAdminTab(tab) {
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
+  $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
+  $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
+}
+
 async function createAdminUser(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -469,6 +775,100 @@ function renderAdminUsers() {
       ${state.adminUsers.map(adminUserRow).join("")}
     </div>
   `;
+}
+
+function renderAdminCatalogRequests() {
+  const wrapper = $("#adminCatalogRequests");
+  if (!state.adminCatalogRequests.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhuma sugestao enviada ainda.</p>';
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row catalog-request-row admin-row-head">
+        <span>Sugestao</span>
+        <span>Codigo ML</span>
+        <span>Preco</span>
+        <span>Foto</span>
+        <span>Link</span>
+        <span>Status</span>
+        <span>Acoes</span>
+      </div>
+      ${state.adminCatalogRequests.map(adminCatalogRequestRow).join("")}
+    </div>
+  `;
+}
+
+function renderAdminCatalogProducts() {
+  const wrapper = $("#adminCatalogProducts");
+  if (!state.adminCatalogProducts.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum produto aprovado no banco historico.</p>';
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row catalog-product-row admin-row-head">
+        <span>Produto</span>
+        <span>Codigo ML</span>
+        <span>Preco</span>
+        <span>Custo</span>
+        <span>Atualizado</span>
+        <span>Acoes</span>
+      </div>
+      ${state.adminCatalogProducts.map(adminCatalogProductRow).join("")}
+    </div>
+  `;
+}
+
+function adminCatalogProductRow(product) {
+  return `
+    <article class="admin-row catalog-product-row" data-catalog-product-id="${escapeHtml(product.id)}">
+      <div>
+        <strong>${escapeHtml(product.descricao)}</strong>
+        <span class="muted">${escapeHtml(product.categoria || "-")} ${escapeHtml(product.subcategoria || "")}</span>
+      </div>
+      <span>${escapeHtml(product.codigoMl)}</span>
+      <span>${money(product.valorUnit)}</span>
+      <span>${money(product.precoCusto)}</span>
+      <span>${formatDate(product.updatedAt || product.createdAt)}</span>
+      <div class="admin-actions">
+        <button type="button" class="danger" data-delete-catalog-product="${escapeHtml(product.id)}">Excluir do banco</button>
+      </div>
+    </article>
+  `;
+}
+
+function adminCatalogRequestRow(request) {
+  const user = request.user?.email || request.user?.name || "usuario";
+  const pending = request.status === "pending";
+  const imageUrl = String(request.foto || "").trim();
+  const productLink = String(request.link || "").trim();
+  return `
+    <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
+      <div>
+        <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
+        <span class="muted">${escapeHtml(user)} · ${formatDate(request.createdAt)}</span>
+        <span class="muted">${escapeHtml(request.descricao)}</span>
+      </div>
+      <span>${escapeHtml(request.codigoMl)}</span>
+      <span>${money(request.valorUnit)}</span>
+      <span>${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener"><img class="catalog-thumb" src="${escapeHtml(imageUrl)}" alt="Foto do produto" /></a>` : "-"}</span>
+      <span>${productLink ? `<a class="catalog-link" href="${escapeHtml(productLink)}" target="_blank" rel="noopener">Abrir link</a>` : "-"}</span>
+      <span>${catalogRequestStatus(request.status)}</span>
+      <div class="admin-actions">
+        <button type="button" ${pending ? "" : "disabled"} data-review-catalog="approve">Aprovar</button>
+        <button type="button" class="danger" ${pending ? "" : "disabled"} data-review-catalog="reject">Rejeitar</button>
+      </div>
+    </article>
+  `;
+}
+
+function catalogRequestStatus(status) {
+  if (status === "approved") return "Aprovada";
+  if (status === "rejected") return "Rejeitada";
+  return "Pendente";
 }
 
 function adminUserRow(user) {
@@ -537,6 +937,45 @@ async function handleAdminUsersClick(event) {
   }
 }
 
+async function handleAdminCatalogRequestsClick(event) {
+  const button = event.target.closest("[data-review-catalog]");
+  if (!button) return;
+  const row = button.closest("[data-catalog-request-id]");
+  const action = button.dataset.reviewCatalog;
+  button.disabled = true;
+  try {
+    await api(`/api/admin/catalog-requests/${encodeURIComponent(row.dataset.catalogRequestId)}/${encodeURIComponent(action)}`, { method: "POST" });
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = action === "approve" ? "Sugestao aprovada." : "Sugestao rejeitada.";
+    await loadAdminCatalogRequests();
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleAdminCatalogProductsClick(event) {
+  const button = event.target.closest("[data-delete-catalog-product]");
+  if (!button) return;
+  const product = state.adminCatalogProducts.find((item) => item.id === button.dataset.deleteCatalogProduct);
+  if (!product || !confirm(`Excluir ${product.codigoMl} do banco historico oficial?`)) return;
+
+  button.disabled = true;
+  try {
+    await api(`/api/admin/catalog-products/${encodeURIComponent(product.id)}`, { method: "DELETE" });
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = "Produto removido do banco historico.";
+    await loadAdminCatalogProducts();
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadLots(selectId = state.selectedLotId) {
   const response = await api("/api/lots");
   state.lots = response.lots;
@@ -553,6 +992,7 @@ async function loadLots(selectId = state.selectedLotId) {
 function clearLotDetail() {
   $("#lotDetail").classList.add("empty");
   $("#lotDetail").textContent = "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
+  hideNoSheetPanel();
 }
 
 function renderLots() {
@@ -581,6 +1021,11 @@ async function selectLot(lotId) {
   state.selectedLotId = lotId;
   state.selectedRz = null;
   const response = await api(`/api/lots/${lotId}`);
+  if (isNoSheetLot(response.lot)) {
+    renderDiverseLot(response.lot);
+  } else {
+    hideNoSheetPanel();
+  }
   renderLots();
   renderLotDetail(response.lot);
 }
@@ -590,6 +1035,7 @@ function renderLotDetail(lot) {
   detail.classList.remove("empty");
   detail.innerHTML = `
     <h2>${escapeHtml(lot.nomeArquivo)}</h2>
+    ${isNoSheetLot(lot) ? '<p class="muted">Lote sem planilha: use o painel acima para gerar/usar RZ e iniciar a bipagem.</p>' : ""}
     <div class="actions">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
@@ -1236,7 +1682,7 @@ function itemRow(item) {
 }
 
 function diverseItemsTable(lot) {
-  const items = (lot.items || []).filter((item) => item.tipoItem === "entrada_diversos");
+  const items = (lot.items || []).filter(isNoSheetItem);
   if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
   const sortedItems = [...items].sort((a, b) => {
     const byRz = String(a.codigoRz || "").localeCompare(String(b.codigoRz || ""));
@@ -1259,6 +1705,10 @@ function diverseItemsTable(lot) {
       ${sortedItems.map((item, index) => diverseItemRow(item, sortedItems[index - 1]?.codigoRz !== item.codigoRz)).join("")}
     </div>
   `;
+}
+
+function isNoSheetItem(item) {
+  return item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha";
 }
 
 function diverseItemRow(item, startsRz = false) {
@@ -1299,8 +1749,23 @@ function palletRow(item) {
 async function api(url, options = {}) {
   const response = await fetch(url, options);
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(payload.error || "Erro inesperado.");
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      const error = new Error(response.ok ? "Resposta invalida do servidor." : "Servidor retornou uma pagina de erro. Recarregue e tente novamente.");
+      error.status = response.status;
+      error.raw = text.slice(0, 200);
+      throw error;
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(payload.error || "Erro inesperado.");
+    error.code = payload.code;
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 

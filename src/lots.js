@@ -1,5 +1,7 @@
 import { roundMoney } from "./domain.js";
 
+const COMPLETE_EXPORT_ORIGINS = new Set(["planilha", "entrada_diversos", "lote_sem_planilha", "lote_sem_planilha_manual"]);
+
 export function summarizeLot(db, lot, includeItems = false) {
   const products = db.products.filter((product) => product.lotId === lot.id);
   const items = db.rzItems.filter((item) => item.lotId === lot.id);
@@ -39,7 +41,7 @@ export function summarizeLot(db, lot, includeItems = false) {
 }
 
 export function findProductHistory(db, userId, currentLotId, codigoMl) {
-  const userLots = new Map(db.lots.filter((lot) => lot.userId === userId && lot.id !== currentLotId).map((lot) => [lot.id, lot]));
+  const userLots = new Map(db.lots.filter((lot) => lot.id !== currentLotId).map((lot) => [lot.id, lot]));
   return db.products
     .filter((product) => product.codigoMl === codigoMl && userLots.has(product.lotId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -48,7 +50,7 @@ export function findProductHistory(db, userId, currentLotId, codigoMl) {
 
 export function getBlingProducts(db, lot, kind) {
   const products = db.products.filter((product) => product.lotId === lot.id);
-  if (kind === "complete") return products.filter((product) => product.origem === "planilha" || product.origem === "entrada_diversos");
+  if (kind === "complete") return products.filter((product) => COMPLETE_EXPORT_ORIGINS.has(product.origem));
   if (kind === "excess") return products.filter((product) => product.origem === "excedente_externo");
   throw new Error("Tipo de exportação inválido.");
 }

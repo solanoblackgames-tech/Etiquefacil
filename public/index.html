@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260616-remessa-labels" />
+    <link rel="stylesheet" href="styles.css?v=20260617-backoffice-banco" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -40,19 +40,56 @@
       </header>
 
       <section class="upload-band">
-        <form id="uploadForm" class="upload-grid">
-          <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
-          <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
-          <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-          <label>Prefixo SKU<input name="skuPrefix" placeholder="AMZ04L" required /></label>
-          <button type="submit">Subir planilha</button>
-        </form>
+        <div class="lot-entry-grid">
+          <form id="uploadForm" class="upload-grid">
+            <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
+            <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
+            <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+            <label>Prefixo SKU<input name="skuPrefix" placeholder="AMZ04L" required /></label>
+            <button type="submit">Subir planilha</button>
+          </form>
+
+          <section class="diverse-shell">
+            <form id="diverseLotForm" class="diverse-form">
+              <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
+              <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+              <label>Custo medio unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+              <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
+              <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+              <button type="submit">Subir lote sem planilha</button>
+            </form>
+            <p id="diverseLotMessage" class="message"></p>
+
+            <section id="diverseScanPanel" class="hidden">
+              <div class="diverse-heading">
+                <div>
+                  <span class="muted">Lote ativo</span>
+                  <h2 id="diverseLotTitle"></h2>
+                </div>
+                <button type="button" id="diverseDownloadButton">Baixar Bling</button>
+              </div>
+              <form id="diverseRzForm" class="diverse-rz-form">
+                <input name="codigoRz" placeholder="Novo RZ" autocomplete="off" required />
+                <button type="submit">Gerar/usar RZ</button>
+                <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
+                <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling da remessa</button>
+              </form>
+              <div id="diverseRzList" class="diverse-rz-list"></div>
+              <form id="diverseScanForm" class="search-bar">
+                <input name="codigoMl" placeholder="Bipe o codigo para buscar no historico" autocomplete="off" required />
+                <button type="submit">Adicionar</button>
+              </form>
+              <div id="diverseLabelOptions"></div>
+              <p id="diverseScanMessage" class="message"></p>
+              <div id="diverseItems" class="diverse-items"></div>
+            </section>
+          </section>
+        </div>
         <p id="uploadMessage" class="message"></p>
       </section>
 
       <nav class="tabs">
         <button data-tab="lots" class="active">Lotes</button>
-        <button data-tab="diverse">Gerar lote de entrada diversos</button>
         <button data-tab="search">Busca ML</button>
       </nav>
 
@@ -74,42 +111,6 @@
         <div id="searchResults"></div>
       </section>
 
-      <section id="diverseTab" class="search hidden">
-        <section class="diverse-shell">
-          <form id="diverseLotForm" class="diverse-form">
-            <label>Nome do lote<input name="name" placeholder="Entrada diversos" /></label>
-            <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-            <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
-            <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-            <button type="submit">Criar lote</button>
-          </form>
-          <p id="diverseLotMessage" class="message"></p>
-
-          <section id="diverseScanPanel" class="hidden">
-            <div class="diverse-heading">
-              <div>
-                <span class="muted">Lote ativo</span>
-                <h2 id="diverseLotTitle"></h2>
-              </div>
-              <button type="button" id="diverseDownloadButton">Baixar Bling</button>
-            </div>
-            <form id="diverseRzForm" class="diverse-rz-form">
-              <input name="codigoRz" placeholder="Nova remessa" autocomplete="off" required />
-              <button type="submit">Criar/usar remessa</button>
-              <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
-              <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling da remessa</button>
-            </form>
-            <div id="diverseRzList" class="diverse-rz-list"></div>
-            <form id="diverseScanForm" class="search-bar">
-              <input name="codigoMl" placeholder="Bipe o codigo para buscar no historico" autocomplete="off" required />
-              <button type="submit">Adicionar</button>
-            </form>
-            <div id="diverseLabelOptions"></div>
-            <p id="diverseScanMessage" class="message"></p>
-            <div id="diverseItems" class="diverse-items"></div>
-          </section>
-        </section>
-      </section>
     </main>
 
     <main id="adminApp" class="app hidden">
@@ -121,24 +122,52 @@
         <button id="adminLogoutButton" class="ghost">Sair</button>
       </header>
 
+      <nav class="tabs admin-tabs">
+        <button data-admin-tab="users" class="active">Usuarios</button>
+        <button data-admin-tab="catalog">Banco historico</button>
+      </nav>
+
       <section class="admin-shell">
-        <section class="admin-panel">
-          <h2>Gestao de usuarios</h2>
-          <form id="adminCreateUserForm" class="admin-form">
-            <label>Nome<input name="name" required /></label>
-            <label>E-mail<input name="email" type="email" required /></label>
-            <label>Senha<input name="password" type="password" required /></label>
-            <button type="submit">Criar usuario</button>
-          </form>
-          <p id="adminMessage" class="message"></p>
+        <section id="adminUsersTab">
+          <section class="admin-panel">
+            <h2>Gestao de usuarios</h2>
+            <form id="adminCreateUserForm" class="admin-form">
+              <label>Nome<input name="name" required /></label>
+              <label>E-mail<input name="email" type="email" required /></label>
+              <label>Senha<input name="password" type="password" required /></label>
+              <button type="submit">Criar usuario</button>
+            </form>
+            <p id="adminMessage" class="message"></p>
+          </section>
+
+          <section class="admin-panel">
+            <div class="admin-heading">
+              <h2>Usuarios cadastrados</h2>
+              <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
+            </div>
+            <div id="adminUsers" class="admin-users"></div>
+          </section>
         </section>
 
-        <section class="admin-panel">
-          <div class="admin-heading">
-            <h2>Usuarios cadastrados</h2>
-            <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
-          </div>
-          <div id="adminUsers" class="admin-users"></div>
+        <section id="adminCatalogTab" class="hidden">
+          <section class="admin-panel">
+            <div class="admin-heading">
+              <h2>Sugestoes para banco historico</h2>
+              <button id="adminCatalogRefreshButton" class="ghost" type="button">Atualizar</button>
+            </div>
+            <div id="adminCatalogRequests" class="admin-users"></div>
+          </section>
+
+          <section class="admin-panel">
+            <div class="admin-heading">
+              <h2>Banco historico oficial</h2>
+              <form id="adminCatalogSearchForm" class="search-bar">
+                <input name="q" placeholder="Buscar por Codigo ML ou descricao" />
+                <button type="submit">Buscar</button>
+              </form>
+            </div>
+            <div id="adminCatalogProducts" class="admin-users"></div>
+          </section>
         </section>
       </section>
     </main>
@@ -163,6 +192,48 @@
       </div>
     </section>
 
-    <script src="app.js?v=20260616-scan-decrement" type="module"></script>
+    <section id="decisionModal" class="label-modal hidden" aria-live="polite" tabindex="-1">
+      <div class="decision-stage">
+        <h2 id="decisionTitle"></h2>
+        <div id="decisionBody"></div>
+        <div id="decisionFields" class="decision-fields"></div>
+        <div id="decisionActions" class="label-controls"></div>
+      </div>
+    </section>
+
+    <section id="manualProductModal" class="label-modal hidden" aria-live="polite" tabindex="-1">
+      <form id="manualProductForm" class="decision-stage">
+        <h2>Cadastro manual</h2>
+        <div class="decision-body-row">
+          <span>Codigo ML</span>
+          <strong id="manualProductCode"></strong>
+        </div>
+        <div class="decision-body-row">
+          <span>Status</span>
+          <strong>Nao encontrado no banco historico</strong>
+        </div>
+        <div class="decision-fields">
+          <label>Nome/descricao do produto
+            <input id="manualProductDescription" name="descricao" placeholder="Ex: Kit 4 vestido infantil menina estampado" required />
+          </label>
+          <label>Preco de venda para Bling/etiqueta
+            <input id="manualProductPrice" name="valorUnit" placeholder="Ex: 129,90" required />
+          </label>
+          <label>Link do produto
+            <input id="manualProductLink" name="link" placeholder="Opcional" />
+          </label>
+          <label>URL/foto do produto
+            <input id="manualProductPhoto" name="foto" placeholder="Opcional" />
+          </label>
+          <p id="manualProductError" class="message"></p>
+        </div>
+        <div class="label-controls">
+          <button type="submit">Cadastrar</button>
+          <button id="manualProductCancel" type="button" class="ghost">Cancelar</button>
+        </div>
+      </form>
+    </section>
+
+    <script src="app.js?v=20260617-backoffice-banco" type="module"></script>
   </body>
 </html>
