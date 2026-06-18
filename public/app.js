@@ -81,13 +81,8 @@ function bindEvents() {
 
   $("#uploadForm").addEventListener("submit", uploadLot);
 
-  document.querySelectorAll(".tabs button").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-      $("#lotsTab").classList.toggle("hidden", button.dataset.tab !== "lots");
-      $("#searchTab").classList.toggle("hidden", button.dataset.tab !== "search");
-    });
+  document.querySelectorAll("#app [data-tab]").forEach((button) => {
+    button.addEventListener("click", () => setMainTab(button.dataset.tab));
   });
 
   $("#diverseLotForm").addEventListener("submit", createDiverseLot);
@@ -149,6 +144,7 @@ async function uploadLot(event) {
     form.reset();
     $("#uploadMessage").textContent = `Lote importado: ${response.lot.nomeArquivo}`;
     await loadLots(response.lot.id);
+    setMainTab("lots");
   } catch (error) {
     $("#uploadMessage").textContent = error.message;
   } finally {
@@ -174,6 +170,7 @@ async function createDiverseLot(event) {
     $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
+    setMainTab("home");
     $("#diverseRzForm input[name='codigoRz']").focus();
   } catch (error) {
     $("#diverseLotMessage").style.color = "";
@@ -654,6 +651,7 @@ async function showApp(user) {
 
   $("#adminApp").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  $("#app .app-nav")?.classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
   const scanRequest = getScanRequest();
   if (scanRequest) {
@@ -661,13 +659,26 @@ async function showApp(user) {
     return;
   }
   await loadLots();
+  setMainTab("home");
 }
 
 function showAuth() {
   document.body.classList.remove("scan-only");
+  document.body.classList.remove("lot-focus");
   $("#auth").classList.remove("hidden");
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
+}
+
+function setMainTab(tab) {
+  const target = tab || "home";
+  document.querySelectorAll("#app [data-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === target);
+  });
+  $(".upload-band").classList.toggle("hidden", target !== "home");
+  $("#lotsTab").classList.toggle("hidden", target !== "lots");
+  $("#searchTab").classList.toggle("hidden", target !== "search");
+  document.body.classList.remove("lot-focus");
 }
 
 function getScanRequest() {
@@ -683,7 +694,9 @@ async function showScanOnly({ lotId, codigoRz }) {
   state.selectedLotId = lotId;
   state.selectedRz = codigoRz;
   document.body.classList.add("scan-only");
+  document.body.classList.remove("lot-focus");
   $("#app .topbar h1").textContent = "Bipagem";
+  $("#app .app-nav")?.classList.add("hidden");
   $("#uploadForm").closest(".upload-band").classList.add("hidden");
   $(".tabs").classList.add("hidden");
   $("#lotsTab").classList.remove("hidden");
@@ -990,6 +1003,7 @@ async function loadLots(selectId = state.selectedLotId) {
 }
 
 function clearLotDetail() {
+  document.body.classList.remove("lot-focus");
   $("#lotDetail").classList.add("empty");
   $("#lotDetail").textContent = "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
   hideNoSheetPanel();
@@ -1020,6 +1034,7 @@ function renderLots() {
 async function selectLot(lotId) {
   state.selectedLotId = lotId;
   state.selectedRz = null;
+  setMainTab("lots");
   const response = await api(`/api/lots/${lotId}`);
   if (isNoSheetLot(response.lot)) {
     renderDiverseLot(response.lot);
@@ -1028,13 +1043,20 @@ async function selectLot(lotId) {
   }
   renderLots();
   renderLotDetail(response.lot);
+  document.body.classList.add("lot-focus");
 }
 
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
   detail.classList.remove("empty");
   detail.innerHTML = `
-    <h2>${escapeHtml(lot.nomeArquivo)}</h2>
+    <div class="work-heading">
+      <div>
+        <span class="muted">Lote em trabalho</span>
+        <h2>${escapeHtml(lot.nomeArquivo)}</h2>
+      </div>
+      <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
+    </div>
     ${isNoSheetLot(lot) ? '<p class="muted">Lote sem planilha: use o painel acima para gerar/usar RZ e iniciar a bipagem.</p>' : ""}
     <div class="actions">
       <button data-download="complete">Baixar Bling - Lote completo</button>
@@ -1066,6 +1088,13 @@ function renderLotDetail(lot) {
     </div>
     <div id="rzDetail"></div>
   `;
+  $("#backToLotsButton").addEventListener("click", () => {
+    state.selectedLotId = null;
+    state.selectedRz = null;
+    document.body.classList.remove("lot-focus");
+    renderLots();
+    clearLotDetail();
+  });
   detail.querySelectorAll("button[data-download]").forEach((button) => {
     button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
   });
@@ -1145,20 +1174,6 @@ async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") 
 function renderRz(lot, codigoRz) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
-  const opened = openScanWindow(lot.id, codigoRz);
-  const rzDetail = $("#rzDetail");
-  if (rzDetail) {
-    rzDetail.innerHTML = `
-      <div class="scan-opened">
-        <strong>Bipagem aberta em uma nova janela.</strong>
-        <span class="muted">Voce pode continuar navegando neste sistema enquanto o operador bipa o ${escapeHtml(codigoRz)}.</span>
-        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
-      </div>
-    `;
-    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, codigoRz));
-  }
-  if (!opened) alert("O navegador bloqueou a janela de bipagem. Permita pop-ups para o Etiquefacil.");
-  return;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   $("#rzDetail").innerHTML = `
@@ -1189,20 +1204,7 @@ function renderRz(lot, codigoRz) {
       ${items.map(itemRow).join("")}
     </div>
   `;
-  $("#scanButton").addEventListener("click", () => scanCurrent(lot.id, codigoRz));
-  $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lot.id, codigoRz));
-  $("#autoPrintToggle").addEventListener("change", (event) => {
-    state.labelOptions.autoPrint = event.currentTarget.checked;
-    localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
-  });
-  $("#includePriceToggle").addEventListener("change", (event) => {
-    state.labelOptions.includePrice = event.currentTarget.checked;
-    localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
-  });
-  $("#scanInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") scanCurrent(lot.id, codigoRz);
-  });
-  $("#scanInput").focus();
+  bindScanControls(lot.id, codigoRz);
 }
 
 function renderPallet(lot, codigoRz) {

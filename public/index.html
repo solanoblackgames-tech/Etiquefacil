@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260617-backoffice-banco" />
+    <link rel="stylesheet" href="styles.css?v=20260618-ui-focus" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -36,12 +36,26 @@
           <h1>Etiquefácil</h1>
           <span id="userName"></span>
         </div>
+        <nav class="app-nav">
+          <button data-tab="home" class="active" type="button">Entradas</button>
+          <button data-tab="lots" type="button">Lotes</button>
+          <button data-tab="search" type="button">Busca ML</button>
+        </nav>
         <button id="logoutButton" class="ghost">Sair</button>
       </header>
 
       <section class="upload-band">
+        <div class="view-heading">
+          <span class="muted">Home</span>
+          <h2>Entradas de lotes</h2>
+          <p>Cadastre uma planilha ou crie um lote avulso para iniciar o trabalho.</p>
+        </div>
         <div class="lot-entry-grid">
-          <form id="uploadForm" class="upload-grid">
+          <form id="uploadForm" class="upload-grid entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Com planilha</span>
+              <h3>Importar XLSX</h3>
+            </div>
             <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
             <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
             <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
@@ -49,7 +63,11 @@
             <button type="submit">Subir planilha</button>
           </form>
 
-          <section class="diverse-shell">
+          <section class="diverse-shell entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Sem planilha</span>
+              <h3>Lote avulso</h3>
+            </div>
             <form id="diverseLotForm" class="diverse-form">
               <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
               <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
@@ -88,14 +106,12 @@
         <p id="uploadMessage" class="message"></p>
       </section>
 
-      <nav class="tabs">
-        <button data-tab="lots" class="active">Lotes</button>
-        <button data-tab="search">Busca ML</button>
-      </nav>
-
-      <section id="lotsTab" class="layout">
+      <section id="lotsTab" class="layout hidden">
         <aside class="lot-list">
-          <h2>Planilhas</h2>
+          <div class="aside-heading">
+            <span class="muted">Dashboard</span>
+            <h2>Lotes ativos</h2>
+          </div>
           <div id="lots"></div>
         </aside>
         <section class="detail">
@@ -234,6 +250,6 @@
       </form>
     </section>
 
-    <script src="app.js?v=20260617-backoffice-banco" type="module"></script>
+    <script src="app.js?v=20260618-ui-focus" type="module"></script>
   </body>
 </html>
