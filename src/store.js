@@ -1509,7 +1509,13 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         l.fornecedor as lot__fornecedor,
         l.prefixo_sku as lot__prefixo_sku,
         l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
-        l.created_at as lot__created_at
+        l.created_at as lot__created_at,
+        cp.codigo_ml as catalog__codigo_ml,
+        cp.descricao as catalog__descricao,
+        cp.valor_unit as catalog__valor_unit,
+        cp.preco_custo as catalog__preco_custo,
+        cp.categoria as catalog__categoria,
+        cp.subcategoria as catalog__subcategoria
       from products p
       join lots l on l.id = p.lot_id
       left join catalog_products cp on upper(trim(cp.codigo_ml)) = upper(trim(p.codigo_ml))
@@ -1523,10 +1529,19 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
     [currentLotId, codigoMl, limit, userId]
   );
 
-  return result.rows.map((row) => ({
-    ...productFromRow(row),
-    lot: lotFromPrefixedRow(row, "lot__")
-  }));
+  return result.rows.map((row) => {
+    const product = productFromRow(row);
+    return {
+      ...product,
+      codigoMl: row.catalog__codigo_ml,
+      descricao: row.catalog__descricao,
+      valorUnit: num(row.catalog__valor_unit),
+      precoCusto: num(row.catalog__preco_custo),
+      categoria: row.catalog__categoria || "",
+      subcategoria: row.catalog__subcategoria || "",
+      lot: lotFromPrefixedRow(row, "lot__")
+    };
+  });
 }
 
 function findCatalogProduct(db, codigoMl) {

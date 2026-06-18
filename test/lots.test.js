@@ -113,6 +113,8 @@ test("findApprovedProductHistory only returns history approved in catalog", () =
         id: "approved-suggestion",
         lotId: "old-lot",
         codigoMl: "ML-APPROVED",
+        descricao: "Produto antigo incorreto",
+        valorUnit: 500,
         origem: "lote_sem_planilha_manual",
         createdAt: "2026-06-17T00:00:00.000Z"
       },
@@ -139,8 +141,8 @@ test("findApprovedProductHistory only returns history approved in catalog", () =
       }
     ],
     catalogProducts: [
-      { id: "catalog-1", codigoMl: "ML-APPROVED" },
-      { id: "catalog-2", codigoMl: "ML-SHEET-APPROVED" }
+      { id: "catalog-1", codigoMl: "ML-APPROVED", descricao: "Produto oficial aprovado", valorUnit: 105 },
+      { id: "catalog-2", codigoMl: "ML-SHEET-APPROVED", descricao: "Produto de planilha aprovado", valorUnit: 220 }
     ]
   };
 
@@ -149,6 +151,10 @@ test("findApprovedProductHistory only returns history approved in catalog", () =
   assert.deepEqual(
     findApprovedProductHistory(db, "user-1", "current-lot", "ML-APPROVED").map((product) => product.id),
     ["approved-suggestion"]
+  );
+  assert.deepEqual(
+    findApprovedProductHistory(db, "user-1", "current-lot", "ML-APPROVED").map((product) => [product.descricao, product.valorUnit]),
+    [["Produto oficial aprovado", 105]]
   );
   assert.deepEqual(
     findApprovedProductHistory(db, "user-1", "current-lot", "ML-SHEET-APPROVED").map((product) => product.id),

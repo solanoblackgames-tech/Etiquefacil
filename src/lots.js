@@ -50,11 +50,20 @@ export function findProductHistory(db, userId, currentLotId, codigoMl) {
 }
 
 export function findApprovedProductHistory(db, userId, currentLotId, codigoMl) {
-  const approvedCodes = new Set((db.catalogProducts || []).map((product) => normalizeCode(product.codigoMl)));
+  const approvedByCode = new Map((db.catalogProducts || []).map((product) => [normalizeCode(product.codigoMl), product]));
   return findProductHistory(db, userId, currentLotId, codigoMl).filter((product) => {
     if (product.lot?.userId !== userId) return false;
-    return approvedCodes.has(normalizeCode(product.codigoMl));
-  });
+    return approvedByCode.has(normalizeCode(product.codigoMl));
+  }).map((product) => ({
+    ...product,
+    ...approvedByCode.get(normalizeCode(product.codigoMl)),
+    id: product.id,
+    lotId: product.lotId,
+    sku: product.sku,
+    qtdTotal: product.qtdTotal,
+    origem: product.origem,
+    lot: product.lot
+  }));
 }
 
 export function getBlingProducts(db, lot, kind) {
