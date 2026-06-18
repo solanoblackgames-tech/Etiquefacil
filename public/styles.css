@@ -391,6 +391,46 @@ h3 {
   margin: 20px 0 10px;
 }
 
+.lot-preview-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.preview-rz-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.preview-rz-row {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(140px, 1.2fr) repeat(5, minmax(90px, 1fr));
+  padding: 11px 12px;
+}
+
+.preview-rz-row:last-child {
+  border-bottom: 0;
+}
+
+.preview-rz-row strong,
+.preview-rz-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview-rz-row small {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+
 .summary-grid {
   display: grid;
   gap: 10px;
@@ -1204,6 +1244,7 @@ h3 {
   .scan-box,
   .custom-text-row,
   .item-row,
+  .preview-rz-row,
   .diverse-rz-form,
   .diverse-label-options,
   .diverse-form,

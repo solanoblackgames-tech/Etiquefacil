@@ -5,6 +5,7 @@ const state = {
   adminCatalogProducts: [],
   lots: [],
   selectedLotId: null,
+  previewLotId: null,
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
   selectedDiverseRz: null,
@@ -728,6 +729,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   const target = tab || "home";
   if (resetSelection) {
     state.selectedLotId = null;
+    state.previewLotId = null;
     state.selectedRz = null;
     renderLots();
     clearLotDetail();
@@ -1056,6 +1058,7 @@ async function loadLots(selectId = state.selectedLotId) {
   if (!selectId || !state.lots.some((lot) => lot.id === selectId)) {
     selectId = null;
     state.selectedLotId = null;
+    state.previewLotId = null;
     state.selectedRz = null;
     clearLotDetail();
   }
@@ -1065,6 +1068,7 @@ async function loadLots(selectId = state.selectedLotId) {
 
 function clearLotDetail() {
   document.body.classList.remove("lot-focus");
+  state.previewLotId = null;
   $("#lotDetail").classList.add("empty");
   $("#lotDetail").textContent = "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
   hideNoSheetPanel();
@@ -1080,20 +1084,40 @@ function renderLots() {
 
   for (const lot of state.lots) {
     const card = document.createElement("article");
-    card.className = `lot-card ${lot.id === state.selectedLotId ? "active" : ""}`;
+    const activeLotId = state.previewLotId || state.selectedLotId;
+    card.className = `lot-card ${lot.id === activeLotId ? "active" : ""}`;
     card.innerHTML = `
       <strong>${escapeHtml(lot.nomeArquivo)}</strong>
       <span class="muted">${lot.totalProducts} SKUs · ${lot.rzs.length} RZs</span>
       <span class="muted">${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}</span>
       ${lot.totalExcessExternal ? `<span class="badge excess">${lot.totalExcessExternal} excedente(s)</span>` : ""}
     `;
-    card.addEventListener("click", () => selectLot(lot.id));
+    card.addEventListener("click", () => previewLot(lot.id));
     wrapper.appendChild(card);
+  }
+}
+
+async function previewLot(lotId) {
+  state.previewLotId = lotId;
+  state.selectedLotId = null;
+  state.selectedRz = null;
+  setMainTab("lots", { push: false });
+  renderLots();
+  $("#lotDetail").classList.remove("empty");
+  $("#lotDetail").innerHTML = '<p class="muted">Carregando status do lote...</p>';
+
+  try {
+    const response = await api(`/api/lots/${lotId}`);
+    renderLotPreview(response.lot);
+  } catch (error) {
+    $("#lotDetail").classList.add("empty");
+    $("#lotDetail").textContent = error.message;
   }
 }
 
 async function selectLot(lotId, { push = true } = {}) {
   state.selectedLotId = lotId;
+  state.previewLotId = null;
   state.selectedRz = null;
   setMainTab("lots", { push: false });
   const response = await api(`/api/lots/${lotId}`);
@@ -1107,6 +1131,44 @@ async function selectLot(lotId, { push = true } = {}) {
   document.body.classList.add("lot-focus");
   if (push) updateRoute(lotPath(lotId));
   return response.lot;
+}
+
+function renderLotPreview(lot) {
+  const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
+  const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
+  const checkedRzs = lot.rzs.filter((rz) => Number(rz.qtyPercent || 0) >= 100 && Number(rz.missing || 0) === 0 && Number(rz.excess || 0) === 0).length;
+  const status = missingQty === 0 && excessQty === 0 && lot.totalItems > 0 ? "Conferido" : lot.progress.checkedQty > 0 ? "Em andamento" : "Pendente";
+  const detail = $("#lotDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="lot-preview-panel">
+      <div class="work-heading">
+        <div>
+          <span class="muted">Status do lote</span>
+          <h2>${escapeHtml(lot.nomeArquivo)}</h2>
+        </div>
+        <button type="button" id="openLotButton">Abrir lote</button>
+      </div>
+      <div class="summary-grid">
+        ${metric("Status", status)}
+        ${metric("SKUs", lot.totalProducts)}
+        ${metric("RZs", `${checkedRzs}/${lot.rzs.length}`)}
+        ${metric("Excedentes", lot.totalExcessExternal)}
+      </div>
+      <h3 class="section-title">Andamento geral</h3>
+      <div class="summary-grid">
+        ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
+        ${progressMetric("Preco de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`)}
+        ${metric("Itens faltantes", missingQty)}
+        ${metric("Itens excedentes", excessQty)}
+      </div>
+      <h3 class="section-title">Resumo das RZs</h3>
+      <div class="preview-rz-list">
+        ${lot.rzs.length ? lot.rzs.map(previewRzRow).join("") : '<p class="muted">Nenhuma RZ encontrada neste lote.</p>'}
+      </div>
+    </section>
+  `;
+  $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
 }
 
 function renderLotDetail(lot) {
@@ -1745,6 +1807,20 @@ function progressMetric(label, percent, detail) {
       <div class="progress-bar"><i style="width: ${safePercent}%"></i></div>
       <em>${escapeHtml(detail)}</em>
     </div>
+  `;
+}
+
+function previewRzRow(rz) {
+  const status = rz.missing === 0 && rz.excess === 0 && rz.checked > 0 ? "OK" : rz.checked > 0 ? "Parcial" : "Pendente";
+  return `
+    <article class="preview-rz-row">
+      <strong>${escapeHtml(rz.codigoRz)}</strong>
+      <span><small>Status</small>${escapeHtml(status)}</span>
+      <span><small>Conferido</small>${rz.checked}/${rz.expected}</span>
+      <span><small>Faltante</small>${rz.missing}</span>
+      <span><small>Excedente</small>${rz.excess}</span>
+      <span><small>Venda conf.</small>${money(rz.checkedValue)}</span>
+    </article>
   `;
 }
 
