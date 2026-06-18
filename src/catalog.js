@@ -29,7 +29,7 @@ export function parseCatalogRows(rows) {
   const products = [];
 
   for (const row of rows.slice(headerIndex + 1)) {
-    const codigoMl = String(valueAt(row, index, "codigoMl") ?? "").trim();
+    const codigoMl = String(valueAt(row, index, "codigoMl") ?? "").trim().toUpperCase();
     const descricao = String(valueAt(row, index, "descricao") ?? "").trim();
     if (!codigoMl || !descricao) continue;
 

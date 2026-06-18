@@ -28,6 +28,7 @@ const $ = (selector) => document.querySelector(selector);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const formatDate = (value) => new Date(value).toLocaleDateString("pt-BR");
 const routePath = (path) => `${window.location.origin}${path}`;
+const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
 
 await bootstrap();
 
@@ -103,6 +104,7 @@ function bindEvents() {
     if (state.selectedDiverseLotId && state.selectedDiverseRz) downloadDiverseRzBling(state.selectedDiverseLotId, state.selectedDiverseRz);
   });
   $("#searchForm").addEventListener("submit", searchMl);
+  document.addEventListener("input", handleCodigoMlInput);
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
   $("#labelCloseButton").addEventListener("click", () => hideLabelPreview());
@@ -119,6 +121,19 @@ function bindEvents() {
   window.addEventListener("afterprint", () => {
     cleanupLabelPrintRoot();
   });
+}
+
+function handleCodigoMlInput(event) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
+  if (input.name !== "codigoMl" && input.id !== "scanInput") return;
+
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  const upper = input.value.toUpperCase();
+  if (input.value === upper) return;
+  input.value = upper;
+  if (start !== null && end !== null) input.setSelectionRange(start, end);
 }
 
 async function submitAuth(url, form) {
@@ -191,7 +206,8 @@ async function addDiverseItem(event) {
   const form = event.currentTarget;
   const input = form.querySelector("input[name='codigoMl']");
   const button = form.querySelector("button");
-  const codigoMl = input.value.trim();
+  const codigoMl = normalizeCodigoMl(input.value);
+  input.value = codigoMl;
   const codigoRz = state.selectedDiverseRz;
   if (!codigoMl || !codigoRz) return;
 
@@ -505,6 +521,7 @@ function renderDiverseLot(lot) {
   const rzs = diverseRzs(lot);
   if (state.selectedDiverseRz && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
   if (!state.selectedDiverseRz && rzs.length) state.selectedDiverseRz = rzs[0].codigoRz;
+  mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
   renderDiverseRzControls(lot);
@@ -518,8 +535,25 @@ function hideNoSheetPanel() {
   state.selectedDiverseLot = null;
   state.selectedDiverseRz = null;
   $("#diverseScanPanel")?.classList.add("hidden");
+  moveDiversePanelToHome();
   const message = $("#diverseLotMessage");
   if (message) message.textContent = "";
+}
+
+function mountDiversePanelForCurrentView() {
+  const panel = $("#diverseScanPanel");
+  const mount = $("#diversePanelMount");
+  if (panel && mount && panel.parentElement !== mount) {
+    mount.appendChild(panel);
+  }
+}
+
+function moveDiversePanelToHome() {
+  const panel = $("#diverseScanPanel");
+  const message = $("#diverseLotMessage");
+  if (panel && message && panel.parentElement !== message.parentElement) {
+    message.insertAdjacentElement("afterend", panel);
+  }
 }
 
 function isNoSheetLot(lot) {
@@ -1151,13 +1185,13 @@ async function selectLot(lotId, { push = true } = {}) {
   state.selectedRz = null;
   setMainTab("lots", { push: false });
   const response = await api(`/api/lots/${lotId}`);
+  renderLots();
+  renderLotDetail(response.lot);
   if (isNoSheetLot(response.lot)) {
     renderDiverseLot(response.lot);
   } else {
     hideNoSheetPanel();
   }
-  renderLots();
-  renderLotDetail(response.lot);
   document.body.classList.add("lot-focus");
   if (push) updateRoute(lotPath(lotId));
   return response.lot;
@@ -1203,6 +1237,8 @@ function renderLotPreview(lot) {
 
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
+  const noSheetLot = isNoSheetLot(lot);
+  moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
     <div class="work-heading">
@@ -1212,7 +1248,8 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
-    ${isNoSheetLot(lot) ? '<p class="muted">Lote sem planilha: use o painel acima para gerar/usar RZ e iniciar a bipagem.</p>' : ""}
+    ${noSheetLot ? '<div id="diversePanelMount"></div>' : ""}
+    ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
     <div class="actions">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
@@ -1541,7 +1578,8 @@ function bindLabelTextControls() {
 async function scanCurrent(lotId, codigoRz) {
   if (state.pendingScan) return;
   const input = $("#scanInput");
-  const codigoMl = input.value.trim();
+  const codigoMl = normalizeCodigoMl(input.value);
+  input.value = codigoMl;
   if (!codigoMl) return;
 
   try {
@@ -1625,7 +1663,8 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
 async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
   if (state.pendingDecrement) return;
   const input = $("#scanInput");
-  const codigoMl = String(codigoMlFromButton || input?.value || "").trim();
+  const codigoMl = normalizeCodigoMl(codigoMlFromButton || input?.value);
+  if (input && !codigoMlFromButton) input.value = codigoMl;
   if (!codigoMl) return;
 
   try {
@@ -1673,7 +1712,9 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
 
 async function searchMl(event) {
   event.preventDefault();
-  const codigoMl = new FormData(event.currentTarget).get("codigoMl");
+  const input = event.currentTarget.querySelector("input[name='codigoMl']");
+  const codigoMl = normalizeCodigoMl(input?.value);
+  if (input) input.value = codigoMl;
   const response = await api(`/api/search?codigoMl=${encodeURIComponent(codigoMl)}`);
   const wrapper = $("#searchResults");
   if (!response.results.length) {
@@ -1709,7 +1750,8 @@ async function printLabel(productId) {
 }
 
 function findScannedProduct(lot, codigoRz, codigoMl) {
-  return lot.items.find((item) => item.codigoRz === codigoRz && item.product?.codigoMl === codigoMl)?.product || null;
+  const normalizedMl = normalizeCodigoMl(codigoMl);
+  return lot.items.find((item) => item.codigoRz === codigoRz && normalizeCodigoMl(item.product?.codigoMl) === normalizedMl)?.product || null;
 }
 
 function showLabel(product, { autoPrint = false } = {}) {

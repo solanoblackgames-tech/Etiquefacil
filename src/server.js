@@ -319,7 +319,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, re
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
-    const codigoMl = String(req.body.codigoMl || "").trim();
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML.");
     res.json(await scanLotRz({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
@@ -329,7 +329,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => 
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
   try {
-    const codigoMl = String(req.body.codigoMl || "").trim();
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML para diminuir.");
     res.json(await decrementLotRzScan({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
@@ -339,7 +339,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req
 
 app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
   try {
-    const codigoMl = String(req.body.codigoMl || "").trim();
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     res.json(await createExternalExcess({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
@@ -348,7 +348,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
 
 app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, async (req, res) => {
   try {
-    const codigoMl = String(req.body.codigoMl || "").trim();
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     res.json(
       await createManualExternalExcess({
         userId: req.session.user.id,
@@ -365,7 +365,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
 
 app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   try {
-    const codigoMl = String(req.body.codigoMl || "").trim();
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     const codigoRz = String(req.body.codigoRz || "").trim();
     res.json(
       await addDiverseLotItem({
@@ -423,7 +423,7 @@ app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, async (req,
 });
 
 app.get("/api/search", requireAuth, async (req, res) => {
-  const codigoMl = String(req.query.codigoMl || "").trim();
+  const codigoMl = String(req.query.codigoMl || "").trim().toUpperCase();
   res.json({ results: await searchProducts(req.session.user.id, codigoMl) });
 });
 

@@ -424,7 +424,7 @@ export async function getLotBlingData(userId, lotId, kind) {
 
 export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   if (!normalizedMl) throw new Error("Informe o CÃ³digo ML.");
 
   if (hasPostgres()) return scanLotRzPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
@@ -470,7 +470,7 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
 
 export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   if (!normalizedMl) throw new Error("Informe o CÃ³digo ML para diminuir.");
 
   if (hasPostgres()) return decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
@@ -506,7 +506,7 @@ export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) 
 
 export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   if (hasPostgres()) return createExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
 
   const db = await readDb();
@@ -528,7 +528,7 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
 
 export async function createManualExternalExcess({ userId, lotId, codigoRz, codigoMl, manualProduct }) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   if (!normalizedMl) throw new Error("Informe o Codigo ML.");
   if (hasPostgres()) return createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl, manualProduct });
 
@@ -559,7 +559,7 @@ export async function createManualExternalExcess({ userId, lotId, codigoRz, codi
 
 export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   const normalizedRz = String(codigoRz || "").trim().toUpperCase();
   if (!normalizedMl) throw new Error("Informe o CÃƒÂ³digo ML.");
   if (!normalizedRz) throw new Error("Informe o RZ.");
@@ -731,7 +731,7 @@ export async function reviewCatalogRequest(requestId, action) {
 
 export async function searchProducts(userId, codigoMl) {
   await ensureStore();
-  const normalizedMl = String(codigoMl || "").trim();
+  const normalizedMl = normalizeCode(codigoMl);
   if (hasPostgres()) {
     const result = await query(
       `
@@ -1680,7 +1680,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
   return {
-    codigoMl,
+    codigoMl: normalizeCode(codigoMl),
     descricao,
     valorUnit,
     precoCusto: roundMoney(Number(input.precoCusto || 0)),
@@ -1692,6 +1692,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
 }
 
 function buildCatalogRequest({ userId, lot, product, type, payload }) {
+  const codigoMl = normalizeCode(payload.codigoMl || product.codigoMl);
   return {
     id: randomUUID(),
     userId,
@@ -1699,7 +1700,7 @@ function buildCatalogRequest({ userId, lot, product, type, payload }) {
     productId: product.id,
     type,
     status: "pending",
-    codigoMl: payload.codigoMl || product.codigoMl,
+    codigoMl,
     descricao: payload.descricao || product.descricao,
     valorUnit: roundMoney(payload.valorUnit ?? product.valorUnit),
     precoCusto: roundMoney(payload.precoCusto ?? product.precoCusto),
@@ -1774,7 +1775,7 @@ function buildCatalogDoubleCheck(request) {
     lotId: request.lotId || null,
     productId: request.productId || null,
     type: request.type,
-    codigoMl: request.codigoMl,
+    codigoMl: normalizeCode(request.codigoMl),
     descricao: request.descricao,
     valorUnit: roundMoney(request.valorUnit || 0),
     precoCusto: roundMoney(request.precoCusto || 0),
@@ -1802,10 +1803,11 @@ function enrichCatalogRequestDoubleChecks(request, usersById) {
 
 function upsertCatalogProduct(db, request) {
   const now = new Date().toISOString();
-  const existing = (db.catalogProducts || []).find((product) => product.codigoMl === request.codigoMl);
+  const codigoMl = normalizeCode(request.codigoMl);
+  const existing = (db.catalogProducts || []).find((product) => normalizeCode(product.codigoMl) === codigoMl);
   const record = {
     id: existing?.id || randomUUID(),
-    codigoMl: request.codigoMl,
+    codigoMl,
     descricao: request.descricao,
     valorUnit: Number(request.valorUnit || 0),
     precoCusto: Number(request.precoCusto || 0),
@@ -1831,7 +1833,7 @@ function blingOriginsForKind(kind) {
 function normalizeCatalogProducts(products, now) {
   const byCode = new Map();
   for (const input of products || []) {
-    const codigoMl = String(input.codigoMl || "").trim();
+    const codigoMl = normalizeCode(input.codigoMl);
     const descricao = String(input.descricao || "").trim();
     if (!codigoMl || !descricao) continue;
     byCode.set(codigoMl, {

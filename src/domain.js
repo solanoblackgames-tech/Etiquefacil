@@ -151,7 +151,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
   const percentage = parseNumber(lotInput.auctionPercent) / 100;
 
   for (const row of rows.slice(headerIndex + 1)) {
-    const codigoMl = String(get(row, "codigoMl") ?? "").trim();
+    const codigoMl = String(get(row, "codigoMl") ?? "").trim().toUpperCase();
     const codigoRz = String(get(row, "codigoRz") ?? "").trim();
     if (!codigoMl || !codigoRz) continue;
 
