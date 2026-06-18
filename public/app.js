@@ -748,8 +748,11 @@ function getScanRequest() {
   const params = new URLSearchParams(window.location.search);
   const lotId = params.get("scanLot");
   const codigoRz = params.get("scanRz");
-  if (!lotId || !codigoRz) return null;
-  return { lotId, codigoRz };
+  if (lotId && codigoRz) return { lotId, codigoRz };
+
+  const route = parseRoute(window.location.pathname);
+  if (route.view === "lotRz") return { lotId: route.lotId, codigoRz: route.codigoRz };
+  return null;
 }
 
 async function showScanOnly({ lotId, codigoRz }) {
@@ -1300,6 +1303,21 @@ async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") 
 function renderRz(lot, codigoRz, { push = true } = {}) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
+  const opened = openScanWindow(lot.id, codigoRz);
+  const rzDetail = $("#rzDetail");
+  if (rzDetail) {
+    rzDetail.innerHTML = `
+      <div class="scan-opened">
+        <strong>Bipagem aberta em uma nova janela.</strong>
+        <span class="muted">Use a janela dedicada para bipar e imprimir etiquetas automaticamente.</span>
+        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
+      </div>
+    `;
+    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, codigoRz));
+  }
+  if (!opened) alert("O navegador bloqueou a janela de bipagem. Permita pop-ups para o Etiquefacil.");
+  if (push) updateRoute(lotPath(lot.id));
+  return;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   $("#rzDetail").innerHTML = `
@@ -1393,7 +1411,7 @@ function renderPallet(lot, codigoRz) {
 }
 
 function openScanWindow(lotId, codigoRz) {
-  const url = `${window.location.pathname}?scanLot=${encodeURIComponent(lotId)}&scanRz=${encodeURIComponent(codigoRz)}`;
+  const url = lotRzPath(lotId, codigoRz);
   const target = `etiquefacil-bipagem-${String(lotId).replace(/\W/g, "")}-${String(codigoRz).replace(/\W/g, "")}`;
   const scanWindow = window.open(url, target, "width=1180,height=760");
   if (scanWindow) scanWindow.focus();
