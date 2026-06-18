@@ -994,7 +994,7 @@ h3 {
 }
 
 .catalog-request-row {
-  grid-template-columns: minmax(260px, 1.5fr) minmax(120px, 0.6fr) minmax(100px, 0.5fr) 88px minmax(100px, 0.6fr) minmax(90px, 0.5fr) minmax(190px, 0.8fr);
+  grid-template-columns: minmax(240px, 1.35fr) minmax(110px, 0.55fr) minmax(90px, 0.45fr) 76px minmax(95px, 0.55fr) minmax(150px, 0.8fr) minmax(85px, 0.45fr) minmax(180px, 0.75fr);
 }
 
 .catalog-product-row {
@@ -1046,6 +1046,27 @@ h3 {
 .catalog-link {
   color: #075e57;
   font-weight: 800;
+}
+
+.check-count {
+  color: #075e57;
+}
+
+.double-checks summary {
+  cursor: pointer;
+}
+
+.double-check-item {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.double-check-item span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .label-modal {

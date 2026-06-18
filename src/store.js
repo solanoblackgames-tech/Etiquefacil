@@ -544,7 +544,7 @@ export async function createManualExternalExcess({ userId, lotId, codigoRz, codi
   lot.proximoSequencialSku += 1;
   db.products.push(product);
   db.rzItems.push(item);
-  db.catalogRequests.push(buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
+  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
   db.scans.push({
     id: randomUUID(),
     lotId: lot.id,
@@ -603,7 +603,7 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, man
     lot.proximoSequencialSku += 1;
     db.products.push(product);
     db.rzItems.push(item);
-    db.catalogRequests.push(buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
+    mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
     await writeDb(db);
     return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
   }
@@ -633,7 +633,7 @@ export async function suggestCatalogUpdate({ userId, lotId, productId, payload }
   const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
   if (!product) throw notFound("Produto nao encontrado.");
   const normalized = normalizeManualProduct({ ...product, ...payload }, product.codigoMl);
-  db.catalogRequests.push(buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized }));
+  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized }));
   await writeDb(db);
   return { ok: true };
 }
@@ -641,21 +641,26 @@ export async function suggestCatalogUpdate({ userId, lotId, productId, payload }
 export async function listCatalogRequestsForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
-    const result = await query(`
+    const [result, usersResult] = await Promise.all([
+      query(`
       select cr.*, u.name as user_name, u.email as user_email
       from catalog_requests cr
       left join users u on u.id = cr.user_id
       order by cr.created_at desc
-    `);
-    return result.rows.map(catalogRequestFromRow);
+    `),
+      query("select id, name, email, created_at from users")
+    ]);
+    const usersById = new Map(usersResult.rows.map((row) => [row.id, sanitizeUser(userFromRow(row))]));
+    return result.rows.map((row) => enrichCatalogRequestDoubleChecks(catalogRequestFromRow(row), usersById));
   }
 
   const db = await readDb();
+  const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRequests || [])
-    .map((request) => ({
+    .map((request) => enrichCatalogRequestDoubleChecks({
       ...request,
-      user: sanitizeUser(db.users.find((user) => user.id === request.userId))
-    }))
+      user: usersById.get(request.userId) || null
+    }, usersById))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -923,11 +928,13 @@ async function ensurePgStore() {
       subcategoria text not null default '',
       link text not null default '',
       foto text not null default '',
+      double_checks jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now(),
       reviewed_at timestamptz
     );
 
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
+    alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
 
     create index if not exists lots_user_id_idx on lots(user_id);
     create index if not exists products_lot_id_idx on products(lot_id);
@@ -1191,6 +1198,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "subcategoria",
       "link",
       "foto",
+      "double_checks",
       "created_at",
       "reviewed_at"
     ],
@@ -1209,6 +1217,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.subcategoria || "",
       request.link || "",
       request.foto || "",
+      JSON.stringify(request.doubleChecks || []),
       request.createdAt,
       request.reviewedAt || null
     ])
@@ -1394,7 +1403,7 @@ async function createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl,
     const source = normalizeManualProduct(manualProduct, codigoMl);
     const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl);
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-    await insertCatalogRequestRows(client, [buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source })]);
+    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source }));
     await client.query(
       `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
        values ($1, $2, $3, $4, $5, $6, $7)`,
@@ -1456,7 +1465,7 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualPr
         const source = normalizeManualProduct(manualProduct, codigoMl);
         const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual" });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-        await insertCatalogRequestRows(client, [buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source })]);
+        await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source }));
         await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
         result = { status: "cadastro_manual", product: records.product, parent: null };
         await client.query("commit");
@@ -1548,7 +1557,7 @@ async function suggestCatalogUpdatePg({ userId, lotId, productId, payload }) {
     const product = productFromRow(row);
     const lot = { id: lotId };
     const normalized = normalizeManualProduct({ ...product, ...payload }, product.codigoMl);
-    await insertCatalogRequestRows(client, [buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized })]);
+    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized }));
     return { ok: true };
   } finally {
     client.release();
@@ -1703,6 +1712,94 @@ function buildCatalogRequest({ userId, lot, product, type, payload }) {
   };
 }
 
+export function mergePendingCatalogRequest(requests, request) {
+  const target = findMergeableCatalogRequest(requests, request);
+  if (!target) {
+    request.doubleChecks = normalizeDoubleChecks(request.doubleChecks);
+    requests.push(request);
+    return request;
+  }
+
+  target.doubleChecks = [...normalizeDoubleChecks(target.doubleChecks), buildCatalogDoubleCheck(request)];
+  return target;
+}
+
+async function mergePendingCatalogRequestPg(client, request) {
+  const mergeable = request.type === "create"
+    ? await client.query(
+        `
+          select id, double_checks
+          from catalog_requests
+          where status = 'pending'
+            and type = 'create'
+            and upper(trim(codigo_ml)) = upper(trim($1))
+          order by created_at asc
+          limit 1
+          for update
+        `,
+        [request.codigoMl]
+      )
+    : { rows: [] };
+
+  if (!mergeable.rows.length) {
+    request.doubleChecks = normalizeDoubleChecks(request.doubleChecks);
+    await insertCatalogRequestRows(client, [request]);
+    return request;
+  }
+
+  const check = buildCatalogDoubleCheck(request);
+  await client.query(
+    `
+      update catalog_requests
+      set double_checks = coalesce(double_checks, '[]'::jsonb) || $2::jsonb
+      where id = $1
+    `,
+    [mergeable.rows[0].id, JSON.stringify([check])]
+  );
+  return { ...request, id: mergeable.rows[0].id };
+}
+
+function findMergeableCatalogRequest(requests, request) {
+  if (request.type !== "create") return null;
+  const normalizedCode = normalizeCode(request.codigoMl);
+  return (requests || []).find((candidate) => {
+    return candidate.status === "pending" && candidate.type === "create" && normalizeCode(candidate.codigoMl) === normalizedCode;
+  }) || null;
+}
+
+function buildCatalogDoubleCheck(request) {
+  return {
+    id: randomUUID(),
+    userId: request.userId,
+    lotId: request.lotId || null,
+    productId: request.productId || null,
+    type: request.type,
+    codigoMl: request.codigoMl,
+    descricao: request.descricao,
+    valorUnit: roundMoney(request.valorUnit || 0),
+    precoCusto: roundMoney(request.precoCusto || 0),
+    categoria: request.categoria || "",
+    subcategoria: request.subcategoria || "",
+    link: request.link || "",
+    foto: request.foto || "",
+    createdAt: request.createdAt || new Date().toISOString()
+  };
+}
+
+function normalizeDoubleChecks(checks) {
+  return Array.isArray(checks) ? checks : [];
+}
+
+function enrichCatalogRequestDoubleChecks(request, usersById) {
+  return {
+    ...request,
+    doubleChecks: normalizeDoubleChecks(request.doubleChecks).map((check) => ({
+      ...check,
+      user: usersById.get(check.userId) || null
+    }))
+  };
+}
+
 function upsertCatalogProduct(db, request) {
   const now = new Date().toISOString();
   const existing = (db.catalogProducts || []).find((product) => product.codigoMl === request.codigoMl);
@@ -1847,6 +1944,7 @@ function catalogRequestFromRow(row) {
     subcategoria: row.subcategoria || "",
     link: row.link || "",
     foto: row.foto || "",
+    doubleChecks: parseJsonArray(row.double_checks),
     createdAt: iso(row.created_at),
     reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
     user: row.user_name || row.user_email ? { name: row.user_name || "", email: row.user_email || "" } : null
@@ -1897,4 +1995,19 @@ function iso(value) {
 
 function num(value) {
   return Number(value || 0);
+}
+
+function normalizeCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }

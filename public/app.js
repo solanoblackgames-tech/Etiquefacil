@@ -871,6 +871,7 @@ function renderAdminCatalogRequests() {
         <span>Preco</span>
         <span>Foto</span>
         <span>Link</span>
+        <span>Double check</span>
         <span>Status</span>
         <span>Acoes</span>
       </div>
@@ -924,6 +925,8 @@ function adminCatalogRequestRow(request) {
   const pending = request.status === "pending";
   const imageUrl = String(request.foto || "").trim();
   const productLink = String(request.link || "").trim();
+  const doubleChecks = Array.isArray(request.doubleChecks) ? request.doubleChecks : [];
+  const totalChecks = 1 + doubleChecks.length;
   return `
     <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
       <div>
@@ -935,12 +938,36 @@ function adminCatalogRequestRow(request) {
       <span>${money(request.valorUnit)}</span>
       <span>${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener"><img class="catalog-thumb" src="${escapeHtml(imageUrl)}" alt="Foto do produto" /></a>` : "-"}</span>
       <span>${productLink ? `<a class="catalog-link" href="${escapeHtml(productLink)}" target="_blank" rel="noopener">Abrir link</a>` : "-"}</span>
+      <span>${catalogDoubleCheckSummary(totalChecks, doubleChecks)}</span>
       <span>${catalogRequestStatus(request.status)}</span>
       <div class="admin-actions">
         <button type="button" ${pending ? "" : "disabled"} data-review-catalog="approve">Aprovar</button>
         <button type="button" class="danger" ${pending ? "" : "disabled"} data-review-catalog="reject">Rejeitar</button>
       </div>
     </article>
+  `;
+}
+
+function catalogDoubleCheckSummary(totalChecks, doubleChecks) {
+  if (!doubleChecks.length) return '<strong class="check-count">1 cadastro</strong>';
+  return `
+    <details class="double-checks">
+      <summary><strong class="check-count">${totalChecks} cadastros</strong></summary>
+      ${doubleChecks.map(catalogDoubleCheckRow).join("")}
+    </details>
+  `;
+}
+
+function catalogDoubleCheckRow(check) {
+  const user = check.user?.email || check.user?.name || "usuario";
+  const link = String(check.link || "").trim();
+  return `
+    <div class="double-check-item">
+      <strong>${escapeHtml(user)}</strong>
+      <span>${formatDate(check.createdAt)} - ${money(check.valorUnit)}</span>
+      <span>${escapeHtml(check.descricao || "")}</span>
+      ${link ? `<a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}
+    </div>
   `;
 }
 
