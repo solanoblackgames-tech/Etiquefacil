@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergePendingCatalogRequest } from "../src/store.js";
+import { mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
 
 test("mergePendingCatalogRequest groups repeated pending create suggestions by Codigo ML", () => {
   const requests = [
@@ -66,4 +66,31 @@ test("mergePendingCatalogRequest keeps rejected suggestions separated", () => {
 
   assert.equal(requests.length, 2);
   assert.equal(requests[1].id, "request-2");
+});
+
+test("selectCatalogApprovalPayload uses the selected double check values", () => {
+  const request = {
+    id: "request-1",
+    codigoMl: "ML123",
+    descricao: "Produto inicial",
+    valorUnit: 100,
+    precoCusto: 0,
+    doubleChecks: [
+      {
+        id: "check-1",
+        codigoMl: "ML123",
+        descricao: "Produto confirmado",
+        valorUnit: 105,
+        precoCusto: 7
+      }
+    ]
+  };
+
+  const selected = selectCatalogApprovalPayload(request, "check-1");
+
+  assert.equal(selected.id, "request-1");
+  assert.equal(selected.codigoMl, "ML123");
+  assert.equal(selected.descricao, "Produto confirmado");
+  assert.equal(selected.valorUnit, 105);
+  assert.equal(selected.precoCusto, 7);
 });

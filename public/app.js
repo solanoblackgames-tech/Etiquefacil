@@ -903,9 +903,7 @@ function renderAdminCatalogRequests() {
         <span>Sugestao</span>
         <span>Codigo ML</span>
         <span>Preco</span>
-        <span>Foto</span>
-        <span>Link</span>
-        <span>Double check</span>
+        <span>Cadastros</span>
         <span>Status</span>
         <span>Acoes</span>
       </div>
@@ -957,10 +955,7 @@ function adminCatalogProductRow(product) {
 function adminCatalogRequestRow(request) {
   const user = request.user?.email || request.user?.name || "usuario";
   const pending = request.status === "pending";
-  const imageUrl = String(request.foto || "").trim();
-  const productLink = String(request.link || "").trim();
-  const doubleChecks = Array.isArray(request.doubleChecks) ? request.doubleChecks : [];
-  const totalChecks = 1 + doubleChecks.length;
+  const options = catalogApprovalOptions(request);
   return `
     <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
       <div>
@@ -970,38 +965,44 @@ function adminCatalogRequestRow(request) {
       </div>
       <span>${escapeHtml(request.codigoMl)}</span>
       <span>${money(request.valorUnit)}</span>
-      <span>${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener"><img class="catalog-thumb" src="${escapeHtml(imageUrl)}" alt="Foto do produto" /></a>` : "-"}</span>
-      <span>${productLink ? `<a class="catalog-link" href="${escapeHtml(productLink)}" target="_blank" rel="noopener">Abrir link</a>` : "-"}</span>
-      <span>${catalogDoubleCheckSummary(totalChecks, doubleChecks)}</span>
+      <span><strong class="check-count">${options.length} cadastro${options.length === 1 ? "" : "s"}</strong></span>
       <span>${catalogRequestStatus(request.status)}</span>
       <div class="admin-actions">
         <button type="button" ${pending ? "" : "disabled"} data-review-catalog="approve">Aprovar</button>
         <button type="button" class="danger" ${pending ? "" : "disabled"} data-review-catalog="reject">Rejeitar</button>
       </div>
+      <details class="double-checks" ${options.length > 1 ? "open" : ""}>
+        <summary>Escolher cadastro para aprovar</summary>
+        <div class="double-check-list">
+          ${options.map((option, index) => catalogApprovalOptionRow(request.id, option, index)).join("")}
+        </div>
+      </details>
     </article>
   `;
 }
 
-function catalogDoubleCheckSummary(totalChecks, doubleChecks) {
-  if (!doubleChecks.length) return '<strong class="check-count">1 cadastro</strong>';
-  return `
-    <details class="double-checks">
-      <summary><strong class="check-count">${totalChecks} cadastros</strong></summary>
-      ${doubleChecks.map(catalogDoubleCheckRow).join("")}
-    </details>
-  `;
+function catalogApprovalOptions(request) {
+  return [
+    { id: "base", label: "Cadastro inicial", user: request.user, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, link: request.link, foto: request.foto },
+    ...(Array.isArray(request.doubleChecks) ? request.doubleChecks : []).map((check, index) => ({ ...check, label: `Double check ${index + 1}` }))
+  ];
 }
 
-function catalogDoubleCheckRow(check) {
-  const user = check.user?.email || check.user?.name || "usuario";
-  const link = String(check.link || "").trim();
+function catalogApprovalOptionRow(requestId, option, index) {
+  const optionId = option.id || "base";
+  const user = option.user?.email || option.user?.name || "usuario";
+  const link = String(option.link || "").trim();
+  const photo = String(option.foto || "").trim();
   return `
-    <div class="double-check-item">
-      <strong>${escapeHtml(user)}</strong>
-      <span>${formatDate(check.createdAt)} - ${money(check.valorUnit)}</span>
-      <span>${escapeHtml(check.descricao || "")}</span>
-      ${link ? `<a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}
-    </div>
+    <label class="double-check-item">
+      <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
+      <div>
+        <strong>${escapeHtml(option.label || "Cadastro")}</strong>
+        <span>${escapeHtml(user)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
+        <span>${escapeHtml(option.descricao || "")}</span>
+        <span>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener">Abrir foto</a>` : "Sem foto"}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
+      </div>
+    </label>
   `;
 }
 
@@ -1082,9 +1083,14 @@ async function handleAdminCatalogRequestsClick(event) {
   if (!button) return;
   const row = button.closest("[data-catalog-request-id]");
   const action = button.dataset.reviewCatalog;
+  const selectedCheckId = row.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base";
   button.disabled = true;
   try {
-    await api(`/api/admin/catalog-requests/${encodeURIComponent(row.dataset.catalogRequestId)}/${encodeURIComponent(action)}`, { method: "POST" });
+    await api(`/api/admin/catalog-requests/${encodeURIComponent(row.dataset.catalogRequestId)}/${encodeURIComponent(action)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action === "approve" ? { selectedCheckId } : {})
+    });
     $("#adminMessage").style.color = "#0f766e";
     $("#adminMessage").textContent = action === "approve" ? "Sugestao aprovada." : "Sugestao rejeitada.";
     await loadAdminCatalogRequests();

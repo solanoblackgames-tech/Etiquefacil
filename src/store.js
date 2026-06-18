@@ -707,9 +707,9 @@ export async function deleteCatalogProductForAdmin(productId) {
   return { ok: true };
 }
 
-export async function reviewCatalogRequest(requestId, action) {
+export async function reviewCatalogRequest(requestId, action, options = {}) {
   await ensureStore();
-  if (hasPostgres()) return reviewCatalogRequestPg(requestId, action);
+  if (hasPostgres()) return reviewCatalogRequestPg(requestId, action, options);
 
   const db = await readDb();
   const request = (db.catalogRequests || []).find((item) => item.id === requestId);
@@ -717,7 +717,7 @@ export async function reviewCatalogRequest(requestId, action) {
   if (request.status !== "pending") throw new Error("Esta sugestao ja foi analisada.");
 
   if (action === "approve") {
-    upsertCatalogProduct(db, request);
+    upsertCatalogProduct(db, selectCatalogApprovalPayload(request, options.selectedCheckId));
     request.status = "approved";
   } else if (action === "reject") {
     request.status = "rejected";
@@ -1564,7 +1564,7 @@ async function suggestCatalogUpdatePg({ userId, lotId, productId, payload }) {
   }
 }
 
-async function reviewCatalogRequestPg(requestId, action) {
+async function reviewCatalogRequestPg(requestId, action, options = {}) {
   const client = await getPgPool().connect();
   try {
     await client.query("begin");
@@ -1574,6 +1574,7 @@ async function reviewCatalogRequestPg(requestId, action) {
     if (request.status !== "pending") throw new Error("Esta sugestao ja foi analisada.");
 
     if (action === "approve") {
+      const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
           insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, created_at, updated_at)
@@ -1586,7 +1587,7 @@ async function reviewCatalogRequestPg(requestId, action) {
             subcategoria = excluded.subcategoria,
             updated_at = now()
         `,
-        [randomUUID(), request.codigoMl, request.descricao, request.valorUnit, request.precoCusto || 0, request.categoria || "", request.subcategoria || ""]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || ""]
       );
       await client.query("update catalog_requests set status = 'approved', reviewed_at = now() where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -1798,6 +1799,24 @@ function enrichCatalogRequestDoubleChecks(request, usersById) {
       ...check,
       user: usersById.get(check.userId) || null
     }))
+  };
+}
+
+export function selectCatalogApprovalPayload(request, selectedCheckId) {
+  if (!selectedCheckId || selectedCheckId === "base") return request;
+  const selected = normalizeDoubleChecks(request.doubleChecks).find((check) => check.id === selectedCheckId);
+  if (!selected) throw new Error("Cadastro selecionado para aprovacao nao encontrado.");
+  return {
+    ...request,
+    ...selected,
+    id: request.id,
+    userId: request.userId,
+    lotId: request.lotId,
+    productId: request.productId,
+    status: request.status,
+    createdAt: request.createdAt,
+    reviewedAt: request.reviewedAt,
+    doubleChecks: request.doubleChecks
   };
 }
 

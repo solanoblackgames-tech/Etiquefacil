@@ -151,7 +151,7 @@ app.delete("/api/admin/catalog-products/:productId", requireAdmin, async (req, r
 
 app.post("/api/admin/catalog-requests/:requestId/:action", requireAdmin, async (req, res) => {
   try {
-    res.json(await reviewCatalogRequest(req.params.requestId, req.params.action));
+    res.json(await reviewCatalogRequest(req.params.requestId, req.params.action, { selectedCheckId: req.body?.selectedCheckId }));
   } catch (error) {
     sendError(res, error);
   }
