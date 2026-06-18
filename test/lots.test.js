@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getBlingProducts, summarizeLot } from "../src/lots.js";
+import { findApprovedProductHistory, getBlingProducts, summarizeLot } from "../src/lots.js";
 
 test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   const db = {
@@ -63,12 +63,95 @@ test("getBlingProducts includes diverse entry items in complete export", () => {
       { id: "product-1", lotId: "lot-1", origem: "planilha" },
       { id: "product-2", lotId: "lot-1", origem: "entrada_diversos" },
       { id: "product-3", lotId: "lot-1", origem: "excedente_externo" },
-      { id: "product-4", lotId: "lot-2", origem: "entrada_diversos" }
+      { id: "product-4", lotId: "lot-2", origem: "entrada_diversos" },
+      { id: "product-5", lotId: "lot-1", origem: "lote_sem_planilha_manual" }
     ]
   };
 
   assert.deepEqual(
     getBlingProducts(db, lot, "complete").map((product) => product.id),
-    ["product-1", "product-2"]
+    ["product-1", "product-2", "product-5"]
+  );
+});
+
+test("manual no-sheet products are exported as Bling excess", () => {
+  const lot = { id: "lot-1" };
+  const db = {
+    lots: [lot],
+    products: [
+      { id: "product-1", lotId: "lot-1", origem: "lote_sem_planilha" },
+      { id: "product-2", lotId: "lot-1", origem: "lote_sem_planilha_manual" },
+      { id: "product-3", lotId: "lot-1", origem: "excedente_externo" },
+      { id: "product-4", lotId: "lot-2", origem: "lote_sem_planilha_manual" }
+    ],
+    rzItems: []
+  };
+
+  assert.equal(summarizeLot(db, lot).totalExcessExternal, 2);
+  assert.deepEqual(
+    getBlingProducts(db, lot, "excess").map((product) => product.id),
+    ["product-2", "product-3"]
+  );
+});
+
+test("findApprovedProductHistory only returns history approved in catalog", () => {
+  const db = {
+    lots: [
+      { id: "old-lot", userId: "user-1" },
+      { id: "current-lot", userId: "user-1" },
+      { id: "other-user-lot", userId: "user-2" }
+    ],
+    products: [
+      {
+        id: "pending-suggestion",
+        lotId: "old-lot",
+        codigoMl: "ML-PENDING",
+        origem: "lote_sem_planilha_manual",
+        createdAt: "2026-06-17T00:00:00.000Z"
+      },
+      {
+        id: "approved-suggestion",
+        lotId: "old-lot",
+        codigoMl: "ML-APPROVED",
+        origem: "lote_sem_planilha_manual",
+        createdAt: "2026-06-17T00:00:00.000Z"
+      },
+      {
+        id: "unapproved-sheet-history",
+        lotId: "old-lot",
+        codigoMl: "ML-SHEET-PENDING",
+        origem: "planilha",
+        createdAt: "2026-06-17T00:00:00.000Z"
+      },
+      {
+        id: "approved-sheet-history",
+        lotId: "old-lot",
+        codigoMl: "ML-SHEET-APPROVED",
+        origem: "planilha",
+        createdAt: "2026-06-17T00:00:00.000Z"
+      },
+      {
+        id: "other-user-history",
+        lotId: "other-user-lot",
+        codigoMl: "ML-SHEET-APPROVED",
+        origem: "planilha",
+        createdAt: "2026-06-18T00:00:00.000Z"
+      }
+    ],
+    catalogProducts: [
+      { id: "catalog-1", codigoMl: "ML-APPROVED" },
+      { id: "catalog-2", codigoMl: "ML-SHEET-APPROVED" }
+    ]
+  };
+
+  assert.deepEqual(findApprovedProductHistory(db, "user-1", "current-lot", "ML-PENDING"), []);
+  assert.deepEqual(findApprovedProductHistory(db, "user-1", "current-lot", "ML-SHEET-PENDING"), []);
+  assert.deepEqual(
+    findApprovedProductHistory(db, "user-1", "current-lot", "ML-APPROVED").map((product) => product.id),
+    ["approved-suggestion"]
+  );
+  assert.deepEqual(
+    findApprovedProductHistory(db, "user-1", "current-lot", "ML-SHEET-APPROVED").map((product) => product.id),
+    ["approved-sheet-history"]
   );
 });

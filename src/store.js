@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import pg from "pg";
 import { formatSku, roundMoney } from "./domain.js";
-import { findProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
+import { findApprovedProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
 import { insertRows } from "./pg-bulk.js";
 
 const { Pool } = pg;
@@ -16,6 +16,7 @@ let pool;
 let storeReady;
 
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
+const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 
 const emptyDb = () => ({
   users: [],
@@ -456,7 +457,7 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
     if (sameLotProduct) {
       scan.status = "outro_rz";
     } else {
-      const history = findProductHistory(db, userId, lot.id, normalizedMl);
+      const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl);
       scan.status = history.length ? "historico" : "desconhecido";
       scan.history = history.slice(0, 5);
     }
@@ -512,7 +513,7 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
-  const history = findProductHistory(db, userId, lot.id, normalizedMl)[0];
+  const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
 
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing) throw new Error("Este CÃ³digo ML jÃ¡ existe no lote atual.");
@@ -583,7 +584,7 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, man
     return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, lot: summarizeLot(db, lot, true) };
   }
 
-  const history = findProductHistory(db, userId, lot.id, normalizedMl)[0];
+  const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
   const source = history || findCatalogProduct(db, normalizedMl);
   if (!existing && source && preview) {
     return { status: "preview", product: { ...source, codigoMl: normalizedMl }, source: history ? "historico" : "catalogo_oculto", lot: summarizeLot(db, lot, true) };
@@ -1502,11 +1503,15 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         l.created_at as lot__created_at
       from products p
       join lots l on l.id = p.lot_id
-      where l.id <> $1 and upper(trim(p.codigo_ml)) = upper(trim($2))
+      left join catalog_products cp on upper(trim(cp.codigo_ml)) = upper(trim(p.codigo_ml))
+      where l.id <> $1
+        and l.user_id = $4
+        and upper(trim(p.codigo_ml)) = upper(trim($2))
+        and cp.id is not null
       order by p.created_at desc
       limit $3
     `,
-    [currentLotId, codigoMl, limit]
+    [currentLotId, codigoMl, limit, userId]
   );
 
   return result.rows.map((row) => ({
@@ -1722,7 +1727,7 @@ function getUserLotFromDb(db, userId, lotId) {
 
 function blingOriginsForKind(kind) {
   if (kind === "complete") return ["planilha", ...NO_SHEET_ORIGINS, "lote_sem_planilha_manual"];
-  if (kind === "excess") return ["excedente_externo"];
+  if (kind === "excess") return EXCESS_EXPORT_ORIGINS;
   throw new Error("Tipo de exportaÃ§Ã£o invÃ¡lido.");
 }
 

@@ -1,6 +1,7 @@
 import { roundMoney } from "./domain.js";
 
 const COMPLETE_EXPORT_ORIGINS = new Set(["planilha", "entrada_diversos", "lote_sem_planilha", "lote_sem_planilha_manual"]);
+const EXCESS_EXPORT_ORIGINS = new Set(["excedente_externo", "lote_sem_planilha_manual"]);
 
 export function summarizeLot(db, lot, includeItems = false) {
   const products = db.products.filter((product) => product.lotId === lot.id);
@@ -17,7 +18,7 @@ export function summarizeLot(db, lot, includeItems = false) {
     ...lot,
     totalProducts: products.length,
     totalItems: expectedQty,
-    totalExcessExternal: products.filter((product) => product.origem === "excedente_externo").length,
+    totalExcessExternal: products.filter((product) => EXCESS_EXPORT_ORIGINS.has(product.origem)).length,
     progress: {
       expectedQty,
       checkedQty,
@@ -48,10 +49,18 @@ export function findProductHistory(db, userId, currentLotId, codigoMl) {
     .map((product) => ({ ...product, lot: userLots.get(product.lotId) }));
 }
 
+export function findApprovedProductHistory(db, userId, currentLotId, codigoMl) {
+  const approvedCodes = new Set((db.catalogProducts || []).map((product) => normalizeCode(product.codigoMl)));
+  return findProductHistory(db, userId, currentLotId, codigoMl).filter((product) => {
+    if (product.lot?.userId !== userId) return false;
+    return approvedCodes.has(normalizeCode(product.codigoMl));
+  });
+}
+
 export function getBlingProducts(db, lot, kind) {
   const products = db.products.filter((product) => product.lotId === lot.id);
   if (kind === "complete") return products.filter((product) => COMPLETE_EXPORT_ORIGINS.has(product.origem));
-  if (kind === "excess") return products.filter((product) => product.origem === "excedente_externo");
+  if (kind === "excess") return products.filter((product) => EXCESS_EXPORT_ORIGINS.has(product.origem));
   throw new Error("Tipo de exportação inválido.");
 }
 
@@ -91,4 +100,8 @@ function summarizeRz(db, lot, codigoRz) {
 function percent(value, total) {
   if (!total) return 0;
   return roundMoney((value / total) * 100);
+}
+
+function normalizeCode(value) {
+  return String(value || "").trim().toUpperCase();
 }
