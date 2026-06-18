@@ -442,6 +442,10 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca"], (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
+
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Faça login para continuar." });
   next();
