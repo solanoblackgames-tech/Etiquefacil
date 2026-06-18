@@ -26,6 +26,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const formatDate = (value) => new Date(value).toLocaleDateString("pt-BR");
+const routePath = (path) => `${window.location.origin}${path}`;
 
 await bootstrap();
 
@@ -81,8 +82,12 @@ function bindEvents() {
 
   $("#uploadForm").addEventListener("submit", uploadLot);
 
+  window.addEventListener("popstate", () => {
+    if (state.user && !state.scanOnly) applyRouteFromLocation();
+  });
+
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
-    button.addEventListener("click", () => setMainTab(button.dataset.tab));
+    button.addEventListener("click", () => setMainTab(button.dataset.tab, { resetSelection: true }));
   });
 
   $("#diverseLotForm").addEventListener("submit", createDiverseLot);
@@ -144,7 +149,6 @@ async function uploadLot(event) {
     form.reset();
     $("#uploadMessage").textContent = `Lote importado: ${response.lot.nomeArquivo}`;
     await loadLots(response.lot.id);
-    setMainTab("lots");
   } catch (error) {
     $("#uploadMessage").textContent = error.message;
   } finally {
@@ -170,7 +174,7 @@ async function createDiverseLot(event) {
     $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
-    setMainTab("home");
+    updateRoute("/entradas");
     $("#diverseRzForm input[name='codigoRz']").focus();
   } catch (error) {
     $("#diverseLotMessage").style.color = "";
@@ -659,7 +663,7 @@ async function showApp(user) {
     return;
   }
   await loadLots();
-  setMainTab("home");
+  await applyRouteFromLocation({ replace: true });
 }
 
 function showAuth() {
@@ -670,8 +674,64 @@ function showAuth() {
   $("#adminApp").classList.add("hidden");
 }
 
-function setMainTab(tab) {
+async function applyRouteFromLocation({ replace = false } = {}) {
+  const route = parseRoute(window.location.pathname);
+
+  if (route.view === "lotRz") {
+    const lot = await selectLot(route.lotId, { push: false });
+    if (lot) renderRz(lot, route.codigoRz, { push: false });
+    if (replace) updateRoute(lot ? lotRzPath(route.lotId, route.codigoRz) : "/lotes", { replace: true });
+    return;
+  }
+
+  if (route.view === "lot") {
+    const lot = await selectLot(route.lotId, { push: false });
+    if (replace) updateRoute(lot ? lotPath(route.lotId) : "/lotes", { replace: true });
+    return;
+  }
+
+  setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
+  if (replace) updateRoute(routePathForView(route.view), { replace: true });
+}
+
+function parseRoute(pathname) {
+  const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
+  if (!parts.length || parts[0] === "entradas") return { view: "home" };
+  if (parts[0] === "busca") return { view: "search" };
+  if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
+  if (parts[0] === "lotes" && parts[1]) return { view: "lot", lotId: parts[1] };
+  if (parts[0] === "lotes") return { view: "lots" };
+  return { view: "home" };
+}
+
+function routePathForView(view) {
+  if (view === "lots") return "/lotes";
+  if (view === "search") return "/busca";
+  return "/entradas";
+}
+
+function lotPath(lotId) {
+  return `/lotes/${encodeURIComponent(lotId)}`;
+}
+
+function lotRzPath(lotId, codigoRz) {
+  return `${lotPath(lotId)}/rz/${encodeURIComponent(codigoRz)}`;
+}
+
+function updateRoute(path, { replace = false } = {}) {
+  const next = routePath(path);
+  if (window.location.href === next) return;
+  window.history[replace ? "replaceState" : "pushState"]({}, "", next);
+}
+
+function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   const target = tab || "home";
+  if (resetSelection) {
+    state.selectedLotId = null;
+    state.selectedRz = null;
+    renderLots();
+    clearLotDetail();
+  }
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === target);
   });
@@ -679,6 +739,7 @@ function setMainTab(tab) {
   $("#lotsTab").classList.toggle("hidden", target !== "lots");
   $("#searchTab").classList.toggle("hidden", target !== "search");
   document.body.classList.remove("lot-focus");
+  if (push) updateRoute(routePathForView(target));
 }
 
 function getScanRequest() {
@@ -1031,10 +1092,10 @@ function renderLots() {
   }
 }
 
-async function selectLot(lotId) {
+async function selectLot(lotId, { push = true } = {}) {
   state.selectedLotId = lotId;
   state.selectedRz = null;
-  setMainTab("lots");
+  setMainTab("lots", { push: false });
   const response = await api(`/api/lots/${lotId}`);
   if (isNoSheetLot(response.lot)) {
     renderDiverseLot(response.lot);
@@ -1044,6 +1105,8 @@ async function selectLot(lotId) {
   renderLots();
   renderLotDetail(response.lot);
   document.body.classList.add("lot-focus");
+  if (push) updateRoute(lotPath(lotId));
+  return response.lot;
 }
 
 function renderLotDetail(lot) {
@@ -1094,6 +1157,7 @@ function renderLotDetail(lot) {
     document.body.classList.remove("lot-focus");
     renderLots();
     clearLotDetail();
+    updateRoute("/lotes");
   });
   detail.querySelectorAll("button[data-download]").forEach((button) => {
     button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
@@ -1171,7 +1235,7 @@ async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") 
   }
 }
 
-function renderRz(lot, codigoRz) {
+function renderRz(lot, codigoRz, { push = true } = {}) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -1205,6 +1269,7 @@ function renderRz(lot, codigoRz) {
     </div>
   `;
   bindScanControls(lot.id, codigoRz);
+  if (push) updateRoute(lotRzPath(lot.id, codigoRz));
 }
 
 function renderPallet(lot, codigoRz) {
