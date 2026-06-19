@@ -977,10 +977,13 @@ function adminCatalogRequestRow(request) {
   const options = catalogApprovalOptions(request);
   return `
     <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
-      <div>
+      <div class="catalog-request-summary">
+        ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
+        <div>
         <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
         <span class="muted">${escapeHtml(user)} · ${formatDate(request.createdAt)}</span>
         <span class="muted">${escapeHtml(request.descricao)}</span>
+        </div>
       </div>
       <span>${escapeHtml(request.codigoMl)}</span>
       <span>${money(request.valorUnit)}</span>
@@ -1013,19 +1016,28 @@ function catalogApprovalOptionRow(requestId, option, index) {
   const link = String(option.link || "").trim();
   const photo = String(option.foto || "").trim();
   const ean = String(option.ean || "").trim();
-  const photoHtml = photo
-    ? `<a class="photo-link" href="${escapeHtml(photo)}" target="_blank" rel="noopener"><img src="${escapeHtml(photo)}" alt="Foto do produto" loading="lazy" onerror="this.remove(); this.parentElement.append('Abrir foto');" /></a>`
-    : "Sem foto";
   return `
     <label class="double-check-item">
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
+      ${catalogPhotoFrame(photo, "catalog-photo-option")}
       <div>
         <strong>${escapeHtml(option.label || "Cadastro")}</strong>
         <span>${escapeHtml(user)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
-        <span>EAN: ${escapeHtml(ean || "-")} - ${photoHtml}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
+        <span>EAN: ${escapeHtml(ean || "-")}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
+  `;
+}
+
+function catalogPhotoFrame(photo, className = "") {
+  const src = String(photo || "").trim();
+  if (!src) return `<span class="catalog-photo-frame ${className} is-empty">Sem foto</span>`;
+  return `
+    <span class="catalog-photo-frame ${className}">
+      <img src="${escapeHtml(src)}" alt="Foto do produto" loading="lazy" onerror="this.closest('.catalog-photo-frame').classList.add('is-missing');" />
+      <span class="photo-missing">Foto indisponivel</span>
+    </span>
   `;
 }
 
