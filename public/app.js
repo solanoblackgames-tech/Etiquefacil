@@ -975,6 +975,16 @@ function adminCatalogRequestRow(request) {
   const user = request.user?.email || request.user?.name || "usuario";
   const pending = request.status === "pending";
   const options = catalogApprovalOptions(request);
+  const choiceHtml = options.length > 1
+    ? `
+      <details class="double-checks" open>
+        <summary>Escolher cadastro para aprovar</summary>
+        <div class="double-check-list">
+          ${options.map((option, index) => catalogApprovalOptionRow(request.id, option, index)).join("")}
+        </div>
+      </details>
+    `
+    : "";
   return `
     <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
       <div class="catalog-request-summary">
@@ -993,12 +1003,7 @@ function adminCatalogRequestRow(request) {
         <button type="button" ${pending ? "" : "disabled"} data-review-catalog="approve">Aprovar</button>
         <button type="button" class="danger" ${pending ? "" : "disabled"} data-review-catalog="reject">Rejeitar</button>
       </div>
-      <details class="double-checks" ${options.length > 1 ? "open" : ""}>
-        <summary>Escolher cadastro para aprovar</summary>
-        <div class="double-check-list">
-          ${options.map((option, index) => catalogApprovalOptionRow(request.id, option, index)).join("")}
-        </div>
-      </details>
+      ${choiceHtml}
     </article>
   `;
 }
