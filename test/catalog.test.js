@@ -15,7 +15,21 @@ test("parseCatalogRows imports Bling-like catalog using Marca as ML code", () =>
       valorUnit: 1234.56,
       precoCusto: 123.45,
       categoria: "Auto",
-      subcategoria: ""
+      subcategoria: "",
+      ean: "",
+      foto: "",
+      link: ""
     }
   ]);
+});
+
+test("parseCatalogRows imports optional EAN image URL and link", () => {
+  const products = parseCatalogRows([
+    ["Marca", "Descricao", "Preco", "EAN", "URL Imagens Externas", "Link Externo"],
+    ["ML123", "Produto catalogo", "10,00", "7891234567890", "https://img.example/produto.jpg", "https://example/produto"]
+  ]);
+
+  assert.equal(products[0].ean, "7891234567890");
+  assert.equal(products[0].foto, "https://img.example/produto.jpg");
+  assert.equal(products[0].link, "https://example/produto");
 });

@@ -119,6 +119,7 @@ function bindEvents() {
     }
   });
   window.addEventListener("afterprint", finishLabelPrint);
+  bindPrintCloseFallback();
 }
 
 function handleCodigoMlInput(event) {
@@ -167,6 +168,7 @@ async function uploadLot(event) {
     $("#uploadMessage").textContent = error.message;
   } finally {
     button.disabled = false;
+    schedulePrimaryInputFocus(["#uploadForm input[name='file']"]);
   }
 }
 
@@ -230,7 +232,7 @@ async function addDiverseItem(event) {
     $("#diverseScanMessage").textContent = diverseScanStatusMessage(response, codigoRz, parent);
     await loadLots(response.lot.id);
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
-    input.focus();
+    schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
   } catch (error) {
     if (error.code === "manual_required" || error.status === 404) {
       try {
@@ -246,7 +248,7 @@ async function addDiverseItem(event) {
         $("#diverseScanMessage").textContent = `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
         await loadLots(response.lot.id);
         if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
-        input.focus();
+        schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
         return;
       } catch (manualError) {
         $("#diverseScanMessage").style.color = "";
@@ -322,6 +324,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const code = $("#manualProductCode");
     const description = $("#manualProductDescription");
     const price = $("#manualProductPrice");
+    const ean = $("#manualProductEan");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
     const error = $("#manualProductError");
@@ -359,6 +362,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       const result = {
         descricao,
         valorUnit,
+        ean: ean.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -526,6 +530,7 @@ function renderDiverseLot(lot) {
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
+  schedulePrimaryInputFocus();
 }
 
 function hideNoSheetPanel() {
@@ -683,6 +688,7 @@ async function showApp(user) {
     await loadAdminUsers();
     await loadAdminCatalogRequests();
     await loadAdminCatalogProducts();
+    schedulePrimaryInputFocus();
     return;
   }
 
@@ -697,6 +703,7 @@ async function showApp(user) {
   }
   await loadLots();
   await applyRouteFromLocation({ replace: true });
+  schedulePrimaryInputFocus();
 }
 
 function showAuth() {
@@ -705,6 +712,7 @@ function showAuth() {
   $("#auth").classList.remove("hidden");
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
+  schedulePrimaryInputFocus(["#loginForm input[name='email']"]);
 }
 
 async function applyRouteFromLocation({ replace = false } = {}) {
@@ -774,6 +782,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   $("#searchTab").classList.toggle("hidden", target !== "search");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
+  schedulePrimaryInputFocus();
 }
 
 function getScanRequest() {
@@ -840,6 +849,7 @@ function setAdminTab(tab) {
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
   $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
   $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
+  schedulePrimaryInputFocus();
 }
 
 async function createAdminUser(event) {
@@ -864,6 +874,7 @@ async function createAdminUser(event) {
     $("#adminMessage").textContent = error.message;
   } finally {
     button.disabled = false;
+    schedulePrimaryInputFocus(["#adminCreateUserForm input[name='name']"]);
   }
 }
 
@@ -922,6 +933,7 @@ function renderAdminCatalogProducts() {
       <div class="admin-row catalog-product-row admin-row-head">
         <span>Produto</span>
         <span>Codigo ML</span>
+        <span>EAN</span>
         <span>Preco</span>
         <span>Custo</span>
         <span>Atualizado</span>
@@ -940,6 +952,7 @@ function adminCatalogProductRow(product) {
         <span class="muted">${escapeHtml(product.categoria || "-")} ${escapeHtml(product.subcategoria || "")}</span>
       </div>
       <span>${escapeHtml(product.codigoMl)}</span>
+      <span>${escapeHtml(product.ean || "-")}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
       <span>${formatDate(product.updatedAt || product.createdAt)}</span>
@@ -981,7 +994,7 @@ function adminCatalogRequestRow(request) {
 
 function catalogApprovalOptions(request) {
   return [
-    { id: "base", label: "Cadastro inicial", user: request.user, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, link: request.link, foto: request.foto },
+    { id: "base", label: "Cadastro inicial", user: request.user, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto },
     ...(Array.isArray(request.doubleChecks) ? request.doubleChecks : []).map((check, index) => ({ ...check, label: `Double check ${index + 1}` }))
   ];
 }
@@ -991,6 +1004,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
   const user = option.user?.email || option.user?.name || "usuario";
   const link = String(option.link || "").trim();
   const photo = String(option.foto || "").trim();
+  const ean = String(option.ean || "").trim();
   return `
     <label class="double-check-item">
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
@@ -998,7 +1012,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
         <strong>${escapeHtml(option.label || "Cadastro")}</strong>
         <span>${escapeHtml(user)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
-        <span>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener">Abrir foto</a>` : "Sem foto"}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
+        <span>EAN: ${escapeHtml(ean || "-")} · ${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener">Abrir foto</a>` : "Sem foto"}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
   `;
@@ -1306,6 +1320,7 @@ function renderLotDetail(lot) {
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
+  schedulePrimaryInputFocus(noSheetLot ? undefined : ["#rzSearchInput"]);
 }
 
 async function deleteLot(lot) {
@@ -1557,7 +1572,7 @@ function bindScanControls(lotId, codigoRz) {
   $("#scanInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") scanCurrent(lotId, codigoRz);
   });
-  $("#scanInput").focus();
+  schedulePrimaryInputFocus(["#scanInput"]);
 }
 
 function bindLabelTextControls() {
@@ -1630,6 +1645,7 @@ async function scanCurrent(lotId, codigoRz) {
     state.pendingScan = false;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = false;
+    schedulePrimaryInputFocus(["#scanInput"]);
   }
 }
 
@@ -1693,6 +1709,7 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
     state.pendingDecrement = false;
     const decrementButton = $("#decrementScanButton");
     if (decrementButton) decrementButton.disabled = false;
+    schedulePrimaryInputFocus(["#scanInput"]);
   }
 }
 
@@ -1723,6 +1740,7 @@ async function searchMl(event) {
   const response = await api(`/api/search?codigoMl=${encodeURIComponent(codigoMl)}`);
   const wrapper = $("#searchResults");
   if (!response.results.length) {
+    schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
     wrapper.innerHTML = '<p class="muted">Produto não encontrado.</p>';
     return;
   }
@@ -1739,6 +1757,7 @@ async function searchMl(event) {
   wrapper.querySelectorAll("button[data-product]").forEach((button) => {
     button.addEventListener("click", () => printLabel(button.dataset.product));
   });
+  schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
 }
 
 async function printLabel(productId) {
@@ -1863,6 +1882,21 @@ function printCurrentLabel() {
   window.print();
 }
 
+function bindPrintCloseFallback() {
+  const printMedia = window.matchMedia?.("print");
+  if (!printMedia) return;
+
+  const handleChange = (event) => {
+    if (!event.matches) finishLabelPrint();
+  };
+
+  if (printMedia.addEventListener) {
+    printMedia.addEventListener("change", handleChange);
+  } else if (printMedia.addListener) {
+    printMedia.addListener(handleChange);
+  }
+}
+
 function finishLabelPrint() {
   const wasPrintingLabel = Boolean($("#labelPrintRoot")) || document.body.classList.contains("printing-label");
   cleanupLabelPrintRoot();
@@ -1878,7 +1912,62 @@ function hideLabelPreview() {
   $("#labelModal").classList.add("hidden");
   $("#labelPreview").innerHTML = "";
   state.labelProduct = null;
-  setTimeout(() => $("#scanInput")?.focus(), 0);
+  scheduleScanInputFocus();
+}
+
+function scheduleScanInputFocus() {
+  schedulePrimaryInputFocus(["#scanInput", "#diverseScanForm input[name='codigoMl']"]);
+}
+
+function schedulePrimaryInputFocus(preferredSelectors) {
+  [0, 50, 150, 300, 600].forEach((delay) => {
+    setTimeout(() => focusPrimaryInput(preferredSelectors), delay);
+  });
+}
+
+function focusScanInput() {
+  focusPrimaryInput(["#scanInput", "#diverseScanForm input[name='codigoMl']"]);
+}
+
+function focusPrimaryInput(preferredSelectors) {
+  const selectors = [
+    ...(Array.isArray(preferredSelectors) ? preferredSelectors : preferredSelectors ? [preferredSelectors] : []),
+    ...primaryInputSelectors()
+  ];
+  const input = selectors.map((selector) => $(selector)).find(isFocusableInput);
+  if (!input) return;
+
+  const visibleModal = [...document.querySelectorAll(".label-modal:not(.hidden)")].find(isElementVisible);
+  if (visibleModal && !visibleModal.contains(input)) return;
+
+  window.focus();
+  input.focus({ preventScroll: true });
+}
+
+function primaryInputSelectors() {
+  return [
+    "#manualProductModal:not(.hidden) #manualProductDescription",
+    "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
+    "#scanInput",
+    "#diverseScanForm input[name='codigoMl']:not(:disabled)",
+    "#diverseRzForm input[name='codigoRz']",
+    "#rzSearchInput",
+    "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
+    "#loginForm input[name='email']",
+    "#adminUsersTab:not(.hidden) #adminCreateUserForm input[name='name']",
+    "#adminCatalogTab:not(.hidden) #adminCatalogSearchForm input[name='q']",
+    "#uploadForm input[name='file']",
+    "#diverseLotForm input[name='name']"
+  ];
+}
+
+function isFocusableInput(element) {
+  if (!element || element.disabled || element.readOnly) return false;
+  return isElementVisible(element);
+}
+
+function isElementVisible(element) {
+  return Boolean(element && !element.closest(".hidden") && element.getClientRects().length);
 }
 
 function labelTextControls() {

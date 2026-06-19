@@ -94,6 +94,9 @@ const COLUMN_ALIASES = {
   valorTotal: ["Valor Total"],
   categoria: ["Categoria"],
   subcategoria: ["Subcategoria"],
+  ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
+  foto: ["URL Imagens Externas", "URL da imagem", "URL/foto do produto", "Foto", "Imagem"],
+  link: ["Link Externo", "Link do produto", "URL do produto", "Link"],
   enderecoWms: ["Endereço WMS", "Endereco WMS"],
   condicaoGrade: ["Condição\n(Grade)", "Condição (Grade)", "Condicao (Grade)", "Grade"]
 };
@@ -174,6 +177,9 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     const descricao = String(get(row, "descricao") ?? "").trim();
     const categoria = String(get(row, "categoria") ?? "").trim();
     const subcategoria = String(get(row, "subcategoria") ?? "").trim();
+    const ean = String(get(row, "ean") ?? "").trim();
+    const foto = String(get(row, "foto") ?? "").trim();
+    const link = String(get(row, "link") ?? "").trim();
 
     if (!byMl.has(codigoMl)) {
       byMl.set(codigoMl, {
@@ -186,6 +192,9 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
         qtdTotal: 0,
         categoria,
         subcategoria,
+        ean,
+        foto,
+        link,
         origem: "planilha",
         createdAt: new Date().toISOString()
       });
@@ -264,6 +273,10 @@ export function buildBlingCsv(products, lot) {
     row["Preço de custo"] = formatBrMoney(product.precoCusto);
     row["Fornecedor"] = lot.fornecedor;
     row["Marca"] = product.codigoMl;
+    row["GTIN/EAN"] = product.ean || "";
+    row["GTIN/EAN da Embalagem"] = product.ean || "";
+    row["URL Imagens Externas"] = product.foto || "";
+    row["Link Externo"] = product.link || "";
     row["Estoque máximo"] = "0";
     row["Estoque mínimo"] = "0";
     row["Peso líquido (Kg)"] = "0";
@@ -298,7 +311,7 @@ export function buildBlingStockEntryCsv(items, { deposito = "Depósito Geral", o
   const rows = items.map((item) => ({
     "ID Produto": "",
     "Código SKU*": item.sku || "",
-    "GTIN/EAN**": "",
+    "GTIN/EAN**": item.ean || "",
     "Nome do Produto": item.descricao || "",
     "Depósito*": deposito,
     "Movimentação de Estoque*": String(Number(item.qtdConferida || item.quantidade || 0)),

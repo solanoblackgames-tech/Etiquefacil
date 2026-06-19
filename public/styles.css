@@ -998,7 +998,7 @@ h3 {
 }
 
 .catalog-product-row {
-  grid-template-columns: minmax(280px, 1.7fr) minmax(130px, 0.7fr) minmax(100px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.6fr) minmax(180px, 0.8fr);
+  grid-template-columns: minmax(260px, 1.7fr) minmax(120px, 0.65fr) minmax(110px, 0.6fr) minmax(100px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.6fr) minmax(180px, 0.8fr);
 }
 
 .admin-row:last-child {

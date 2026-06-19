@@ -553,6 +553,7 @@ async function getRzStockEntryData(userId, lotId, codigoRz) {
     } else {
       productsById.set(item.product.id, {
         sku: item.product.sku || "",
+        ean: item.product.ean || "",
         descricao: item.product.descricao || "",
         precoCusto: Number(item.product.precoCusto || 0),
         qtdConferida
@@ -584,6 +585,7 @@ function buildPalletReport(lot, codigoRz) {
       return {
         sku: product.sku || "",
         codigoMl: product.codigoMl || "",
+        ean: product.ean || "",
         descricao: product.descricao || "",
         categoria: product.categoria || "",
         subcategoria: product.subcategoria || "",
@@ -625,6 +627,7 @@ function buildPalletWorkbook(pallet) {
   const itemRows = pallet.items.map((item) => ({
     SKU: item.sku,
     "Codigo ML": item.codigoMl,
+    EAN: item.ean,
     Descricao: item.descricao,
     "Endereco WMS": item.enderecoWms,
     Tipo: item.tipoItem,

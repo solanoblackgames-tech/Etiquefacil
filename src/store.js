@@ -681,7 +681,7 @@ export async function listCatalogProductsForAdmin(search = "") {
     let where = "";
     if (term) {
       params.push(`%${term}%`);
-      where = "where codigo_ml ilike $1 or descricao ilike $1";
+      where = "where codigo_ml ilike $1 or descricao ilike $1 or ean ilike $1";
     }
     const result = await query(
       `select * from catalog_products ${where} order by updated_at desc, codigo_ml asc limit 200`,
@@ -694,7 +694,7 @@ export async function listCatalogProductsForAdmin(search = "") {
   return (await readDb()).catalogProducts
     .filter((product) => {
       if (!normalized) return true;
-      return product.codigoMl.toLowerCase().includes(normalized) || product.descricao.toLowerCase().includes(normalized);
+      return product.codigoMl.toLowerCase().includes(normalized) || product.descricao.toLowerCase().includes(normalized) || String(product.ean || "").toLowerCase().includes(normalized);
     })
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
     .slice(0, 200);
@@ -874,6 +874,9 @@ async function ensurePgStore() {
       qtd_total integer not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ean text not null default '',
+      link text not null default '',
+      foto text not null default '',
       origem text not null default 'planilha',
       created_at timestamptz not null default now()
     );
@@ -886,6 +889,9 @@ async function ensurePgStore() {
       preco_custo numeric not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ean text not null default '',
+      link text not null default '',
+      foto text not null default '',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -935,6 +941,7 @@ async function ensurePgStore() {
       preco_custo numeric not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ean text not null default '',
       link text not null default '',
       foto text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -943,6 +950,15 @@ async function ensurePgStore() {
     );
 
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
+    alter table products add column if not exists ean text not null default '';
+    alter table products add column if not exists link text not null default '';
+    alter table products add column if not exists foto text not null default '';
+    alter table catalog_products add column if not exists ean text not null default '';
+    alter table catalog_products add column if not exists link text not null default '';
+    alter table catalog_products add column if not exists foto text not null default '';
+    alter table catalog_requests add column if not exists ean text not null default '';
+    alter table catalog_requests add column if not exists link text not null default '';
+    alter table catalog_requests add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
 
     create index if not exists lots_user_id_idx on lots(user_id);
@@ -1024,7 +1040,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -1036,6 +1052,9 @@ async function writePgDb(db) {
         product.qtdTotal,
         product.categoria || "",
         product.subcategoria || "",
+        product.ean || "",
+        product.link || "",
+        product.foto || "",
         product.origem || "planilha",
         product.createdAt
       ])
@@ -1133,7 +1152,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "origem", "created_at"],
+    ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -1145,6 +1164,9 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.qtdTotal,
       product.categoria || "",
       product.subcategoria || "",
+      product.ean || "",
+      product.link || "",
+      product.foto || "",
       product.origem || "planilha",
       product.createdAt
     ])
@@ -1173,7 +1195,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -1182,6 +1204,9 @@ async function insertCatalogProductRows(client, products = []) {
       product.precoCusto,
       product.categoria || "",
       product.subcategoria || "",
+      product.ean || "",
+      product.link || "",
+      product.foto || "",
       product.createdAt,
       product.updatedAt || product.createdAt
     ])
@@ -1205,6 +1230,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "preco_custo",
       "categoria",
       "subcategoria",
+      "ean",
       "link",
       "foto",
       "double_checks",
@@ -1224,6 +1250,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.precoCusto || 0,
       request.categoria || "",
       request.subcategoria || "",
+      request.ean || "",
       request.link || "",
       request.foto || "",
       JSON.stringify(request.doubleChecks || []),
@@ -1527,7 +1554,10 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         cp.valor_unit as catalog__valor_unit,
         cp.preco_custo as catalog__preco_custo,
         cp.categoria as catalog__categoria,
-        cp.subcategoria as catalog__subcategoria
+        cp.subcategoria as catalog__subcategoria,
+        cp.ean as catalog__ean,
+        cp.link as catalog__link,
+        cp.foto as catalog__foto
       from products p
       join lots l on l.id = p.lot_id
       left join catalog_products cp on upper(trim(cp.codigo_ml)) = upper(trim(p.codigo_ml))
@@ -1551,6 +1581,9 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
       precoCusto: num(row.catalog__preco_custo),
       categoria: row.catalog__categoria || "",
       subcategoria: row.catalog__subcategoria || "",
+      ean: row.catalog__ean || "",
+      link: row.catalog__link || "",
+      foto: row.catalog__foto || "",
       lot: lotFromPrefixedRow(row, "lot__")
     };
   });
@@ -1635,17 +1668,20 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
             preco_custo = excluded.preco_custo,
             categoria = excluded.categoria,
             subcategoria = excluded.subcategoria,
+            ean = excluded.ean,
+            link = excluded.link,
+            foto = excluded.foto,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || ""]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || ""]
       );
       await client.query("update catalog_requests set status = 'approved', reviewed_at = now() where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -1678,6 +1714,9 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
+    ean: history.ean || "",
+    link: history.link || "",
+    foto: history.foto || "",
     origem: options.origem || "excedente_externo",
     createdAt: new Date().toISOString()
   };
@@ -1710,6 +1749,9 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
+    ean: history.ean || "",
+    link: history.link || "",
+    foto: history.foto || "",
     origem: options.origem || "lote_sem_planilha",
     createdAt: new Date().toISOString()
   };
@@ -1745,6 +1787,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
     precoCusto: roundMoney(Number(input.precoCusto || 0)),
     categoria: String(input.categoria || "").trim(),
     subcategoria: String(input.subcategoria || "").trim(),
+    ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
     foto: String(input.foto || "").trim()
   };
@@ -1765,8 +1808,9 @@ function buildCatalogRequest({ userId, lot, product, type, payload }) {
     precoCusto: roundMoney(payload.precoCusto ?? product.precoCusto),
     categoria: payload.categoria || product.categoria || "",
     subcategoria: payload.subcategoria || product.subcategoria || "",
-    link: payload.link || "",
-    foto: payload.foto || "",
+    ean: payload.ean || product.ean || "",
+    link: payload.link || product.link || "",
+    foto: payload.foto || product.foto || "",
     createdAt: new Date().toISOString(),
     reviewedAt: null
   };
@@ -1840,6 +1884,7 @@ function buildCatalogDoubleCheck(request) {
     precoCusto: roundMoney(request.precoCusto || 0),
     categoria: request.categoria || "",
     subcategoria: request.subcategoria || "",
+    ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
     createdAt: request.createdAt || new Date().toISOString()
@@ -1890,6 +1935,9 @@ function upsertCatalogProduct(db, request) {
     precoCusto: Number(request.precoCusto || 0),
     categoria: request.categoria || "",
     subcategoria: request.subcategoria || "",
+    ean: request.ean || "",
+    link: request.link || "",
+    foto: request.foto || "",
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
@@ -1921,6 +1969,9 @@ function normalizeCatalogProducts(products, now) {
       precoCusto: Number(input.precoCusto || 0),
       categoria: String(input.categoria || "").trim(),
       subcategoria: String(input.subcategoria || "").trim(),
+      ean: String(input.ean || "").trim(),
+      link: String(input.link || "").trim(),
+      foto: String(input.foto || "").trim(),
       createdAt: input.createdAt || now,
       updatedAt: now
     });
@@ -1988,6 +2039,9 @@ function productFromRow(row) {
     qtdTotal: Number(row.qtd_total),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ean: row.ean || "",
+    link: row.link || "",
+    foto: row.foto || "",
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };
@@ -2002,6 +2056,9 @@ function catalogProductFromRow(row) {
     precoCusto: num(row.preco_custo),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ean: row.ean || "",
+    link: row.link || "",
+    foto: row.foto || "",
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at)
   };
@@ -2021,6 +2078,7 @@ function catalogRequestFromRow(row) {
     precoCusto: num(row.preco_custo),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
     doubleChecks: parseJsonArray(row.double_checks),

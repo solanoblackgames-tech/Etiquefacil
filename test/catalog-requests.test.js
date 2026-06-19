@@ -81,7 +81,10 @@ test("selectCatalogApprovalPayload uses the selected double check values", () =>
         codigoMl: "ML123",
         descricao: "Produto confirmado",
         valorUnit: 105,
-        precoCusto: 7
+        precoCusto: 7,
+        ean: "7891234567890",
+        link: "https://example/produto",
+        foto: "https://img.example/produto.jpg"
       }
     ]
   };
@@ -93,4 +96,7 @@ test("selectCatalogApprovalPayload uses the selected double check values", () =>
   assert.equal(selected.descricao, "Produto confirmado");
   assert.equal(selected.valorUnit, 105);
   assert.equal(selected.precoCusto, 7);
+  assert.equal(selected.ean, "7891234567890");
+  assert.equal(selected.link, "https://example/produto");
+  assert.equal(selected.foto, "https://img.example/produto.jpg");
 });

@@ -45,7 +45,10 @@ test("Bling CSV maps SKU, ML brand and total stock", () => {
         descricao: "Alternador Lifan",
         valorUnit: 1659.17,
         precoCusto: 331.83,
-        qtdTotal: 3
+        qtdTotal: 3,
+        ean: "7891234567890",
+        foto: "https://img.example/produto.jpg",
+        link: "https://example/produto"
       }
     ],
     { fornecedor: "AMZ04LOTE" }
@@ -60,6 +63,9 @@ test("Bling CSV maps SKU, ML brand and total stock", () => {
   assert.equal(value("Marca"), "JQQR53377");
   assert.equal(value("Estoque"), "3");
   assert.equal(value("Fornecedor"), "AMZ04LOTE");
+  assert.equal(value("GTIN/EAN"), "7891234567890");
+  assert.equal(value("URL Imagens Externas"), "https://img.example/produto.jpg");
+  assert.equal(value("Link Externo"), "https://example/produto");
   assert.equal(value("Preço"), "1.659,17");
   assert.equal(value("Preço de custo"), "331,83");
 });

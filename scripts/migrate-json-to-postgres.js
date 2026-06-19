@@ -50,7 +50,7 @@ try {
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "origem", "created_at"],
+    ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
     (db.products || []).map((product) => [
       product.id,
       product.lotId,
@@ -62,6 +62,9 @@ try {
       product.qtdTotal,
       product.categoria || "",
       product.subcategoria || "",
+      product.ean || "",
+      product.link || "",
+      product.foto || "",
       product.origem || "planilha",
       product.createdAt
     ])
