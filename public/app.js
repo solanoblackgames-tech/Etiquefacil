@@ -118,9 +118,7 @@ function bindEvents() {
       hideLabelPreview();
     }
   });
-  window.addEventListener("afterprint", () => {
-    cleanupLabelPrintRoot();
-  });
+  window.addEventListener("afterprint", finishLabelPrint);
 }
 
 function handleCodigoMlInput(event) {
@@ -1862,6 +1860,12 @@ function printCurrentLabel() {
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
   window.print();
+}
+
+function finishLabelPrint() {
+  const wasPrintingLabel = Boolean($("#labelPrintRoot")) || document.body.classList.contains("printing-label");
+  cleanupLabelPrintRoot();
+  if (wasPrintingLabel) hideLabelPreview();
 }
 
 function cleanupLabelPrintRoot() {
