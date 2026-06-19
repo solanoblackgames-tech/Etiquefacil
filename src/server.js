@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
-import { buildBlingCsv, importSpecialistWorkbook } from "./domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
   addDiverseLotItem,
@@ -49,6 +49,7 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
+const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Depósito Geral";
 const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
   id: "backoffice-admin",
@@ -317,6 +318,40 @@ app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, re
   }
 });
 
+app.get("/api/lots/:lotId/rz/:codigoRz/stock-entry", requireAuth, async (req, res) => {
+  try {
+    const data = await getRzStockEntryData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    if (!data) return res.status(404).json({ error: "Remessa nao encontrada neste lote." });
+    if (!data.items.length) return res.status(404).json({ error: "Nenhum item conferido nesta remessa." });
+
+    const csv = buildStockEntryCsvForRz(data);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${rzStockEntryFileName(data.lot, data.codigoRz)}"`);
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, async (req, res) => {
+  try {
+    const data = await getRzStockEntryData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    if (!data) return res.status(404).json({ error: "Remessa nao encontrada neste lote." });
+    if (!data.items.length) return res.status(404).json({ error: "Nenhum item conferido nesta remessa." });
+
+    const csv = buildStockEntryCsvForRz(data);
+    const downloadsDir = path.join(os.homedir(), "Downloads");
+    await fs.mkdir(downloadsDir, { recursive: true });
+    const fileName = await uniqueDownloadName(downloadsDir, rzStockEntryFileName(data.lot, data.codigoRz));
+    const filePath = path.join(downloadsDir, fileName);
+    await fs.writeFile(filePath, `\uFEFF${csv}`, "utf8");
+    revealFile(filePath);
+    res.json({ fileName, path: filePath, count: data.items.length });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
@@ -476,6 +511,10 @@ function rzBlingFileName(lot, codigoRz) {
   return `${safeFileName(lot.prefixoSku)}-${safeFileName(codigoRz)}-bling.csv`;
 }
 
+function rzStockEntryFileName(lot, codigoRz) {
+  return `${safeFileName(lot.prefixoSku)}-${safeFileName(codigoRz)}-entrada-estoque-bling.csv`;
+}
+
 async function getRzBlingData(userId, lotId, codigoRz) {
   const lot = await getUserLotDetail(userId, lotId);
   if (!lot) return null;
@@ -495,6 +534,41 @@ async function getRzBlingData(userId, lotId, codigoRz) {
 
   if (!productsById.size) return null;
   return { lot, codigoRz, products: [...productsById.values()] };
+}
+
+async function getRzStockEntryData(userId, lotId, codigoRz) {
+  const lot = await getUserLotDetail(userId, lotId);
+  if (!lot) return null;
+  if (!(lot.rzs || []).some((item) => item.codigoRz === codigoRz)) return null;
+
+  const productsById = new Map();
+  for (const item of lot.items || []) {
+    if (item.codigoRz !== codigoRz || !item.product) continue;
+    const qtdConferida = Number(item.qtdConferida || 0);
+    if (qtdConferida <= 0) continue;
+
+    const existing = productsById.get(item.product.id);
+    if (existing) {
+      existing.qtdConferida += qtdConferida;
+    } else {
+      productsById.set(item.product.id, {
+        sku: item.product.sku || "",
+        descricao: item.product.descricao || "",
+        precoCusto: Number(item.product.precoCusto || 0),
+        qtdConferida
+      });
+    }
+  }
+
+  if (!productsById.size) return { lot, codigoRz, items: [] };
+  return { lot, codigoRz, items: [...productsById.values()].sort((a, b) => a.sku.localeCompare(b.sku)) };
+}
+
+function buildStockEntryCsvForRz(data) {
+  return buildBlingStockEntryCsv(data.items, {
+    deposito: BLING_STOCK_DEPOSIT,
+    observacao: `Entrada por conferência RZ ${data.codigoRz}`
+  });
 }
 
 function buildPalletReport(lot, codigoRz) {

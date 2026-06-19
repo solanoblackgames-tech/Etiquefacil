@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import pg from "pg";
 import { formatSku, roundMoney } from "./domain.js";
-import { findApprovedProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
+import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
 import { insertRows } from "./pg-bulk.js";
 
 const { Pool } = pg;
@@ -585,9 +585,18 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, man
   }
 
   const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
-  const source = history || findCatalogProduct(db, normalizedMl);
+  const previousHistory = history ? null : findProductHistory(db, userId, lot.id, normalizedMl)[0];
+  const source = history || previousHistory || findCatalogProduct(db, normalizedMl);
   if (!existing && source && preview) {
-    return { status: "preview", product: { ...source, codigoMl: normalizedMl }, source: history ? "historico" : "catalogo_oculto", lot: summarizeLot(db, lot, true) };
+    return { status: "preview", product: { ...source, codigoMl: normalizedMl }, source: history || previousHistory ? "historico" : "catalogo_oculto", lot: summarizeLot(db, lot, true) };
+  }
+  if (previousHistory) {
+    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride });
+    lot.proximoSequencialSku += 1;
+    db.products.push(product);
+    db.rzItems.push(item);
+    await writeDb(db);
+    return { status: "criado", product, parent: previousHistory, source: "historico", lot: summarizeLot(db, lot, true) };
   }
   if (!history && source) {
     const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride });
@@ -1456,10 +1465,13 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualPr
       await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [existing.id]);
       result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
     } else {
-      const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0] || (await findPgCatalogProduct(client, codigoMl));
+      const approvedHistory = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
+      const previousHistory = approvedHistory ? null : (await findPgPreviousProductHistory(client, userId, lot.id, codigoMl, 1))[0];
+      const catalogProduct = approvedHistory || previousHistory ? null : await findPgCatalogProduct(client, codigoMl);
+      const history = approvedHistory || previousHistory || catalogProduct;
       if (history && preview) {
         await client.query("commit");
-        return { status: "preview", product: { ...history, codigoMl }, source: history.lot ? "historico" : "catalogo_oculto", lot: await getUserLotDetail(userId, lotId) };
+        return { status: "preview", product: { ...history, codigoMl }, source: approvedHistory || previousHistory ? "historico" : "catalogo_oculto", lot: await getUserLotDetail(userId, lotId) };
       }
       if (!history && manualProduct) {
         const source = normalizeManualProduct(manualProduct, codigoMl);
@@ -1542,6 +1554,37 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
       lot: lotFromPrefixedRow(row, "lot__")
     };
   });
+}
+
+async function findPgPreviousProductHistory(client, userId, currentLotId, codigoMl, limit) {
+  const result = await client.query(
+    `
+      select
+        p.*,
+        l.id as lot__id,
+        l.user_id as lot__user_id,
+        l.nome_arquivo as lot__nome_arquivo,
+        l.percentual_arremate as lot__percentual_arremate,
+        l.custo_medio_unitario as lot__custo_medio_unitario,
+        l.fornecedor as lot__fornecedor,
+        l.prefixo_sku as lot__prefixo_sku,
+        l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
+        l.created_at as lot__created_at
+      from products p
+      join lots l on l.id = p.lot_id
+      where l.id <> $1
+        and l.user_id = $4
+        and upper(trim(p.codigo_ml)) = upper(trim($2))
+      order by p.created_at desc
+      limit $3
+    `,
+    [currentLotId, codigoMl, limit, userId]
+  );
+
+  return result.rows.map((row) => ({
+    ...productFromRow(row),
+    lot: lotFromPrefixedRow(row, "lot__")
+  }));
 }
 
 function findCatalogProduct(db, codigoMl) {

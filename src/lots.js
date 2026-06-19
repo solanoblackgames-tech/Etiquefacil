@@ -42,7 +42,7 @@ export function summarizeLot(db, lot, includeItems = false) {
 }
 
 export function findProductHistory(db, userId, currentLotId, codigoMl) {
-  const userLots = new Map(db.lots.filter((lot) => lot.id !== currentLotId).map((lot) => [lot.id, lot]));
+  const userLots = new Map(db.lots.filter((lot) => lot.id !== currentLotId && lot.userId === userId).map((lot) => [lot.id, lot]));
   return db.products
     .filter((product) => product.codigoMl === codigoMl && userLots.has(product.lotId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))

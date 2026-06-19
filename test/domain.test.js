@@ -1,10 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingCsv, formatSku, roundMoney } from "../src/domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, formatSku, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
   assert.equal(formatSku("ABC", 42), "ABC0042");
+});
+
+test("Bling stock entry CSV maps checked quantity for inventory entry", () => {
+  const csv = buildBlingStockEntryCsv(
+    [
+      {
+        sku: "AMZ04L0001",
+        descricao: "Alternador Lifan",
+        precoCusto: 331.83,
+        qtdConferida: 2
+      }
+    ],
+    { deposito: "Depósito Geral", observacao: "Entrada por conferência RZ RZ-01" }
+  );
+
+  const [headerLine, dataLine] = csv.split("\r\n");
+
+  assert.equal(
+    headerLine,
+    '"ID Produto","Código SKU*","GTIN/EAN**","Nome do Produto","Depósito*","Movimentação de Estoque*","Tipo de lançamento*","Preço de Compra*","Preço de Custo","Observação"'
+  );
+  assert.equal(
+    dataLine,
+    '"","AMZ04L0001","","Alternador Lifan","Depósito Geral","2","Entrada","331,83","331,83","Entrada por conferência RZ RZ-01"'
+  );
 });
 
 test("auction cost rounds to Brazilian money precision", () => {

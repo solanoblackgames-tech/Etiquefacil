@@ -1439,6 +1439,7 @@ function renderPallet(lot, codigoRz) {
         <div class="pallet-actions">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
           <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>
+          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>
           <a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>
           <a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>
         </div>

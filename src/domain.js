@@ -63,6 +63,19 @@ export const BLING_HEADERS = [
   "Informações Adicionais"
 ];
 
+export const BLING_STOCK_ENTRY_HEADERS = [
+  "ID Produto",
+  "Código SKU*",
+  "GTIN/EAN**",
+  "Nome do Produto",
+  "Depósito*",
+  "Movimentação de Estoque*",
+  "Tipo de lançamento*",
+  "Preço de Compra*",
+  "Preço de Custo",
+  "Observação"
+];
+
 const REQUIRED_COLUMNS = [
   "codigoMl",
   "codigoRz",
@@ -281,6 +294,25 @@ export function buildBlingCsv(products, lot) {
     .join("\r\n");
 }
 
+export function buildBlingStockEntryCsv(items, { deposito = "Depósito Geral", observacao = "" } = {}) {
+  const rows = items.map((item) => ({
+    "ID Produto": "",
+    "Código SKU*": item.sku || "",
+    "GTIN/EAN**": "",
+    "Nome do Produto": item.descricao || "",
+    "Depósito*": deposito,
+    "Movimentação de Estoque*": String(Number(item.qtdConferida || item.quantidade || 0)),
+    "Tipo de lançamento*": "Entrada",
+    "Preço de Compra*": formatBrMoney(item.precoCusto || 0),
+    "Preço de Custo": formatBrMoney(item.precoCusto || 0),
+    "Observação": observacao
+  }));
+
+  return [BLING_STOCK_ENTRY_HEADERS, ...rows.map((row) => BLING_STOCK_ENTRY_HEADERS.map((header) => row[header]))]
+    .map((row) => row.map(csvQuotedCell).join(","))
+    .join("\r\n");
+}
+
 export function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -296,4 +328,8 @@ function csvCell(value) {
   const text = String(value ?? "");
   const escaped = text.replace(/"/g, '""');
   return /[;"\r\n]/.test(escaped) ? `"${escaped}"` : escaped;
+}
+
+function csvQuotedCell(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }

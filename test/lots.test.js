@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findApprovedProductHistory, getBlingProducts, summarizeLot } from "../src/lots.js";
+import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "../src/lots.js";
 
 test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   const db = {
@@ -159,5 +159,24 @@ test("findApprovedProductHistory only returns history approved in catalog", () =
   assert.deepEqual(
     findApprovedProductHistory(db, "user-1", "current-lot", "ML-SHEET-APPROVED").map((product) => product.id),
     ["approved-sheet-history"]
+  );
+});
+
+test("findProductHistory returns previous products from same user even before catalog approval", () => {
+  const db = {
+    lots: [
+      { id: "old-lot", userId: "user-1" },
+      { id: "current-lot", userId: "user-1" },
+      { id: "other-user-lot", userId: "user-2" }
+    ],
+    products: [
+      { id: "same-user-history", lotId: "old-lot", codigoMl: "ML-PENDING", createdAt: "2026-06-17T00:00:00.000Z" },
+      { id: "other-user-history", lotId: "other-user-lot", codigoMl: "ML-PENDING", createdAt: "2026-06-18T00:00:00.000Z" }
+    ]
+  };
+
+  assert.deepEqual(
+    findProductHistory(db, "user-1", "current-lot", "ML-PENDING").map((product) => product.id),
+    ["same-user-history"]
   );
 });
