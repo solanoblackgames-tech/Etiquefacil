@@ -333,6 +333,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const cleanup = () => {
       modal.classList.add("hidden");
       form.onsubmit = null;
+      ean.onkeydown = null;
       cancel.onclick = null;
       modal.onkeydown = null;
       form.reset();
@@ -373,6 +374,13 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     cancel.onclick = () => {
       cleanup();
       resolve(null);
+    };
+
+    ean.onkeydown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        form.requestSubmit();
+      }
     };
 
     modal.onkeydown = (event) => {
@@ -1005,6 +1013,9 @@ function catalogApprovalOptionRow(requestId, option, index) {
   const link = String(option.link || "").trim();
   const photo = String(option.foto || "").trim();
   const ean = String(option.ean || "").trim();
+  const photoHtml = photo
+    ? `<a class="photo-link" href="${escapeHtml(photo)}" target="_blank" rel="noopener"><img src="${escapeHtml(photo)}" alt="Foto do produto" loading="lazy" onerror="this.remove(); this.parentElement.append('Abrir foto');" /></a>`
+    : "Sem foto";
   return `
     <label class="double-check-item">
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
@@ -1012,7 +1023,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
         <strong>${escapeHtml(option.label || "Cadastro")}</strong>
         <span>${escapeHtml(user)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
-        <span>EAN: ${escapeHtml(ean || "-")} · ${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener">Abrir foto</a>` : "Sem foto"}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
+        <span>EAN: ${escapeHtml(ean || "-")} - ${photoHtml}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
   `;

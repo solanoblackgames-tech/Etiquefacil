@@ -1778,6 +1778,7 @@ function buildDiverseRzItem(lot, product, codigoRz) {
 function normalizeManualProduct(input = {}, codigoMl) {
   const descricao = String(input.descricao || input.nome || "").trim();
   const valorUnit = roundMoney(Number(input.valorUnit ?? input.preco ?? 0));
+  const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
   return {
@@ -1789,7 +1790,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
     subcategoria: String(input.subcategoria || "").trim(),
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
-    foto: String(input.foto || "").trim()
+    foto: String(foto || "").trim()
   };
 }
 

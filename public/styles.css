@@ -1048,6 +1048,20 @@ h3 {
   font-weight: 800;
 }
 
+.photo-link {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.photo-link img {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  height: 56px;
+  object-fit: cover;
+  width: 56px;
+}
+
 .check-count {
   color: #075e57;
 }
