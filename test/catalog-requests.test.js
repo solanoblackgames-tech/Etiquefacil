@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
+import { buildRejectedCatalogRequest, mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
 
 test("mergePendingCatalogRequest groups repeated pending create suggestions by Codigo ML", () => {
   const requests = [
@@ -99,4 +99,30 @@ test("selectCatalogApprovalPayload uses the selected double check values", () =>
   assert.equal(selected.ean, "7891234567890");
   assert.equal(selected.link, "https://example/produto");
   assert.equal(selected.foto, "https://img.example/produto.jpg");
+});
+
+test("buildRejectedCatalogRequest archives rejected suggestion data", () => {
+  const archived = buildRejectedCatalogRequest(
+    {
+      id: "request-1",
+      userId: "user-1",
+      lotId: "lot-1",
+      productId: "product-1",
+      type: "create",
+      status: "pending",
+      codigoMl: " ml123 ",
+      descricao: "Produto rejeitado",
+      valorUnit: 100,
+      precoCusto: 7,
+      doubleChecks: [{ id: "check-1", descricao: "Conferencia" }],
+      createdAt: "2026-06-18T10:00:00.000Z"
+    },
+    "2026-06-18T11:00:00.000Z"
+  );
+
+  assert.equal(archived.originalRequestId, "request-1");
+  assert.equal(archived.status, "rejected");
+  assert.equal(archived.codigoMl, "ML123");
+  assert.equal(archived.rejectedAt, "2026-06-18T11:00:00.000Z");
+  assert.deepEqual(archived.doubleChecks, [{ id: "check-1", descricao: "Conferencia" }]);
 });

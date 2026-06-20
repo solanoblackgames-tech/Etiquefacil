@@ -33,6 +33,7 @@ import {
   hasPostgres,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
+  listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
   reviewCatalogRequest,
   scanLotRz,
@@ -136,6 +137,10 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
 
 app.get("/api/admin/catalog-requests", requireAdmin, async (req, res) => {
   res.json({ requests: await listCatalogRequestsForAdmin() });
+});
+
+app.get("/api/admin/catalog-rejected-requests", requireAdmin, async (req, res) => {
+  res.json({ requests: await listRejectedCatalogRequestsForAdmin() });
 });
 
 app.get("/api/admin/catalog-products", requireAdmin, async (req, res) => {

@@ -26,7 +26,8 @@ const emptyDb = () => ({
   scans: [],
   labels: [],
   catalogProducts: [],
-  catalogRequests: []
+  catalogRequests: [],
+  catalogRejectedRequests: []
 });
 
 export function hasPostgres() {
@@ -74,6 +75,22 @@ async function ensureStoreOnce() {
   } catch {
     await fs.writeFile(DB_PATH, JSON.stringify(emptyDb(), null, 2));
   }
+  await migrateJsonStore();
+}
+
+async function migrateJsonStore() {
+  const raw = await fs.readFile(DB_PATH, "utf8");
+  const db = { ...emptyDb(), ...JSON.parse(raw || "{}") };
+  const rejectedInQueue = (db.catalogRequests || []).filter((request) => request.status === "rejected");
+  if (!rejectedInQueue.length) return;
+
+  const archivedOriginalIds = new Set((db.catalogRejectedRequests || []).map((request) => request.originalRequestId));
+  const archived = rejectedInQueue
+    .filter((request) => !archivedOriginalIds.has(request.id))
+    .map((request) => buildRejectedCatalogRequest(request, request.reviewedAt || new Date().toISOString()));
+  db.catalogRejectedRequests = [...(db.catalogRejectedRequests || []), ...archived];
+  db.catalogRequests = (db.catalogRequests || []).filter((request) => request.status !== "rejected");
+  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
 }
 
 export async function readDb() {
@@ -655,6 +672,7 @@ export async function listCatalogRequestsForAdmin() {
       select cr.*, u.name as user_name, u.email as user_email
       from catalog_requests cr
       left join users u on u.id = cr.user_id
+      where cr.status <> 'rejected'
       order by cr.created_at desc
     `),
       query("select id, name, email, created_at from users")
@@ -666,11 +684,43 @@ export async function listCatalogRequestsForAdmin() {
   const db = await readDb();
   const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRequests || [])
+    .filter((request) => request.status !== "rejected")
     .map((request) => enrichCatalogRequestDoubleChecks({
       ...request,
       user: usersById.get(request.userId) || null
     }, usersById))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listRejectedCatalogRequestsForAdmin() {
+  await ensureStore();
+  if (hasPostgres()) {
+    const [result, usersResult] = await Promise.all([
+      query(`
+      select crr.*, u.name as user_name, u.email as user_email
+      from catalog_rejected_requests crr
+      left join users u on u.id = crr.user_id
+      order by crr.rejected_at desc
+      limit 200
+    `),
+      query("select id, name, email, created_at from users")
+    ]);
+    const usersById = new Map(usersResult.rows.map((row) => [row.id, sanitizeUser(userFromRow(row))]));
+    return result.rows.map((row) => enrichCatalogRequestDoubleChecks({
+      ...catalogRejectedRequestFromRow(row),
+      user: row.user_name || row.user_email ? { name: row.user_name || "", email: row.user_email || "" } : null
+    }, usersById));
+  }
+
+  const db = await readDb();
+  const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
+  return (db.catalogRejectedRequests || [])
+    .map((request) => enrichCatalogRequestDoubleChecks({
+      ...request,
+      user: usersById.get(request.userId) || null
+    }, usersById))
+    .sort((a, b) => String(b.rejectedAt || "").localeCompare(String(a.rejectedAt || "")))
+    .slice(0, 200);
 }
 
 export async function listCatalogProductsForAdmin(search = "") {
@@ -728,12 +778,15 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
   if (action === "approve") {
     upsertCatalogProduct(db, selectCatalogApprovalPayload(request, options.selectedCheckId));
     request.status = "approved";
+    request.reviewedAt = new Date().toISOString();
   } else if (action === "reject") {
-    request.status = "rejected";
+    const reviewedAt = new Date().toISOString();
+    db.catalogRejectedRequests = db.catalogRejectedRequests || [];
+    db.catalogRejectedRequests.push(buildRejectedCatalogRequest(request, reviewedAt));
+    db.catalogRequests = (db.catalogRequests || []).filter((item) => item.id !== requestId);
   } else {
     throw new Error("Acao invalida.");
   }
-  request.reviewedAt = new Date().toISOString();
   await writeDb(db);
   return { ok: true };
 }
@@ -949,6 +1002,28 @@ async function ensurePgStore() {
       reviewed_at timestamptz
     );
 
+    create table if not exists catalog_rejected_requests (
+      id text primary key,
+      original_request_id text not null,
+      user_id text not null,
+      lot_id text,
+      product_id text,
+      type text not null,
+      status text not null default 'rejected',
+      codigo_ml text not null,
+      descricao text not null,
+      valor_unit numeric not null default 0,
+      preco_custo numeric not null default 0,
+      categoria text not null default '',
+      subcategoria text not null default '',
+      ean text not null default '',
+      link text not null default '',
+      foto text not null default '',
+      double_checks jsonb not null default '[]'::jsonb,
+      created_at timestamptz not null,
+      rejected_at timestamptz not null default now()
+    );
+
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists link text not null default '';
@@ -975,11 +1050,63 @@ async function ensurePgStore() {
     create index if not exists labels_user_id_idx on labels(user_id);
     create index if not exists catalog_requests_status_idx on catalog_requests(status);
     create index if not exists catalog_requests_codigo_ml_idx on catalog_requests(codigo_ml);
+    create index if not exists catalog_rejected_requests_codigo_ml_idx on catalog_rejected_requests(codigo_ml);
+    create index if not exists catalog_rejected_requests_rejected_at_idx on catalog_rejected_requests(rejected_at);
   `);
+  await query(`
+    insert into catalog_rejected_requests (
+      id,
+      original_request_id,
+      user_id,
+      lot_id,
+      product_id,
+      type,
+      status,
+      codigo_ml,
+      descricao,
+      valor_unit,
+      preco_custo,
+      categoria,
+      subcategoria,
+      ean,
+      link,
+      foto,
+      double_checks,
+      created_at,
+      rejected_at
+    )
+    select
+      cr.id || '-rejected',
+      cr.id,
+      cr.user_id,
+      cr.lot_id,
+      cr.product_id,
+      cr.type,
+      'rejected',
+      cr.codigo_ml,
+      cr.descricao,
+      cr.valor_unit,
+      cr.preco_custo,
+      cr.categoria,
+      cr.subcategoria,
+      cr.ean,
+      cr.link,
+      cr.foto,
+      cr.double_checks,
+      cr.created_at,
+      coalesce(cr.reviewed_at, now())
+    from catalog_requests cr
+    where cr.status = 'rejected'
+      and not exists (
+        select 1 from catalog_rejected_requests crr where crr.original_request_id = cr.id
+      )
+    on conflict (id) do nothing
+  `);
+  await query("delete from catalog_requests where status = 'rejected'");
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, catalogProducts, catalogRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -987,7 +1114,8 @@ async function readPgDb() {
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
-    query("select * from catalog_requests order by created_at asc")
+    query("select * from catalog_requests order by created_at asc"),
+    query("select * from catalog_rejected_requests order by rejected_at asc")
   ]);
 
   return {
@@ -998,7 +1126,8 @@ async function readPgDb() {
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
-    catalogRequests: catalogRequests.rows.map(catalogRequestFromRow)
+    catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
+    catalogRejectedRequests: catalogRejectedRequests.rows.map(catalogRejectedRequestFromRow)
   };
 }
 
@@ -1006,6 +1135,7 @@ async function writePgDb(db) {
   const client = await getPgPool().connect();
   try {
     await client.query("begin");
+    await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
     await client.query("delete from labels");
     await client.query("delete from scans");
@@ -1099,6 +1229,7 @@ async function writePgDb(db) {
     );
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
+    await insertCatalogRejectedRequestRows(client, db.catalogRejectedRequests || []);
 
     await client.query("commit");
   } catch (error) {
@@ -1256,6 +1387,55 @@ async function insertCatalogRequestRows(client, requests = []) {
       JSON.stringify(request.doubleChecks || []),
       request.createdAt,
       request.reviewedAt || null
+    ])
+  );
+}
+
+async function insertCatalogRejectedRequestRows(client, requests = []) {
+  await insertRows(
+    client,
+    "catalog_rejected_requests",
+    [
+      "id",
+      "original_request_id",
+      "user_id",
+      "lot_id",
+      "product_id",
+      "type",
+      "status",
+      "codigo_ml",
+      "descricao",
+      "valor_unit",
+      "preco_custo",
+      "categoria",
+      "subcategoria",
+      "ean",
+      "link",
+      "foto",
+      "double_checks",
+      "created_at",
+      "rejected_at"
+    ],
+    requests.map((request) => [
+      request.id,
+      request.originalRequestId,
+      request.userId,
+      request.lotId || null,
+      request.productId || null,
+      request.type,
+      request.status || "rejected",
+      request.codigoMl,
+      request.descricao,
+      request.valorUnit,
+      request.precoCusto || 0,
+      request.categoria || "",
+      request.subcategoria || "",
+      request.ean || "",
+      request.link || "",
+      request.foto || "",
+      JSON.stringify(request.doubleChecks || []),
+      request.createdAt,
+      request.rejectedAt
     ])
   );
 }
@@ -1685,7 +1865,8 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       );
       await client.query("update catalog_requests set status = 'approved', reviewed_at = now() where id = $1", [requestId]);
     } else if (action === "reject") {
-      await client.query("update catalog_requests set status = 'rejected', reviewed_at = now() where id = $1", [requestId]);
+      await insertCatalogRejectedRequestRows(client, [buildRejectedCatalogRequest(request, new Date().toISOString())]);
+      await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else {
       throw new Error("Acao invalida.");
     }
@@ -1892,6 +2073,30 @@ function buildCatalogDoubleCheck(request) {
   };
 }
 
+export function buildRejectedCatalogRequest(request, rejectedAt) {
+  return {
+    id: randomUUID(),
+    originalRequestId: request.originalRequestId || request.id,
+    userId: request.userId,
+    lotId: request.lotId || null,
+    productId: request.productId || null,
+    type: request.type,
+    status: "rejected",
+    codigoMl: normalizeCode(request.codigoMl),
+    descricao: request.descricao,
+    valorUnit: roundMoney(request.valorUnit || 0),
+    precoCusto: roundMoney(request.precoCusto || 0),
+    categoria: request.categoria || "",
+    subcategoria: request.subcategoria || "",
+    ean: request.ean || "",
+    link: request.link || "",
+    foto: request.foto || "",
+    doubleChecks: normalizeDoubleChecks(request.doubleChecks),
+    createdAt: request.createdAt || rejectedAt,
+    rejectedAt
+  };
+}
+
 function normalizeDoubleChecks(checks) {
   return Array.isArray(checks) ? checks : [];
 }
@@ -2086,6 +2291,30 @@ function catalogRequestFromRow(row) {
     createdAt: iso(row.created_at),
     reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
     user: row.user_name || row.user_email ? { name: row.user_name || "", email: row.user_email || "" } : null
+  };
+}
+
+function catalogRejectedRequestFromRow(row) {
+  return {
+    id: row.id,
+    originalRequestId: row.original_request_id,
+    userId: row.user_id,
+    lotId: row.lot_id,
+    productId: row.product_id,
+    type: row.type,
+    status: row.status,
+    codigoMl: row.codigo_ml,
+    descricao: row.descricao,
+    valorUnit: num(row.valor_unit),
+    precoCusto: num(row.preco_custo),
+    categoria: row.categoria || "",
+    subcategoria: row.subcategoria || "",
+    ean: row.ean || "",
+    link: row.link || "",
+    foto: row.foto || "",
+    doubleChecks: parseJsonArray(row.double_checks),
+    createdAt: iso(row.created_at),
+    rejectedAt: iso(row.rejected_at)
   };
 }
 

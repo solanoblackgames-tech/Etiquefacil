@@ -2,6 +2,7 @@ const state = {
   user: null,
   adminUsers: [],
   adminCatalogRequests: [],
+  adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
   lots: [],
   selectedLotId: null,
@@ -62,7 +63,7 @@ function bindEvents() {
   $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
 
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
-  $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogRequests);
+  $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogReviewLists);
   $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
@@ -694,7 +695,7 @@ async function showApp(user) {
     $("#adminApp").classList.remove("hidden");
     $("#adminName").textContent = `${user.name} (${user.email})`;
     await loadAdminUsers();
-    await loadAdminCatalogRequests();
+    await loadAdminCatalogReviewLists();
     await loadAdminCatalogProducts();
     schedulePrimaryInputFocus();
     return;
@@ -845,6 +846,19 @@ async function loadAdminCatalogRequests() {
   renderAdminCatalogRequests();
 }
 
+async function loadAdminCatalogRejectedRequests() {
+  const response = await api("/api/admin/catalog-rejected-requests");
+  state.adminCatalogRejectedRequests = response.requests;
+  renderAdminCatalogRejectedRequests();
+}
+
+async function loadAdminCatalogReviewLists() {
+  await Promise.all([
+    loadAdminCatalogRequests(),
+    loadAdminCatalogRejectedRequests()
+  ]);
+}
+
 async function loadAdminCatalogProducts(event) {
   if (event) event.preventDefault();
   const query = $("#adminCatalogSearchForm") ? new FormData($("#adminCatalogSearchForm")).get("q") : "";
@@ -929,6 +943,27 @@ function renderAdminCatalogRequests() {
   `;
 }
 
+function renderAdminCatalogRejectedRequests() {
+  const wrapper = $("#adminCatalogRejectedRequests");
+  if (!state.adminCatalogRejectedRequests.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhuma sugestao rejeitada ainda.</p>';
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row catalog-rejected-row admin-row-head">
+        <span>Sugestao</span>
+        <span>Codigo ML</span>
+        <span>Preco</span>
+        <span>Cadastros</span>
+        <span>Rejeitada em</span>
+      </div>
+      ${state.adminCatalogRejectedRequests.map(adminCatalogRejectedRequestRow).join("")}
+    </div>
+  `;
+}
+
 function renderAdminCatalogProducts() {
   const wrapper = $("#adminCatalogProducts");
   if (!state.adminCatalogProducts.length) {
@@ -949,6 +984,27 @@ function renderAdminCatalogProducts() {
       </div>
       ${state.adminCatalogProducts.map(adminCatalogProductRow).join("")}
     </div>
+  `;
+}
+
+function adminCatalogRejectedRequestRow(request) {
+  const user = request.user?.email || request.user?.name || "usuario";
+  const options = catalogApprovalOptions(request);
+  return `
+    <article class="admin-row catalog-rejected-row" data-catalog-rejected-request-id="${escapeHtml(request.id)}">
+      <div class="catalog-request-summary">
+        ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
+        <div>
+          <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
+          <span class="muted">${escapeHtml(user)} - ${formatDate(request.createdAt)}</span>
+          <span class="muted">${escapeHtml(request.descricao)}</span>
+        </div>
+      </div>
+      <span>${escapeHtml(request.codigoMl)}</span>
+      <span>${money(request.valorUnit)}</span>
+      <span><strong class="check-count">${options.length} cadastro${options.length === 1 ? "" : "s"}</strong></span>
+      <span>${formatDate(request.rejectedAt)}</span>
+    </article>
   `;
 }
 
@@ -1133,7 +1189,7 @@ async function handleAdminCatalogRequestsClick(event) {
     });
     $("#adminMessage").style.color = "#0f766e";
     $("#adminMessage").textContent = action === "approve" ? "Sugestao aprovada." : "Sugestao rejeitada.";
-    await loadAdminCatalogRequests();
+    await loadAdminCatalogReviewLists();
   } catch (error) {
     $("#adminMessage").style.color = "";
     $("#adminMessage").textContent = error.message;
