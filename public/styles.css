@@ -138,6 +138,51 @@ h3 {
   min-height: 20px;
 }
 
+.settings-shell {
+  display: grid;
+  margin: 0 auto;
+  max-width: 920px;
+  padding: 24px;
+}
+
+.settings-form {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-actions {
+  align-items: end;
+  display: flex;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.integration-status {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 16px;
+}
+
+.primary-action {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 700;
+  min-height: 40px;
+  padding: 0 14px;
+  text-decoration: none;
+}
+
+.primary-action:hover {
+  background: var(--accent-strong);
+}
+
 .download-link {
   color: #075e57;
   text-decoration: underline;
@@ -145,6 +190,42 @@ h3 {
 
 .app {
   min-height: 100vh;
+}
+
+.profile-shell {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 190px minmax(0, 1fr);
+  padding: 24px;
+}
+
+.profile-menu {
+  align-self: start;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  position: sticky;
+  top: 88px;
+}
+
+.profile-menu button {
+  background: transparent;
+  color: var(--muted);
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.profile-menu button.active,
+.profile-menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.profile-section {
+  min-width: 0;
 }
 
 .topbar {

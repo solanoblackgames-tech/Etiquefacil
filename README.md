@@ -22,6 +22,9 @@ DATABASE_URL=postgres://...
 SESSION_SECRET=uma-chave-grande-com-32-caracteres-ou-mais
 NODE_ENV=production
 DOWNLOAD_MODE=browser
+BLING_CLIENT_ID=client-id-do-app-bling
+BLING_CLIENT_SECRET=client-secret-do-app-bling
+BLING_REDIRECT_URI=https://seu-dominio.com/api/integrations/bling/callback
 ```
 
 Com `DATABASE_URL`, o app cria automaticamente as tabelas PostgreSQL ao iniciar. Em produção, `DATABASE_URL` e `SESSION_SECRET` são obrigatórios.
@@ -33,6 +36,22 @@ PGSSL=false
 ```
 
 Se trocar para um provedor com SSL gerenciado, remova `PGSSL=false`.
+
+## Integracao Bling API
+
+Cadastre o aplicativo no Bling e configure o Link de redirecionamento como:
+
+```text
+https://seu-dominio.com/api/integrations/bling/callback
+```
+
+Para teste local, use:
+
+```text
+http://localhost:3000/api/integrations/bling/callback
+```
+
+Depois configure `BLING_CLIENT_ID`, `BLING_CLIENT_SECRET` e `BLING_REDIRECT_URI` no servidor. Cada usuario autoriza a propria conta Bling pela aba Perfil; ele nao precisa preencher client secret nem tokens.
 
 ## Health check
 

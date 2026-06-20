@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
@@ -19,7 +20,9 @@ import {
   createLabel,
   createLotFromImport,
   createManualExternalExcess,
+  createOperator,
   createUser,
+  deleteUserBlingIntegration,
   deleteCatalogProductForAdmin,
   deleteUser,
   deleteUserLot,
@@ -28,18 +31,22 @@ import {
   getLotBlingData,
   getPgPool,
   getStoreHealth,
+  getUserBlingIntegration,
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
+  listOperatorsForUser,
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
+  recordOperatorActivity,
   reviewCatalogRequest,
   scanLotRz,
   searchProducts,
   suggestCatalogUpdate,
   updateUserPassword,
+  saveUserBlingIntegration,
   verifyUser
 } from "./store.js";
 
@@ -54,6 +61,8 @@ const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Depósito Geral"
 const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
   id: "backoffice-admin",
+  tenantId: "backoffice",
+  tenantName: "Back Office",
   name: "Back Office",
   email: ADMIN_EMAIL,
   role: "admin"
@@ -121,6 +130,7 @@ app.post("/api/login", async (req, res) => {
     const user = await verifyUser(req.body.email || "", req.body.password || "");
     if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
     req.session.user = user;
+    await recordOperatorActivity(user, "login");
     res.json({ user });
   } catch (error) {
     sendError(res, error);
@@ -191,10 +201,75 @@ app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
 });
 
 app.get("/api/lots", requireAuth, async (req, res) => {
-  res.json({ lots: await getUserLotSummaries(req.session.user.id) });
+  await recordOperatorActivity(req.session.user, "view_lots");
+  res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
 });
 
-app.post("/api/lots", requireAuth, upload.single("file"), async (req, res) => {
+app.get("/api/operators", requireAuth, requireOwner, async (req, res) => {
+  res.json({ operators: await listOperatorsForUser(workspaceUserId(req)) });
+});
+
+app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
+    res.json({ operator: await createOperator({ ownerUserId: workspaceUserId(req), name, email, password }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
+  const integration = await getUserBlingIntegration(workspaceUserId(req));
+  res.json({ integration: { ...integration, appConfigured: hasBlingAppConfig(), authorizeUrl: hasBlingAppConfig() ? "/api/integrations/bling/authorize" : null } });
+});
+
+app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, (req, res) => {
+  try {
+    if (!hasBlingAppConfig()) throw new Error("Configure BLING_CLIENT_ID e BLING_CLIENT_SECRET no servidor.");
+    const state = randomBytes(24).toString("hex");
+    req.session.blingOAuthState = state;
+    const url = new URL("https://www.bling.com.br/Api/v3/oauth/authorize");
+    url.searchParams.set("client_id", config.blingClientId);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("state", state);
+    res.redirect(url.toString());
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (req, res) => {
+  try {
+    if (!hasBlingAppConfig()) throw new Error("Configure BLING_CLIENT_ID e BLING_CLIENT_SECRET no servidor.");
+    if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
+    if (!req.query.code) throw new Error("Bling nao retornou o codigo de autorizacao.");
+    if (!req.query.state || req.query.state !== req.session.blingOAuthState) throw new Error("Retorno OAuth invalido. Tente autorizar novamente.");
+    req.session.blingOAuthState = null;
+
+    const token = await exchangeBlingAuthorizationCode(String(req.query.code), getBlingRedirectUri(req));
+    await saveUserBlingIntegration(workspaceUserId(req), {
+      clientId: config.blingClientId,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      tokenExpiresAt: token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null
+    });
+    res.redirect("/perfil?bling=connected");
+  } catch (error) {
+    req.session.blingOAuthState = null;
+    res.redirect(`/perfil?bling=error&message=${encodeURIComponent(error.message)}`);
+  }
+});
+
+app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await deleteUserBlingIntegration(workspaceUserId(req)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) throw new Error("Envie uma planilha .xlsx com as colunas obrigatórias.");
     const auctionPercent = Number(req.body.auctionPercent);
@@ -206,7 +281,7 @@ app.post("/api/lots", requireAuth, upload.single("file"), async (req, res) => {
 
     const imported = await importSpecialistWorkbook(req.file.buffer, { auctionPercent, fornecedor, skuPrefix });
     const lot = await createLotFromImport({
-      userId: req.session.user.id,
+      userId: workspaceUserId(req),
       originalName: req.file.originalname,
       auctionPercent,
       fornecedor,
@@ -220,20 +295,21 @@ app.post("/api/lots", requireAuth, upload.single("file"), async (req, res) => {
 });
 
 app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
-  const lot = await getUserLotDetail(req.session.user.id, req.params.lotId);
+  await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
+  const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
   if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
   res.json({ lot });
 });
 
-app.delete("/api/lots/:lotId", requireAuth, async (req, res) => {
+app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json(await deleteUserLot(req.session.user.id, req.params.lotId));
+    res.json(await deleteUserLot(workspaceUserId(req), req.params.lotId));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/diverse-lots", requireAuth, async (req, res) => {
+app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
@@ -246,7 +322,7 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
     if (!Number.isFinite(averageCost) || averageCost <= 0) throw new Error("Informe o custo medio por unidade.");
 
     const lot = await createDiverseLot({
-      userId: req.session.user.id,
+      userId: workspaceUserId(req),
       name,
       fornecedor,
       skuPrefix,
@@ -259,9 +335,9 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/lots/:lotId/bling/:kind", requireAuth, async (req, res) => {
+app.get("/api/lots/:lotId/bling/:kind", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getLotBlingData(req.session.user.id, req.params.lotId, req.params.kind);
+    const data = await getLotBlingData(workspaceUserId(req), req.params.lotId, req.params.kind);
     if (!data) return res.status(404).json({ error: "Lote não encontrado." });
 
     const csv = buildBlingCsv(data.products, data.lot);
@@ -273,9 +349,9 @@ app.get("/api/lots/:lotId/bling/:kind", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getLotBlingData(req.session.user.id, req.params.lotId, req.params.kind);
+    const data = await getLotBlingData(workspaceUserId(req), req.params.lotId, req.params.kind);
     if (!data) return res.status(404).json({ error: "Lote não encontrado." });
 
     const csv = buildBlingCsv(data.products, data.lot);
@@ -291,9 +367,9 @@ app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, async (req, res) => {
+app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    const data = await getRzBlingData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
     if (!data) return res.status(404).json({ error: "Remessa nÃ£o encontrada neste lote." });
 
     const csv = buildBlingCsv(data.products, data.lot);
@@ -305,9 +381,9 @@ app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, async (req, res) => 
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getRzBlingData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    const data = await getRzBlingData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
     if (!data) return res.status(404).json({ error: "Remessa nÃ£o encontrada neste lote." });
 
     const csv = buildBlingCsv(data.products, data.lot);
@@ -323,9 +399,9 @@ app.post("/api/lots/:lotId/rz/:codigoRz/bling/save", requireAuth, async (req, re
   }
 });
 
-app.get("/api/lots/:lotId/rz/:codigoRz/stock-entry", requireAuth, async (req, res) => {
+app.get("/api/lots/:lotId/rz/:codigoRz/stock-entry", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getRzStockEntryData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    const data = await getRzStockEntryData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
     if (!data) return res.status(404).json({ error: "Remessa nao encontrada neste lote." });
     if (!data.items.length) return res.status(404).json({ error: "Nenhum item conferido nesta remessa." });
 
@@ -338,9 +414,9 @@ app.get("/api/lots/:lotId/rz/:codigoRz/stock-entry", requireAuth, async (req, re
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, requireOwner, async (req, res) => {
   try {
-    const data = await getRzStockEntryData(req.session.user.id, req.params.lotId, req.params.codigoRz);
+    const data = await getRzStockEntryData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
     if (!data) return res.status(404).json({ error: "Remessa nao encontrada neste lote." });
     if (!data.items.length) return res.status(404).json({ error: "Nenhum item conferido nesta remessa." });
 
@@ -357,41 +433,41 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, async (r
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, requireOwner, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML.");
-    res.json(await scanLotRz({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    res.json(await scanLotRz({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, requireOwner, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML para diminuir.");
-    res.json(await decrementLotRzScan({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    res.json(await decrementLotRzScan({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, requireOwner, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
-    res.json(await createExternalExcess({ userId: req.session.user.id, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    res.json(await createExternalExcess({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, requireOwner, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     res.json(
       await createManualExternalExcess({
-        userId: req.session.user.id,
+        userId: workspaceUserId(req),
         lotId: req.params.lotId,
         codigoRz: req.params.codigoRz,
         codigoMl,
@@ -403,13 +479,13 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
   }
 });
 
-app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     const codigoRz = String(req.body.codigoRz || "").trim();
     res.json(
       await addDiverseLotItem({
-        userId: req.session.user.id,
+        userId: workspaceUserId(req),
         lotId: req.params.lotId,
         codigoMl,
         codigoRz,
@@ -423,17 +499,17 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/lots/:lotId/products/:productId/catalog-suggestion", requireAuth, async (req, res) => {
+app.post("/api/lots/:lotId/products/:productId/catalog-suggestion", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json(await suggestCatalogUpdate({ userId: req.session.user.id, lotId: req.params.lotId, productId: req.params.productId, payload: req.body }));
+    res.json(await suggestCatalogUpdate({ userId: workspaceUserId(req), lotId: req.params.lotId, productId: req.params.productId, payload: req.body }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, async (req, res) => {
+app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, requireOwner, async (req, res) => {
   try {
-    const lot = await getUserLotDetail(req.session.user.id, req.params.lotId);
+    const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) return res.status(404).json({ error: "Lote nÃ£o encontrado." });
 
     const pallet = buildPalletReport(lot, req.params.codigoRz);
@@ -464,11 +540,21 @@ app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, async (req,
 
 app.get("/api/search", requireAuth, async (req, res) => {
   const codigoMl = String(req.query.codigoMl || "").trim().toUpperCase();
-  res.json({ results: await searchProducts(req.session.user.id, codigoMl) });
+  if (codigoMl) await recordOperatorActivity(req.session.user, "search_ml", { codigoMl });
+  res.json({ results: await searchProducts(workspaceUserId(req), codigoMl) });
 });
 
-app.post("/api/labels", requireAuth, async (req, res) => {
-  const result = await createLabel(req.session.user.id, req.body.productId);
+app.post("/api/operator-activity", requireAuth, async (req, res) => {
+  try {
+    await recordOperatorActivity(req.session.user, String(req.body.action || ""), req.body.metadata || {});
+    res.json({ ok: true });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/labels", requireAuth, requireOwner, async (req, res) => {
+  const result = await createLabel(workspaceUserId(req), req.body.productId);
   if (!result) return res.status(404).json({ error: "Produto não encontrado." });
   res.json(result);
 });
@@ -482,7 +568,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/perfil"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -496,12 +582,53 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireOwner(req, res, next) {
+  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  if (role !== "owner") return res.status(403).json({ error: "Acesso restrito ao usuario principal." });
+  next();
+}
+
+function workspaceUserId(req) {
+  return req.session.user?.workspaceUserId || req.session.user?.id;
+}
+
 function isAdminLogin(email, password) {
   return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
 }
 
 function sendError(res, error) {
   res.status(error.status || 400).json({ error: error.message, code: error.code });
+}
+
+function hasBlingAppConfig() {
+  return Boolean(config.blingClientId && config.blingClientSecret);
+}
+
+function getBlingRedirectUri(req) {
+  if (config.blingRedirectUri) return config.blingRedirectUri;
+  return `${req.protocol}://${req.get("host")}/api/integrations/bling/callback`;
+}
+
+async function exchangeBlingAuthorizationCode(code, redirectUri) {
+  const response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${config.blingClientId}:${config.blingClientSecret}`).toString("base64")}`,
+      "Content-Type": "application/json",
+      "enable-jwt": "1"
+    },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.error_description || payload?.error || "Nao foi possivel autorizar no Bling.";
+    throw new Error(message);
+  }
+  return payload;
 }
 
 function safeFileName(value) {

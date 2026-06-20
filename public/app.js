@@ -4,6 +4,9 @@ const state = {
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
+  blingIntegration: null,
+  operators: [],
+  profileSection: "entries",
   lots: [],
   selectedLotId: null,
   previewLotId: null,
@@ -105,6 +108,11 @@ function bindEvents() {
     if (state.selectedDiverseLotId && state.selectedDiverseRz) downloadDiverseRzBling(state.selectedDiverseLotId, state.selectedDiverseRz);
   });
   $("#searchForm").addEventListener("submit", searchMl);
+  $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
+  $("#operatorForm").addEventListener("submit", createOperator);
+  document.querySelectorAll("[data-profile-section]").forEach((button) => {
+    button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
+  });
   document.addEventListener("input", handleCodigoMlInput);
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
@@ -191,7 +199,7 @@ async function createDiverseLot(event) {
     $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
-    updateRoute("/entradas");
+    updateRoute("/perfil");
     $("#diverseRzForm input[name='codigoRz']").focus();
   } catch (error) {
     $("#diverseLotMessage").style.color = "";
@@ -705,14 +713,21 @@ async function showApp(user) {
   $("#app").classList.remove("hidden");
   $("#app .app-nav")?.classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
+  applyUserPermissions(user);
   const scanRequest = getScanRequest();
-  if (scanRequest) {
+  if (scanRequest && user.role !== "operator") {
     await showScanOnly(scanRequest);
     return;
   }
   await loadLots();
   await applyRouteFromLocation({ replace: true });
   schedulePrimaryInputFocus();
+}
+
+function applyUserPermissions(user) {
+  const operator = user.role === "operator";
+  document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
+  document.body.classList.toggle("operator-view", operator);
 }
 
 function showAuth() {
@@ -724,12 +739,148 @@ function showAuth() {
   schedulePrimaryInputFocus(["#loginForm input[name='email']"]);
 }
 
+async function loadBlingIntegration() {
+  try {
+    const response = await api("/api/integrations/bling");
+    state.blingIntegration = response.integration;
+    renderBlingIntegration(response.integration);
+  } catch (error) {
+    $("#blingIntegrationStatus").textContent = error.message;
+  }
+}
+
+function renderBlingIntegration(integration) {
+  const connected = Boolean(integration?.connected && integration?.hasAccessToken);
+  $("#blingIntegrationTitle").textContent = connected ? "Bling autorizado para este usuario" : "Bling ainda nao autorizado";
+  $("#blingIntegrationDetails").textContent = connected
+    ? `Autorizado com o aplicativo ${integration.clientId}. ${integration.tokenExpiresAt ? `Token expira em ${formatDate(integration.tokenExpiresAt)}.` : ""}`
+    : integration?.appConfigured
+      ? "Clique em Autorizar no Bling, entre na conta Bling deste usuario e aprove o acesso."
+      : "O aplicativo Bling ainda precisa ser configurado no servidor.";
+  $("#blingAuthorizeLink").classList.toggle("hidden", !integration?.appConfigured);
+  $("#blingIntegrationDelete").disabled = !connected;
+  $("#blingIntegrationStatus").style.color = connected ? "#0f766e" : "";
+  $("#blingIntegrationStatus").textContent = getBlingCallbackMessage() || "";
+}
+
+async function deleteBlingIntegration() {
+  if (!confirm("Remover a integracao Bling deste usuario?")) return;
+  $("#blingIntegrationDelete").disabled = true;
+  try {
+    await api("/api/integrations/bling", { method: "DELETE" });
+    state.blingIntegration = null;
+    renderBlingIntegration(null);
+  } catch (error) {
+    $("#blingIntegrationStatus").style.color = "";
+    $("#blingIntegrationStatus").textContent = error.message;
+  } finally {
+    $("#blingIntegrationDelete").disabled = false;
+  }
+}
+
+function getBlingCallbackMessage() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("bling") === "connected") return "Integracao Bling autorizada com sucesso.";
+  if (params.get("bling") === "error") return params.get("message") || "Nao foi possivel autorizar no Bling.";
+  return "";
+}
+
+function setProfileSection(section = "entries") {
+  state.profileSection = section;
+  document.querySelectorAll("[data-profile-section]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.profileSection === section);
+  });
+  $("#profileEntries").classList.toggle("hidden", section !== "entries");
+  $("#profileSync").classList.toggle("hidden", section !== "sync");
+  $("#profileOperators").classList.toggle("hidden", section !== "operators");
+  if (section === "sync") loadBlingIntegration();
+  if (section === "operators") loadOperators();
+}
+
+async function loadOperators() {
+  try {
+    const response = await api("/api/operators");
+    state.operators = response.operators || [];
+    renderOperators();
+  } catch (error) {
+    $("#operatorMessage").textContent = error.message;
+  }
+}
+
+function renderOperators() {
+  const wrapper = $("#operatorList");
+  if (!state.operators.length) {
+    wrapper.innerHTML = '<p class="empty">Nenhum operador cadastrado.</p>';
+    return;
+  }
+  wrapper.innerHTML = state.operators
+    .map((operator) => `
+      <article class="admin-row">
+        <div>
+          <strong>${escapeHtml(operator.name)}</strong>
+          <span class="muted">${escapeHtml(operator.email)}</span>
+        </div>
+        <span>Logins: ${operator.stats?.logins || 0}</span>
+        <span>Buscas: ${operator.stats?.searches || 0}</span>
+        <span>Lotes: ${operator.stats?.lotViews || 0}</span>
+        <span>Pallets: ${operator.stats?.palletViews || 0}</span>
+        <span>${operator.stats?.lastActivityAt ? formatDate(operator.stats.lastActivityAt) : "Sem atividade"}</span>
+      </article>
+    `)
+    .join("");
+}
+
+async function createOperator(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#operatorMessage").textContent = "";
+  button.disabled = true;
+  try {
+    await api("/api/operators", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Operador criado.";
+    await loadOperators();
+  } catch (error) {
+    $("#operatorMessage").style.color = "";
+    $("#operatorMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function recordOperatorActivity(action, metadata = {}) {
+  if (state.user?.role !== "operator") return;
+  try {
+    await api("/api/operator-activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, metadata })
+    });
+  } catch {
+    // Activity tracking must not interrupt the read-only workflow.
+  }
+}
+
 async function applyRouteFromLocation({ replace = false } = {}) {
   const route = parseRoute(window.location.pathname);
+  if (state.user?.role === "operator" && route.view === "profile") {
+    setMainTab("lots", { push: false, resetSelection: true });
+    if (replace) updateRoute("/lotes", { replace: true });
+    return;
+  }
 
   if (route.view === "lotRz") {
     const lot = await selectLot(route.lotId, { push: false });
-    if (lot) renderRz(lot, route.codigoRz, { push: false });
+    if (lot) {
+      if (state.user?.role === "operator") renderPallet(lot, route.codigoRz);
+      else renderRz(lot, route.codigoRz, { push: false });
+    }
     if (replace) updateRoute(lot ? lotRzPath(route.lotId, route.codigoRz) : "/lotes", { replace: true });
     return;
   }
@@ -746,18 +897,19 @@ async function applyRouteFromLocation({ replace = false } = {}) {
 
 function parseRoute(pathname) {
   const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
-  if (!parts.length || parts[0] === "entradas") return { view: "home" };
+  if (!parts.length || parts[0] === "entradas" || parts[0] === "perfil" || parts[0] === "bling") return { view: "profile" };
   if (parts[0] === "busca") return { view: "search" };
   if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
   if (parts[0] === "lotes" && parts[1]) return { view: "lot", lotId: parts[1] };
   if (parts[0] === "lotes") return { view: "lots" };
-  return { view: "home" };
+  return { view: "profile" };
 }
 
 function routePathForView(view) {
   if (view === "lots") return "/lotes";
   if (view === "search") return "/busca";
-  return "/entradas";
+  if (view === "profile") return "/perfil";
+  return "/perfil";
 }
 
 function lotPath(lotId) {
@@ -775,7 +927,8 @@ function updateRoute(path, { replace = false } = {}) {
 }
 
 function setMainTab(tab, { push = true, resetSelection = false } = {}) {
-  const target = tab || "home";
+  let target = tab || "profile";
+  if (state.user?.role === "operator" && target === "profile") target = "lots";
   if (resetSelection) {
     state.selectedLotId = null;
     state.previewLotId = null;
@@ -786,11 +939,13 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === target);
   });
-  $(".upload-band").classList.toggle("hidden", target !== "home");
+  $(".upload-band").classList.toggle("hidden", target !== "profile");
   $("#lotsTab").classList.toggle("hidden", target !== "lots");
   $("#searchTab").classList.toggle("hidden", target !== "search");
+  $("#profileTab").classList.toggle("hidden", target !== "profile");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
+  if (target === "profile") setProfileSection(state.profileSection || "entries");
   schedulePrimaryInputFocus();
 }
 
@@ -817,6 +972,7 @@ async function showScanOnly({ lotId, codigoRz }) {
   $(".tabs").classList.add("hidden");
   $("#lotsTab").classList.remove("hidden");
   $("#searchTab").classList.add("hidden");
+  $("#profileTab").classList.add("hidden");
   $("#lotDetail").classList.remove("empty");
   $("#lotDetail").innerHTML = '<p class="muted">Carregando bipagem...</p>';
 
@@ -1340,6 +1496,7 @@ function renderLotPreview(lot) {
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
   const noSheetLot = isNoSheetLot(lot);
+  const readOnly = state.user?.role === "operator";
   moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -1350,9 +1507,9 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
-    ${noSheetLot ? '<div id="diversePanelMount"></div>' : ""}
-    ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    <div class="actions">
+    ${noSheetLot && !readOnly ? '<div id="diversePanelMount"></div>' : ""}
+    ${noSheetLot && !readOnly ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    <div class="actions ${readOnly ? "hidden" : ""}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
@@ -1378,7 +1535,7 @@ function renderLotDetail(lot) {
     </div>
     <p id="rzSearchMessage" class="message"></p>
     <div class="rz-grid">
-      ${lot.rzs.map((rz) => rzCard(rz)).join("")}
+      ${lot.rzs.map((rz) => rzCard(rz, { readOnly })).join("")}
     </div>
     <div id="rzDetail"></div>
   `;
@@ -1390,17 +1547,21 @@ function renderLotDetail(lot) {
     clearLotDetail();
     updateRoute("/lotes");
   });
-  detail.querySelectorAll("button[data-download]").forEach((button) => {
-    button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
-  });
-  $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
+  if (!readOnly) {
+    detail.querySelectorAll("button[data-download]").forEach((button) => {
+      button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
+    });
+    $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
+  }
   $("#rzSearchButton").addEventListener("click", () => openRzFromSearch(lot));
   $("#rzSearchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
-  detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
-    button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
-  });
+  if (!readOnly) {
+    detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
+      button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
+    });
+  }
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
@@ -1520,6 +1681,8 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
 }
 
 function renderPallet(lot, codigoRz) {
+  const readOnly = state.user?.role === "operator";
+  if (readOnly) recordOperatorActivity("view_pallet", { lotId: lot.id, codigoRz });
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -1535,7 +1698,7 @@ function renderPallet(lot, codigoRz) {
           <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
           <h2>Pallet ${escapeHtml(codigoRz)}</h2>
         </div>
-        <div class="pallet-actions">
+        <div class="pallet-actions ${readOnly ? "hidden" : ""}">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
           <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>
           <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>
@@ -1575,7 +1738,7 @@ function renderPallet(lot, codigoRz) {
       </div>
     </section>
   `;
-  $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
+  if (!readOnly) $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -2095,7 +2258,7 @@ function previewRzRow(rz) {
   `;
 }
 
-function rzCard(rz) {
+function rzCard(rz, { readOnly = false } = {}) {
   const title = `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
   return `
     <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
@@ -2109,7 +2272,7 @@ function rzCard(rz) {
         <span>Excedente</span><strong>${rz.excess}</strong>
       </div>
       <div class="rz-card-actions">
-        <button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>
+        ${readOnly ? "" : `<button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>`}
         <button type="button" class="ghost" data-pallet-rz="${escapeHtml(rz.codigoRz)}">Exibir pallet</button>
       </div>
     </article>

@@ -37,19 +37,26 @@
           <span id="userName"></span>
         </div>
         <nav class="app-nav">
-          <button data-tab="home" class="active" type="button">Entradas</button>
           <button data-tab="lots" type="button">Lotes</button>
           <button data-tab="search" type="button">Busca ML</button>
+          <button data-tab="profile" class="active" type="button">Perfil</button>
         </nav>
         <button id="logoutButton" class="ghost">Sair</button>
       </header>
 
-      <section class="upload-band">
-        <div class="view-heading">
-          <span class="muted">Home</span>
-          <h2>Entradas de lotes</h2>
-          <p>Cadastre uma planilha ou crie um lote avulso para iniciar o trabalho.</p>
-        </div>
+      <section id="profileTab" class="profile-shell hidden">
+        <aside class="profile-menu">
+          <button data-profile-section="entries" class="active" type="button">Entradas</button>
+          <button data-profile-section="sync" type="button">Sincronizacao</button>
+          <button data-profile-section="operators" type="button">Operadores</button>
+        </aside>
+
+        <section id="profileEntries" class="upload-band profile-section">
+          <div class="view-heading">
+            <span class="muted">Perfil</span>
+            <h2>Entradas de lotes</h2>
+            <p>Cadastre uma planilha ou crie um lote avulso para iniciar o trabalho.</p>
+          </div>
         <div class="lot-entry-grid">
           <form id="uploadForm" class="upload-grid entry-panel">
             <div class="panel-heading">
@@ -106,6 +113,44 @@
         <p id="uploadMessage" class="message"></p>
       </section>
 
+        <section id="profileSync" class="settings-shell profile-section hidden">
+          <section class="entry-panel">
+          <div class="panel-heading">
+            <span class="muted">Perfil</span>
+            <h3>Integracao Bling API</h3>
+          </div>
+          <div class="integration-status">
+            <strong id="blingIntegrationTitle">Verificando integracao...</strong>
+            <span id="blingIntegrationDetails" class="muted"></span>
+          </div>
+          <div class="settings-actions">
+            <a id="blingAuthorizeLink" class="button-link primary-action" href="/api/integrations/bling/authorize">Autorizar no Bling</a>
+            <button id="blingIntegrationDelete" type="button" class="danger">Remover autorizacao</button>
+          </div>
+          <p id="blingIntegrationStatus" class="message"></p>
+          </section>
+        </section>
+
+        <section id="profileOperators" class="settings-shell profile-section hidden">
+          <section class="entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Operadores</h3>
+            </div>
+            <form id="operatorForm" class="settings-form">
+              <label>Nome<input name="name" required /></label>
+              <label>E-mail<input name="email" type="email" required /></label>
+              <label>Senha<input name="password" type="password" required /></label>
+              <div class="settings-actions">
+                <button type="submit">Criar operador</button>
+              </div>
+            </form>
+            <p id="operatorMessage" class="message"></p>
+            <div id="operatorList" class="admin-users"></div>
+          </section>
+        </section>
+      </section>
+
       <section id="lotsTab" class="layout hidden">
         <aside class="lot-list">
           <div class="aside-heading">
@@ -121,7 +166,7 @@
 
       <section id="searchTab" class="search hidden">
         <form id="searchForm" class="search-bar">
-          <input name="codigoMl" placeholder="Bipe ou digite o Código ML" required />
+          <input name="codigoMl" placeholder="Bipe ou digite o Codigo ML" required />
           <button type="submit">Buscar</button>
         </form>
         <div id="searchResults"></div>

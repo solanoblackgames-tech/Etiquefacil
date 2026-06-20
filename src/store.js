@@ -25,6 +25,8 @@ const emptyDb = () => ({
   rzItems: [],
   scans: [],
   labels: [],
+  blingIntegrations: [],
+  operatorActivities: [],
   catalogProducts: [],
   catalogRequests: [],
   catalogRejectedRequests: []
@@ -81,8 +83,12 @@ async function ensureStoreOnce() {
 async function migrateJsonStore() {
   const raw = await fs.readFile(DB_PATH, "utf8");
   const db = { ...emptyDb(), ...JSON.parse(raw || "{}") };
+  let changed = normalizeDbTenants(db);
   const rejectedInQueue = (db.catalogRequests || []).filter((request) => request.status === "rejected");
-  if (!rejectedInQueue.length) return;
+  if (!rejectedInQueue.length) {
+    if (changed) await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+    return;
+  }
 
   const archivedOriginalIds = new Set((db.catalogRejectedRequests || []).map((request) => request.originalRequestId));
   const archived = rejectedInQueue
@@ -98,7 +104,9 @@ export async function readDb() {
   if (hasPostgres()) return readPgDb();
 
   const raw = await fs.readFile(DB_PATH, "utf8");
-  return { ...emptyDb(), ...JSON.parse(raw || "{}") };
+  const db = { ...emptyDb(), ...JSON.parse(raw || "{}") };
+  normalizeDbTenants(db);
+  return db;
 }
 
 export async function writeDb(db) {
@@ -108,14 +116,20 @@ export async function writeDb(db) {
     return;
   }
 
+  normalizeDbTenants(db);
   await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
 }
 
-export async function createUser({ name, email, password }) {
+export async function createUser({ name, email, password, parentUserId = null }) {
   await ensureStore();
   const normalizedEmail = email.trim().toLowerCase();
+  const owner = parentUserId ? await getUserById(parentUserId) : null;
   const user = {
     id: randomUUID(),
+    tenantId: owner?.tenantId || randomUUID(),
+    tenantName: owner?.tenantName || name.trim(),
+    parentUserId: owner?.id || null,
+    role: owner ? "operator" : "owner",
     name: name.trim(),
     email: normalizedEmail,
     passwordHash: await bcrypt.hash(password, 10),
@@ -125,9 +139,9 @@ export async function createUser({ name, email, password }) {
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5)`,
-        [user.id, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -143,6 +157,10 @@ export async function createUser({ name, email, password }) {
   db.users.push(user);
   await writeDb(db);
   return sanitizeUser(user);
+}
+
+export async function createOperator({ ownerUserId, name, email, password }) {
+  return createUser({ name, email, password, parentUserId: ownerUserId });
 }
 
 export async function verifyUser(email, password) {
@@ -162,9 +180,90 @@ export async function verifyUser(email, password) {
   return sanitizeUser(user);
 }
 
+async function getUserById(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select * from users where id = $1 limit 1", [userId]);
+    return result.rows[0] ? userFromRow(result.rows[0]) : null;
+  }
+
+  const db = await readDb();
+  return db.users.find((user) => user.id === userId) || null;
+}
+
 export function sanitizeUser(user) {
   if (!user) return null;
-  return { id: user.id, name: user.name, email: user.email };
+  return {
+    id: user.id,
+    tenantId: user.tenantId || user.id,
+    tenantName: user.tenantName || user.name,
+    parentUserId: user.parentUserId || null,
+    workspaceUserId: user.parentUserId || user.id,
+    role: user.role || (user.parentUserId ? "operator" : "owner"),
+    name: user.name,
+    email: user.email
+  };
+}
+
+export async function listOperatorsForUser(ownerUserId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select
+          u.*,
+          count(oa.id)::int as activity_total,
+          max(oa.created_at) as last_activity_at,
+          count(oa.id) filter (where oa.action = 'login')::int as login_total,
+          count(oa.id) filter (where oa.action = 'search_ml')::int as search_total,
+          count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
+          count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total
+        from users u
+        left join operator_activities oa on oa.operator_user_id = u.id
+        where u.parent_user_id = $1
+        group by u.id
+        order by u.created_at desc
+      `,
+      [ownerUserId]
+    );
+    return result.rows.map((row) => ({ ...sanitizeUser(userFromRow(row)), stats: operatorStatsFromRow(row) }));
+  }
+
+  const db = await readDb();
+  return db.users
+    .filter((user) => user.parentUserId === ownerUserId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id) }));
+}
+
+export async function recordOperatorActivity(user, action, metadata = {}) {
+  if (!action) return null;
+  const operatorUserId = user?.role === "operator" ? user.id : null;
+  const ownerUserId = user?.workspaceUserId || user?.parentUserId || null;
+  if (!operatorUserId || !ownerUserId) return null;
+  await ensureStore();
+  const activity = {
+    id: randomUUID(),
+    ownerUserId,
+    operatorUserId,
+    action,
+    metadata,
+    createdAt: new Date().toISOString()
+  };
+
+  if (hasPostgres()) {
+    await query(
+      `insert into operator_activities (id, owner_user_id, operator_user_id, action, metadata, created_at)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [activity.id, activity.ownerUserId, activity.operatorUserId, activity.action, JSON.stringify(activity.metadata || {}), activity.createdAt]
+    );
+    return activity;
+  }
+
+  const db = await readDb();
+  db.operatorActivities.push(activity);
+  await writeDb(db);
+  return activity;
 }
 
 export async function listUsersForAdmin() {
@@ -174,6 +273,10 @@ export async function listUsersForAdmin() {
       `
         select
           u.id,
+          u.tenant_id,
+          u.tenant_name,
+          u.parent_user_id,
+          u.role,
           u.name,
           u.email,
           u.created_at,
@@ -188,6 +291,10 @@ export async function listUsersForAdmin() {
     );
     return result.rows.map((row) => ({
       id: row.id,
+      tenantId: row.tenant_id || row.id,
+      tenantName: row.tenant_name || row.name,
+      parentUserId: row.parent_user_id || null,
+      role: row.role || (row.parent_user_id ? "operator" : "owner"),
       name: row.name,
       email: row.email,
       createdAt: iso(row.created_at),
@@ -250,6 +357,7 @@ export async function deleteUser(userId) {
   db.rzItems = db.rzItems.filter((item) => !lotIds.has(item.lotId) && !productIds.has(item.productId));
   db.scans = db.scans.filter((scan) => !lotIds.has(scan.lotId));
   db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
+  db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   await writeDb(db);
   return { ok: true };
 }
@@ -280,6 +388,77 @@ export async function getStoreHealth() {
   if (!hasPostgres()) return { ok: true, storage: "json" };
   await query("select 1");
   return { ok: true, storage: "postgres" };
+}
+
+export async function getUserBlingIntegration(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select * from bling_integrations where user_id = $1 limit 1", [userId]);
+    return publicBlingIntegration(result.rows[0] ? blingIntegrationFromRow(result.rows[0]) : null);
+  }
+
+  const db = await readDb();
+  return publicBlingIntegration((db.blingIntegrations || []).find((integration) => integration.userId === userId) || null);
+}
+
+export async function saveUserBlingIntegration(userId, payload = {}) {
+  await ensureStore();
+  const existing = await getPrivateUserBlingIntegration(userId);
+  const integration = normalizeBlingIntegration(userId, payload, existing);
+
+  if (hasPostgres()) {
+    await query(
+      `
+        insert into bling_integrations (
+          user_id,
+          client_id,
+          client_secret,
+          access_token,
+          refresh_token,
+          token_expires_at,
+          updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        on conflict (user_id) do update set
+          client_id = excluded.client_id,
+          client_secret = excluded.client_secret,
+          access_token = excluded.access_token,
+          refresh_token = excluded.refresh_token,
+          token_expires_at = excluded.token_expires_at,
+          updated_at = excluded.updated_at
+      `,
+      [
+        integration.userId,
+        integration.clientId,
+        integration.clientSecret,
+        integration.accessToken,
+        integration.refreshToken,
+        integration.tokenExpiresAt,
+        integration.updatedAt
+      ]
+    );
+    return publicBlingIntegration(integration);
+  }
+
+  const db = await readDb();
+  const index = (db.blingIntegrations || []).findIndex((item) => item.userId === userId);
+  if (index >= 0) db.blingIntegrations[index] = integration;
+  else db.blingIntegrations.push(integration);
+  await writeDb(db);
+  return publicBlingIntegration(integration);
+}
+
+export async function deleteUserBlingIntegration(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    await query("delete from bling_integrations where user_id = $1", [userId]);
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
+  await writeDb(db);
+  return { ok: true };
 }
 
 export async function replaceCatalogProducts(products) {
@@ -898,6 +1077,10 @@ async function ensurePgStore() {
   await query(`
     create table if not exists users (
       id text primary key,
+      tenant_id text not null,
+      tenant_name text not null,
+      parent_user_id text references users(id) on delete cascade,
+      role text not null default 'owner',
       name text not null,
       email text not null unique,
       password_hash text not null,
@@ -981,6 +1164,25 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists bling_integrations (
+      user_id text primary key references users(id) on delete cascade,
+      client_id text not null default '',
+      client_secret text not null default '',
+      access_token text not null default '',
+      refresh_token text not null default '',
+      token_expires_at timestamptz,
+      updated_at timestamptz not null default now()
+    );
+
+    create table if not exists operator_activities (
+      id text primary key,
+      owner_user_id text not null references users(id) on delete cascade,
+      operator_user_id text not null references users(id) on delete cascade,
+      action text not null,
+      metadata jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists catalog_requests (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
@@ -1024,6 +1226,15 @@ async function ensurePgStore() {
       rejected_at timestamptz not null default now()
     );
 
+    alter table users add column if not exists tenant_id text;
+    alter table users add column if not exists tenant_name text;
+    alter table users add column if not exists parent_user_id text references users(id) on delete cascade;
+    alter table users add column if not exists role text not null default 'owner';
+    update users set tenant_id = id where tenant_id is null or tenant_id = '';
+    update users set tenant_name = name where tenant_name is null or tenant_name = '';
+    update users set role = 'operator' where parent_user_id is not null and (role is null or role = 'owner');
+    alter table users alter column tenant_id set not null;
+    alter table users alter column tenant_name set not null;
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists link text not null default '';
@@ -1036,6 +1247,8 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
 
+    create index if not exists users_tenant_id_idx on users(tenant_id);
+    create index if not exists users_parent_user_id_idx on users(parent_user_id);
     create index if not exists lots_user_id_idx on lots(user_id);
     create index if not exists products_lot_id_idx on products(lot_id);
     create index if not exists products_codigo_ml_idx on products(codigo_ml);
@@ -1048,6 +1261,11 @@ async function ensurePgStore() {
     create index if not exists labels_product_id_idx on labels(product_id);
     create index if not exists labels_lot_id_idx on labels(lot_id);
     create index if not exists labels_user_id_idx on labels(user_id);
+    create index if not exists bling_integrations_updated_at_idx on bling_integrations(updated_at);
+    create index if not exists operator_activities_owner_user_id_idx on operator_activities(owner_user_id);
+    create index if not exists operator_activities_operator_user_id_idx on operator_activities(operator_user_id);
+    create index if not exists operator_activities_action_idx on operator_activities(action);
+    create index if not exists operator_activities_created_at_idx on operator_activities(created_at);
     create index if not exists catalog_requests_status_idx on catalog_requests(status);
     create index if not exists catalog_requests_codigo_ml_idx on catalog_requests(codigo_ml);
     create index if not exists catalog_rejected_requests_codigo_ml_idx on catalog_rejected_requests(codigo_ml);
@@ -1106,13 +1324,15 @@ async function ensurePgStore() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
     query("select * from rz_items order by created_at asc"),
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
+    query("select * from bling_integrations order by updated_at asc"),
+    query("select * from operator_activities order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
     query("select * from catalog_requests order by created_at asc"),
     query("select * from catalog_rejected_requests order by rejected_at asc")
@@ -1125,6 +1345,8 @@ async function readPgDb() {
     rzItems: rzItems.rows.map(rzItemFromRow),
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
+    blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
+    operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
     catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
     catalogRejectedRequests: catalogRejectedRequests.rows.map(catalogRejectedRequestFromRow)
@@ -1137,6 +1359,8 @@ async function writePgDb(db) {
     await client.query("begin");
     await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
+    await client.query("delete from operator_activities");
+    await client.query("delete from bling_integrations");
     await client.query("delete from labels");
     await client.query("delete from scans");
     await client.query("delete from rz_items");
@@ -1148,8 +1372,18 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "name", "email", "password_hash", "created_at"],
-      (db.users || []).map((user) => [user.id, user.name, user.email, user.passwordHash, user.createdAt])
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "name", "email", "password_hash", "created_at"],
+      (db.users || []).map((user) => [
+        user.id,
+        user.tenantId || user.id,
+        user.tenantName || user.name,
+        user.parentUserId || null,
+        user.role || (user.parentUserId ? "operator" : "owner"),
+        user.name,
+        user.email,
+        user.passwordHash,
+        user.createdAt
+      ])
     );
     await insertRows(
       client,
@@ -1227,6 +1461,8 @@ async function writePgDb(db) {
       ["id", "product_id", "lot_id", "user_id", "created_at"],
       (db.labels || []).map((label) => [label.id, label.productId, label.lotId, label.userId, label.createdAt])
     );
+    await insertBlingIntegrationRows(client, db.blingIntegrations || []);
+    await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
     await insertCatalogRejectedRequestRows(client, db.catalogRejectedRequests || []);
@@ -1340,6 +1576,39 @@ async function insertCatalogProductRows(client, products = []) {
       product.foto || "",
       product.createdAt,
       product.updatedAt || product.createdAt
+    ])
+  );
+}
+
+async function insertBlingIntegrationRows(client, integrations = []) {
+  await insertRows(
+    client,
+    "bling_integrations",
+    ["user_id", "client_id", "client_secret", "access_token", "refresh_token", "token_expires_at", "updated_at"],
+    integrations.map((integration) => [
+      integration.userId,
+      integration.clientId || "",
+      integration.clientSecret || "",
+      integration.accessToken || "",
+      integration.refreshToken || "",
+      integration.tokenExpiresAt || null,
+      integration.updatedAt
+    ])
+  );
+}
+
+async function insertOperatorActivityRows(client, activities = []) {
+  await insertRows(
+    client,
+    "operator_activities",
+    ["id", "owner_user_id", "operator_user_id", "action", "metadata", "created_at"],
+    activities.map((activity) => [
+      activity.id,
+      activity.ownerUserId,
+      activity.operatorUserId,
+      activity.action,
+      JSON.stringify(activity.metadata || {}),
+      activity.createdAt
     ])
   );
 }
@@ -2198,6 +2467,10 @@ async function query(sql, params) {
 function userFromRow(row) {
   return {
     id: row.id,
+    tenantId: row.tenant_id || row.id,
+    tenantName: row.tenant_name || row.name,
+    parentUserId: row.parent_user_id || null,
+    role: row.role || (row.parent_user_id ? "operator" : "owner"),
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
@@ -2356,6 +2629,54 @@ function labelFromRow(row) {
   };
 }
 
+function blingIntegrationFromRow(row) {
+  return {
+    userId: row.user_id,
+    clientId: row.client_id || "",
+    clientSecret: row.client_secret || "",
+    accessToken: row.access_token || "",
+    refreshToken: row.refresh_token || "",
+    tokenExpiresAt: row.token_expires_at ? iso(row.token_expires_at) : null,
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function operatorActivityFromRow(row) {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    operatorUserId: row.operator_user_id,
+    action: row.action,
+    metadata: parseJsonObject(row.metadata),
+    createdAt: iso(row.created_at)
+  };
+}
+
+function operatorStatsFromRow(row) {
+  return {
+    total: Number(row.activity_total || 0),
+    logins: Number(row.login_total || 0),
+    searches: Number(row.search_total || 0),
+    lotViews: Number(row.lot_view_total || 0),
+    palletViews: Number(row.pallet_view_total || 0),
+    lastActivityAt: row.last_activity_at ? iso(row.last_activity_at) : null
+  };
+}
+
+function summarizeOperatorActivities(activities, operatorUserId) {
+  const stats = { total: 0, logins: 0, searches: 0, lotViews: 0, palletViews: 0, lastActivityAt: null };
+  for (const activity of activities || []) {
+    if (activity.operatorUserId !== operatorUserId) continue;
+    stats.total += 1;
+    if (activity.action === "login") stats.logins += 1;
+    if (activity.action === "search_ml") stats.searches += 1;
+    if (activity.action === "view_lot") stats.lotViews += 1;
+    if (activity.action === "view_pallet") stats.palletViews += 1;
+    if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
+  }
+  return stats;
+}
+
 function iso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
@@ -2368,6 +2689,90 @@ function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeDbTenants(db) {
+  let changed = false;
+  for (const user of db.users || []) {
+    if (!user.tenantId) {
+      user.tenantId = user.id;
+      changed = true;
+    }
+    if (!user.tenantName) {
+      user.tenantName = user.name;
+      changed = true;
+    }
+    if (user.parentUserId === undefined) {
+      user.parentUserId = null;
+      changed = true;
+    }
+    if (!user.role) {
+      user.role = user.parentUserId ? "operator" : "owner";
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function getPrivateUserBlingIntegration(userId) {
+  if (hasPostgres()) {
+    const result = await query("select * from bling_integrations where user_id = $1 limit 1", [userId]);
+    return result.rows[0] ? blingIntegrationFromRow(result.rows[0]) : null;
+  }
+
+  const db = await readDb();
+  return (db.blingIntegrations || []).find((integration) => integration.userId === userId) || null;
+}
+
+function normalizeBlingIntegration(userId, input = {}, existing = null) {
+  const clientId = String(input.clientId ?? existing?.clientId ?? "").trim();
+  const clientSecret = String(input.clientSecret || existing?.clientSecret || "").trim();
+  const accessToken = String(input.accessToken || existing?.accessToken || "").trim();
+  const refreshToken = String(input.refreshToken || existing?.refreshToken || "").trim();
+  const tokenExpiresAt = normalizeOptionalIso(input.tokenExpiresAt ?? existing?.tokenExpiresAt ?? null);
+
+  if (!clientId) throw new Error("Informe o Client ID do Bling.");
+
+  return {
+    userId,
+    clientId,
+    clientSecret,
+    accessToken,
+    refreshToken,
+    tokenExpiresAt,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function publicBlingIntegration(integration) {
+  if (!integration) {
+    return {
+      connected: false,
+      clientId: "",
+      hasClientSecret: false,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      tokenExpiresAt: null,
+      updatedAt: null
+    };
+  }
+
+  return {
+    connected: Boolean(integration.clientId && integration.clientSecret),
+    clientId: integration.clientId,
+    hasClientSecret: Boolean(integration.clientSecret),
+    hasAccessToken: Boolean(integration.accessToken),
+    hasRefreshToken: Boolean(integration.refreshToken),
+    tokenExpiresAt: integration.tokenExpiresAt || null,
+    updatedAt: integration.updatedAt
+  };
+}
+
+function normalizeOptionalIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error("Data de expiracao do token invalida.");
+  return date.toISOString();
+}
+
 function parseJsonArray(value) {
   if (Array.isArray(value)) return value;
   if (!value) return [];
@@ -2376,5 +2781,16 @@ function parseJsonArray(value) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }

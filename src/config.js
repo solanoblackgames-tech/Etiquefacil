@@ -6,6 +6,8 @@ export function buildRuntimeConfig(env = process.env) {
   const isProduction = nodeEnv === "production";
   const databaseUrl = env.DATABASE_URL || "";
   const sessionSecret = env.SESSION_SECRET || (isProduction ? "" : DEFAULT_DEV_SECRET);
+  const blingClientId = env.BLING_CLIENT_ID || "";
+  const blingClientSecret = env.BLING_CLIENT_SECRET || "";
 
   if (isProduction && !databaseUrl) {
     throw new Error("DATABASE_URL é obrigatório em produção.");
@@ -19,6 +21,9 @@ export function buildRuntimeConfig(env = process.env) {
     nodeEnv,
     databaseUrl,
     sessionSecret,
+    blingClientId,
+    blingClientSecret,
+    blingRedirectUri: env.BLING_REDIRECT_URI || "",
     downloadMode: env.DOWNLOAD_MODE || (isProduction ? "browser" : "local"),
     cookieSecure: env.COOKIE_SECURE === undefined ? isProduction : env.COOKIE_SECURE === "true",
     trustProxy: isProduction ? 1 : 0
