@@ -1072,9 +1072,23 @@ function revealFile(filePath) {
   }
 }
 
-ensureStore().catch((error) => {
-  console.error("Falha ao inicializar o banco:", error);
-});
+async function seedBlingAppConfigFromEnv() {
+  if (!hasBlingAppConfig()) return;
+  try {
+    await saveBlingAppConfig({
+      clientId: config.blingClientId,
+      clientSecret: config.blingClientSecret
+    });
+  } catch (error) {
+    console.error("Falha ao configurar app Bling pelo ambiente:", error);
+  }
+}
+
+ensureStore()
+  .then(seedBlingAppConfigFromEnv)
+  .catch((error) => {
+    console.error("Falha ao inicializar o banco:", error);
+  });
 
 app.listen(config.port, () => {
   console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
