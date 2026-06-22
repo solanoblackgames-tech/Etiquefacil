@@ -17,7 +17,7 @@ test("Bling stock entry CSV maps checked quantity for inventory entry", () => {
         qtdConferida: 2
       }
     ],
-    { deposito: "Depósito Geral", observacao: "Entrada por conferência RZ RZ-01" }
+    { deposito: "Geral", observacao: "Entrada por conferência RZ RZ-01" }
   );
 
   const [headerLine, dataLine] = csv.split("\r\n");
@@ -28,7 +28,7 @@ test("Bling stock entry CSV maps checked quantity for inventory entry", () => {
   );
   assert.equal(
     dataLine,
-    '"","AMZ04L0001","","Alternador Lifan","Depósito Geral","2","Entrada","331,83","331,83","Entrada por conferência RZ RZ-01"'
+    '"","AMZ04L0001","","Alternador Lifan","Geral","2","Entrada","331,83","331,83","Entrada por conferência RZ RZ-01"'
   );
 });
 

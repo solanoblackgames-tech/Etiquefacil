@@ -68,7 +68,7 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
-const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Depósito Geral";
+const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Geral";
 const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
   id: "backoffice-admin",

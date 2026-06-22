@@ -25,7 +25,7 @@ DOWNLOAD_MODE=browser
 BLING_CLIENT_ID=client-id-do-app-bling
 BLING_CLIENT_SECRET=client-secret-do-app-bling
 BLING_REDIRECT_URI=https://seu-dominio.com/api/integrations/bling/callback
-BLING_STOCK_DEPOSIT=Deposito Geral
+BLING_STOCK_DEPOSIT=Geral
 ```
 
 Com `DATABASE_URL`, o app cria automaticamente as tabelas PostgreSQL ao iniciar. Em produção, `DATABASE_URL` e `SESSION_SECRET` são obrigatórios.

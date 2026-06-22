@@ -317,7 +317,7 @@ export function buildBlingCsv(products, lot) {
     .join("\r\n");
 }
 
-export function buildBlingStockEntryCsv(items, { deposito = "Depósito Geral", observacao = "" } = {}) {
+export function buildBlingStockEntryCsv(items, { deposito = "Geral", observacao = "" } = {}) {
   const rows = items.map((item) => ({
     "ID Produto": "",
     "Código SKU*": item.sku || "",
