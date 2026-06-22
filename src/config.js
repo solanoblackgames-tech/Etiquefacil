@@ -1,5 +1,12 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config as loadDotenv } from "dotenv";
+
 const DEFAULT_PORT = 3000;
 const DEFAULT_DEV_SECRET = "etiquefacil-dev-secret";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+loadDotenv({ path: path.resolve(__dirname, "../.env") });
 
 export function buildRuntimeConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || "development";
