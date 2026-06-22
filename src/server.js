@@ -518,7 +518,7 @@ app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner
     const integration = await getRequiredBlingCredentials(userId);
     const result = await syncBlingProducts({
       integration,
-      products: data.products,
+      products: withLotSupplier(data.products, data.lot),
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
     res.json(result);
@@ -1042,6 +1042,7 @@ async function getRzStockEntryData(userId, lotId, codigoRz) {
         descricao: item.product.descricao || "",
         valorUnit: Number(item.product.valorUnit || 0),
         precoCusto: Number(item.product.precoCusto || 0),
+        fornecedor: lot.fornecedor || "",
         link: item.product.link || "",
         foto: item.product.foto || "",
         qtdConferida
@@ -1070,6 +1071,7 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
     descricao: item.product.descricao || "",
     valorUnit: Number(item.product.valorUnit || 0),
     precoCusto: Number(item.product.precoCusto || 0),
+    fornecedor: lot.fornecedor || "",
     link: item.product.link || "",
     foto: item.product.foto || "",
     quantidade: 1,
@@ -1082,6 +1084,10 @@ function buildStockEntryCsvForRz(data) {
     deposito: BLING_STOCK_DEPOSIT,
     observacao: `Entrada por conferência RZ ${data.codigoRz}`
   });
+}
+
+function withLotSupplier(items, lot) {
+  return (items || []).map((item) => ({ ...item, fornecedor: item.fornecedor || lot?.fornecedor || "" }));
 }
 
 function buildPalletReport(lot, codigoRz) {

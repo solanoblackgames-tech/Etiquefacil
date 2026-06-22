@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockExitPayload, buildBlingStockTransferPayload, syncBlingProducts } from "../src/bling-api.js";
+import {
+  buildBlingProductPayload,
+  buildBlingProductSupplierPayload,
+  buildBlingStockEntryPayload,
+  buildBlingStockExitPayload,
+  buildBlingStockTransferPayload,
+  syncBlingProducts
+} from "../src/bling-api.js";
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   const payload = buildBlingProductPayload({
@@ -8,6 +15,7 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
     codigoMl: "JQQR53377",
     descricao: "Alternador Lifan",
     valorUnit: 1659.17,
+    precoCusto: 331.83,
     ean: "7891234567890",
     foto: "https://img.example/produto.jpg",
     link: "https://example/produto"
@@ -16,6 +24,7 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   assert.equal(payload.nome, "Alternador Lifan");
   assert.equal(payload.codigo, "AMZ04L0001");
   assert.equal(payload.preco, 1659.17);
+  assert.equal(payload.precoCusto, 331.83);
   assert.equal(payload.tipo, "P");
   assert.equal(payload.situacao, "A");
   assert.equal(payload.formato, "S");
@@ -24,6 +33,28 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   assert.equal(payload.marca, "JQQR53377");
   assert.equal(payload.imagemURL, "https://img.example/produto.jpg");
   assert.equal(payload.linkExterno, "https://example/produto");
+});
+
+test("Bling product supplier payload maps supplier cost relationship", () => {
+  const payload = buildBlingProductSupplierPayload(
+    {
+      sku: "AMZ04L0001",
+      descricao: "Alternador Lifan",
+      precoCusto: 331.83
+    },
+    {
+      productId: 123,
+      supplierId: 456
+    }
+  );
+
+  assert.deepEqual(payload.produto, { id: 123 });
+  assert.deepEqual(payload.fornecedor, { id: 456 });
+  assert.equal(payload.descricao, "Alternador Lifan");
+  assert.equal(payload.codigo, "AMZ04L0001");
+  assert.equal(payload.precoCusto, 331.83);
+  assert.equal(payload.precoCompra, 331.83);
+  assert.equal(payload.padrao, true);
 });
 
 test("Bling stock entry payload maps checked RZ item to stock entry", () => {

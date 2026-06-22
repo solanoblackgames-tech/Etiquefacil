@@ -8,6 +8,7 @@ export function buildBlingProductPayload(product) {
     nome: product.descricao || product.sku,
     codigo: product.sku || "",
     preco: numberOrZero(product.valorUnit),
+    precoCusto: numberOrZero(product.precoCusto),
     tipo: "P",
     situacao: "A",
     formato: "S",
@@ -25,6 +26,18 @@ export function buildBlingProductPayload(product) {
     pesoBruto: 0,
     volumes: 0,
     itensPorCaixa: 0
+  });
+}
+
+export function buildBlingProductSupplierPayload(product, { productId, supplierId } = {}) {
+  return compactObject({
+    produto: { id: Number(productId) },
+    fornecedor: { id: Number(supplierId) },
+    descricao: product.descricao || product.sku || "",
+    codigo: product.sku || "",
+    precoCusto: numberOrZero(product.precoCusto),
+    precoCompra: numberOrZero(product.precoCusto),
+    padrao: true
   });
 }
 
@@ -68,12 +81,15 @@ export async function syncBlingProducts({ integration, products, saveIntegration
   for (const product of products) {
     const existing = await client.findProductBySku(product.sku);
     if (existing?.id) {
+      await client.ensureProductSupplier(product, existing.id);
       results.push({ sku: product.sku, status: "skipped", blingProductId: existing.id });
       continue;
     }
 
     const response = await client.createProduct(buildBlingProductPayload(product));
-    results.push({ sku: product.sku, status: "created", blingProductId: response?.data?.id || null, response });
+    const blingProductId = response?.data?.id || null;
+    if (blingProductId) await client.ensureProductSupplier(product, blingProductId);
+    results.push({ sku: product.sku, status: "created", blingProductId, response });
   }
 
   return summarizeSync(results);
@@ -90,6 +106,7 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
     if (!product?.id) {
       const created = await client.createProduct(buildBlingProductPayload(item));
       product = { id: created?.data?.id, codigo: item.sku };
+      if (product.id) await client.ensureProductSupplier(item, product.id);
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
 
@@ -118,6 +135,7 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   if (!product?.id && operation === "entry") {
     const created = await client.createProduct(buildBlingProductPayload(item));
     product = { id: created?.data?.id, codigo: item.sku };
+    if (product.id) await client.ensureProductSupplier(item, product.id);
   }
   if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
 
@@ -197,6 +215,44 @@ class BlingApiClient {
 
   async createProduct(payload) {
     return this.request("/produtos", { method: "POST", body: payload });
+  }
+
+  async ensureProductSupplier(product, productId) {
+    if (!product?.fornecedor || !productId) return null;
+    const supplier = await this.findOrCreateSupplier(product.fornecedor);
+    if (!supplier?.id) return null;
+    const existing = await this.findProductSupplier(productId, supplier.id);
+    if (existing?.id) return existing;
+    return this.createProductSupplier(buildBlingProductSupplierPayload(product, { productId, supplierId: supplier.id }));
+  }
+
+  async findProductSupplier(productId, supplierId) {
+    const payload = await this.request("/produtos/fornecedores", {
+      query: { idProduto: productId, limite: 100 }
+    });
+    return (payload?.data || []).find((item) => {
+      return String(item.produto?.id || item.idProduto || "") === String(productId) && String(item.fornecedor?.id || item.idFornecedor || "") === String(supplierId);
+    });
+  }
+
+  async findOrCreateSupplier(name) {
+    const normalized = normalizeText(name);
+    if (!normalized) return null;
+    const payload = await this.request("/contatos", {
+      query: { pesquisa: name, limite: 100 }
+    });
+    const existing = (payload?.data || []).find((contact) => normalizeText(contact.nome) === normalized);
+    if (existing?.id) return existing;
+
+    const created = await this.request("/contatos", {
+      method: "POST",
+      body: { nome: name, situacao: "A" }
+    });
+    return created?.data || null;
+  }
+
+  async createProductSupplier(payload) {
+    return this.request("/produtos/fornecedores", { method: "POST", body: payload });
   }
 
   async findDepositByDescription(description) {
