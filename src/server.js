@@ -815,11 +815,11 @@ async function getRequiredBlingCredentials(userId) {
 }
 
 function getBlingRedirectUri(req) {
-  if (config.blingRedirectUri) return config.blingRedirectUri;
   const host = req.get("host");
   if (host === "etiquefacil.com.br" || host === "www.etiquefacil.com.br") {
     return "https://etiquefacil.com.br/api/integrations/bling/callback";
   }
+  if (config.blingRedirectUri) return config.blingRedirectUri;
   return `${req.protocol}://${req.get("host")}/api/integrations/bling/callback`;
 }
 
