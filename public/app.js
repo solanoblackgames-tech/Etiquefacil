@@ -115,6 +115,7 @@ function bindEvents() {
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
+  $("#blingConfigForm").addEventListener("submit", saveBlingAppConfig);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
@@ -759,16 +760,44 @@ async function loadBlingIntegration() {
 
 function renderBlingIntegration(integration) {
   const connected = Boolean(integration?.connected && integration?.hasAccessToken);
+  const appConfigured = Boolean(integration?.appConfigured);
   $("#blingIntegrationTitle").textContent = connected ? "Bling autorizado para este usuario" : "Bling ainda nao autorizado";
   $("#blingIntegrationDetails").textContent = connected
     ? `Autorizado com o aplicativo ${integration.clientId}. ${integration.tokenExpiresAt ? `Token expira em ${formatDate(integration.tokenExpiresAt)}.` : ""}`
-    : integration?.appConfigured
+    : appConfigured
       ? "Clique em Autorizar no Bling, entre na conta Bling deste usuario e aprove o acesso."
-      : "O aplicativo Bling ainda precisa ser configurado no servidor.";
-  $("#blingAuthorizeLink").classList.toggle("hidden", !integration?.appConfigured);
+      : "Informe as credenciais do aplicativo Bling para liberar a autorizacao.";
+  $("#blingConfigForm").classList.toggle("hidden", connected || appConfigured);
+  $("#blingAuthorizeLink").classList.toggle("hidden", !appConfigured);
   $("#blingIntegrationDelete").disabled = !connected;
   $("#blingIntegrationStatus").style.color = connected ? "#0f766e" : "";
   $("#blingIntegrationStatus").textContent = getBlingCallbackMessage() || "";
+}
+
+async function saveBlingAppConfig(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#blingIntegrationStatus").style.color = "";
+  $("#blingIntegrationStatus").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api("/api/integrations/bling/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    state.blingIntegration = response.integration;
+    renderBlingIntegration(response.integration);
+    $("#blingIntegrationStatus").style.color = "#0f766e";
+    $("#blingIntegrationStatus").textContent = "Credenciais salvas. Agora autorize no Bling.";
+  } catch (error) {
+    $("#blingIntegrationStatus").style.color = "";
+    $("#blingIntegrationStatus").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function deleteBlingIntegration() {

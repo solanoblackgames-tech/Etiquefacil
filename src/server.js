@@ -328,16 +328,31 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
   const integration = await getUserBlingIntegration(workspaceUserId(req));
-  res.json({ integration: { ...integration, appConfigured: hasBlingAppConfig(), authorizeUrl: hasBlingAppConfig() ? "/api/integrations/bling/authorize" : null } });
+  const appConfigured = hasBlingAppConfig() || Boolean(integration?.connected);
+  res.json({ integration: { ...integration, appConfigured, authorizeUrl: appConfigured ? "/api/integrations/bling/authorize" : null } });
 });
 
-app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, (req, res) => {
+app.post("/api/integrations/bling/config", requireAuth, requireOwner, async (req, res) => {
   try {
-    if (!hasBlingAppConfig()) throw new Error("Configure BLING_CLIENT_ID e BLING_CLIENT_SECRET no servidor.");
+    const clientId = String(req.body.clientId || "").trim();
+    const clientSecret = String(req.body.clientSecret || "").trim();
+    if (!clientId || !clientSecret) throw new Error("Informe Client ID e Client Secret do Bling.");
+    const userId = workspaceUserId(req);
+    await deleteUserBlingIntegration(userId);
+    const integration = await saveUserBlingIntegration(userId, { clientId, clientSecret });
+    res.json({ integration: { ...integration, appConfigured: true, authorizeUrl: "/api/integrations/bling/authorize" } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const blingApp = await getBlingAppCredentials(workspaceUserId(req));
     const state = randomBytes(24).toString("hex");
     req.session.blingOAuthState = state;
     const url = new URL("https://www.bling.com.br/Api/v3/oauth/authorize");
-    url.searchParams.set("client_id", config.blingClientId);
+    url.searchParams.set("client_id", blingApp.clientId);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("state", state);
     res.redirect(url.toString());
@@ -348,15 +363,16 @@ app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, (req, re
 
 app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (req, res) => {
   try {
-    if (!hasBlingAppConfig()) throw new Error("Configure BLING_CLIENT_ID e BLING_CLIENT_SECRET no servidor.");
+    const blingApp = await getBlingAppCredentials(workspaceUserId(req));
     if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
     if (!req.query.code) throw new Error("Bling nao retornou o codigo de autorizacao.");
     if (!req.query.state || req.query.state !== req.session.blingOAuthState) throw new Error("Retorno OAuth invalido. Tente autorizar novamente.");
     req.session.blingOAuthState = null;
 
-    const token = await exchangeBlingAuthorizationCode(String(req.query.code), getBlingRedirectUri(req));
+    const token = await exchangeBlingAuthorizationCode(blingApp, String(req.query.code), getBlingRedirectUri(req));
     await saveUserBlingIntegration(workspaceUserId(req), {
-      clientId: config.blingClientId,
+      clientId: blingApp.clientId,
+      clientSecret: blingApp.clientSecret,
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       tokenExpiresAt: token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null
@@ -755,6 +771,17 @@ function hasBlingAppConfig() {
   return Boolean(config.blingClientId && config.blingClientSecret);
 }
 
+async function getBlingAppCredentials(userId) {
+  if (hasBlingAppConfig()) {
+    return { clientId: config.blingClientId, clientSecret: config.blingClientSecret };
+  }
+  const integration = await getUserBlingCredentials(userId);
+  if (integration?.clientId && integration?.clientSecret) {
+    return { clientId: integration.clientId, clientSecret: integration.clientSecret };
+  }
+  throw new Error("Configure Client ID e Client Secret do Bling antes de autorizar.");
+}
+
 async function getRequiredBlingCredentials(userId) {
   const integration = await getUserBlingCredentials(userId);
   if (!integration?.accessToken || !integration?.refreshToken) {
@@ -768,11 +795,11 @@ function getBlingRedirectUri(req) {
   return `${req.protocol}://${req.get("host")}/api/integrations/bling/callback`;
 }
 
-async function exchangeBlingAuthorizationCode(code, redirectUri) {
+async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
   const response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
     method: "POST",
     headers: {
-      Authorization: `Basic ${Buffer.from(`${config.blingClientId}:${config.blingClientSecret}`).toString("base64")}`,
+      Authorization: `Basic ${Buffer.from(`${blingApp.clientId}:${blingApp.clientSecret}`).toString("base64")}`,
       "Content-Type": "application/json",
       "enable-jwt": "1"
     },
