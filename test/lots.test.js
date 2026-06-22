@@ -56,6 +56,56 @@ test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   assert.equal(summary.items[0].product.codigoMl, "ML1");
 });
 
+test("summarizeLot consolidates repeated product rows in the same RZ", () => {
+  const db = {
+    lots: [{ id: "lot-1", userId: "user-1" }],
+    products: [
+      {
+        id: "product-1",
+        lotId: "lot-1",
+        codigoMl: "ML1",
+        sku: "TST0001",
+        descricao: "Produto 1",
+        valorUnit: 10,
+        origem: "planilha"
+      }
+    ],
+    rzItems: [
+      {
+        id: "item-1",
+        lotId: "lot-1",
+        productId: "product-1",
+        codigoRz: "RZ-1",
+        qtdEsperada: 1,
+        qtdConferida: 3,
+        tipoItem: "excedente_outro_rz",
+        valorTotal: 10
+      },
+      {
+        id: "item-2",
+        lotId: "lot-1",
+        productId: "product-1",
+        codigoRz: "RZ-1",
+        qtdEsperada: 1,
+        qtdConferida: 0,
+        tipoItem: "esperado",
+        valorTotal: 10
+      }
+    ]
+  };
+
+  const summary = summarizeLot(db, db.lots[0], true);
+
+  assert.equal(summary.items.length, 1);
+  assert.equal(summary.items[0].qtdEsperada, 2);
+  assert.equal(summary.items[0].qtdConferida, 3);
+  assert.equal(summary.items[0].tipoItem, "excedente_outro_rz");
+  assert.equal(summary.rzs[0].expected, 2);
+  assert.equal(summary.rzs[0].checked, 3);
+  assert.equal(summary.rzs[0].missing, 0);
+  assert.equal(summary.rzs[0].excess, 1);
+});
+
 test("getBlingProducts includes diverse entry items in complete export", () => {
   const lot = { id: "lot-1" };
   const db = {

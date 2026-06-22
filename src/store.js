@@ -632,7 +632,8 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
   const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
-  const sameRzItem = rzItems.find((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItems = rzItems.filter((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItem = chooseRzItemForScan(sameRzItems);
   const scan = {
     id: randomUUID(),
     lotId: lot.id,
@@ -678,7 +679,8 @@ export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) 
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
   const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
-  const sameRzItem = rzItems.find((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItems = rzItems.filter((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItem = chooseRzItemForDecrement(sameRzItems);
   if (!sameRzItem) throw notFound("CÃ³digo ML nÃ£o encontrado neste RZ.");
   if (sameRzItem.qtdConferida <= 0) throw new Error("Este CÃ³digo ML jÃ¡ estÃ¡ com quantidade conferida zerada.");
 
@@ -1739,13 +1741,12 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
         join products p on p.id = ri.product_id
         where ri.lot_id = $1 and ri.codigo_rz = $2 and p.codigo_ml = $3
         order by ri.created_at asc
-        limit 1
         for update of ri
       `,
       [lot.id, codigoRz, codigoMl]
     );
 
-    const sameRzItem = sameRzResult.rows[0];
+    const sameRzItem = choosePgRzItemForScan(sameRzResult.rows);
     if (sameRzItem) {
       const nextQtdConferida = Number(sameRzItem.qtd_conferida) + 1;
       const nextTipoItem =
@@ -1800,13 +1801,12 @@ async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
         join products p on p.id = ri.product_id
         where ri.lot_id = $1 and ri.codigo_rz = $2 and p.codigo_ml = $3
         order by ri.created_at asc
-        limit 1
         for update of ri
       `,
       [lot.id, codigoRz, codigoMl]
     );
 
-    const sameRzItem = sameRzResult.rows[0];
+    const sameRzItem = choosePgRzItemForDecrement(sameRzResult.rows);
     if (!sameRzItem) throw notFound("CÃ³digo ML nÃ£o encontrado neste RZ.");
     if (Number(sameRzItem.qtd_conferida) <= 0) throw new Error("Este CÃ³digo ML jÃ¡ estÃ¡ com quantidade conferida zerada.");
 
@@ -2607,6 +2607,32 @@ function rzItemFromRow(row) {
     tipoItem: row.tipo_item || "esperado",
     createdAt: iso(row.created_at)
   };
+}
+
+function chooseRzItemForScan(items) {
+  return items.find((item) => item.qtdConferida < item.qtdEsperada) || items[0] || null;
+}
+
+function chooseRzItemForDecrement(items) {
+  return (
+    items.find((item) => item.qtdConferida > item.qtdEsperada) ||
+    [...items].reverse().find((item) => item.qtdConferida > 0) ||
+    items[0] ||
+    null
+  );
+}
+
+function choosePgRzItemForScan(rows) {
+  return rows.find((row) => Number(row.qtd_conferida) < Number(row.qtd_esperada)) || rows[0] || null;
+}
+
+function choosePgRzItemForDecrement(rows) {
+  return (
+    rows.find((row) => Number(row.qtd_conferida) > Number(row.qtd_esperada)) ||
+    [...rows].reverse().find((row) => Number(row.qtd_conferida) > 0) ||
+    rows[0] ||
+    null
+  );
 }
 
 function scanFromRow(row) {

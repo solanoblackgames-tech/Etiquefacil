@@ -5,7 +5,8 @@ const EXCESS_EXPORT_ORIGINS = new Set(["excedente_externo", "lote_sem_planilha_m
 
 export function summarizeLot(db, lot, includeItems = false) {
   const products = db.products.filter((product) => product.lotId === lot.id);
-  const items = db.rzItems.filter((item) => item.lotId === lot.id);
+  const rawItems = db.rzItems.filter((item) => item.lotId === lot.id);
+  const items = consolidateRzItems(rawItems);
   const rzs = [...new Set(items.map((item) => item.codigoRz))]
     .sort()
     .map((codigoRz) => summarizeRz(db, lot, codigoRz));
@@ -74,7 +75,7 @@ export function getBlingProducts(db, lot, kind) {
 }
 
 function summarizeRz(db, lot, codigoRz) {
-  const items = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
+  const items = consolidateRzItems(db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz));
   const products = db.products.filter((product) => product.lotId === lot.id);
   const enriched = items.map((item) => ({ ...item, product: products.find((product) => product.id === item.productId) }));
   const expected = enriched.reduce((sum, item) => sum + item.qtdEsperada, 0);
@@ -104,6 +105,48 @@ function summarizeRz(db, lot, codigoRz) {
     missingValue: roundMoney(missingValue),
     excessValue: roundMoney(excessValue)
   };
+}
+
+function consolidateRzItems(items) {
+  const byProductAndRz = new Map();
+  for (const item of items) {
+    const key = `${item.lotId || ""}\u0000${item.codigoRz || ""}\u0000${item.productId || ""}`;
+    const current = byProductAndRz.get(key);
+    if (!current) {
+      byProductAndRz.set(key, { ...item });
+      continue;
+    }
+
+    current.qtdEsperada += item.qtdEsperada;
+    current.qtdConferida += item.qtdConferida;
+    current.valorTotal += item.valorTotal || 0;
+    current.tipoItem = mergeTipoItem(current.tipoItem, item.tipoItem);
+    current.tipoItem = consolidatedTipoItem(current);
+    current.condicaoGrade = mergeText(current.condicaoGrade, item.condicaoGrade);
+    current.enderecoWms = mergeText(current.enderecoWms, item.enderecoWms);
+  }
+  return [...byProductAndRz.values()].map((item) => ({
+    ...item,
+    tipoItem: consolidatedTipoItem(item)
+  }));
+}
+
+function mergeTipoItem(first, second) {
+  if (first === "excedente_externo" || second === "excedente_externo") return "excedente_externo";
+  if (first === "lote_sem_planilha" || second === "lote_sem_planilha") return "lote_sem_planilha";
+  if (first === "entrada_diversos" || second === "entrada_diversos") return "entrada_diversos";
+  return first || second || "esperado";
+}
+
+function consolidatedTipoItem(item) {
+  if (item.tipoItem === "excedente_externo") return "excedente_externo";
+  if (item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha") return item.tipoItem;
+  return item.qtdConferida > item.qtdEsperada ? "excedente_outro_rz" : "esperado";
+}
+
+function mergeText(first, second) {
+  const values = [first, second].filter(Boolean);
+  return [...new Set(values)].join(" / ");
 }
 
 function percent(value, total) {
