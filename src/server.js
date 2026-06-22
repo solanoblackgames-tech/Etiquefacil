@@ -433,38 +433,42 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, requireO
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML.");
+    await recordOperatorActivity(req.session.user, "scan_ml", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await scanLotRz({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o Código ML para diminuir.");
+    await recordOperatorActivity(req.session.user, "decrement_scan", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await decrementLotRzScan({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    await recordOperatorActivity(req.session.user, "create_external_excess", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await createExternalExcess({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    await recordOperatorActivity(req.session.user, "create_manual_product", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(
       await createManualExternalExcess({
         userId: workspaceUserId(req),
@@ -553,7 +557,7 @@ app.post("/api/operator-activity", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/labels", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/labels", requireAuth, async (req, res) => {
   const result = await createLabel(workspaceUserId(req), req.body.productId);
   if (!result) return res.status(404).json({ error: "Produto não encontrado." });
   res.json(result);

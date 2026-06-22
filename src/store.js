@@ -216,6 +216,8 @@ export async function listOperatorsForUser(ownerUserId) {
           max(oa.created_at) as last_activity_at,
           count(oa.id) filter (where oa.action = 'login')::int as login_total,
           count(oa.id) filter (where oa.action = 'search_ml')::int as search_total,
+          count(oa.id) filter (where oa.action = 'scan_ml')::int as scan_total,
+          count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))::int as create_total,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
           count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total
         from users u
@@ -2657,6 +2659,8 @@ function operatorStatsFromRow(row) {
     total: Number(row.activity_total || 0),
     logins: Number(row.login_total || 0),
     searches: Number(row.search_total || 0),
+    scans: Number(row.scan_total || 0),
+    creates: Number(row.create_total || 0),
     lotViews: Number(row.lot_view_total || 0),
     palletViews: Number(row.pallet_view_total || 0),
     lastActivityAt: row.last_activity_at ? iso(row.last_activity_at) : null
@@ -2664,12 +2668,14 @@ function operatorStatsFromRow(row) {
 }
 
 function summarizeOperatorActivities(activities, operatorUserId) {
-  const stats = { total: 0, logins: 0, searches: 0, lotViews: 0, palletViews: 0, lastActivityAt: null };
+  const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, lastActivityAt: null };
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
     stats.total += 1;
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
+    if (activity.action === "scan_ml") stats.scans += 1;
+    if (activity.action === "create_manual_product" || activity.action === "create_external_excess") stats.creates += 1;
     if (activity.action === "view_lot") stats.lotViews += 1;
     if (activity.action === "view_pallet") stats.palletViews += 1;
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;

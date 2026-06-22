@@ -715,7 +715,7 @@ async function showApp(user) {
   $("#userName").textContent = `${user.name} (${user.email})`;
   applyUserPermissions(user);
   const scanRequest = getScanRequest();
-  if (scanRequest && user.role !== "operator") {
+  if (scanRequest) {
     await showScanOnly(scanRequest);
     return;
   }
@@ -822,6 +822,8 @@ function renderOperators() {
         </div>
         <span>Logins: ${operator.stats?.logins || 0}</span>
         <span>Buscas: ${operator.stats?.searches || 0}</span>
+        <span>Bipagens: ${operator.stats?.scans || 0}</span>
+        <span>Cadastros: ${operator.stats?.creates || 0}</span>
         <span>Lotes: ${operator.stats?.lotViews || 0}</span>
         <span>Pallets: ${operator.stats?.palletViews || 0}</span>
         <span>${operator.stats?.lastActivityAt ? formatDate(operator.stats.lastActivityAt) : "Sem atividade"}</span>
@@ -878,8 +880,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   if (route.view === "lotRz") {
     const lot = await selectLot(route.lotId, { push: false });
     if (lot) {
-      if (state.user?.role === "operator") renderPallet(lot, route.codigoRz);
-      else renderRz(lot, route.codigoRz, { push: false });
+      renderRz(lot, route.codigoRz, { push: false });
     }
     if (replace) updateRoute(lot ? lotRzPath(route.lotId, route.codigoRz) : "/lotes", { replace: true });
     return;
@@ -1496,7 +1497,8 @@ function renderLotPreview(lot) {
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
   const noSheetLot = isNoSheetLot(lot);
-  const readOnly = state.user?.role === "operator";
+  const canManage = state.user?.role !== "operator";
+  const canScan = true;
   moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -1507,9 +1509,9 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
-    ${noSheetLot && !readOnly ? '<div id="diversePanelMount"></div>' : ""}
-    ${noSheetLot && !readOnly ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    <div class="actions ${readOnly ? "hidden" : ""}">
+    ${noSheetLot && canManage ? '<div id="diversePanelMount"></div>' : ""}
+    ${noSheetLot && canManage ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    <div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
@@ -1535,7 +1537,7 @@ function renderLotDetail(lot) {
     </div>
     <p id="rzSearchMessage" class="message"></p>
     <div class="rz-grid">
-      ${lot.rzs.map((rz) => rzCard(rz, { readOnly })).join("")}
+      ${lot.rzs.map((rz) => rzCard(rz, { canScan })).join("")}
     </div>
     <div id="rzDetail"></div>
   `;
@@ -1547,7 +1549,7 @@ function renderLotDetail(lot) {
     clearLotDetail();
     updateRoute("/lotes");
   });
-  if (!readOnly) {
+  if (canManage) {
     detail.querySelectorAll("button[data-download]").forEach((button) => {
       button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
     });
@@ -1557,11 +1559,9 @@ function renderLotDetail(lot) {
   $("#rzSearchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
-  if (!readOnly) {
-    detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
-      button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
-    });
-  }
+  detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
+    button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
+  });
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
@@ -1681,8 +1681,8 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
 }
 
 function renderPallet(lot, codigoRz) {
-  const readOnly = state.user?.role === "operator";
-  if (readOnly) recordOperatorActivity("view_pallet", { lotId: lot.id, codigoRz });
+  const canManage = state.user?.role !== "operator";
+  if (state.user?.role === "operator") recordOperatorActivity("view_pallet", { lotId: lot.id, codigoRz });
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -1698,12 +1698,12 @@ function renderPallet(lot, codigoRz) {
           <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
           <h2>Pallet ${escapeHtml(codigoRz)}</h2>
         </div>
-        <div class="pallet-actions ${readOnly ? "hidden" : ""}">
+        <div class="pallet-actions">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
-          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>
-          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>
-          <a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>
-          <a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>
+          ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>` : ""}
+          ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>` : ""}
+          ${canManage ? `<a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>` : ""}
+          ${canManage ? `<a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>` : ""}
         </div>
       </div>
       <div class="summary-grid">
@@ -1738,7 +1738,7 @@ function renderPallet(lot, codigoRz) {
       </div>
     </section>
   `;
-  if (!readOnly) $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
+  $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -2258,7 +2258,7 @@ function previewRzRow(rz) {
   `;
 }
 
-function rzCard(rz, { readOnly = false } = {}) {
+function rzCard(rz, { canScan = true } = {}) {
   const title = `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
   return `
     <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
@@ -2272,7 +2272,7 @@ function rzCard(rz, { readOnly = false } = {}) {
         <span>Excedente</span><strong>${rz.excess}</strong>
       </div>
       <div class="rz-card-actions">
-        ${readOnly ? "" : `<button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>`}
+        ${canScan ? `<button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>` : ""}
         <button type="button" class="ghost" data-pallet-rz="${escapeHtml(rz.codigoRz)}">Exibir pallet</button>
       </div>
     </article>
