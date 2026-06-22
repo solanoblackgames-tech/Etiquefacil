@@ -363,7 +363,6 @@ app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, async (r
     const url = new URL("https://www.bling.com.br/Api/v3/oauth/authorize");
     url.searchParams.set("client_id", blingApp.clientId);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("redirect_uri", getBlingRedirectUri(req));
     url.searchParams.set("state", state);
     res.redirect(url.toString());
   } catch (error) {
