@@ -935,11 +935,11 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function createManualExternalExcess({ userId, lotId, codigoRz, codigoMl, manualProduct }) {
+export async function createManualExternalExcess({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoRz, codigoMl, manualProduct }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
   if (!normalizedMl) throw new Error("Informe o Codigo ML.");
-  if (hasPostgres()) return createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl, manualProduct });
+  if (hasPostgres()) return createManualExternalExcessPg({ userId, createdByUserId, operatorUserId, lotId, codigoRz, codigoMl: normalizedMl, manualProduct });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -953,7 +953,7 @@ export async function createManualExternalExcess({ userId, lotId, codigoRz, codi
   lot.proximoSequencialSku += 1;
   db.products.push(product);
   db.rzItems.push(item);
-  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
+  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
   db.scans.push({
     id: randomUUID(),
     lotId: lot.id,
@@ -966,13 +966,13 @@ export async function createManualExternalExcess({ userId, lotId, codigoRz, codi
   return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
+export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
   const normalizedRz = String(codigoRz || "").trim().toUpperCase();
   if (!normalizedMl) throw new Error("Informe o CÃƒÂ³digo ML.");
   if (!normalizedRz) throw new Error("Informe o RZ.");
-  if (hasPostgres()) return addDiverseLotItemPg({ userId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, preview });
+  if (hasPostgres()) return addDiverseLotItemPg({ userId, createdByUserId, operatorUserId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, preview });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -1021,7 +1021,7 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, man
     lot.proximoSequencialSku += 1;
     db.products.push(product);
     db.rzItems.push(item);
-    mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "create", payload: sourceManual }));
+    mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
     await writeDb(db);
     return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
   }
@@ -1041,9 +1041,9 @@ export async function addDiverseLotItem({ userId, lotId, codigoMl, codigoRz, man
   return { status: "criado", product, parent: history, lot: summarizeLot(db, lot, true) };
 }
 
-export async function suggestCatalogUpdate({ userId, lotId, productId, payload }) {
+export async function suggestCatalogUpdate({ userId, createdByUserId = userId, operatorUserId = null, lotId, productId, payload }) {
   await ensureStore();
-  if (hasPostgres()) return suggestCatalogUpdatePg({ userId, lotId, productId, payload });
+  if (hasPostgres()) return suggestCatalogUpdatePg({ userId, createdByUserId, operatorUserId, lotId, productId, payload });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -1051,7 +1051,7 @@ export async function suggestCatalogUpdate({ userId, lotId, productId, payload }
   const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
   if (!product) throw notFound("Produto nao encontrado.");
   const normalized = normalizeManualProduct({ ...product, ...payload }, product.codigoMl);
-  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized }));
+  mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "update", payload: normalized }));
   await writeDb(db);
   return { ok: true };
 }
@@ -1431,6 +1431,8 @@ async function ensurePgStore() {
     create table if not exists catalog_requests (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
+      created_by_user_id text references users(id) on delete set null,
+      operator_user_id text references users(id) on delete set null,
       lot_id text references lots(id) on delete set null,
       product_id text references products(id) on delete set null,
       type text not null,
@@ -1453,6 +1455,8 @@ async function ensurePgStore() {
       id text primary key,
       original_request_id text not null,
       user_id text not null,
+      created_by_user_id text,
+      operator_user_id text,
       lot_id text,
       product_id text,
       type text not null,
@@ -1503,6 +1507,12 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists link text not null default '';
     alter table catalog_requests add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
+    alter table catalog_requests add column if not exists created_by_user_id text references users(id) on delete set null;
+    alter table catalog_requests add column if not exists operator_user_id text references users(id) on delete set null;
+    alter table catalog_rejected_requests add column if not exists created_by_user_id text;
+    alter table catalog_rejected_requests add column if not exists operator_user_id text;
+    update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
+    update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
     create index if not exists users_tenant_id_idx on users(tenant_id);
     create index if not exists users_parent_user_id_idx on users(parent_user_id);
@@ -1536,6 +1546,8 @@ async function ensurePgStore() {
       id,
       original_request_id,
       user_id,
+      created_by_user_id,
+      operator_user_id,
       lot_id,
       product_id,
       type,
@@ -1557,6 +1569,8 @@ async function ensurePgStore() {
       cr.id || '-rejected',
       cr.id,
       cr.user_id,
+      cr.created_by_user_id,
+      cr.operator_user_id,
       cr.lot_id,
       cr.product_id,
       cr.type,
@@ -1930,6 +1944,8 @@ async function insertCatalogRequestRows(client, requests = []) {
     [
       "id",
       "user_id",
+      "created_by_user_id",
+      "operator_user_id",
       "lot_id",
       "product_id",
       "type",
@@ -1950,6 +1966,8 @@ async function insertCatalogRequestRows(client, requests = []) {
     requests.map((request) => [
       request.id,
       request.userId,
+      request.createdByUserId || request.userId,
+      request.operatorUserId || null,
       request.lotId || null,
       request.productId || null,
       request.type,
@@ -1978,6 +1996,8 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "id",
       "original_request_id",
       "user_id",
+      "created_by_user_id",
+      "operator_user_id",
       "lot_id",
       "product_id",
       "type",
@@ -1999,6 +2019,8 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.id,
       request.originalRequestId,
       request.userId,
+      request.createdByUserId || request.userId,
+      request.operatorUserId || null,
       request.lotId || null,
       request.productId || null,
       request.type,
@@ -2181,7 +2203,7 @@ async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl, manualProduct }) {
+async function createManualExternalExcessPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoRz, codigoMl, manualProduct }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -2196,7 +2218,7 @@ async function createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl,
     const source = normalizeManualProduct(manualProduct, codigoMl);
     const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl);
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source }));
+    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
     await client.query(
       `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
        values ($1, $2, $3, $4, $5, $6, $7)`,
@@ -2215,7 +2237,7 @@ async function createManualExternalExcessPg({ userId, lotId, codigoRz, codigoMl,
   return { ...result, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
+async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -2261,7 +2283,7 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualPr
         const source = normalizeManualProduct(manualProduct, codigoMl);
         const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual" });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-        await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product: records.product, type: "create", payload: source }));
+        await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
         result = { status: "cadastro_manual", product: records.product, parent: null };
         await client.query("commit");
@@ -2467,7 +2489,7 @@ async function findPgCatalogProduct(client, codigoMl) {
   return result.rows[0] ? catalogProductFromRow(result.rows[0]) : null;
 }
 
-async function suggestCatalogUpdatePg({ userId, lotId, productId, payload }) {
+async function suggestCatalogUpdatePg({ userId, createdByUserId = userId, operatorUserId = null, lotId, productId, payload }) {
   const client = await getPgPool().connect();
   try {
     const productResult = await client.query(
@@ -2485,7 +2507,7 @@ async function suggestCatalogUpdatePg({ userId, lotId, productId, payload }) {
     const product = productFromRow(row);
     const lot = { id: lotId };
     const normalized = normalizeManualProduct({ ...product, ...payload }, product.codigoMl);
-    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, lot, product, type: "update", payload: normalized }));
+    await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "update", payload: normalized }));
     return { ok: true };
   } finally {
     client.release();
@@ -2632,11 +2654,13 @@ function normalizeManualProduct(input = {}, codigoMl) {
   };
 }
 
-function buildCatalogRequest({ userId, lot, product, type, payload }) {
+function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId = null, lot, product, type, payload }) {
   const codigoMl = normalizeCode(payload.codigoMl || product.codigoMl);
   return {
     id: randomUUID(),
     userId,
+    createdByUserId: createdByUserId || userId,
+    operatorUserId: operatorUserId || null,
     lotId: lot.id,
     productId: product.id,
     type,
@@ -2663,6 +2687,8 @@ export function mergePendingCatalogRequest(requests, request) {
     return request;
   }
 
+  if (catalogRequestHasUserCheck(target, catalogRequestActorId(request))) return target;
+
   target.doubleChecks = [...normalizeDoubleChecks(target.doubleChecks), buildCatalogDoubleCheck(request)];
   return target;
 }
@@ -2671,7 +2697,7 @@ async function mergePendingCatalogRequestPg(client, request) {
   const mergeable = request.type === "create"
     ? await client.query(
         `
-          select id, double_checks
+          select id, user_id, created_by_user_id, operator_user_id, double_checks
           from catalog_requests
           where status = 'pending'
             and type = 'create'
@@ -2688,6 +2714,10 @@ async function mergePendingCatalogRequestPg(client, request) {
     request.doubleChecks = normalizeDoubleChecks(request.doubleChecks);
     await insertCatalogRequestRows(client, [request]);
     return request;
+  }
+
+  if (catalogRequestHasUserCheck(catalogRequestFromRow(mergeable.rows[0]), catalogRequestActorId(request))) {
+    return { ...request, id: mergeable.rows[0].id };
   }
 
   const check = buildCatalogDoubleCheck(request);
@@ -2714,6 +2744,8 @@ function buildCatalogDoubleCheck(request) {
   return {
     id: randomUUID(),
     userId: request.userId,
+    createdByUserId: request.createdByUserId || request.userId,
+    operatorUserId: request.operatorUserId || null,
     lotId: request.lotId || null,
     productId: request.productId || null,
     type: request.type,
@@ -2730,11 +2762,22 @@ function buildCatalogDoubleCheck(request) {
   };
 }
 
+function catalogRequestHasUserCheck(request, userId) {
+  if (!userId) return false;
+  return catalogRequestActorId(request) === userId || normalizeDoubleChecks(request.doubleChecks).some((check) => catalogRequestActorId(check) === userId);
+}
+
+function catalogRequestActorId(request) {
+  return request?.createdByUserId || request?.userId || null;
+}
+
 export function buildRejectedCatalogRequest(request, rejectedAt) {
   return {
     id: randomUUID(),
     originalRequestId: request.originalRequestId || request.id,
     userId: request.userId,
+    createdByUserId: request.createdByUserId || request.userId,
+    operatorUserId: request.operatorUserId || null,
     lotId: request.lotId || null,
     productId: request.productId || null,
     type: request.type,
@@ -2761,9 +2804,14 @@ function normalizeDoubleChecks(checks) {
 function enrichCatalogRequestDoubleChecks(request, usersById) {
   return {
     ...request,
+    user: request.user || usersById.get(request.userId) || null,
+    createdByUser: usersById.get(request.createdByUserId || request.userId) || null,
+    operatorUser: request.operatorUserId ? usersById.get(request.operatorUserId) || null : null,
     doubleChecks: normalizeDoubleChecks(request.doubleChecks).map((check) => ({
       ...check,
-      user: usersById.get(check.userId) || null
+      user: usersById.get(check.userId) || null,
+      createdByUser: usersById.get(check.createdByUserId || check.userId) || null,
+      operatorUser: check.operatorUserId ? usersById.get(check.operatorUserId) || null : null
     }))
   };
 }
@@ -2977,6 +3025,8 @@ function catalogRequestFromRow(row) {
   return {
     id: row.id,
     userId: row.user_id,
+    createdByUserId: row.created_by_user_id || row.user_id,
+    operatorUserId: row.operator_user_id || null,
     lotId: row.lot_id,
     productId: row.product_id,
     type: row.type,
@@ -3002,6 +3052,8 @@ function catalogRejectedRequestFromRow(row) {
     id: row.id,
     originalRequestId: row.original_request_id,
     userId: row.user_id,
+    createdByUserId: row.created_by_user_id || row.user_id,
+    operatorUserId: row.operator_user_id || null,
     lotId: row.lot_id,
     productId: row.product_id,
     type: row.type,

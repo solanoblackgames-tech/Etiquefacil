@@ -101,6 +101,12 @@ app.use(
     }
   })
 );
+app.get("/", (req, res, next) => {
+  if (!req.query.code && !req.query.error) return next();
+  return requireAuth(req, res, () =>
+    requireOwner(req, res, () => handleBlingOAuthCallback(req, res, getBlingRootRedirectUri(req)))
+  );
+});
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/api/config", (req, res) => {
@@ -371,6 +377,10 @@ app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, async (r
 });
 
 app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (req, res) => {
+  return handleBlingOAuthCallback(req, res, getBlingRedirectUri(req));
+});
+
+async function handleBlingOAuthCallback(req, res, redirectUri) {
   try {
     const blingApp = await getBlingAppCredentials(workspaceUserId(req));
     if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
@@ -378,7 +388,7 @@ app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (re
     if (!req.query.state || req.query.state !== req.session.blingOAuthState) throw new Error("Retorno OAuth invalido. Tente autorizar novamente.");
     req.session.blingOAuthState = null;
 
-    const token = await exchangeBlingAuthorizationCode(blingApp, String(req.query.code), getBlingRedirectUri(req));
+    const token = await exchangeBlingAuthorizationCode(blingApp, String(req.query.code), redirectUri);
     await saveUserBlingIntegration(workspaceUserId(req), {
       clientId: blingApp.clientId,
       accessToken: token.access_token,
@@ -390,7 +400,7 @@ app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (re
     req.session.blingOAuthState = null;
     res.redirect(`/perfil?bling=error&message=${encodeURIComponent(error.message)}`);
   }
-});
+}
 
 app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
   try {
@@ -643,6 +653,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
     res.json(
       await createManualExternalExcess({
         userId: workspaceUserId(req),
+        createdByUserId: req.session.user?.id,
+        operatorUserId: operatorUserId(req),
         lotId: req.params.lotId,
         codigoRz: req.params.codigoRz,
         codigoMl,
@@ -661,6 +673,8 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req
     res.json(
       await addDiverseLotItem({
         userId: workspaceUserId(req),
+        createdByUserId: req.session.user?.id,
+        operatorUserId: operatorUserId(req),
         lotId: req.params.lotId,
         codigoMl,
         codigoRz,
@@ -676,7 +690,16 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req
 
 app.post("/api/lots/:lotId/products/:productId/catalog-suggestion", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json(await suggestCatalogUpdate({ userId: workspaceUserId(req), lotId: req.params.lotId, productId: req.params.productId, payload: req.body }));
+    res.json(
+      await suggestCatalogUpdate({
+        userId: workspaceUserId(req),
+        createdByUserId: req.session.user?.id,
+        operatorUserId: operatorUserId(req),
+        lotId: req.params.lotId,
+        productId: req.params.productId,
+        payload: req.body
+      })
+    );
   } catch (error) {
     sendError(res, error);
   }
@@ -781,6 +804,10 @@ function workspaceUserId(req) {
   return req.session.user?.workspaceUserId || req.session.user?.id;
 }
 
+function operatorUserId(req) {
+  return req.session.user?.role === "operator" ? req.session.user.id : null;
+}
+
 function isAdminLogin(email, password) {
   return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
 }
@@ -820,6 +847,14 @@ function getBlingRedirectUri(req) {
   }
   if (config.blingRedirectUri) return config.blingRedirectUri;
   return `${req.protocol}://${req.get("host")}/api/integrations/bling/callback`;
+}
+
+function getBlingRootRedirectUri(req) {
+  const host = req.get("host");
+  if (host === "etiquefacil.com.br" || host === "www.etiquefacil.com.br") {
+    return "https://etiquefacil.com.br/";
+  }
+  return `${req.protocol}://${req.get("host")}/`;
 }
 
 async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {

@@ -68,6 +68,73 @@ test("mergePendingCatalogRequest keeps rejected suggestions separated", () => {
   assert.equal(requests[1].id, "request-2");
 });
 
+test("mergePendingCatalogRequest ignores repeated confirmations from the same actor", () => {
+  const requests = [
+    {
+      id: "request-1",
+      userId: "owner-1",
+      createdByUserId: "operator-1",
+      type: "create",
+      status: "pending",
+      codigoMl: "ML123",
+      descricao: "Produto inicial",
+      valorUnit: 100,
+      createdAt: "2026-06-18T10:00:00.000Z"
+    }
+  ];
+
+  const merged = mergePendingCatalogRequest(requests, {
+    id: "request-2",
+    userId: "owner-1",
+    createdByUserId: "operator-1",
+    type: "create",
+    status: "pending",
+    codigoMl: "ML123",
+    descricao: "Produto repetido",
+    valorUnit: 105,
+    createdAt: "2026-06-18T11:00:00.000Z"
+  });
+
+  assert.equal(merged.id, "request-1");
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].doubleChecks || [], []);
+});
+
+test("mergePendingCatalogRequest accepts double check from another operator in the same workspace", () => {
+  const requests = [
+    {
+      id: "request-1",
+      userId: "owner-1",
+      createdByUserId: "operator-1",
+      type: "create",
+      status: "pending",
+      codigoMl: "ML123",
+      descricao: "Produto inicial",
+      valorUnit: 100,
+      createdAt: "2026-06-18T10:00:00.000Z"
+    }
+  ];
+
+  mergePendingCatalogRequest(requests, {
+    id: "request-2",
+    userId: "owner-1",
+    createdByUserId: "operator-2",
+    operatorUserId: "operator-2",
+    type: "create",
+    status: "pending",
+    codigoMl: "ML123",
+    descricao: "Produto confirmado",
+    valorUnit: 105,
+    createdAt: "2026-06-18T11:00:00.000Z"
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].doubleChecks.length, 1);
+  assert.equal(requests[0].doubleChecks[0].userId, "owner-1");
+  assert.equal(requests[0].doubleChecks[0].createdByUserId, "operator-2");
+  assert.equal(requests[0].doubleChecks[0].operatorUserId, "operator-2");
+});
+
 test("selectCatalogApprovalPayload uses the selected double check values", () => {
   const request = {
     id: "request-1",

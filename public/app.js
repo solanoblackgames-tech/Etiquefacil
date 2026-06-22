@@ -1275,7 +1275,7 @@ function renderAdminCatalogProducts() {
 }
 
 function adminCatalogRejectedRequestRow(request) {
-  const user = request.user?.email || request.user?.name || "usuario";
+  const actor = catalogActorLabel(request);
   const options = catalogApprovalOptions(request);
   return `
     <article class="admin-row catalog-rejected-row" data-catalog-rejected-request-id="${escapeHtml(request.id)}">
@@ -1283,7 +1283,7 @@ function adminCatalogRejectedRequestRow(request) {
         ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
         <div>
           <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
-          <span class="muted">${escapeHtml(user)} - ${formatDate(request.createdAt)}</span>
+          <span class="muted">${escapeHtml(actor)} - ${formatDate(request.createdAt)}</span>
           <span class="muted">${escapeHtml(request.descricao)}</span>
         </div>
       </div>
@@ -1315,7 +1315,7 @@ function adminCatalogProductRow(product) {
 }
 
 function adminCatalogRequestRow(request) {
-  const user = request.user?.email || request.user?.name || "usuario";
+  const actor = catalogActorLabel(request);
   const pending = request.status === "pending";
   const options = catalogApprovalOptions(request);
   const choiceHtml = options.length > 1
@@ -1334,7 +1334,7 @@ function adminCatalogRequestRow(request) {
         ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
         <div>
         <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
-        <span class="muted">${escapeHtml(user)} · ${formatDate(request.createdAt)}</span>
+        <span class="muted">${escapeHtml(actor)} - ${formatDate(request.createdAt)}</span>
         <span class="muted">${escapeHtml(request.descricao)}</span>
         </div>
       </div>
@@ -1353,14 +1353,14 @@ function adminCatalogRequestRow(request) {
 
 function catalogApprovalOptions(request) {
   return [
-    { id: "base", label: "Cadastro inicial", user: request.user, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto },
+    { id: "base", label: "Cadastro inicial", user: request.user, createdByUser: request.createdByUser, operatorUser: request.operatorUser, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto },
     ...(Array.isArray(request.doubleChecks) ? request.doubleChecks : []).map((check, index) => ({ ...check, label: `Double check ${index + 1}` }))
   ];
 }
 
 function catalogApprovalOptionRow(requestId, option, index) {
   const optionId = option.id || "base";
-  const user = option.user?.email || option.user?.name || "usuario";
+  const actor = catalogActorLabel(option);
   const link = String(option.link || "").trim();
   const photo = String(option.foto || "").trim();
   const ean = String(option.ean || "").trim();
@@ -1370,12 +1370,21 @@ function catalogApprovalOptionRow(requestId, option, index) {
       ${catalogPhotoFrame(photo, "catalog-photo-option")}
       <div>
         <strong>${escapeHtml(option.label || "Cadastro")}</strong>
-        <span>${escapeHtml(user)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
+        <span>${escapeHtml(actor)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
         <span>EAN: ${escapeHtml(ean || "-")}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
   `;
+}
+
+function catalogActorLabel(item) {
+  const owner = item.user?.email || item.user?.name || "usuario";
+  const createdBy = item.createdByUser?.email || item.createdByUser?.name || "";
+  const operator = item.operatorUser?.email || item.operatorUser?.name || "";
+  const actor = operator || createdBy;
+  if (actor && actor !== owner) return `${owner} / operador ${actor}`;
+  return actor || owner;
 }
 
 function catalogPhotoFrame(photo, className = "") {
