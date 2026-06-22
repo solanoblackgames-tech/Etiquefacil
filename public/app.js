@@ -1017,6 +1017,7 @@ function parseRoute(pathname) {
   const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length || parts[0] === "entradas" || parts[0] === "perfil" || parts[0] === "bling") return { view: "profile" };
   if (parts[0] === "busca") return { view: "search" };
+  if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
   if (parts[0] === "lotes" && parts[1]) return { view: "lot", lotId: parts[1] };
   if (parts[0] === "lotes") return { view: "lots" };
@@ -1026,6 +1027,7 @@ function parseRoute(pathname) {
 function routePathForView(view) {
   if (view === "lots") return "/lotes";
   if (view === "search") return "/busca";
+  if (view === "transfers") return "/transferencias";
   if (view === "profile") return "/perfil";
   return "/perfil";
 }
@@ -1051,8 +1053,11 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
     state.selectedLotId = null;
     state.previewLotId = null;
     state.selectedRz = null;
+    state.selectedTransferLotId = null;
     renderLots();
+    renderTransferLots();
     clearLotDetail();
+    clearTransferDetail();
   }
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === target);
@@ -1060,10 +1065,12 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   $(".upload-band").classList.toggle("hidden", target !== "profile");
   $("#lotsTab").classList.toggle("hidden", target !== "lots");
   $("#searchTab").classList.toggle("hidden", target !== "search");
+  $("#transfersTab").classList.toggle("hidden", target !== "transfers");
   $("#profileTab").classList.toggle("hidden", target !== "profile");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
   if (target === "profile") setProfileSection(state.profileSection || "entries");
+  if (target === "transfers") loadTransferLots(state.selectedTransferLotId);
   schedulePrimaryInputFocus();
 }
 
