@@ -878,25 +878,57 @@ async function exchangeBlingAuthorizationCodeWithFallback(blingApp, code, redire
 }
 
 async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
-  const response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${blingApp.clientId}:${blingApp.clientSecret}`).toString("base64")}`,
-      "Content-Type": "application/json",
-      "enable-jwt": "1"
+  const attempts = [
+    {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${blingApp.clientId}:${blingApp.clientSecret}`).toString("base64")}`,
+        "Content-Type": "application/json",
+        "enable-jwt": "1"
+      },
+      body: JSON.stringify({ grant_type: "authorization_code", code, redirect_uri: redirectUri })
     },
-    body: JSON.stringify({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri
-    })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.error_description || payload?.error || "Nao foi possivel autorizar no Bling.";
-    throw new Error(message);
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "enable-jwt": "1"
+      },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: blingApp.clientId,
+        client_secret: blingApp.clientSecret
+      })
+    },
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "enable-jwt": "1"
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: blingApp.clientId,
+        client_secret: blingApp.clientSecret
+      }).toString()
+    }
+  ];
+
+  let payload = {};
+  let response = null;
+  for (const attempt of attempts) {
+    response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
+      method: "POST",
+      headers: attempt.headers,
+      body: attempt.body
+    });
+    payload = await response.json().catch(() => ({}));
+    if (response.ok) return payload;
+    if ((payload?.error?.message || payload?.error_description || payload?.error) !== "invalid_client") break;
   }
-  return payload;
+  const message = payload?.error?.message || payload?.error_description || payload?.error || "Nao foi possivel autorizar no Bling.";
+  throw new Error(message);
 }
 
 function safeFileName(value) {
