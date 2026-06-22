@@ -1191,6 +1191,41 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.transfer-shell {
+  display: grid;
+  gap: 18px;
+  padding: 22px 24px;
+}
+
+.transfer-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1.2fr 1fr 1fr auto;
+}
+
+.transfer-layout {
+  min-height: 520px;
+  padding: 0;
+}
+
+.transfer-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.transfer-table {
+  margin-top: 4px;
+}
+
+.transfer-row {
+  grid-template-columns: 1fr 1fr 2.2fr 0.5fr 0.8fr;
+}
+
+.transfer-empty {
+  padding: 14px;
+}
+
 .admin-shell {
   display: grid;
   gap: 18px;

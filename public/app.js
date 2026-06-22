@@ -1546,18 +1546,229 @@ async function handleAdminCatalogProductsClick(event) {
   }
 }
 
+async function loadTransferLots(selectId = state.selectedTransferLotId) {
+  try {
+    const response = await api("/api/transfer-lots");
+    state.transferLots = response.lots || [];
+    renderTransferLots();
+    if (selectId && state.transferLots.some((lot) => lot.id === selectId)) {
+      await selectTransferLot(selectId);
+    } else if (!selectId) {
+      clearTransferDetail();
+    }
+  } catch (error) {
+    $("#transferMessage").textContent = error.message;
+  }
+}
+
+async function createTransferLot(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#transferMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api("/api/transfer-lots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    $("#transferMessage").style.color = "#0f766e";
+    $("#transferMessage").textContent = "Lote de transferencia criado. Pode comecar a bipar.";
+    await loadTransferLots(response.lot.id);
+    $("#transferScanInput")?.focus();
+  } catch (error) {
+    $("#transferMessage").style.color = "";
+    $("#transferMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderTransferLots() {
+  const wrapper = $("#transferLots");
+  if (!wrapper) return;
+  if (!state.transferLots.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum lote de transferencia criado.</p>';
+    return;
+  }
+  wrapper.innerHTML = state.transferLots.map((lot) => `
+    <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
+      <strong>${escapeHtml(lot.name)}</strong>
+      <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
+      <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
+      <span class="badge ${lot.status === "synced" ? "" : "excess"}">${lot.status === "synced" ? "enviado" : "aberto"}</span>
+    </article>
+  `).join("");
+}
+
+function clearTransferDetail() {
+  const detail = $("#transferDetail");
+  if (!detail) return;
+  detail.classList.add("empty");
+  detail.textContent = "Crie ou selecione um lote de transferencia.";
+}
+
+async function handleTransferLotsClick(event) {
+  const card = event.target.closest("[data-transfer-lot]");
+  if (!card) return;
+  await selectTransferLot(card.dataset.transferLot);
+}
+
+async function selectTransferLot(transferLotId) {
+  state.selectedTransferLotId = transferLotId;
+  const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}`);
+  renderTransferLots();
+  renderTransferDetail(response.lot);
+}
+
+function renderTransferDetail(lot) {
+  const canSync = state.user?.role !== "operator";
+  const synced = lot.status === "synced";
+  const detail = $("#transferDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="transfer-panel">
+      <div class="work-heading">
+        <div>
+          <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
+          <h2>${escapeHtml(lot.name)}</h2>
+        </div>
+        <span class="badge ${synced ? "" : "excess"}">${synced ? "Enviado ao Bling" : "Aberto"}</span>
+      </div>
+      <form id="transferScanForm" class="search-bar">
+        <input id="transferScanInput" name="code" placeholder="Bipe Codigo ML ou SKU" autocomplete="off" ${synced ? "disabled" : ""} required />
+        <button type="submit" ${synced ? "disabled" : ""}>Adicionar</button>
+      </form>
+      <p id="transferScanMessage" class="message"></p>
+      <div class="summary-grid">
+        ${metric("SKUs", lot.totalSkus)}
+        ${metric("Unidades", lot.totalQty)}
+        ${metric("Origem", lot.depositoOrigem)}
+        ${metric("Destino", lot.depositoDestino)}
+      </div>
+      <div class="actions ${canSync ? "" : "hidden"}">
+        <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar CSV</a>
+        <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length ? "disabled" : ""}>Enviar transferencia ao Bling</button>
+      </div>
+      <div class="diverse-table transfer-table">
+        <div class="diverse-row transfer-row diverse-row-head">
+          <span>SKU</span>
+          <span>Codigo</span>
+          <span>Produto</span>
+          <span>Qtd</span>
+          <span>Acoes</span>
+        </div>
+        ${lot.items.length ? lot.items.map((item) => transferItemRow(item, synced)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
+      </div>
+    </section>
+  `;
+  schedulePrimaryInputFocus(["#transferScanInput"]);
+}
+
+function transferItemRow(item, synced) {
+  return `
+    <article class="diverse-row transfer-row">
+      <strong>${escapeHtml(item.sku)}</strong>
+      <span>${escapeHtml(item.codigoMl)}</span>
+      <span>${escapeHtml(item.descricao)}</span>
+      <span>${item.quantidade}</span>
+      <span><button type="button" class="danger ghost" data-transfer-decrement="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Diminuir</button></span>
+    </article>
+  `;
+}
+
+async function handleTransferDetailSubmit(event) {
+  if (event.target.id !== "transferScanForm") return;
+  event.preventDefault();
+  if (!state.selectedTransferLotId) return;
+  const input = event.target.querySelector("input[name='code']");
+  const button = event.target.querySelector("button");
+  const code = normalizeCode(input.value);
+  input.value = code;
+  if (!code) return;
+  button.disabled = true;
+  try {
+    const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/scan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+    input.value = "";
+    renderTransferDetail(response.lot);
+    await loadTransferLots(response.lot.id);
+    $("#transferScanMessage").style.color = "#0f766e";
+    $("#transferScanMessage").textContent = `${response.product.sku} adicionado ao lote.`;
+  } catch (error) {
+    $("#transferScanMessage").style.color = "";
+    $("#transferScanMessage").textContent = error.message;
+    input.select();
+  } finally {
+    button.disabled = false;
+    schedulePrimaryInputFocus(["#transferScanInput"]);
+  }
+}
+
+async function handleTransferDetailClick(event) {
+  const decrement = event.target.closest("[data-transfer-decrement]");
+  if (decrement && state.selectedTransferLotId) {
+    decrement.disabled = true;
+    try {
+      const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/items/${encodeURIComponent(decrement.dataset.transferDecrement)}/decrement`, { method: "POST" });
+      renderTransferDetail(response.lot);
+      await loadTransferLots(state.selectedTransferLotId);
+    } catch (error) {
+      $("#transferScanMessage").textContent = error.message;
+    }
+    return;
+  }
+
+  const sync = event.target.closest("[data-sync-transfer]");
+  if (sync) await syncTransferLot(sync.dataset.syncTransfer, sync);
+}
+
+async function syncTransferLot(transferLotId, button) {
+  if (!confirm("Enviar esta transferencia ao Bling agora?")) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/bling/sync`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Nao foi possivel enviar a transferencia ao Bling.");
+    await loadTransferLots(transferLotId);
+    $("#transferScanMessage").style.color = "#0f766e";
+    $("#transferScanMessage").textContent = `Transferencia enviada: ${payload.transferred} item(ns) para ${payload.depositoDestino?.descricao || ""}.`;
+  } catch (error) {
+    $("#transferScanMessage").style.color = "";
+    $("#transferScanMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadLots(selectId = state.selectedLotId) {
-  const response = await api("/api/lots");
-  state.lots = response.lots;
-  if (!selectId || !state.lots.some((lot) => lot.id === selectId)) {
-    selectId = null;
+  try {
+    const response = await api("/api/lots");
+    state.lots = response.lots;
+    if (!selectId || !state.lots.some((lot) => lot.id === selectId)) {
+      selectId = null;
+      state.selectedLotId = null;
+      state.previewLotId = null;
+      state.selectedRz = null;
+      clearLotDetail();
+    }
+    renderLots();
+    if (selectId) await selectLot(selectId);
+  } catch (error) {
+    state.lots = [];
     state.selectedLotId = null;
     state.previewLotId = null;
     state.selectedRz = null;
+    renderLots();
     clearLotDetail();
+    $("#lots").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+    $("#uploadMessage").textContent = error.message;
   }
-  renderLots();
-  if (selectId) await selectLot(selectId);
 }
 
 function clearLotDetail() {
@@ -2447,6 +2658,8 @@ function primaryInputSelectors() {
     "#diverseRzForm input[name='codigoRz']",
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
+    "#transferScanInput",
+    "#transferLotForm input[name='name']",
     "#loginForm input[name='email']",
     "#adminUsersTab:not(.hidden) #adminCreateUserForm input[name='name']",
     "#adminCatalogTab:not(.hidden) #adminCatalogSearchForm input[name='q']",

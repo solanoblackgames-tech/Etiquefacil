@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingProductPayload, buildBlingStockEntryPayload } from "../src/bling-api.js";
+import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockTransferPayload } from "../src/bling-api.js";
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   const payload = buildBlingProductPayload({
@@ -47,4 +47,26 @@ test("Bling stock entry payload maps checked RZ item to stock entry", () => {
   assert.equal(payload.preco, 331.83);
   assert.equal(payload.custo, 331.83);
   assert.equal(payload.observacoes, "Entrada por conferencia RZ RZ-01");
+});
+
+test("Bling stock transfer payload maps origin and destination deposits", () => {
+  const payload = buildBlingStockTransferPayload(
+    {
+      sku: "AMZ04L0001",
+      quantidade: 3
+    },
+    {
+      productId: 123,
+      depositoOrigemId: 456,
+      depositoDestinoId: 789,
+      observacao: "Transferencia Etiquefacil"
+    }
+  );
+
+  assert.deepEqual(payload.produto, { id: 123, codigo: "AMZ04L0001" });
+  assert.deepEqual(payload.deposito, { id: 456 });
+  assert.deepEqual(payload.depositoDestino, { id: 789 });
+  assert.equal(payload.operacao, "T");
+  assert.equal(payload.quantidade, 3);
+  assert.equal(payload.observacoes, "Transferencia Etiquefacil");
 });

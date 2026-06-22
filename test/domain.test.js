@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingCsv, buildBlingStockEntryCsv, formatSku, roundMoney } from "../src/domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
@@ -30,6 +30,25 @@ test("Bling stock entry CSV maps checked quantity for inventory entry", () => {
     dataLine,
     '"","AMZ04L0001","","Alternador Lifan","Depósito Geral","2","Entrada","331,83","331,83","Entrada por conferência RZ RZ-01"'
   );
+});
+
+test("Bling stock transfer CSV maps origin destination and quantity", () => {
+  const csv = buildBlingStockTransferCsv(
+    [
+      {
+        sku: "AMZ04L0001",
+        codigoMl: "JQQR53377",
+        descricao: "Alternador Lifan",
+        quantidade: 3
+      }
+    ],
+    { depositoOrigem: "Deposito Geral", depositoDestino: "Picking", observacao: "Transferencia do dia" }
+  );
+
+  const [headerLine, dataLine] = csv.split("\r\n");
+
+  assert.equal(headerLine, '"Codigo SKU*","GTIN/EAN","Nome do Produto","Deposito origem*","Deposito destino*","Quantidade*","Observacao"');
+  assert.equal(dataLine, '"AMZ04L0001","","Alternador Lifan","Deposito Geral","Picking","3","Transferencia do dia"');
 });
 
 test("auction cost rounds to Brazilian money precision", () => {
