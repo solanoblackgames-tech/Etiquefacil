@@ -39,6 +39,17 @@ export function buildBlingStockEntryPayload(item, { productId, depositoId, obser
   });
 }
 
+export function buildBlingStockTransferPayload(item, { productId, depositoOrigemId, depositoDestinoId, observacao = "" } = {}) {
+  return compactObject({
+    produto: { id: Number(productId), codigo: item.sku || "" },
+    deposito: { id: Number(depositoOrigemId) },
+    depositoDestino: { id: Number(depositoDestinoId) },
+    operacao: "T",
+    quantidade: numberOrZero(item.quantidade || item.qtdConferida),
+    observacoes: observacao
+  });
+}
+
 export async function syncBlingProducts({ integration, products, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   const results = [];
@@ -89,6 +100,44 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
   };
 }
 
+export async function listBlingDeposits({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  return client.listDeposits();
+}
+
+export async function syncBlingStockTransfers({ integration, items, depositoOrigemName, depositoDestinoName, observacao, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const origem = await client.findDepositByDescription(depositoOrigemName);
+  if (!origem?.id) throw new Error(`Deposito Bling de origem nao encontrado: ${depositoOrigemName}`);
+  const destino = await client.findDepositByDescription(depositoDestinoName);
+  if (!destino?.id) throw new Error(`Deposito Bling de destino nao encontrado: ${depositoDestinoName}`);
+  if (String(origem.id) === String(destino.id)) throw new Error("Escolha depositos diferentes para transferir.");
+
+  const results = [];
+  for (const item of items) {
+    await waitBetweenRequests(results.length);
+    const product = await client.findProductBySku(item.sku);
+    if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
+
+    const response = await client.createStockEntry(
+      buildBlingStockTransferPayload(item, {
+        productId: product.id,
+        depositoOrigemId: origem.id,
+        depositoDestinoId: destino.id,
+        observacao
+      })
+    );
+    results.push({ sku: item.sku, status: "transferred", blingProductId: product.id, response });
+  }
+
+  return {
+    ...summarizeSync(results),
+    transferred: results.length,
+    depositoOrigem: { id: origem.id, descricao: origem.descricao || depositoOrigemName },
+    depositoDestino: { id: destino.id, descricao: destino.descricao || depositoDestinoName }
+  };
+}
+
 class BlingApiClient {
   constructor(integration, saveIntegration) {
     if (!integration?.accessToken) throw new Error("Autorize a integracao Bling antes de enviar dados.");
@@ -113,6 +162,16 @@ class BlingApiClient {
     });
     const normalized = normalizeText(description);
     return (payload?.data || []).find((deposito) => normalizeText(deposito.descricao) === normalized) || (payload?.data || [])[0];
+  }
+
+  async listDeposits() {
+    const payload = await this.request("/depositos", {
+      query: { situacao: 1, limite: 100 }
+    });
+    return (payload?.data || []).map((deposito) => ({
+      id: deposito.id,
+      descricao: deposito.descricao || ""
+    }));
   }
 
   async createStockEntry(payload) {
@@ -189,6 +248,7 @@ function summarizeSync(results) {
     created: results.filter((item) => item.status === "created").length,
     skipped: results.filter((item) => item.status === "skipped").length,
     entered: results.filter((item) => item.status === "entered").length,
+    transferred: results.filter((item) => item.status === "transferred").length,
     results
   };
 }

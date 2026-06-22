@@ -304,7 +304,7 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.5fr) repeat(7, minmax(72px, 0.65fr)) minmax(110px, 0.9fr);
+  grid-template-columns: 38px minmax(180px, 1.5fr) minmax(58px, 0.45fr) repeat(7, minmax(72px, 0.65fr)) minmax(110px, 0.9fr);
   padding: 14px 12px;
 }
 
@@ -1255,6 +1255,59 @@ h3 {
   border-bottom: 0;
 }
 
+.admin-user-row {
+  display: block;
+  gap: 0;
+  padding: 0;
+}
+
+.admin-user-main {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1.5fr) 0.5fr 0.5fr 0.7fr minmax(360px, 1.4fr);
+  padding: 12px;
+}
+
+.admin-operators {
+  background: #f8fafb;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.admin-operators > strong {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.admin-operator-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.admin-operator-item {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(80px, 0.35fr) minmax(360px, 1.4fr);
+  padding: 10px 12px;
+}
+
+.admin-operator-item:last-child {
+  border-bottom: 0;
+}
+
+.admin-operator-code {
+  color: #075e57;
+  font-weight: 800;
+}
+
 .admin-row-head {
   background: #e7edef;
   color: var(--muted);
@@ -1264,7 +1317,9 @@ h3 {
 }
 
 .admin-row strong,
-.admin-row .muted {
+.admin-row .muted,
+.admin-operator-item strong,
+.admin-operator-item .muted {
   display: block;
   overflow-wrap: anywhere;
 }
@@ -1479,6 +1534,14 @@ h3 {
   padding-bottom: 1.5mm;
 }
 
+.label-print.has-meta {
+  grid-template-rows: 9mm 11.5mm 3mm 5.5mm 2.5mm;
+}
+
+.label-print.has-note.has-meta {
+  grid-template-rows: 7.5mm 9.8mm 3mm 4.5mm 3.6mm 2.4mm;
+}
+
 .label-desc {
   font-family: Arial, sans-serif;
   font-size: 8.5px;
@@ -1550,6 +1613,21 @@ h3 {
   display: block;
 }
 
+.label-footer {
+  align-self: end;
+  color: #444;
+  display: none;
+  font-family: Arial, sans-serif;
+  font-size: 5.2px;
+  justify-self: end;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.has-meta .label-footer {
+  display: block;
+}
+
 .label-controls {
   align-items: center;
   display: flex;
@@ -1603,7 +1681,9 @@ h3 {
   .pallet-row,
   .result-card,
   .admin-form,
-  .admin-row {
+  .admin-row,
+  .admin-user-main,
+  .admin-operator-item {
     grid-template-columns: 1fr;
   }
 

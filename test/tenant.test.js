@@ -11,6 +11,7 @@ test("sanitizeUser exposes explicit tenant context", () => {
       parentUserId: null,
       workspaceUserId: "user-1",
       role: "owner",
+      operatorCode: null,
       name: "Lucas",
       email: "lucas@example.com"
     }),
@@ -21,6 +22,7 @@ test("sanitizeUser exposes explicit tenant context", () => {
       parentUserId: null,
       workspaceUserId: "user-1",
       role: "owner",
+      operatorCode: null,
       name: "Lucas",
       email: "lucas@example.com"
     }
@@ -41,6 +43,7 @@ test("sanitizeUser keeps legacy users compatible with tenant context", () => {
       parentUserId: null,
       workspaceUserId: "user-1",
       role: "owner",
+      operatorCode: null,
       name: "Lucas",
       email: "lucas@example.com"
     }
@@ -55,6 +58,7 @@ test("sanitizeUser points operators at the owner workspace", () => {
       tenantName: "Empresa 1",
       parentUserId: "user-1",
       role: "operator",
+      operatorCode: 1001,
       name: "Ana",
       email: "ana@example.com"
     }),
@@ -65,6 +69,7 @@ test("sanitizeUser points operators at the owner workspace", () => {
       parentUserId: "user-1",
       workspaceUserId: "user-1",
       role: "operator",
+      operatorCode: 1001,
       name: "Ana",
       email: "ana@example.com"
     }

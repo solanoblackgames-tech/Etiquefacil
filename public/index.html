@@ -39,6 +39,7 @@
         <nav class="app-nav">
           <button data-tab="lots" type="button">Lotes</button>
           <button data-tab="search" type="button">Busca ML</button>
+          <button data-tab="transfers" type="button">Transferencias</button>
           <button data-tab="profile" class="active" type="button">Perfil</button>
         </nav>
         <button id="logoutButton" class="ghost">Sair</button>
@@ -170,6 +171,32 @@
           <button type="submit">Buscar</button>
         </form>
         <div id="searchResults"></div>
+      </section>
+
+      <section id="transfersTab" class="transfer-shell hidden">
+        <section class="entry-panel">
+          <div class="panel-heading">
+            <span class="muted">Operacao</span>
+            <h3>Criar lote de transferencia</h3>
+          </div>
+          <form id="transferLotForm" class="transfer-form">
+            <label>Nome do lote<input name="name" placeholder="Transferencia do dia" /></label>
+            <label>Estoque origem<input name="depositoOrigem" placeholder="Deposito Geral" required /></label>
+            <label>Estoque destino<input name="depositoDestino" placeholder="Loja / Picking / Full" required /></label>
+            <button type="submit">Criar lote</button>
+          </form>
+          <p id="transferMessage" class="message"></p>
+        </section>
+        <section class="layout transfer-layout">
+          <aside class="lot-list">
+            <div class="aside-heading">
+              <span class="muted">Transferencias</span>
+              <h2>Lotes</h2>
+            </div>
+            <div id="transferLots"></div>
+          </aside>
+          <section id="transferDetail" class="detail empty">Crie ou selecione um lote de transferencia.</section>
+        </section>
       </section>
 
     </main>

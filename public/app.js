@@ -6,6 +6,8 @@ const state = {
   adminCatalogProducts: [],
   blingIntegration: null,
   operators: [],
+  transferLots: [],
+  selectedTransferLotId: null,
   profileSection: "entries",
   lots: [],
   selectedLotId: null,
@@ -18,6 +20,7 @@ const state = {
   pendingScan: false,
   pendingDecrement: false,
   labelProduct: null,
+  labelMeta: null,
   config: { downloadMode: "local" },
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
@@ -108,6 +111,10 @@ function bindEvents() {
     if (state.selectedDiverseLotId && state.selectedDiverseRz) downloadDiverseRzBling(state.selectedDiverseLotId, state.selectedDiverseRz);
   });
   $("#searchForm").addEventListener("submit", searchMl);
+  $("#transferLotForm").addEventListener("submit", createTransferLot);
+  $("#transferLots").addEventListener("click", handleTransferLotsClick);
+  $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
+  $("#transferDetail").addEventListener("click", handleTransferDetailClick);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
@@ -240,7 +247,7 @@ async function addDiverseItem(event) {
     $("#diverseScanMessage").style.color = "#0f766e";
     $("#diverseScanMessage").textContent = diverseScanStatusMessage(response, codigoRz, parent);
     await loadLots(response.lot.id);
-    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
     schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
   } catch (error) {
     if (error.code === "manual_required" || error.status === 404) {
@@ -256,7 +263,7 @@ async function addDiverseItem(event) {
         $("#diverseScanMessage").style.color = "#0f766e";
         $("#diverseScanMessage").textContent = `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
         await loadLots(response.lot.id);
-        if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+        if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
         schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
         return;
       } catch (manualError) {
@@ -720,6 +727,7 @@ async function showApp(user) {
     return;
   }
   await loadLots();
+  await loadTransferLots();
   await applyRouteFromLocation({ replace: true });
   schedulePrimaryInputFocus();
 }
@@ -863,6 +871,7 @@ function renderOperators() {
         <div class="operator-row operator-row-head">
           <span>#</span>
           <span>Operador</span>
+          <span>Cod.</span>
           <span>Total</span>
           <span>Logins</span>
           <span>Buscas</span>
@@ -892,6 +901,7 @@ function operatorViewModel(operator) {
   return {
     name: operator.name || "Operador",
     email: operator.email || "",
+    operatorCode: operator.operatorCode || "",
     logins,
     searches,
     scans,
@@ -926,6 +936,7 @@ function operatorTableRow(operator, index) {
         <strong>${escapeHtml(operator.name)}</strong>
         <small>${escapeHtml(operator.email)}</small>
       </span>
+      <strong>${escapeHtml(operator.operatorCode || "--")}</strong>
       <strong>${operator.activity}</strong>
       <span>${operator.logins}</span>
       <span>${operator.searches}</span>
@@ -1373,30 +1384,73 @@ function catalogRequestStatus(status) {
 
 function adminUserRow(user) {
   return `
-    <article class="admin-row" data-user-id="${escapeHtml(user.id)}">
-      <div>
-        <strong>${escapeHtml(user.name)}</strong>
-        <span class="muted">${escapeHtml(user.email)}</span>
+    <article class="admin-row admin-user-row" data-user-id="${escapeHtml(user.id)}">
+      <div class="admin-user-main">
+        <div>
+          <strong>${escapeHtml(user.name)}</strong>
+          <span class="muted">${escapeHtml(user.email)}</span>
+        </div>
+        <span>${user.totalLots}</span>
+        <span>${user.totalProducts}</span>
+        <span>${formatDate(user.createdAt)}</span>
+        <div class="admin-actions">
+          <form class="password-form">
+            <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
+            <button type="submit">Salvar senha</button>
+          </form>
+          <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
+        </div>
       </div>
-      <span>${user.totalLots}</span>
-      <span>${user.totalProducts}</span>
-      <span>${formatDate(user.createdAt)}</span>
-      <div class="admin-actions">
-        <form class="password-form">
-          <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
-          <button type="submit">Salvar senha</button>
-        </form>
-        <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
-      </div>
+      ${adminOperatorList(user.operators || [])}
     </article>
   `;
+}
+
+function adminOperatorList(operators) {
+  if (!operators.length) return "";
+  return `
+    <div class="admin-operators">
+      <strong>Operadores</strong>
+      <div class="admin-operator-list">
+        ${operators.map(adminOperatorRow).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function adminOperatorRow(operator) {
+  return `
+    <div class="admin-operator-item" data-user-id="${escapeHtml(operator.id)}">
+      <div>
+        <strong>${escapeHtml(operator.name)}</strong>
+        <span class="muted">${escapeHtml(operator.email)}</span>
+      </div>
+      <span class="admin-operator-code">${escapeHtml(operator.operatorCode || "--")}</span>
+      <div class="admin-actions">
+        <form class="password-form">
+          <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
+          <button type="submit">Salvar senha</button>
+        </form>
+        <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
+      </div>
+    </div>
+  `;
+}
+
+function findAdminUser(userId) {
+  for (const user of state.adminUsers) {
+    if (user.id === userId) return user;
+    const operator = (user.operators || []).find((item) => item.id === userId);
+    if (operator) return operator;
+  }
+  return null;
 }
 
 async function handleAdminPasswordSubmit(event) {
   event.preventDefault();
   const form = event.target;
   if (!form.matches(".password-form")) return;
-  const row = form.closest(".admin-row");
+  const row = form.closest("[data-user-id]");
   const password = new FormData(form).get("password");
   const button = form.querySelector("button");
   button.disabled = true;
@@ -1420,8 +1474,12 @@ async function handleAdminPasswordSubmit(event) {
 async function handleAdminUsersClick(event) {
   const button = event.target.closest("[data-delete-user]");
   if (!button) return;
-  const user = state.adminUsers.find((item) => item.id === button.dataset.deleteUser);
-  if (!user || !confirm(`Excluir ${user.name}? Esta acao apaga tambem os lotes deste usuario.`)) return;
+  const user = findAdminUser(button.dataset.deleteUser);
+  if (!user) return;
+  const deleteMessage = user.role === "operator"
+    ? `Excluir operador ${user.name}?`
+    : `Excluir ${user.name}? Esta acao apaga tambem os lotes deste usuario.`;
+  if (!confirm(deleteMessage)) return;
 
   button.disabled = true;
   try {
@@ -2036,7 +2094,7 @@ async function scanCurrent(lotId, codigoRz) {
       } else {
         renderLotDetail(response.lot);
       }
-      if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true });
+      if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
@@ -2073,7 +2131,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
       renderLotDetail(response.lot);
       $("#scanMessage").textContent = successMessage;
     }
-    if (response.product && state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+    if (response.product && state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
   } catch (error) {
     message.textContent = error.message;
     input?.select();
@@ -2125,7 +2183,7 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     } else {
       renderLotDetail(response.lot);
     }
-    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true });
+    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
   } catch (error) {
     $("#scanMessage").textContent = error.message;
   }
@@ -2177,9 +2235,10 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   return lot.items.find((item) => item.codigoRz === codigoRz && normalizeCodigoMl(item.product?.codigoMl) === normalizedMl)?.product || null;
 }
 
-function showLabel(product, { autoPrint = false } = {}) {
+function showLabel(product, { autoPrint = false, meta = null } = {}) {
   state.labelProduct = product;
-  $("#labelPreview").innerHTML = labelMarkup(product);
+  state.labelMeta = meta;
+  $("#labelPreview").innerHTML = labelMarkup(product, meta);
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
   if (autoPrint) setTimeout(printCurrentLabel, 120);
@@ -2255,19 +2314,47 @@ function code39Svg(value) {
   return `<svg class="label-barcode" viewBox="0 0 ${x} ${height}" role="img" aria-label="Código de barras">${bars}</svg>`;
 }
 
-function labelMarkup(product) {
+function labelMarkup(product, meta = null) {
   const price = state.labelOptions.includePrice ? money(product.valorUnit) : "";
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
   const hasCustomText = Boolean(customText);
+  const footer = labelFooterText(meta);
+  const hasMeta = Boolean(footer);
   return `
-    <section class="label-print ${hasCustomText ? "has-note" : ""}">
+    <section class="label-print ${hasCustomText ? "has-note" : ""} ${hasMeta ? "has-meta" : ""}">
       <p class="label-desc">${escapeHtml(product.descricao)}</p>
       ${code39Svg(product.sku)}
       <strong class="label-sku">${escapeHtml(product.sku)}</strong>
       <strong class="label-price">${escapeHtml(price)}</strong>
       <strong class="label-note">${escapeHtml(customText)}</strong>
+      <span class="label-footer">${escapeHtml(footer)}</span>
     </section>
   `;
+}
+
+function labelMeta(createdAt = new Date().toISOString()) {
+  if (!state.user?.operatorCode) return null;
+  return {
+    operatorCode: state.user.operatorCode,
+    createdAt
+  };
+}
+
+function labelFooterText(meta) {
+  if (!meta?.operatorCode || !meta.createdAt) return "";
+  return `${meta.operatorCode} ${formatLabelDateTime(meta.createdAt)}`;
+}
+
+function formatLabelDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function printCurrentLabel() {
@@ -2311,6 +2398,7 @@ function hideLabelPreview() {
   $("#labelModal").classList.add("hidden");
   $("#labelPreview").innerHTML = "";
   state.labelProduct = null;
+  state.labelMeta = null;
   scheduleScanInputFocus();
 }
 

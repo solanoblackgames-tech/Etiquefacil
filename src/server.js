@@ -11,14 +11,15 @@ import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
-import { syncBlingProducts, syncBlingStockEntries } from "./bling-api.js";
-import { buildBlingCsv, buildBlingStockEntryCsv, importSpecialistWorkbook } from "./domain.js";
+import { listBlingDeposits, syncBlingProducts, syncBlingStockEntries, syncBlingStockTransfers } from "./bling-api.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
   addDiverseLotItem,
   createExternalExcess,
   createDiverseLot,
   createLabel,
+  createTransferLot,
   createLotFromImport,
   createManualExternalExcess,
   createOperator,
@@ -27,16 +28,20 @@ import {
   deleteCatalogProductForAdmin,
   deleteUser,
   deleteUserLot,
+  decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
   getLotBlingData,
   getPgPool,
   getStoreHealth,
+  getTransferLotDetail,
   getUserBlingCredentials,
   getUserBlingIntegration,
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
+  listTransferLots,
+  markTransferLotSynced,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
   listOperatorsForUser,
@@ -45,6 +50,7 @@ import {
   recordOperatorActivity,
   reviewCatalogRequest,
   scanLotRz,
+  scanTransferLot,
   searchProducts,
   suggestCatalogUpdate,
   updateUserPassword,
@@ -216,6 +222,105 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
     res.json({ operator: await createOperator({ ownerUserId: workspaceUserId(req), name, email, password }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/bling/deposits", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const integration = await getRequiredBlingCredentials(userId);
+    const deposits = await listBlingDeposits({
+      integration,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json({ deposits });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/transfer-lots", requireAuth, async (req, res) => {
+  await recordOperatorActivity(req.session.user, "view_transfer_lots");
+  res.json({ lots: await listTransferLots(workspaceUserId(req)) });
+});
+
+app.post("/api/transfer-lots", requireAuth, async (req, res) => {
+  try {
+    const lot = await createTransferLot({
+      userId: workspaceUserId(req),
+      name: req.body.name,
+      depositoOrigem: req.body.depositoOrigem,
+      depositoDestino: req.body.depositoDestino,
+      createdByUserId: req.session.user?.id
+    });
+    await recordOperatorActivity(req.session.user, "create_transfer_lot", { transferLotId: lot.id });
+    res.json({ lot });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/transfer-lots/:transferLotId", requireAuth, async (req, res) => {
+  const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+  if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+  res.json({ lot });
+});
+
+app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res) => {
+  try {
+    const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
+    await recordOperatorActivity(req.session.user, "scan_transfer", { transferLotId: req.params.transferLotId, code });
+    res.json(await scanTransferLot({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAuth, async (req, res) => {
+  try {
+    res.json(await decrementTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, async (req, res) => {
+  try {
+    const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+    if (!lot.items.length) return res.status(404).json({ error: "Nenhum item bipado neste lote." });
+    const csv = buildBlingStockTransferCsv(lot.items, {
+      depositoOrigem: lot.depositoOrigem,
+      depositoDestino: lot.depositoDestino,
+      observacao: `Transferencia ${lot.name}`
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${transferFileName(lot)}"`);
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const lot = await getTransferLotDetail(userId, req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+    if (!lot.items.length) throw new Error("Nenhum item bipado neste lote.");
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockTransfers({
+      integration,
+      items: lot.items,
+      depositoOrigemName: lot.depositoOrigem,
+      depositoDestinoName: lot.depositoDestino,
+      observacao: `Transferencia Etiquefacil ${lot.name}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    await markTransferLotSynced(userId, lot.id);
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -614,7 +719,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/perfil"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/perfil"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -699,6 +804,10 @@ function rzBlingFileName(lot, codigoRz) {
 
 function rzStockEntryFileName(lot, codigoRz) {
   return `${safeFileName(lot.prefixoSku)}-${safeFileName(codigoRz)}-entrada-estoque-bling.csv`;
+}
+
+function transferFileName(lot) {
+  return `${safeFileName(lot.name)}-transferencia-bling.csv`;
 }
 
 async function getRzBlingData(userId, lotId, codigoRz) {

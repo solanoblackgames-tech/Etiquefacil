@@ -76,6 +76,16 @@ export const BLING_STOCK_ENTRY_HEADERS = [
   "Observação"
 ];
 
+export const BLING_STOCK_TRANSFER_HEADERS = [
+  "Codigo SKU*",
+  "GTIN/EAN",
+  "Nome do Produto",
+  "Deposito origem*",
+  "Deposito destino*",
+  "Quantidade*",
+  "Observacao"
+];
+
 const REQUIRED_COLUMNS = [
   "codigoMl",
   "codigoRz",
@@ -322,6 +332,22 @@ export function buildBlingStockEntryCsv(items, { deposito = "Depósito Geral", o
   }));
 
   return [BLING_STOCK_ENTRY_HEADERS, ...rows.map((row) => BLING_STOCK_ENTRY_HEADERS.map((header) => row[header]))]
+    .map((row) => row.map(csvQuotedCell).join(","))
+    .join("\r\n");
+}
+
+export function buildBlingStockTransferCsv(items, { depositoOrigem = "", depositoDestino = "", observacao = "" } = {}) {
+  const rows = items.map((item) => ({
+    "Codigo SKU*": item.sku || "",
+    "GTIN/EAN": item.ean || "",
+    "Nome do Produto": item.descricao || "",
+    "Deposito origem*": depositoOrigem,
+    "Deposito destino*": depositoDestino,
+    "Quantidade*": String(Number(item.quantidade || item.qtdConferida || 0)),
+    Observacao: observacao
+  }));
+
+  return [BLING_STOCK_TRANSFER_HEADERS, ...rows.map((row) => BLING_STOCK_TRANSFER_HEADERS.map((header) => row[header]))]
     .map((row) => row.map(csvQuotedCell).join(","))
     .join("\r\n");
 }

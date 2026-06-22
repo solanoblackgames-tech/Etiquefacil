@@ -26,6 +26,8 @@ const emptyDb = () => ({
   scans: [],
   labels: [],
   blingIntegrations: [],
+  transferLots: [],
+  transferItems: [],
   operatorActivities: [],
   catalogProducts: [],
   catalogRequests: [],
@@ -124,12 +126,14 @@ export async function createUser({ name, email, password, parentUserId = null })
   await ensureStore();
   const normalizedEmail = email.trim().toLowerCase();
   const owner = parentUserId ? await getUserById(parentUserId) : null;
+  const operatorCode = owner ? await nextOperatorCode(owner.id) : null;
   const user = {
     id: randomUUID(),
     tenantId: owner?.tenantId || randomUUID(),
     tenantName: owner?.tenantName || name.trim(),
     parentUserId: owner?.id || null,
     role: owner ? "operator" : "owner",
+    operatorCode,
     name: name.trim(),
     email: normalizedEmail,
     passwordHash: await bcrypt.hash(password, 10),
@@ -139,9 +143,9 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -200,9 +204,24 @@ export function sanitizeUser(user) {
     parentUserId: user.parentUserId || null,
     workspaceUserId: user.parentUserId || user.id,
     role: user.role || (user.parentUserId ? "operator" : "owner"),
+    operatorCode: user.operatorCode || null,
     name: user.name,
     email: user.email
   };
+}
+
+async function nextOperatorCode(ownerUserId) {
+  const firstCode = 1001;
+  if (hasPostgres()) {
+    const result = await query("select max(operator_code)::int as max_code from users where parent_user_id = $1", [ownerUserId]);
+    return Math.max(firstCode - 1, Number(result.rows[0]?.max_code || 0)) + 1;
+  }
+
+  const db = await readDb();
+  const maxCode = (db.users || [])
+    .filter((user) => user.parentUserId === ownerUserId)
+    .reduce((max, user) => Math.max(max, Number(user.operatorCode || 0)), 0);
+  return Math.max(firstCode - 1, maxCode) + 1;
 }
 
 export async function listOperatorsForUser(ownerUserId) {
@@ -216,7 +235,7 @@ export async function listOperatorsForUser(ownerUserId) {
           max(oa.created_at) as last_activity_at,
           count(oa.id) filter (where oa.action = 'login')::int as login_total,
           count(oa.id) filter (where oa.action = 'search_ml')::int as search_total,
-          count(oa.id) filter (where oa.action = 'scan_ml')::int as scan_total,
+          count(oa.id) filter (where oa.action in ('scan_ml', 'scan_transfer'))::int as scan_total,
           count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))::int as create_total,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
           count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total
@@ -279,6 +298,7 @@ export async function listUsersForAdmin() {
           u.tenant_name,
           u.parent_user_id,
           u.role,
+          u.operator_code,
           u.name,
           u.email,
           u.created_at,
@@ -291,22 +311,24 @@ export async function listUsersForAdmin() {
         order by u.created_at desc
       `
     );
-    return result.rows.map((row) => ({
+    const users = result.rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id || row.id,
       tenantName: row.tenant_name || row.name,
       parentUserId: row.parent_user_id || null,
       role: row.role || (row.parent_user_id ? "operator" : "owner"),
+      operatorCode: row.operator_code ? Number(row.operator_code) : null,
       name: row.name,
       email: row.email,
       createdAt: iso(row.created_at),
       totalLots: Number(row.total_lots || 0),
       totalProducts: Number(row.total_products || 0)
     }));
+    return groupAdminUsersWithOperators(users);
   }
 
   const db = await readDb();
-  return db.users
+  const users = db.users
     .map((user) => {
       const lots = db.lots.filter((lot) => lot.userId === user.id);
       const lotIds = new Set(lots.map((lot) => lot.id));
@@ -318,6 +340,27 @@ export async function listUsersForAdmin() {
       };
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return groupAdminUsersWithOperators(users);
+}
+
+function groupAdminUsersWithOperators(users) {
+  const operatorsByOwner = new Map();
+  const owners = [];
+
+  for (const user of users) {
+    if (user.parentUserId) {
+      const operators = operatorsByOwner.get(user.parentUserId) || [];
+      operators.push(user);
+      operatorsByOwner.set(user.parentUserId, operators);
+      continue;
+    }
+    owners.push(user);
+  }
+
+  return owners.map((user) => ({
+    ...user,
+    operators: (operatorsByOwner.get(user.id) || []).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }));
 }
 
 export async function updateUserPassword(userId, password) {
@@ -623,6 +666,125 @@ export async function getLotBlingData(userId, lotId, kind) {
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) return null;
   return { lot, products: getBlingProducts(db, lot, kind) };
+}
+
+export async function listTransferLots(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const lots = await query("select * from transfer_lots where user_id = $1 order by created_at desc", [userId]);
+    const lotIds = lots.rows.map((row) => row.id);
+    const items = lotIds.length
+      ? await query("select * from transfer_items where transfer_lot_id = any($1::text[]) order by created_at asc", [lotIds])
+      : { rows: [] };
+    return summarizeTransferLots(lots.rows.map(transferLotFromRow), items.rows.map(transferItemFromRow));
+  }
+
+  const db = await readDb();
+  return summarizeTransferLots(
+    (db.transferLots || []).filter((lot) => lot.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    db.transferItems || []
+  );
+}
+
+export async function getTransferLotDetail(userId, transferLotId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const lotResult = await query("select * from transfer_lots where id = $1 and user_id = $2 limit 1", [transferLotId, userId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) return null;
+    const items = await query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]);
+    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow));
+  }
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) return null;
+  return summarizeTransferLot(lot, db.transferItems || []);
+}
+
+export async function createTransferLot({ userId, name, depositoOrigem, depositoDestino, createdByUserId = null }) {
+  await ensureStore();
+  const lot = {
+    id: randomUUID(),
+    userId,
+    name: String(name || "").trim() || `Transferencia ${new Date().toLocaleDateString("pt-BR")}`,
+    depositoOrigem: String(depositoOrigem || "").trim(),
+    depositoDestino: String(depositoDestino || "").trim(),
+    status: "open",
+    createdByUserId,
+    createdAt: new Date().toISOString(),
+    syncedAt: null
+  };
+  if (!lot.depositoOrigem) throw new Error("Informe o estoque de origem.");
+  if (!lot.depositoDestino) throw new Error("Informe o estoque de destino.");
+  if (normalizeText(lot.depositoOrigem) === normalizeText(lot.depositoDestino)) throw new Error("Origem e destino precisam ser diferentes.");
+
+  if (hasPostgres()) {
+    await insertTransferLotRows(null, [lot]);
+    return summarizeTransferLot(lot, []);
+  }
+
+  const db = await readDb();
+  db.transferLots.push(lot);
+  await writeDb(db);
+  return summarizeTransferLot(lot, []);
+}
+
+export async function scanTransferLot({ userId, transferLotId, code }) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (!normalized) throw new Error("Informe o Codigo ML ou SKU.");
+  if (hasPostgres()) return scanTransferLotPg({ userId, transferLotId, code: normalized });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+  if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
+
+  const product = findTransferProduct(db, userId, normalized);
+  if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
+  const existing = (db.transferItems || []).find((item) => item.transferLotId === lot.id && item.productId === product.id);
+  if (existing) {
+    existing.quantidade += 1;
+  } else {
+    db.transferItems.push(buildTransferItem(lot.id, product));
+  }
+  await writeDb(db);
+  return { status: existing ? "updated" : "added", product, lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
+export async function decrementTransferLotItem({ userId, transferLotId, itemId }) {
+  await ensureStore();
+  if (hasPostgres()) return decrementTransferLotItemPg({ userId, transferLotId, itemId });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+  if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
+  const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === lot.id);
+  if (!item) throw notFound("Item nao encontrado no lote.");
+  item.quantidade -= 1;
+  if (item.quantidade <= 0) db.transferItems = db.transferItems.filter((candidate) => candidate.id !== item.id);
+  await writeDb(db);
+  return { lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
+export async function markTransferLotSynced(userId, transferLotId) {
+  await ensureStore();
+  const syncedAt = new Date().toISOString();
+  if (hasPostgres()) {
+    const result = await query("update transfer_lots set status = 'synced', synced_at = $3 where id = $1 and user_id = $2 returning *", [transferLotId, userId, syncedAt]);
+    if (!result.rows.length) throw notFound("Lote de transferencia nao encontrado.");
+    return { ok: true, syncedAt };
+  }
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+  lot.status = "synced";
+  lot.syncedAt = syncedAt;
+  await writeDb(db);
+  return { ok: true, syncedAt };
 }
 
 export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
@@ -1090,6 +1252,7 @@ async function ensurePgStore() {
       tenant_name text not null,
       parent_user_id text references users(id) on delete cascade,
       role text not null default 'owner',
+      operator_code integer,
       name text not null,
       email text not null unique,
       password_hash text not null,
@@ -1183,6 +1346,31 @@ async function ensurePgStore() {
       updated_at timestamptz not null default now()
     );
 
+    create table if not exists transfer_lots (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      name text not null,
+      deposito_origem text not null,
+      deposito_destino text not null,
+      status text not null default 'open',
+      created_by_user_id text references users(id) on delete set null,
+      created_at timestamptz not null default now(),
+      synced_at timestamptz
+    );
+
+    create table if not exists transfer_items (
+      id text primary key,
+      transfer_lot_id text not null references transfer_lots(id) on delete cascade,
+      source_lot_id text references lots(id) on delete set null,
+      product_id text references products(id) on delete set null,
+      codigo_ml text not null,
+      sku text not null,
+      descricao text not null,
+      ean text not null default '',
+      quantidade integer not null default 0,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists operator_activities (
       id text primary key,
       owner_user_id text not null references users(id) on delete cascade,
@@ -1239,9 +1427,21 @@ async function ensurePgStore() {
     alter table users add column if not exists tenant_name text;
     alter table users add column if not exists parent_user_id text references users(id) on delete cascade;
     alter table users add column if not exists role text not null default 'owner';
+    alter table users add column if not exists operator_code integer;
     update users set tenant_id = id where tenant_id is null or tenant_id = '';
     update users set tenant_name = name where tenant_name is null or tenant_name = '';
     update users set role = 'operator' where parent_user_id is not null and (role is null or role = 'owner');
+    with numbered_operators as (
+      select
+        id,
+        1000 + row_number() over (partition by parent_user_id order by created_at asc, id asc) as generated_code
+      from users
+      where parent_user_id is not null and operator_code is null
+    )
+    update users u
+    set operator_code = n.generated_code
+    from numbered_operators n
+    where u.id = n.id;
     alter table users alter column tenant_id set not null;
     alter table users alter column tenant_name set not null;
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
@@ -1275,6 +1475,9 @@ async function ensurePgStore() {
     create index if not exists operator_activities_operator_user_id_idx on operator_activities(operator_user_id);
     create index if not exists operator_activities_action_idx on operator_activities(action);
     create index if not exists operator_activities_created_at_idx on operator_activities(created_at);
+    create index if not exists transfer_lots_user_id_idx on transfer_lots(user_id);
+    create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
+    create index if not exists transfer_items_sku_idx on transfer_items(sku);
     create index if not exists catalog_requests_status_idx on catalog_requests(status);
     create index if not exists catalog_requests_codigo_ml_idx on catalog_requests(codigo_ml);
     create index if not exists catalog_rejected_requests_codigo_ml_idx on catalog_rejected_requests(codigo_ml);
@@ -1333,7 +1536,7 @@ async function ensurePgStore() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -1341,6 +1544,8 @@ async function readPgDb() {
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
     query("select * from bling_integrations order by updated_at asc"),
+    query("select * from transfer_lots order by created_at asc"),
+    query("select * from transfer_items order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
     query("select * from catalog_requests order by created_at asc"),
@@ -1355,6 +1560,8 @@ async function readPgDb() {
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
     blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
+    transferLots: transferLots.rows.map(transferLotFromRow),
+    transferItems: transferItems.rows.map(transferItemFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
     catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
@@ -1369,6 +1576,8 @@ async function writePgDb(db) {
     await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
     await client.query("delete from operator_activities");
+    await client.query("delete from transfer_items");
+    await client.query("delete from transfer_lots");
     await client.query("delete from bling_integrations");
     await client.query("delete from labels");
     await client.query("delete from scans");
@@ -1381,13 +1590,14 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
         user.tenantName || user.name,
         user.parentUserId || null,
         user.role || (user.parentUserId ? "operator" : "owner"),
+        user.operatorCode || null,
         user.name,
         user.email,
         user.passwordHash,
@@ -1471,6 +1681,8 @@ async function writePgDb(db) {
       (db.labels || []).map((label) => [label.id, label.productId, label.lotId, label.userId, label.createdAt])
     );
     await insertBlingIntegrationRows(client, db.blingIntegrations || []);
+    await insertTransferLotRows(client, db.transferLots || []);
+    await insertTransferItemRows(client, db.transferItems || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
@@ -1602,6 +1814,47 @@ async function insertBlingIntegrationRows(client, integrations = []) {
       integration.refreshToken || "",
       integration.tokenExpiresAt || null,
       integration.updatedAt
+    ])
+  );
+}
+
+async function insertTransferLotRows(client, lots = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "transfer_lots",
+    ["id", "user_id", "name", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at"],
+    lots.map((lot) => [
+      lot.id,
+      lot.userId,
+      lot.name,
+      lot.depositoOrigem,
+      lot.depositoDestino,
+      lot.status || "open",
+      lot.createdByUserId || null,
+      lot.createdAt,
+      lot.syncedAt || null
+    ])
+  );
+}
+
+async function insertTransferItemRows(client, items = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "transfer_items",
+    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "created_at"],
+    items.map((item) => [
+      item.id,
+      item.transferLotId,
+      item.sourceLotId || null,
+      item.productId || null,
+      item.codigoMl,
+      item.sku,
+      item.descricao,
+      item.ean || "",
+      item.quantidade || 0,
+      item.createdAt
     ])
   );
 }
@@ -1991,6 +2244,61 @@ async function addDiverseLotItemPg({ userId, lotId, codigoMl, codigoRz, manualPr
   return { ...result, lot: await getUserLotDetail(userId, lotId) };
 }
 
+async function scanTransferLotPg({ userId, transferLotId, code }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+    if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
+
+    const product = await findPgTransferProduct(client, userId, code);
+    if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
+    const itemResult = await client.query("select * from transfer_items where transfer_lot_id = $1 and product_id = $2 limit 1 for update", [lot.id, product.id]);
+    const existing = itemResult.rows[0] && transferItemFromRow(itemResult.rows[0]);
+    if (existing) {
+      await client.query("update transfer_items set quantidade = quantidade + 1 where id = $1", [existing.id]);
+      result = { status: "updated", product };
+    } else {
+      await insertTransferItemRows(client, [buildTransferItem(lot.id, product)]);
+      result = { status: "added", product };
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
+}
+
+async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+    if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
+    const item = await client.query("select * from transfer_items where id = $1 and transfer_lot_id = $2 limit 1 for update", [itemId, lot.id]);
+    if (!item.rows.length) throw notFound("Item nao encontrado no lote.");
+    if (Number(item.rows[0].quantidade || 0) <= 1) await client.query("delete from transfer_items where id = $1", [itemId]);
+    else await client.query("update transfer_items set quantidade = quantidade - 1 where id = $1", [itemId]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { lot: await getTransferLotDetail(userId, transferLotId) };
+}
+
 async function findPgProductHistory(client, userId, currentLotId, codigoMl, limit) {
   const result = await client.query(
     `
@@ -2043,6 +2351,31 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
       lot: lotFromPrefixedRow(row, "lot__")
     };
   });
+}
+
+async function findPgTransferProduct(client, userId, code) {
+  const result = await client.query(
+    `
+      select
+        p.*,
+        l.id as lot__id,
+        l.nome_arquivo as lot__nome_arquivo
+      from products p
+      join lots l on l.id = p.lot_id
+      where l.user_id = $1
+        and (upper(trim(p.codigo_ml)) = upper(trim($2)) or upper(trim(p.sku)) = upper(trim($2)))
+      order by p.created_at desc
+      limit 1
+    `,
+    [userId, code]
+  );
+  if (!result.rows.length) return null;
+  const product = productFromRow(result.rows[0]);
+  return {
+    ...product,
+    sourceLotId: product.lotId,
+    sourceLotName: result.rows[0].lot__nome_arquivo || ""
+  };
 }
 
 async function findPgPreviousProductHistory(client, userId, currentLotId, codigoMl, limit) {
@@ -2431,6 +2764,47 @@ function getUserLotFromDb(db, userId, lotId) {
   return db.lots.find((lot) => lot.id === lotId && lot.userId === userId);
 }
 
+function summarizeTransferLots(lots, items) {
+  return lots.map((lot) => summarizeTransferLot(lot, items));
+}
+
+function summarizeTransferLot(lot, items) {
+  const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
+  return {
+    ...lot,
+    totalSkus: lotItems.length,
+    totalQty: lotItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0),
+    items: lotItems.sort((a, b) => a.sku.localeCompare(b.sku))
+  };
+}
+
+function findTransferProduct(db, userId, code) {
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const normalized = normalizeCode(code);
+  const product = (db.products || [])
+    .filter((candidate) => lotIds.has(candidate.lotId))
+    .filter((candidate) => normalizeCode(candidate.codigoMl) === normalized || normalizeCode(candidate.sku) === normalized)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!product) return null;
+  const sourceLot = (db.lots || []).find((lot) => lot.id === product.lotId);
+  return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
+}
+
+function buildTransferItem(transferLotId, product) {
+  return {
+    id: randomUUID(),
+    transferLotId,
+    sourceLotId: product.sourceLotId || product.lotId || null,
+    productId: product.id,
+    codigoMl: product.codigoMl || "",
+    sku: product.sku || "",
+    descricao: product.descricao || "",
+    ean: product.ean || "",
+    quantidade: 1,
+    createdAt: new Date().toISOString()
+  };
+}
+
 function blingOriginsForKind(kind) {
   if (kind === "complete") return ["planilha", ...NO_SHEET_ORIGINS, "lote_sem_planilha_manual"];
   if (kind === "excess") return EXCESS_EXPORT_ORIGINS;
@@ -2478,6 +2852,7 @@ function userFromRow(row) {
     tenantName: row.tenant_name || row.name,
     parentUserId: row.parent_user_id || null,
     role: row.role || (row.parent_user_id ? "operator" : "owner"),
+    operatorCode: row.operator_code ? Number(row.operator_code) : null,
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
@@ -2674,6 +3049,35 @@ function blingIntegrationFromRow(row) {
   };
 }
 
+function transferLotFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    depositoOrigem: row.deposito_origem,
+    depositoDestino: row.deposito_destino,
+    status: row.status || "open",
+    createdByUserId: row.created_by_user_id || null,
+    createdAt: iso(row.created_at),
+    syncedAt: row.synced_at ? iso(row.synced_at) : null
+  };
+}
+
+function transferItemFromRow(row) {
+  return {
+    id: row.id,
+    transferLotId: row.transfer_lot_id,
+    sourceLotId: row.source_lot_id || null,
+    productId: row.product_id || null,
+    codigoMl: row.codigo_ml,
+    sku: row.sku,
+    descricao: row.descricao,
+    ean: row.ean || "",
+    quantidade: Number(row.quantidade || 0),
+    createdAt: iso(row.created_at)
+  };
+}
+
 function operatorActivityFromRow(row) {
   return {
     id: row.id,
@@ -2705,7 +3109,7 @@ function summarizeOperatorActivities(activities, operatorUserId) {
     stats.total += 1;
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
-    if (activity.action === "scan_ml") stats.scans += 1;
+    if (activity.action === "scan_ml" || activity.action === "scan_transfer") stats.scans += 1;
     if (activity.action === "create_manual_product" || activity.action === "create_external_excess") stats.creates += 1;
     if (activity.action === "view_lot") stats.lotViews += 1;
     if (activity.action === "view_pallet") stats.palletViews += 1;
@@ -2726,6 +3130,14 @@ function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function normalizeDbTenants(db) {
   let changed = false;
   for (const user of db.users || []) {
@@ -2743,6 +3155,26 @@ function normalizeDbTenants(db) {
     }
     if (!user.role) {
       user.role = user.parentUserId ? "operator" : "owner";
+      changed = true;
+    }
+  }
+  const operatorsByOwner = new Map();
+  for (const user of db.users || []) {
+    if (!user.parentUserId) continue;
+    const operators = operatorsByOwner.get(user.parentUserId) || [];
+    operators.push(user);
+    operatorsByOwner.set(user.parentUserId, operators);
+  }
+
+  for (const operators of operatorsByOwner.values()) {
+    operators.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || String(a.id).localeCompare(String(b.id)));
+    const usedCodes = new Set(operators.map((user) => Number(user.operatorCode || 0)).filter(Boolean));
+    let nextCode = 1001;
+    for (const user of operators) {
+      if (user.operatorCode) continue;
+      while (usedCodes.has(nextCode)) nextCode += 1;
+      user.operatorCode = nextCode;
+      usedCodes.add(nextCode);
       changed = true;
     }
   }
