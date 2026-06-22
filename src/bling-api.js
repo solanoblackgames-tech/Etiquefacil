@@ -1,6 +1,7 @@
 const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
 const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
-const BLING_REQUEST_DELAY_MS = 350;
+const BLING_REQUEST_DELAY_MS = 450;
+const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 
 export function buildBlingProductPayload(product) {
   return compactObject({
@@ -55,7 +56,6 @@ export async function syncBlingProducts({ integration, products, saveIntegration
   const results = [];
 
   for (const product of products) {
-    await waitBetweenRequests(results.length);
     const existing = await client.findProductBySku(product.sku);
     if (existing?.id) {
       results.push({ sku: product.sku, status: "skipped", blingProductId: existing.id });
@@ -76,7 +76,6 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
 
   const results = [];
   for (const item of items) {
-    await waitBetweenRequests(results.length);
     let product = await client.findProductBySku(item.sku);
     if (!product?.id) {
       const created = await client.createProduct(buildBlingProductPayload(item));
@@ -115,7 +114,6 @@ export async function syncBlingStockTransfers({ integration, items, depositoOrig
 
   const results = [];
   for (const item of items) {
-    await waitBetweenRequests(results.length);
     const product = await client.findProductBySku(item.sku);
     if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
 
@@ -143,6 +141,7 @@ class BlingApiClient {
     if (!integration?.accessToken) throw new Error("Autorize a integracao Bling antes de enviar dados.");
     this.integration = integration;
     this.saveIntegration = saveIntegration;
+    this.lastRequestAt = 0;
   }
 
   async findProductBySku(sku) {
@@ -186,6 +185,8 @@ class BlingApiClient {
       if (value !== undefined && value !== null && value !== "") url.searchParams.append(key, String(value));
     }
 
+    await this.waitForRequestSlot();
+
     const response = await fetch(url, {
       method,
       headers: {
@@ -199,6 +200,11 @@ class BlingApiClient {
     if (response.status === 401 && retry && this.integration.refreshToken) {
       await this.refreshToken();
       return this.request(path, { method, query, body, retry: false });
+    }
+
+    if (response.status === 429) {
+      await wait(retryAfterMs(response) ?? BLING_RATE_LIMIT_FALLBACK_DELAY_MS);
+      return this.request(path, { method, query, body, retry });
     }
 
     const payload = await response.json().catch(() => ({}));
@@ -239,6 +245,12 @@ class BlingApiClient {
     };
     if (this.saveIntegration) await this.saveIntegration(this.integration);
   }
+
+  async waitForRequestSlot() {
+    const elapsed = Date.now() - this.lastRequestAt;
+    if (elapsed < BLING_REQUEST_DELAY_MS) await wait(BLING_REQUEST_DELAY_MS - elapsed);
+    this.lastRequestAt = Date.now();
+  }
 }
 
 function summarizeSync(results) {
@@ -278,7 +290,18 @@ function numberOrZero(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-async function waitBetweenRequests(index) {
-  if (index <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, BLING_REQUEST_DELAY_MS));
+function retryAfterMs(response) {
+  const header = response.headers?.get?.("retry-after");
+  if (!header) return null;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+
+  const date = new Date(header).getTime();
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+async function wait(ms) {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockTransferPayload } from "../src/bling-api.js";
+import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockTransferPayload, syncBlingProducts } from "../src/bling-api.js";
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   const payload = buildBlingProductPayload({
@@ -69,4 +69,60 @@ test("Bling stock transfer payload maps origin and destination deposits", () => 
   assert.equal(payload.operacao, "T");
   assert.equal(payload.quantidade, 3);
   assert.equal(payload.observacoes, "Transferencia Etiquefacil");
+});
+
+test("Bling product sync keeps retrying while API rate limit is reached", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "0" }),
+      json: async () => ({ error: { description: "O limite de requisicoes por segundo foi atingido" } })
+    },
+    {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "0" }),
+      json: async () => ({ error: { description: "O limite de requisicoes por segundo foi atingido" } })
+    },
+    {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "0" }),
+      json: async () => ({ error: { description: "O limite de requisicoes por segundo foi atingido" } })
+    },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: [] })
+    },
+    {
+      ok: true,
+      status: 201,
+      headers: new Headers(),
+      json: async () => ({ data: { id: 987 } })
+    }
+  ];
+
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), method: options?.method || "GET" });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingProducts({
+      integration: { accessToken: "token" },
+      products: [{ sku: "AMZ04L0001", descricao: "Produto novo", valorUnit: 10 }]
+    });
+
+    assert.equal(result.created, 1);
+    assert.equal(result.skipped, 0);
+    assert.equal(result.results[0].blingProductId, 987);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "GET", "GET", "GET", "POST"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
