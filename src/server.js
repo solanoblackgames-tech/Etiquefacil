@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
-import { listBlingDeposits, syncBlingProducts, syncBlingStockEntries, syncBlingStockTransfers } from "./bling-api.js";
+import { listBlingDeposits, syncBlingProducts, syncBlingStockEntries, syncBlingStockMovement, syncBlingStockTransfers } from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
@@ -614,6 +614,54 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync", requireAuth, requireO
   }
 });
 
+app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync-one", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    if (!codigoMl) throw new Error("Informe o Codigo ML.");
+
+    const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
+    if (!item) return res.status(404).json({ error: "Produto conferido nao encontrado nesta RZ." });
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockMovement({
+      integration,
+      item,
+      depositoName: BLING_STOCK_DEPOSIT,
+      operation: "entry",
+      observacao: `Entrada automatica por bipagem RZ ${req.params.codigoRz}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    if (!codigoMl) throw new Error("Informe o Codigo ML.");
+
+    const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
+    if (!item) return res.status(404).json({ error: "Produto nao encontrado nesta RZ." });
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockMovement({
+      integration,
+      item,
+      depositoName: BLING_STOCK_DEPOSIT,
+      operation: "exit",
+      observacao: `Saida automatica por diminuicao RZ ${req.params.codigoRz}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
@@ -1003,6 +1051,30 @@ async function getRzStockEntryData(userId, lotId, codigoRz) {
 
   if (!productsById.size) return { lot, codigoRz, items: [] };
   return { lot, codigoRz, items: [...productsById.values()].sort((a, b) => a.sku.localeCompare(b.sku)) };
+}
+
+async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
+  const lot = await getUserLotDetail(userId, lotId);
+  if (!lot) return null;
+
+  const normalizedMl = String(codigoMl || "").trim().toUpperCase();
+  const item = (lot.items || []).find((candidate) => {
+    return candidate.codigoRz === codigoRz && String(candidate.product?.codigoMl || "").trim().toUpperCase() === normalizedMl;
+  });
+  if (!item?.product) return null;
+
+  return {
+    sku: item.product.sku || "",
+    codigoMl: item.product.codigoMl || "",
+    ean: item.product.ean || "",
+    descricao: item.product.descricao || "",
+    valorUnit: Number(item.product.valorUnit || 0),
+    precoCusto: Number(item.product.precoCusto || 0),
+    link: item.product.link || "",
+    foto: item.product.foto || "",
+    quantidade: 1,
+    qtdConferida: 1
+  };
 }
 
 function buildStockEntryCsvForRz(data) {

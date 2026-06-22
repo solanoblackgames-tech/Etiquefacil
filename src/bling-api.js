@@ -40,6 +40,16 @@ export function buildBlingStockEntryPayload(item, { productId, depositoId, obser
   });
 }
 
+export function buildBlingStockExitPayload(item, { productId, depositoId, observacao = "" } = {}) {
+  return compactObject({
+    produto: { id: Number(productId), codigo: item.sku || "" },
+    deposito: { id: Number(depositoId) },
+    operacao: "S",
+    quantidade: numberOrZero(item.quantidade || item.qtdConferida || 1),
+    observacoes: observacao
+  });
+}
+
 export function buildBlingStockTransferPayload(item, { productId, depositoOrigemId, depositoDestinoId, observacao = "" } = {}) {
   return compactObject({
     produto: { id: Number(productId), codigo: item.sku || "" },
@@ -96,6 +106,40 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
   return {
     ...summarizeSync(results),
     deposito: { id: deposito.id, descricao: deposito.descricao || depositoName }
+  };
+}
+
+export async function syncBlingStockMovement({ integration, item, depositoName, operation = "entry", observacao, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const deposito = await client.findDepositByDescription(depositoName);
+  if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
+
+  let product = await client.findProductBySku(item.sku);
+  if (!product?.id && operation === "entry") {
+    const created = await client.createProduct(buildBlingProductPayload(item));
+    product = { id: created?.data?.id, codigo: item.sku };
+  }
+  if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
+
+  const payloadBuilder = operation === "exit" ? buildBlingStockExitPayload : buildBlingStockEntryPayload;
+  const response = await client.createStockEntry(
+    payloadBuilder(
+      { ...item, quantidade: item.quantidade || 1, qtdConferida: item.qtdConferida || 1 },
+      {
+        productId: product.id,
+        depositoId: deposito.id,
+        observacao
+      }
+    )
+  );
+
+  return {
+    ok: true,
+    operation,
+    sku: item.sku,
+    blingProductId: product.id,
+    deposito: { id: deposito.id, descricao: deposito.descricao || depositoName },
+    response
   };
 }
 

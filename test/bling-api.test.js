@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockTransferPayload, syncBlingProducts } from "../src/bling-api.js";
+import { buildBlingProductPayload, buildBlingStockEntryPayload, buildBlingStockExitPayload, buildBlingStockTransferPayload, syncBlingProducts } from "../src/bling-api.js";
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   const payload = buildBlingProductPayload({
@@ -69,6 +69,26 @@ test("Bling stock transfer payload maps origin and destination deposits", () => 
   assert.equal(payload.operacao, "T");
   assert.equal(payload.quantidade, 3);
   assert.equal(payload.observacoes, "Transferencia Etiquefacil");
+});
+
+test("Bling stock exit payload maps decremented item to stock output", () => {
+  const payload = buildBlingStockExitPayload(
+    {
+      sku: "AMZ04L0001",
+      quantidade: 1
+    },
+    {
+      productId: 123,
+      depositoId: 456,
+      observacao: "Saida automatica por diminuicao RZ RZ-01"
+    }
+  );
+
+  assert.deepEqual(payload.produto, { id: 123, codigo: "AMZ04L0001" });
+  assert.deepEqual(payload.deposito, { id: 456 });
+  assert.equal(payload.operacao, "S");
+  assert.equal(payload.quantidade, 1);
+  assert.equal(payload.observacoes, "Saida automatica por diminuicao RZ RZ-01");
 });
 
 test("Bling product sync keeps retrying while API rate limit is reached", async () => {

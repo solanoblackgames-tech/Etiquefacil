@@ -342,6 +342,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const code = $("#manualProductCode");
     const description = $("#manualProductDescription");
     const price = $("#manualProductPrice");
+    const cost = $("#manualProductCost");
     const ean = $("#manualProductEan");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
@@ -368,6 +369,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       event.preventDefault();
       const descricao = description.value.trim();
       const valorUnit = parseMoneyInput(price.value);
+      const precoCusto = cost.value.trim() ? parseMoneyInput(cost.value) : 0;
       if (!descricao) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -378,9 +380,15 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         price.focus();
         return;
       }
+      if (!Number.isFinite(precoCusto) || precoCusto < 0) {
+        error.textContent = "Informe um custo valido.";
+        cost.focus();
+        return;
+      }
       const result = {
         descricao,
         valorUnit,
+        precoCusto,
         ean: ean.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
@@ -2091,25 +2099,6 @@ async function syncBlingProducts(lotId, kind, button, messageSelector = "#downlo
   }
 }
 
-async function syncBlingStockEntry(lotId, codigoRz, button) {
-  if (!confirm(`Lancar entrada de estoque no Bling para a RZ ${codigoRz}?`)) return;
-  const message = $("#palletMessage");
-  message.textContent = "";
-  button.disabled = true;
-  try {
-    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-entry/sync`, { method: "POST" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "Nao foi possivel lancar a entrada no Bling.");
-    message.style.color = "#0f766e";
-    message.textContent = `Entrada lancada no Bling: ${payload.entered} item(ns) no deposito ${payload.deposito?.descricao || ""}.`;
-  } catch (error) {
-    message.style.color = "";
-    message.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-}
-
 function renderRz(lot, codigoRz, { push = true } = {}) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
@@ -2184,7 +2173,6 @@ function renderPallet(lot, codigoRz) {
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
           ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>` : ""}
           ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>` : ""}
-          ${canManage ? `<button type="button" data-sync-stock-entry="${escapeHtml(codigoRz)}">Lancar entrada no Bling</button>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>` : ""}
         </div>
@@ -2223,8 +2211,6 @@ function renderPallet(lot, codigoRz) {
     </section>
   `;
   $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
-  const syncButton = $("#rzDetail [data-sync-stock-entry]");
-  if (syncButton) syncButton.addEventListener("click", () => syncBlingStockEntry(lot.id, codigoRz, syncButton));
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -2370,7 +2356,10 @@ async function scanCurrent(lotId, codigoRz) {
       } else {
         renderLotDetail(response.lot);
       }
-      if (scannedProduct && state.labelOptions.autoPrint) showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
+      if (scannedProduct && state.labelOptions.autoPrint) {
+        showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
+        await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+      }
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
@@ -2407,7 +2396,10 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
       renderLotDetail(response.lot);
       $("#scanMessage").textContent = successMessage;
     }
-    if (response.product && state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+    if (response.product && state.labelOptions.autoPrint) {
+      showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+      await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+    }
   } catch (error) {
     message.textContent = error.message;
     input?.select();
@@ -2436,6 +2428,7 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
     } else {
       renderLotDetail(response.lot);
     }
+    await syncDecrementStockExit(lotId, codigoRz, codigoMl);
   } catch (error) {
     $("#scanMessage").textContent = error.message;
   } finally {
@@ -2443,6 +2436,46 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
     const decrementButton = $("#decrementScanButton");
     if (decrementButton) decrementButton.disabled = false;
     schedulePrimaryInputFocus(["#scanInput"]);
+  }
+}
+
+async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl) {
+  const message = $("#scanMessage");
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-entry/sync-one`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl })
+    });
+    if (message) {
+      message.style.color = "#0f766e";
+      message.textContent = `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
+    }
+  } catch (error) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = `Bipagem registrada e etiqueta impressa, mas a entrada no Bling falhou: ${error.message}`;
+    }
+  }
+}
+
+async function syncDecrementStockExit(lotId, codigoRz, codigoMl) {
+  const message = $("#scanMessage");
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-exit/sync-one`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl })
+    });
+    if (message) {
+      message.style.color = "#0f766e";
+      message.textContent = `Quantidade diminuida e saida lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
+    }
+  } catch (error) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = `Quantidade diminuida, mas a saida no Bling falhou: ${error.message}`;
+    }
   }
 }
 
@@ -2459,7 +2492,10 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     } else {
       renderLotDetail(response.lot);
     }
-    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+    if (response.product && state.labelOptions.autoPrint) {
+      showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+      await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+    }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
   }
