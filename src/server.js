@@ -388,7 +388,7 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
     if (!req.query.state || req.query.state !== req.session.blingOAuthState) throw new Error("Retorno OAuth invalido. Tente autorizar novamente.");
     req.session.blingOAuthState = null;
 
-    const token = await exchangeBlingAuthorizationCode(blingApp, String(req.query.code), redirectUri);
+    const token = await exchangeBlingAuthorizationCodeWithFallback(blingApp, String(req.query.code), getBlingRedirectUriCandidates(req, redirectUri));
     await saveUserBlingIntegration(workspaceUserId(req), {
       clientId: blingApp.clientId,
       accessToken: token.access_token,
@@ -855,6 +855,26 @@ function getBlingRootRedirectUri(req) {
     return "https://etiquefacil.com.br/";
   }
   return `${req.protocol}://${req.get("host")}/`;
+}
+
+function getBlingRedirectUriCandidates(req, primaryRedirectUri) {
+  return [
+    primaryRedirectUri,
+    primaryRedirectUri.endsWith("/") ? primaryRedirectUri.slice(0, -1) : "",
+    getBlingRedirectUri(req)
+  ].filter((uri, index, items) => uri && items.indexOf(uri) === index);
+}
+
+async function exchangeBlingAuthorizationCodeWithFallback(blingApp, code, redirectUris) {
+  let lastError;
+  for (const redirectUri of redirectUris) {
+    try {
+      return await exchangeBlingAuthorizationCode(blingApp, code, redirectUri);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
