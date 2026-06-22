@@ -167,6 +167,171 @@ h3 {
   padding: 16px;
 }
 
+.operator-dashboard {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.operator-metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.operator-metric {
+  background: #fff;
+  border: 1px solid #cfdcd2;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgb(30 58 38 / 0.12);
+  display: grid;
+  gap: 8px;
+  min-height: 138px;
+  padding: 20px;
+}
+
+.operator-metric span {
+  color: #2d4d37;
+  font-size: 14px;
+}
+
+.operator-metric strong {
+  color: #000;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.operator-metric small {
+  color: #2d4d37;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.operator-podium {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.operator-podium-card {
+  align-items: center;
+  background: #fffdf0;
+  border: 2px solid #d4dbe3;
+  border-radius: 8px;
+  display: grid;
+  justify-items: center;
+  min-height: 210px;
+  padding: 22px 16px;
+  text-align: center;
+}
+
+.operator-podium-card.gold {
+  border-color: #ffbf00;
+}
+
+.operator-podium-card.silver {
+  background: #fbfcfd;
+  border-color: #cdd6df;
+  box-shadow: 0 4px 12px rgb(39 53 69 / 0.12);
+}
+
+.operator-podium-card.bronze {
+  border-color: #f97316;
+}
+
+.operator-medal {
+  align-items: center;
+  background: #f59e0b;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 900;
+  height: 24px;
+  justify-content: center;
+  margin-bottom: 6px;
+  width: 24px;
+}
+
+.operator-podium-card.silver .operator-medal {
+  background: #94a3b8;
+}
+
+.operator-podium-card.bronze .operator-medal {
+  background: #c26a36;
+}
+
+.operator-podium-card strong {
+  color: #000;
+  font-size: 18px;
+}
+
+.operator-podium-card span {
+  color: #345040;
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.operator-podium-card b {
+  color: #008035;
+  font-size: 24px;
+  margin-top: 8px;
+}
+
+.operator-podium-card small {
+  color: #203a2a;
+  font-size: 12px;
+}
+
+.operator-podium-card em {
+  color: #0457ff;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.operator-table {
+  border: 1px solid #c9d9ca;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.operator-row {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #c9d9ca;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(180px, 1.5fr) repeat(7, minmax(72px, 0.65fr)) minmax(110px, 0.9fr);
+  padding: 14px 12px;
+}
+
+.operator-row:last-child {
+  border-bottom: 0;
+}
+
+.operator-row-head {
+  background: #eef5ef;
+  color: #000;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.operator-row strong {
+  color: #000;
+}
+
+.operator-row small {
+  color: #345040;
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
 .primary-action {
   align-items: center;
   background: var(--accent);
@@ -1423,6 +1588,9 @@ h3 {
   .upload-grid,
   .layout,
   .summary-grid,
+  .operator-metrics,
+  .operator-podium,
+  .operator-row,
   .rz-search,
   .scan-box,
   .custom-text-row,

@@ -813,23 +813,129 @@ function renderOperators() {
     wrapper.innerHTML = '<p class="empty">Nenhum operador cadastrado.</p>';
     return;
   }
-  wrapper.innerHTML = state.operators
-    .map((operator) => `
-      <article class="admin-row">
-        <div>
-          <strong>${escapeHtml(operator.name)}</strong>
-          <span class="muted">${escapeHtml(operator.email)}</span>
+  const operators = state.operators.map(operatorViewModel);
+  const totals = operators.reduce((acc, operator) => {
+    acc.activity += operator.activity;
+    acc.logins += operator.logins;
+    acc.searches += operator.searches;
+    acc.scans += operator.scans;
+    acc.creates += operator.creates;
+    acc.lotViews += operator.lotViews;
+    acc.palletViews += operator.palletViews;
+    if (!acc.lastActivityAt || (operator.lastActivityAt && operator.lastActivityAt > acc.lastActivityAt)) {
+      acc.lastActivityAt = operator.lastActivityAt;
+    }
+    return acc;
+  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, lastActivityAt: null });
+  const topOperators = [...operators].sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name)).slice(0, 3);
+  const leader = topOperators[0];
+
+  wrapper.innerHTML = `
+    <section class="operator-dashboard">
+      <div class="operator-metrics">
+        <article class="operator-metric">
+          <span>Atividades no periodo</span>
+          <strong>${totals.activity}</strong>
+          <small>${operators.length} operadores cadastrados</small>
+        </article>
+        <article class="operator-metric">
+          <span>Buscas e bipagens</span>
+          <strong>${totals.searches + totals.scans}</strong>
+          <small>${totals.searches} buscas / ${totals.scans} bipagens</small>
+        </article>
+        <article class="operator-metric">
+          <span>Operador destaque</span>
+          <strong>${leader ? leader.activity : 0}</strong>
+          <small>${leader ? escapeHtml(leader.name) : "Sem atividade"}</small>
+        </article>
+        <article class="operator-metric">
+          <span>Ultima atividade</span>
+          <strong>${totals.lastActivityAt ? formatDate(totals.lastActivityAt) : "--"}</strong>
+          <small>${totals.logins} logins registrados</small>
+        </article>
+      </div>
+
+      <div class="operator-podium">
+        ${topOperators.map(operatorPodiumCard).join("")}
+      </div>
+
+      <div class="operator-table">
+        <div class="operator-row operator-row-head">
+          <span>#</span>
+          <span>Operador</span>
+          <span>Total</span>
+          <span>Logins</span>
+          <span>Buscas</span>
+          <span>Bipagens</span>
+          <span>Cadastros</span>
+          <span>Lotes</span>
+          <span>Pallets</span>
+          <span>Ultima ativ.</span>
         </div>
-        <span>Logins: ${operator.stats?.logins || 0}</span>
-        <span>Buscas: ${operator.stats?.searches || 0}</span>
-        <span>Bipagens: ${operator.stats?.scans || 0}</span>
-        <span>Cadastros: ${operator.stats?.creates || 0}</span>
-        <span>Lotes: ${operator.stats?.lotViews || 0}</span>
-        <span>Pallets: ${operator.stats?.palletViews || 0}</span>
-        <span>${operator.stats?.lastActivityAt ? formatDate(operator.stats.lastActivityAt) : "Sem atividade"}</span>
-      </article>
-    `)
-    .join("");
+        ${operators
+          .sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name))
+          .map(operatorTableRow)
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function operatorViewModel(operator) {
+  const stats = operator.stats || {};
+  const logins = stats.logins || 0;
+  const searches = stats.searches || 0;
+  const scans = stats.scans || 0;
+  const creates = stats.creates || 0;
+  const lotViews = stats.lotViews || 0;
+  const palletViews = stats.palletViews || 0;
+  return {
+    name: operator.name || "Operador",
+    email: operator.email || "",
+    logins,
+    searches,
+    scans,
+    creates,
+    lotViews,
+    palletViews,
+    activity: logins + searches + scans + creates + lotViews + palletViews,
+    lastActivityAt: stats.lastActivityAt || null
+  };
+}
+
+function operatorPodiumCard(operator, index) {
+  const rank = index + 1;
+  const rankClass = rank === 1 ? "gold" : rank === 2 ? "silver" : "bronze";
+  return `
+    <article class="operator-podium-card ${rankClass}">
+      <div class="operator-medal">${rank}</div>
+      <strong>${escapeHtml(operator.name)}</strong>
+      <span>${escapeHtml(operator.email)}</span>
+      <b>${operator.activity}</b>
+      <small>atividades registradas</small>
+      <em>${operator.searches + operator.scans} buscas/bipagens</em>
+    </article>
+  `;
+}
+
+function operatorTableRow(operator, index) {
+  return `
+    <div class="operator-row">
+      <span>${index + 1}</span>
+      <span>
+        <strong>${escapeHtml(operator.name)}</strong>
+        <small>${escapeHtml(operator.email)}</small>
+      </span>
+      <strong>${operator.activity}</strong>
+      <span>${operator.logins}</span>
+      <span>${operator.searches}</span>
+      <span>${operator.scans}</span>
+      <span>${operator.creates}</span>
+      <span>${operator.lotViews}</span>
+      <span>${operator.palletViews}</span>
+      <span>${operator.lastActivityAt ? formatDate(operator.lastActivityAt) : "Sem atividade"}</span>
+    </div>
+  `;
 }
 
 async function createOperator(event) {
