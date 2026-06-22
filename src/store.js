@@ -196,6 +196,10 @@ async function getUserById(userId) {
   return db.users.find((user) => user.id === userId) || null;
 }
 
+export async function getPublicUserById(userId) {
+  return sanitizeUser(await getUserById(userId));
+}
+
 export function sanitizeUser(user) {
   if (!user) return null;
   return {

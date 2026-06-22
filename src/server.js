@@ -36,6 +36,7 @@ import {
   getPgPool,
   getStoreHealth,
   getTransferLotDetail,
+  getPublicUserById,
   getUserBlingCredentials,
   getUserBlingIntegration,
   getUserLotDetail,
@@ -114,8 +115,12 @@ app.get("/healthz", async (req, res) => {
   }
 });
 
-app.get("/api/me", (req, res) => {
-  res.json({ user: req.session.user || null });
+app.get("/api/me", async (req, res) => {
+  try {
+    res.json({ user: await refreshSessionUser(req) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post("/api/register", async (req, res) => {
@@ -745,6 +750,20 @@ app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Faça login para continuar." });
   next();
+}
+
+async function refreshSessionUser(req) {
+  const sessionUser = req.session.user;
+  if (!sessionUser) return null;
+  if (sessionUser.role === "admin") return sessionUser;
+
+  const freshUser = await getPublicUserById(sessionUser.id);
+  if (!freshUser) {
+    req.session.user = null;
+    return null;
+  }
+  req.session.user = freshUser;
+  return freshUser;
 }
 
 function requireAdmin(req, res, next) {
