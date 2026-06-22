@@ -31,6 +31,7 @@ import {
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
+  getBlingAppConfig,
   getLotBlingData,
   getPgPool,
   getStoreHealth,
@@ -55,6 +56,7 @@ import {
   suggestCatalogUpdate,
   updateUserPassword,
   saveUserBlingIntegration,
+  saveBlingAppConfig,
   verifyUser
 } from "./store.js";
 
@@ -327,8 +329,11 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req
 });
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
-  const integration = await getUserBlingIntegration(workspaceUserId(req));
-  const appConfigured = hasBlingAppConfig() || Boolean(integration?.connected);
+  const [integration, appConfig] = await Promise.all([
+    getUserBlingIntegration(workspaceUserId(req)),
+    getBlingAppConfig()
+  ]);
+  const appConfigured = hasBlingAppConfig() || Boolean(appConfig.clientId && appConfig.clientSecret);
   res.json({ integration: { ...integration, appConfigured, authorizeUrl: appConfigured ? "/api/integrations/bling/authorize" : null } });
 });
 
@@ -337,9 +342,8 @@ app.post("/api/integrations/bling/config", requireAuth, requireOwner, async (req
     const clientId = String(req.body.clientId || "").trim();
     const clientSecret = String(req.body.clientSecret || "").trim();
     if (!clientId || !clientSecret) throw new Error("Informe Client ID e Client Secret do Bling.");
-    const userId = workspaceUserId(req);
-    await deleteUserBlingIntegration(userId);
-    const integration = await saveUserBlingIntegration(userId, { clientId, clientSecret });
+    await saveBlingAppConfig({ clientId, clientSecret });
+    const integration = await getUserBlingIntegration(workspaceUserId(req));
     res.json({ integration: { ...integration, appConfigured: true, authorizeUrl: "/api/integrations/bling/authorize" } });
   } catch (error) {
     sendError(res, error);
@@ -372,7 +376,6 @@ app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (re
     const token = await exchangeBlingAuthorizationCode(blingApp, String(req.query.code), getBlingRedirectUri(req));
     await saveUserBlingIntegration(workspaceUserId(req), {
       clientId: blingApp.clientId,
-      clientSecret: blingApp.clientSecret,
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       tokenExpiresAt: token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null
@@ -775,9 +778,9 @@ async function getBlingAppCredentials(userId) {
   if (hasBlingAppConfig()) {
     return { clientId: config.blingClientId, clientSecret: config.blingClientSecret };
   }
-  const integration = await getUserBlingCredentials(userId);
-  if (integration?.clientId && integration?.clientSecret) {
-    return { clientId: integration.clientId, clientSecret: integration.clientSecret };
+  const appConfig = await getBlingAppConfig();
+  if (appConfig?.clientId && appConfig?.clientSecret) {
+    return { clientId: appConfig.clientId, clientSecret: appConfig.clientSecret };
   }
   throw new Error("Configure Client ID e Client Secret do Bling antes de autorizar.");
 }
@@ -787,7 +790,8 @@ async function getRequiredBlingCredentials(userId) {
   if (!integration?.accessToken || !integration?.refreshToken) {
     throw new Error("Autorize a integracao Bling na aba Perfil antes de enviar dados.");
   }
-  return integration;
+  const blingApp = await getBlingAppCredentials(userId);
+  return { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret };
 }
 
 function getBlingRedirectUri(req) {

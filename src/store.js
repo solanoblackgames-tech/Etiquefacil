@@ -26,6 +26,7 @@ const emptyDb = () => ({
   scans: [],
   labels: [],
   blingIntegrations: [],
+  appSettings: {},
   transferLots: [],
   transferItems: [],
   operatorActivities: [],
@@ -509,6 +510,43 @@ export async function deleteUserBlingIntegration(userId) {
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   await writeDb(db);
   return { ok: true };
+}
+
+export async function getBlingAppConfig() {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select value from app_settings where key = $1 limit 1", ["bling_app_config"]);
+    return normalizeBlingAppConfig(result.rows[0]?.value || {});
+  }
+
+  const db = await readDb();
+  return normalizeBlingAppConfig(db.appSettings?.blingAppConfig || {});
+}
+
+export async function saveBlingAppConfig(payload = {}) {
+  await ensureStore();
+  const appConfig = normalizeBlingAppConfig(payload);
+  if (!appConfig.clientId || !appConfig.clientSecret) throw new Error("Informe Client ID e Client Secret do Bling.");
+
+  if (hasPostgres()) {
+    await query(
+      `
+        insert into app_settings (key, value, updated_at)
+        values ($1, $2, $3)
+        on conflict (key) do update set
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+      ["bling_app_config", appConfig, new Date().toISOString()]
+    );
+    return publicBlingAppConfig(appConfig);
+  }
+
+  const db = await readDb();
+  db.appSettings = db.appSettings || {};
+  db.appSettings.blingAppConfig = appConfig;
+  await writeDb(db);
+  return publicBlingAppConfig(appConfig);
 }
 
 export async function replaceCatalogProducts(products) {
@@ -1343,6 +1381,12 @@ async function ensurePgStore() {
       access_token text not null default '',
       refresh_token text not null default '',
       token_expires_at timestamptz,
+      updated_at timestamptz not null default now()
+    );
+
+    create table if not exists app_settings (
+      key text primary key,
+      value jsonb not null default '{}'::jsonb,
       updated_at timestamptz not null default now()
     );
 
@@ -3211,6 +3255,21 @@ function normalizeBlingIntegration(userId, input = {}, existing = null) {
   };
 }
 
+function normalizeBlingAppConfig(input = {}) {
+  return {
+    clientId: String(input.clientId || "").trim(),
+    clientSecret: String(input.clientSecret || "").trim()
+  };
+}
+
+function publicBlingAppConfig(appConfig) {
+  return {
+    configured: Boolean(appConfig?.clientId && appConfig?.clientSecret),
+    clientId: appConfig?.clientId || "",
+    hasClientSecret: Boolean(appConfig?.clientSecret)
+  };
+}
+
 function publicBlingIntegration(integration) {
   if (!integration) {
     return {
@@ -3225,7 +3284,7 @@ function publicBlingIntegration(integration) {
   }
 
   return {
-    connected: Boolean(integration.clientId && integration.clientSecret),
+    connected: Boolean(integration.accessToken && integration.refreshToken),
     clientId: integration.clientId,
     hasClientSecret: Boolean(integration.clientSecret),
     hasAccessToken: Boolean(integration.accessToken),
