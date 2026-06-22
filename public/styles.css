@@ -130,16 +130,6 @@ h3 {
   align-self: end;
 }
 
-.bling-config-form {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-}
-
-.bling-config-form button {
-  align-self: end;
-}
-
 .secondary {
   border-top: 1px solid var(--line);
   padding-top: 18px;
