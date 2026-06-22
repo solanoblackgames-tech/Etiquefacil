@@ -25,6 +25,7 @@ DOWNLOAD_MODE=browser
 BLING_CLIENT_ID=client-id-do-app-bling
 BLING_CLIENT_SECRET=client-secret-do-app-bling
 BLING_REDIRECT_URI=https://seu-dominio.com/api/integrations/bling/callback
+BLING_STOCK_DEPOSIT=Deposito Geral
 ```
 
 Com `DATABASE_URL`, o app cria automaticamente as tabelas PostgreSQL ao iniciar. Em produção, `DATABASE_URL` e `SESSION_SECRET` são obrigatórios.
@@ -52,6 +53,10 @@ http://localhost:3000/api/integrations/bling/callback
 ```
 
 Depois configure `BLING_CLIENT_ID`, `BLING_CLIENT_SECRET` e `BLING_REDIRECT_URI` no servidor. Cada usuario autoriza a propria conta Bling pela aba Perfil; ele nao precisa preencher client secret nem tokens.
+
+Com a conta autorizada, o lote passa a ter tambem o botao `Criar produtos no Bling`, que cria pela API apenas os SKUs ainda nao encontrados no Bling. Na tela do pallet/RZ, `Lancar entrada no Bling` procura/cria os produtos necessarios e registra uma entrada de estoque no deposito configurado em `BLING_STOCK_DEPOSIT`, usando a quantidade conferida da RZ.
+
+Os downloads CSV continuam disponiveis como alternativa/manual.
 
 ## Health check
 

@@ -1620,6 +1620,7 @@ function renderLotDetail(lot) {
     <div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
+      <button data-sync-products="complete">Criar produtos no Bling</button>
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
     </div>
     <p id="downloadMessage" class="message"></p>
@@ -1658,6 +1659,9 @@ function renderLotDetail(lot) {
   if (canManage) {
     detail.querySelectorAll("button[data-download]").forEach((button) => {
       button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
+    });
+    detail.querySelectorAll("button[data-sync-products]").forEach((button) => {
+      button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
     });
     $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
   }
@@ -1731,6 +1735,44 @@ async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") 
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
+  }
+}
+
+async function syncBlingProducts(lotId, kind, button, messageSelector = "#downloadMessage") {
+  if (!confirm("Criar no Bling os produtos deste lote que ainda nao existem pelo SKU?")) return;
+  const message = $(messageSelector);
+  message.textContent = "";
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/bling/${encodeURIComponent(kind)}/sync-products`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Nao foi possivel criar os produtos no Bling.");
+    message.style.color = "#0f766e";
+    message.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.skipped} ja existente(s).`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function syncBlingStockEntry(lotId, codigoRz, button) {
+  if (!confirm(`Lancar entrada de estoque no Bling para a RZ ${codigoRz}?`)) return;
+  const message = $("#palletMessage");
+  message.textContent = "";
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-entry/sync`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Nao foi possivel lancar a entrada no Bling.");
+    message.style.color = "#0f766e";
+    message.textContent = `Entrada lancada no Bling: ${payload.entered} item(ns) no deposito ${payload.deposito?.descricao || ""}.`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1808,10 +1850,12 @@ function renderPallet(lot, codigoRz) {
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
           ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>` : ""}
           ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>` : ""}
+          ${canManage ? `<button type="button" data-sync-stock-entry="${escapeHtml(codigoRz)}">Lancar entrada no Bling</button>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>` : ""}
         </div>
       </div>
+      <p id="palletMessage" class="message"></p>
       <div class="summary-grid">
         ${metric("Status", status)}
         ${metric("Itens", rz.expected)}
@@ -1845,6 +1889,8 @@ function renderPallet(lot, codigoRz) {
     </section>
   `;
   $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
+  const syncButton = $("#rzDetail [data-sync-stock-entry]");
+  if (syncButton) syncButton.addEventListener("click", () => syncBlingStockEntry(lot.id, codigoRz, syncButton));
 }
 
 function openScanWindow(lotId, codigoRz) {

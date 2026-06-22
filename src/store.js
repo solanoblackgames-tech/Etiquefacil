@@ -403,6 +403,11 @@ export async function getUserBlingIntegration(userId) {
   return publicBlingIntegration((db.blingIntegrations || []).find((integration) => integration.userId === userId) || null);
 }
 
+export async function getUserBlingCredentials(userId) {
+  await ensureStore();
+  return getPrivateUserBlingIntegration(userId);
+}
+
 export async function saveUserBlingIntegration(userId, payload = {}) {
   await ensureStore();
   const existing = await getPrivateUserBlingIntegration(userId);

@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
+import { syncBlingProducts, syncBlingStockEntries } from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
@@ -31,6 +32,7 @@ import {
   getLotBlingData,
   getPgPool,
   getStoreHealth,
+  getUserBlingCredentials,
   getUserBlingIntegration,
   getUserLotDetail,
   getUserLotSummaries,
@@ -367,6 +369,25 @@ app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, requireOwner, async (
   }
 });
 
+app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const data = await getLotBlingData(userId, req.params.lotId, req.params.kind);
+    if (!data) return res.status(404).json({ error: "Lote nÃ£o encontrado." });
+    if (!data.products.length) throw new Error("Nenhum produto encontrado para enviar ao Bling.");
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingProducts({
+      integration,
+      products: data.products,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, requireOwner, async (req, res) => {
   try {
     const data = await getRzBlingData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
@@ -428,6 +449,27 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/save", requireAuth, requireO
     await fs.writeFile(filePath, `\uFEFF${csv}`, "utf8");
     revealFile(filePath);
     res.json({ fileName, path: filePath, count: data.items.length });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const data = await getRzStockEntryData(userId, req.params.lotId, req.params.codigoRz);
+    if (!data) return res.status(404).json({ error: "Remessa nao encontrada neste lote." });
+    if (!data.items.length) return res.status(404).json({ error: "Nenhum item conferido nesta remessa." });
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockEntries({
+      integration,
+      items: data.items,
+      depositoName: BLING_STOCK_DEPOSIT,
+      observacao: `Entrada por conferencia RZ ${data.codigoRz}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -608,6 +650,14 @@ function hasBlingAppConfig() {
   return Boolean(config.blingClientId && config.blingClientSecret);
 }
 
+async function getRequiredBlingCredentials(userId) {
+  const integration = await getUserBlingCredentials(userId);
+  if (!integration?.accessToken || !integration?.refreshToken) {
+    throw new Error("Autorize a integracao Bling na aba Perfil antes de enviar dados.");
+  }
+  return integration;
+}
+
 function getBlingRedirectUri(req) {
   if (config.blingRedirectUri) return config.blingRedirectUri;
   return `${req.protocol}://${req.get("host")}/api/integrations/bling/callback`;
@@ -689,9 +739,13 @@ async function getRzStockEntryData(userId, lotId, codigoRz) {
     } else {
       productsById.set(item.product.id, {
         sku: item.product.sku || "",
+        codigoMl: item.product.codigoMl || "",
         ean: item.product.ean || "",
         descricao: item.product.descricao || "",
+        valorUnit: Number(item.product.valorUnit || 0),
         precoCusto: Number(item.product.precoCusto || 0),
+        link: item.product.link || "",
+        foto: item.product.foto || "",
         qtdConferida
       });
     }
