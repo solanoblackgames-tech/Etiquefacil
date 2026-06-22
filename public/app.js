@@ -8,6 +8,8 @@ const state = {
   operators: [],
   transferLots: [],
   selectedTransferLotId: null,
+  blingDeposits: [],
+  blingDepositsLoaded: false,
   profileSection: "entries",
   lots: [],
   selectedLotId: null,
@@ -1099,7 +1101,10 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
   if (target === "profile") setProfileSection(state.profileSection || "entries");
-  if (target === "transfers") loadTransferLots(state.selectedTransferLotId);
+  if (target === "transfers") {
+    loadBlingDeposits();
+    loadTransferLots(state.selectedTransferLotId);
+  }
   schedulePrimaryInputFocus();
 }
 
@@ -1590,6 +1595,45 @@ async function loadTransferLots(selectId = state.selectedTransferLotId) {
   }
 }
 
+async function loadBlingDeposits({ force = false } = {}) {
+  const form = $("#transferLotForm");
+  if (!form || (state.blingDepositsLoaded && !force)) return;
+  renderDepositSelects({ loading: true });
+  try {
+    const response = await api("/api/bling/deposits");
+    state.blingDeposits = response.deposits || [];
+    state.blingDepositsLoaded = true;
+    renderDepositSelects();
+    if (!state.blingDeposits.length) {
+      $("#transferMessage").style.color = "";
+      $("#transferMessage").textContent = "Nenhum deposito ativo foi encontrado no Bling.";
+    }
+  } catch (error) {
+    state.blingDeposits = [];
+    state.blingDepositsLoaded = false;
+    renderDepositSelects({ error: error.message });
+    $("#transferMessage").style.color = "";
+    $("#transferMessage").textContent = `${error.message} Autorize o Bling em Perfil > Sincronizacao para selecionar os depositos.`;
+  }
+}
+
+function renderDepositSelects({ loading = false, error = "" } = {}) {
+  const selects = [...document.querySelectorAll("#transferLotForm select[name='depositoOrigem'], #transferLotForm select[name='depositoDestino']")];
+  if (!selects.length) return;
+  const options = loading
+    ? '<option value="">Carregando depositos...</option>'
+    : error
+      ? '<option value="">Depositos indisponiveis</option>'
+      : '<option value="">Selecione</option>' + state.blingDeposits.map((deposit) => `<option value="${escapeHtml(deposit.descricao)}">${escapeHtml(deposit.descricao)}</option>`).join("");
+
+  selects.forEach((select) => {
+    const previous = select.value;
+    select.innerHTML = options;
+    select.disabled = loading || Boolean(error) || !state.blingDeposits.length;
+    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+  });
+}
+
 async function createTransferLot(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1597,10 +1641,14 @@ async function createTransferLot(event) {
   $("#transferMessage").textContent = "";
   button.disabled = true;
   try {
+    const payload = Object.fromEntries(new FormData(form));
+    if (normalizeCode(payload.depositoOrigem) === normalizeCode(payload.depositoDestino)) {
+      throw new Error("Escolha depositos diferentes para origem e destino.");
+    }
     const response = await api("/api/transfer-lots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+      body: JSON.stringify(payload)
     });
     form.reset();
     $("#transferMessage").style.color = "#0f766e";
