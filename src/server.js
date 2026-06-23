@@ -279,7 +279,6 @@ app.post("/api/transfer-lots", requireAuth, async (req, res) => {
   try {
     const lot = await createTransferLot({
       userId: workspaceUserId(req),
-      name: req.body.name,
       depositoOrigem: req.body.depositoOrigem,
       depositoDestino: req.body.depositoDestino,
       createdByUserId: req.session.user?.id

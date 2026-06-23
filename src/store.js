@@ -760,29 +760,98 @@ export async function getPublicTransferLotDetail(transferLotId) {
   return summarizeTransferLot(lot, db.transferItems || []);
 }
 
-export async function createTransferLot({ userId, name, depositoOrigem, depositoDestino, createdByUserId = null }) {
-  await ensureStore();
-  const lot = {
+async function buildTransferLotWithAutomaticNamePg({ userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+  const creatorId = createdByUserId || userId;
+  const [creatorResult, sequenceResult] = await Promise.all([
+    query("select * from users where id = $1 limit 1", [creatorId]),
+    query(
+      "select count(*)::int as total from transfer_lots where user_id = $1 and coalesce(created_by_user_id, user_id) = $2",
+      [userId, creatorId]
+    )
+  ]);
+  const creator = creatorResult.rows[0] ? userFromRow(creatorResult.rows[0]) : null;
+  return buildTransferLotRecord({
+    userId,
+    depositoOrigem,
+    depositoDestino,
+    createdByUserId,
+    creator,
+    sequence: Number(sequenceResult.rows[0]?.total || 0) + 1
+  });
+}
+
+function buildTransferLotWithAutomaticName(db, { userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+  const creatorId = createdByUserId || userId;
+  const creator = (db.users || []).find((user) => user.id === creatorId) || null;
+  const existingCount = (db.transferLots || []).filter((lot) => (
+    lot.userId === userId && (lot.createdByUserId || lot.userId) === creatorId
+  )).length;
+  return buildTransferLotRecord({
+    userId,
+    depositoOrigem,
+    depositoDestino,
+    createdByUserId,
+    creator,
+    sequence: existingCount + 1
+  });
+}
+
+function buildTransferLotRecord({ userId, depositoOrigem, depositoDestino, createdByUserId = null, creator = null, sequence = 1 }) {
+  const createdAt = new Date().toISOString();
+  return {
     id: randomUUID(),
     userId,
-    name: String(name || "").trim() || `Transferencia ${new Date().toLocaleDateString("pt-BR")}`,
-    depositoOrigem: String(depositoOrigem || "").trim(),
-    depositoDestino: String(depositoDestino || "").trim(),
+    name: formatTransferLotName({ creator, sequence, createdAt }),
+    depositoOrigem,
+    depositoDestino,
     status: "open",
     createdByUserId,
-    createdAt: new Date().toISOString(),
+    createdAt,
     syncedAt: null
   };
-  if (!lot.depositoOrigem) throw new Error("Informe o estoque de origem.");
-  if (!lot.depositoDestino) throw new Error("Informe o estoque de destino.");
-  if (normalizeText(lot.depositoOrigem) === normalizeText(lot.depositoDestino)) throw new Error("Origem e destino precisam ser diferentes.");
+}
+
+function formatTransferLotName({ creator = null, sequence = 1, createdAt = new Date().toISOString() }) {
+  const creatorName = String(creator?.name || "").trim();
+  const creatorCode = creator?.operatorCode ? `Operador ${creator.operatorCode}` : "";
+  const label = creatorName || creatorCode || "Operador";
+  return `${label} ${formatCompactDate(createdAt)}-${String(sequence).padStart(3, "0")}`;
+}
+
+function formatCompactDate(value) {
+  const date = new Date(value);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  return `${day}${month}${year}`;
+}
+
+export async function createTransferLot({ userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+  await ensureStore();
+  const depositoOrigemValue = String(depositoOrigem || "").trim();
+  const depositoDestinoValue = String(depositoDestino || "").trim();
+  if (!depositoOrigemValue) throw new Error("Informe o estoque de origem.");
+  if (!depositoDestinoValue) throw new Error("Informe o estoque de destino.");
+  if (normalizeText(depositoOrigemValue) === normalizeText(depositoDestinoValue)) throw new Error("Origem e destino precisam ser diferentes.");
 
   if (hasPostgres()) {
+    const lot = await buildTransferLotWithAutomaticNamePg({
+      userId,
+      depositoOrigem: depositoOrigemValue,
+      depositoDestino: depositoDestinoValue,
+      createdByUserId
+    });
     await insertTransferLotRows(null, [lot]);
     return summarizeTransferLot(lot, []);
   }
 
   const db = await readDb();
+  const lot = buildTransferLotWithAutomaticName(db, {
+    userId,
+    depositoOrigem: depositoOrigemValue,
+    depositoDestino: depositoDestinoValue,
+    createdByUserId
+  });
   db.transferLots.push(lot);
   await writeDb(db);
   return summarizeTransferLot(lot, []);
