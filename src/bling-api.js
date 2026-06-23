@@ -41,6 +41,16 @@ export function buildBlingProductSupplierPayload(product, { productId, supplierI
   });
 }
 
+export function buildBlingSupplierContactPayload(name, supplierType, existing = {}) {
+  return compactObject({
+    ...existing,
+    nome: name || existing.nome || "",
+    tipo: existing.tipo || "J",
+    situacao: existing.situacao || "A",
+    tiposContato: mergeContactTypes(existing.tiposContato, supplierType)
+  });
+}
+
 export function buildBlingStockEntryPayload(item, { productId, depositoId, observacao = "" } = {}) {
   return compactObject({
     produto: { id: Number(productId), codigo: item.sku || "" },
@@ -76,19 +86,21 @@ export function buildBlingStockTransferPayload(item, { productId, depositoOrigem
 
 export async function syncBlingProducts({ integration, products, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
+  const supplier = await client.prepareSupplierForItems(products);
   const results = [];
 
   for (const product of products) {
     const existing = await client.findProductBySku(product.sku);
     if (existing?.id) {
-      await client.ensureProductSupplier(product, existing.id);
-      results.push({ sku: product.sku, status: "skipped", blingProductId: existing.id });
+      await client.updateProduct(existing.id, buildBlingProductPayload(product));
+      await client.ensureProductSupplier(product, existing.id, supplier);
+      results.push({ sku: product.sku, status: "updated", blingProductId: existing.id });
       continue;
     }
 
     const response = await client.createProduct(buildBlingProductPayload(product));
     const blingProductId = response?.data?.id || null;
-    if (blingProductId) await client.ensureProductSupplier(product, blingProductId);
+    if (blingProductId) await client.ensureProductSupplier(product, blingProductId, supplier);
     results.push({ sku: product.sku, status: "created", blingProductId, response });
   }
 
@@ -97,6 +109,7 @@ export async function syncBlingProducts({ integration, products, saveIntegration
 
 export async function syncBlingStockEntries({ integration, items, depositoName, observacao, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
+  const supplier = await client.prepareSupplierForItems(items);
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
@@ -106,7 +119,10 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
     if (!product?.id) {
       const created = await client.createProduct(buildBlingProductPayload(item));
       product = { id: created?.data?.id, codigo: item.sku };
-      if (product.id) await client.ensureProductSupplier(item, product.id);
+      if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
+    } else {
+      await client.updateProduct(product.id, buildBlingProductPayload(item));
+      await client.ensureProductSupplier(item, product.id, supplier);
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
 
@@ -126,8 +142,76 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
   };
 }
 
+export async function syncBlingStockBalances({
+  integration,
+  items,
+  depositoName,
+  observacao,
+  saveIntegration,
+  createMissingProducts = true,
+  updateExistingProducts = true,
+  syncSuppliers = true
+}) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const supplier = syncSuppliers ? await client.prepareSupplierForItems(items) : null;
+  const deposito = await client.findDepositByDescription(depositoName);
+  if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
+
+  const results = [];
+  for (const item of items) {
+    let product = await client.findProductBySku(item.sku);
+    if (!product?.id) {
+      if (!createMissingProducts) {
+        results.push({ sku: item.sku, status: "missing", current: 0, target: numberOrZero(item.qtdConferida || item.quantidade), delta: 0 });
+        continue;
+      }
+      const created = await client.createProduct(buildBlingProductPayload(item));
+      product = { id: created?.data?.id, codigo: item.sku };
+    } else if (updateExistingProducts) {
+      await client.updateProduct(product.id, buildBlingProductPayload(item));
+    }
+    if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
+    if (syncSuppliers) await client.ensureProductSupplier(item, product.id, supplier);
+
+    const target = numberOrZero(item.qtdConferida || item.quantidade);
+    const current = await client.getProductStockBalance(product.id, deposito.id);
+    const delta = target - current;
+    if (delta > 0) {
+      const response = await client.createStockEntry(
+        buildBlingStockEntryPayload(
+          { ...item, quantidade: delta, qtdConferida: delta },
+          { productId: product.id, depositoId: deposito.id, observacao }
+        )
+      );
+      results.push({ sku: item.sku, status: "entered", blingProductId: product.id, current, target, delta, response });
+      continue;
+    }
+    if (delta < 0) {
+      const response = await client.createStockEntry(
+        buildBlingStockExitPayload(
+          { ...item, quantidade: Math.abs(delta), qtdConferida: Math.abs(delta) },
+          { productId: product.id, depositoId: deposito.id, observacao }
+        )
+      );
+      results.push({ sku: item.sku, status: "exited", blingProductId: product.id, current, target, delta, response });
+      continue;
+    }
+    results.push({ sku: item.sku, status: "unchanged", blingProductId: product.id, current, target, delta: 0 });
+  }
+
+  return {
+    ...summarizeSync(results),
+    adjusted: results.filter((item) => item.status === "entered" || item.status === "exited").length,
+    unchanged: results.filter((item) => item.status === "unchanged").length,
+    entries: results.filter((item) => item.status === "entered").length,
+    exits: results.filter((item) => item.status === "exited").length,
+    deposito: { id: deposito.id, descricao: deposito.descricao || depositoName }
+  };
+}
+
 export async function syncBlingStockMovement({ integration, item, depositoName, operation = "entry", observacao, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
+  const supplier = operation === "entry" ? await client.prepareSupplierForItems([item]) : null;
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
@@ -135,7 +219,10 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   if (!product?.id && operation === "entry") {
     const created = await client.createProduct(buildBlingProductPayload(item));
     product = { id: created?.data?.id, codigo: item.sku };
-    if (product.id) await client.ensureProductSupplier(item, product.id);
+    if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
+  } else if (product?.id && operation === "entry") {
+    await client.updateProduct(product.id, buildBlingProductPayload(item));
+    await client.ensureProductSupplier(item, product.id, supplier);
   }
   if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
 
@@ -164,6 +251,14 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
 export async function listBlingDeposits({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listDeposits();
+}
+
+export async function deleteBlingProductBySku({ integration, sku, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const product = await client.findProductBySku(sku);
+  if (!product?.id) return { status: "not_found", sku };
+  await client.deleteProduct(product.id);
+  return { status: "deleted", sku, blingProductId: product.id };
 }
 
 export async function syncBlingStockTransfers({ integration, items, depositoOrigemName, depositoDestinoName, observacao, saveIntegration }) {
@@ -204,6 +299,7 @@ class BlingApiClient {
     this.integration = integration;
     this.saveIntegration = saveIntegration;
     this.lastRequestAt = 0;
+    this.supplierContactType = null;
   }
 
   async findProductBySku(sku) {
@@ -217,10 +313,26 @@ class BlingApiClient {
     return this.request("/produtos", { method: "POST", body: payload });
   }
 
-  async ensureProductSupplier(product, productId) {
+  async updateProduct(productId, payload) {
+    return this.request(`/produtos/${encodeURIComponent(productId)}`, { method: "PUT", body: payload });
+  }
+
+  async deleteProduct(productId) {
+    return this.request(`/produtos/${encodeURIComponent(productId)}`, { method: "DELETE" });
+  }
+
+  async prepareSupplierForItems(items = []) {
+    const supplierName = (items || []).map((item) => item?.fornecedor).find(Boolean);
+    if (!supplierName) return null;
+    const supplier = await this.findOrCreateSupplier(supplierName);
+    if (!supplier?.id) throw new Error(`Fornecedor Bling nao retornou ID: ${supplierName}`);
+    return supplier;
+  }
+
+  async ensureProductSupplier(product, productId, supplier = null) {
     if (!product?.fornecedor || !productId) return null;
-    const supplier = await this.findOrCreateSupplier(product.fornecedor);
-    if (!supplier?.id) return null;
+    supplier = supplier || (await this.findOrCreateSupplier(product.fornecedor));
+    if (!supplier?.id) throw new Error(`Fornecedor Bling nao retornou ID: ${product.fornecedor}`);
     const existing = await this.findProductSupplier(productId, supplier.id);
     if (existing?.id) return existing;
     return this.createProductSupplier(buildBlingProductSupplierPayload(product, { productId, supplierId: supplier.id }));
@@ -238,17 +350,40 @@ class BlingApiClient {
   async findOrCreateSupplier(name) {
     const normalized = normalizeText(name);
     if (!normalized) return null;
+    const supplierType = await this.findSupplierContactType();
+    if (!supplierType?.id) throw new Error("Tipo de contato Fornecedor nao encontrado no Bling.");
     const payload = await this.request("/contatos", {
       query: { pesquisa: name, limite: 100 }
     });
     const existing = (payload?.data || []).find((contact) => normalizeText(contact.nome) === normalized);
-    if (existing?.id) return existing;
+    if (existing?.id) return this.ensureSupplierContactType(existing, supplierType);
 
     const created = await this.request("/contatos", {
       method: "POST",
-      body: { nome: name, situacao: "A" }
+      body: buildBlingSupplierContactPayload(name, supplierType)
     });
     return created?.data || null;
+  }
+
+  async findSupplierContactType() {
+    if (this.supplierContactType) return this.supplierContactType;
+    const payload = await this.request("/contatos/tipos");
+    this.supplierContactType = (payload?.data || []).find((type) => normalizeText(type.descricao) === "fornecedor") || null;
+    return this.supplierContactType;
+  }
+
+  async ensureSupplierContactType(contact, supplierType) {
+    if (!contact?.id || !supplierType?.id) return contact;
+    const detail = await this.request(`/contatos/${encodeURIComponent(contact.id)}`);
+    const fullContact = detail?.data || contact;
+    const currentTypes = Array.isArray(fullContact.tiposContato) ? fullContact.tiposContato : [];
+    if (currentTypes.some((type) => String(type.id) === String(supplierType.id) || normalizeText(type.descricao) === "fornecedor")) return fullContact;
+
+    await this.request(`/contatos/${encodeURIComponent(contact.id)}`, {
+      method: "PUT",
+      body: buildBlingSupplierContactPayload(fullContact.nome || contact.nome, supplierType, fullContact)
+    });
+    return { ...fullContact, tiposContato: mergeContactTypes(currentTypes, supplierType) };
   }
 
   async createProductSupplier(payload) {
@@ -275,6 +410,20 @@ class BlingApiClient {
 
   async createStockEntry(payload) {
     return this.request("/estoques", { method: "POST", body: payload });
+  }
+
+  async getProductStockBalance(productId, depositoId) {
+    try {
+      const payload = await this.request(`/estoques/saldos/${encodeURIComponent(depositoId)}`, {
+        query: { "idsProdutos[]": productId }
+      });
+      return stockBalanceFromPayload(payload, productId);
+    } catch (error) {
+      const payload = await this.request("/estoques/saldos", {
+        query: { "idsProdutos[]": productId }
+      });
+      return stockBalanceFromPayload(payload, productId);
+    }
   }
 
   async request(path, { method = "GET", query = {}, body = null, retry = true } = {}) {
@@ -358,8 +507,11 @@ function summarizeSync(results) {
     ok: true,
     count: results.length,
     created: results.filter((item) => item.status === "created").length,
+    updated: results.filter((item) => item.status === "updated").length,
     skipped: results.filter((item) => item.status === "skipped").length,
+    missing: results.filter((item) => item.status === "missing").length,
     entered: results.filter((item) => item.status === "entered").length,
+    exited: results.filter((item) => item.status === "exited").length,
     transferred: results.filter((item) => item.status === "transferred").length,
     results
   };
@@ -386,6 +538,25 @@ function normalizeText(value) {
 }
 
 function numberOrZero(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function mergeContactTypes(types = [], supplierType) {
+  const merged = Array.isArray(types) ? [...types] : [];
+  if (!supplierType?.id) return merged;
+  if (!merged.some((type) => String(type.id) === String(supplierType.id) || normalizeText(type.descricao) === "fornecedor")) {
+    merged.push({ id: Number(supplierType.id), descricao: supplierType.descricao || "Fornecedor" });
+  }
+  return merged;
+}
+
+function stockBalanceFromPayload(payload, productId) {
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  const row = rows.find((item) => {
+    return String(item.produto?.id || item.idProduto || item.produtoId || item.id || "") === String(productId);
+  }) || rows[0] || {};
+  const value = row.saldoFisico ?? row.saldoFisicoTotal ?? row.saldo ?? row.quantidade ?? row.estoque ?? 0;
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
 }

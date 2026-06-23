@@ -966,6 +966,55 @@ export async function createManualExternalExcess({ userId, createdByUserId = use
   return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
 }
 
+export async function getExternalExcessProduct({ userId, lotId, codigoRz, codigoMl }) {
+  await ensureStore();
+  const normalizedMl = normalizeCode(codigoMl);
+  if (!normalizedMl) throw new Error("Informe o Codigo ML.");
+  if (hasPostgres()) return getExternalExcessProductPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const item = db.rzItems.find((candidate) => {
+    const product = db.products.find((entry) => entry.id === candidate.productId);
+    return (
+      candidate.lotId === lot.id &&
+      candidate.codigoRz === codigoRz &&
+      candidate.tipoItem === "excedente_externo" &&
+      product?.codigoMl === normalizedMl &&
+      product?.origem === "excedente_externo"
+    );
+  });
+  if (!item) throw notFound("Excedente externo nao encontrado nesta RZ.");
+  return db.products.find((product) => product.id === item.productId);
+}
+
+export async function deleteExternalExcess({ userId, lotId, codigoRz, codigoMl }) {
+  await ensureStore();
+  const normalizedMl = normalizeCode(codigoMl);
+  if (!normalizedMl) throw new Error("Informe o Codigo ML.");
+  if (hasPostgres()) return deleteExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const product = await getExternalExcessProduct({ userId, lotId, codigoRz, codigoMl: normalizedMl });
+  db.products = db.products.filter((candidate) => candidate.id !== product.id);
+  db.rzItems = db.rzItems.filter((candidate) => candidate.productId !== product.id);
+  db.scans.push({
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz,
+    codigoMl: normalizedMl,
+    status: "excedente_excluido",
+    createdAt: new Date().toISOString()
+  });
+  await writeDb(db);
+  return { product, lot: summarizeLot(db, lot, true) };
+}
+
 export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
@@ -2235,6 +2284,68 @@ async function createManualExternalExcessPg({ userId, createdByUserId = userId, 
   }
 
   return { ...result, lot: await getUserLotDetail(userId, lotId) };
+}
+
+async function getExternalExcessProductPg({ userId, lotId, codigoRz, codigoMl }) {
+  const result = await query(
+    `
+      select p.*
+      from products p
+      join lots l on l.id = p.lot_id
+      join rz_items ri on ri.product_id = p.id
+      where l.id = $1
+        and l.user_id = $2
+        and ri.codigo_rz = $3
+        and p.codigo_ml = $4
+        and p.origem = 'excedente_externo'
+        and ri.tipo_item = 'excedente_externo'
+      limit 1
+    `,
+    [lotId, userId, codigoRz, codigoMl]
+  );
+  if (!result.rows.length) throw notFound("Excedente externo nao encontrado nesta RZ.");
+  return productFromRow(result.rows[0]);
+}
+
+async function deleteExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
+  const client = await getPgPool().connect();
+  let product;
+  try {
+    await client.query("begin");
+    const result = await client.query(
+      `
+        select p.*
+        from products p
+        join lots l on l.id = p.lot_id
+        join rz_items ri on ri.product_id = p.id
+        where l.id = $1
+          and l.user_id = $2
+          and ri.codigo_rz = $3
+          and p.codigo_ml = $4
+          and p.origem = 'excedente_externo'
+          and ri.tipo_item = 'excedente_externo'
+        limit 1
+        for update of p
+      `,
+      [lotId, userId, codigoRz, codigoMl]
+    );
+    if (!result.rows.length) throw notFound("Excedente externo nao encontrado nesta RZ.");
+    product = productFromRow(result.rows[0]);
+    await client.query("delete from products where id = $1", [product.id]);
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [randomUUID(), lotId, codigoRz, codigoMl, "excedente_excluido", null, new Date().toISOString()]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
 async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {

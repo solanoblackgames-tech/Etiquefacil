@@ -11,7 +11,15 @@ import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import "dotenv/config";
-import { listBlingDeposits, syncBlingProducts, syncBlingStockEntries, syncBlingStockMovement, syncBlingStockTransfers } from "./bling-api.js";
+import {
+  deleteBlingProductBySku,
+  listBlingDeposits,
+  syncBlingProducts,
+  syncBlingStockBalances,
+  syncBlingStockEntries,
+  syncBlingStockMovement,
+  syncBlingStockTransfers
+} from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
@@ -24,6 +32,7 @@ import {
   createManualExternalExcess,
   createOperator,
   createUser,
+  deleteExternalExcess,
   deleteUserBlingIntegration,
   deleteCatalogProductForAdmin,
   deleteUser,
@@ -34,6 +43,7 @@ import {
   getBlingAppConfig,
   getLotBlingData,
   getPgPool,
+  getExternalExcessProduct,
   getStoreHealth,
   getTransferLotDetail,
   getPublicUserById,
@@ -527,6 +537,27 @@ app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner
   }
 });
 
+app.post("/api/lots/:lotId/bling/stock-balance/sync", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const data = await getLotStockBalanceData(userId, req.params.lotId);
+    if (!data) return res.status(404).json({ error: "Lote nao encontrado." });
+    if (!data.items.length) throw new Error("Nenhum item bipado/cadastrado neste lote para corrigir saldo.");
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockBalances({
+      integration,
+      items: data.items,
+      depositoName: BLING_STOCK_DEPOSIT,
+      observacao: `Correcao de saldo por bipagem ${data.lot.nomeArquivo}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json({ ...result, lot: { id: data.lot.id, nomeArquivo: data.lot.nomeArquivo } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/lots/:lotId/rz/:codigoRz/bling", requireAuth, requireOwner, async (req, res) => {
   try {
     const data = await getRzBlingData(workspaceUserId(req), req.params.lotId, req.params.codigoRz);
@@ -709,6 +740,33 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
         manualProduct: req.body.manualProduct
       })
     );
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    if (!codigoMl) throw new Error("Informe o Codigo ML.");
+
+    const product = await getExternalExcessProduct({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    const integration = await getRequiredBlingCredentials(userId);
+    const bling = await deleteBlingProductBySku({
+      integration,
+      sku: product.sku,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    await recordOperatorActivity(req.session.user, "delete_external_excess", {
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      codigoMl,
+      sku: product.sku,
+      blingStatus: bling.status
+    });
+    const result = await deleteExternalExcess({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    res.json({ ...result, bling });
   } catch (error) {
     sendError(res, error);
   }
@@ -1052,6 +1110,40 @@ async function getRzStockEntryData(userId, lotId, codigoRz) {
 
   if (!productsById.size) return { lot, codigoRz, items: [] };
   return { lot, codigoRz, items: [...productsById.values()].sort((a, b) => a.sku.localeCompare(b.sku)) };
+}
+
+async function getLotStockBalanceData(userId, lotId) {
+  const lot = await getUserLotDetail(userId, lotId);
+  if (!lot) return null;
+
+  const productsById = new Map();
+  for (const item of lot.items || []) {
+    if (!item.product) continue;
+    const qtdConferida = Number(item.qtdConferida || 0);
+    if (qtdConferida <= 0) continue;
+
+    const existing = productsById.get(item.product.id);
+    if (existing) {
+      existing.qtdConferida += qtdConferida;
+      existing.quantidade += qtdConferida;
+    } else {
+      productsById.set(item.product.id, {
+        sku: item.product.sku || "",
+        codigoMl: item.product.codigoMl || "",
+        ean: item.product.ean || "",
+        descricao: item.product.descricao || "",
+        valorUnit: Number(item.product.valorUnit || 0),
+        precoCusto: Number(item.product.precoCusto || 0),
+        fornecedor: lot.fornecedor || "",
+        link: item.product.link || "",
+        foto: item.product.foto || "",
+        qtdConferida,
+        quantidade: qtdConferida
+      });
+    }
+  }
+
+  return { lot, items: [...productsById.values()].sort((a, b) => a.sku.localeCompare(b.sku)) };
 }
 
 async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {

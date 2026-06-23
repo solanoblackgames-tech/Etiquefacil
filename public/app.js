@@ -2090,7 +2090,7 @@ async function syncBlingProducts(lotId, kind, button, messageSelector = "#downlo
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Nao foi possivel criar os produtos no Bling.");
     message.style.color = "#0f766e";
-    message.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.skipped} ja existente(s).`;
+    message.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s).`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -2278,6 +2278,9 @@ function bindScanControls(lotId, codigoRz) {
   $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lotId, codigoRz));
   document.querySelectorAll("[data-decrement-ml]").forEach((button) => {
     button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
+  });
+  document.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
+    button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
   });
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
@@ -2498,6 +2501,34 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
+  }
+}
+
+async function deleteExternalExcess(lotId, codigoRz, codigoMlFromButton, button) {
+  const codigoMl = normalizeCodigoMl(codigoMlFromButton);
+  if (!codigoMl) return;
+  if (!confirm(`Excluir o excedente ${codigoMl} do Bling e deste RZ?`)) return;
+
+  try {
+    if (button) button.disabled = true;
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/external-excess`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl })
+    });
+    renderScanPage(response.lot, codigoRz);
+    const blingMessage = response.bling?.status === "deleted" ? "Cadastro excluido no Bling" : "Cadastro nao existia mais no Bling";
+    $("#scanMessage").style.color = "#0f766e";
+    $("#scanMessage").textContent = `${blingMessage}; SKU ${response.product?.sku || ""} liberado.`;
+  } catch (error) {
+    if (button) button.disabled = false;
+    const message = $("#scanMessage");
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    }
+  } finally {
+    schedulePrimaryInputFocus(["#scanInput"]);
   }
 }
 
@@ -2836,6 +2867,10 @@ function rzCard(rz, { canScan = true } = {}) {
 function itemRow(item) {
   const product = item.product || {};
   const badge = item.tipoItem === "excedente_externo" ? '<span class="badge excess">excedente externo</span>' : `<span class="badge">${escapeHtml(item.tipoItem)}</span>`;
+  const deleteButton =
+    item.tipoItem === "excedente_externo"
+      ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
+      : "";
   return `
     <article class="item-row">
       <strong>${escapeHtml(product.sku || "")}</strong>
@@ -2843,8 +2878,23 @@ function itemRow(item) {
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span>${item.qtdConferida}/${item.qtdEsperada}</span>
       ${badge}
-      <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
+      <span class="item-actions">
+        ${deleteButton}
+        <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
+      </span>
     </article>
+  `;
+}
+
+function trashIcon() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4h8v2"></path>
+      <path d="M19 6l-1 14H6L5 6"></path>
+      <path d="M10 11v5"></path>
+      <path d="M14 11v5"></path>
+    </svg>
   `;
 }
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildBlingProductPayload,
   buildBlingProductSupplierPayload,
+  buildBlingSupplierContactPayload,
   buildBlingStockEntryPayload,
   buildBlingStockExitPayload,
   buildBlingStockTransferPayload,
@@ -55,6 +56,18 @@ test("Bling product supplier payload maps supplier cost relationship", () => {
   assert.equal(payload.precoCusto, 331.83);
   assert.equal(payload.precoCompra, 331.83);
   assert.equal(payload.padrao, true);
+});
+
+test("Bling supplier contact payload marks contact as supplier", () => {
+  const payload = buildBlingSupplierContactPayload("AMZ04LOTE", { id: 2, descricao: "Fornecedor" }, { tiposContato: [{ id: 1, descricao: "Cliente" }] });
+
+  assert.equal(payload.nome, "AMZ04LOTE");
+  assert.equal(payload.tipo, "J");
+  assert.equal(payload.situacao, "A");
+  assert.deepEqual(payload.tiposContato, [
+    { id: 1, descricao: "Cliente" },
+    { id: 2, descricao: "Fornecedor" }
+  ]);
 });
 
 test("Bling stock entry payload maps checked RZ item to stock entry", () => {
