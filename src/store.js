@@ -845,6 +845,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code }) {
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
+  if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
@@ -865,10 +866,39 @@ export async function receivePublicTransferLotScan({ transferLotId, code }) {
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
+  if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
+export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update transfer_items set quantidade_conferida = greatest(quantidade_conferida - 1, 0) where id = $1 and transfer_lot_id = $2 returning *",
+      [itemId, transferLotId]
+    );
+    if (!result.rows.length) return null;
+    const lotResult = await query("select * from transfer_lots where id = $1 limit 1", [transferLotId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (lot) {
+      const itemsResult = await query("select * from transfer_items where transfer_lot_id = $1", [transferLotId]);
+      updateTransferLotReceivingStatus(lot, itemsResult.rows.map(transferItemFromRow));
+      await query("update transfer_lots set status = $2 where id = $1", [transferLotId, lot.status]);
+    }
+    return getPublicTransferLotDetail(transferLotId);
+  }
+
+  const db = await readDb();
+  const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === transferLotId);
+  if (!item) return null;
+  item.quantidadeConferida = Math.max(0, Number(item.quantidadeConferida || 0) - 1);
+  const lot = (db.transferLots || []).find((candidate) => candidate.id === transferLotId);
+  if (lot) updateTransferLotReceivingStatus(lot, db.transferItems || []);
+  await writeDb(db);
+  return lot ? summarizeTransferLot(lot, db.transferItems || []) : null;
 }
 
 export async function decrementTransferLotItem({ userId, transferLotId, itemId }) {
@@ -2558,6 +2588,7 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
     if (!itemResult.rows.length) throw notFound("Produto nao previsto nesta remessa.");
 
     const item = transferItemFromRow(itemResult.rows[0]);
+    if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
     const nextReceived = Number(item.quantidadeConferida || 0) + 1;
     await client.query("update transfer_items set quantidade_conferida = $2 where id = $1", [item.id, nextReceived]);
 

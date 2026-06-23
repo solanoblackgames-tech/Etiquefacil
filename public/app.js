@@ -1619,7 +1619,7 @@ async function showTransferReceiveOnly({ transferLotId }) {
 }
 
 function transferReceiveApiBase(transferLotId) {
-  const prefix = state.user ? "/api/transfer-lots" : "/api/public/transfer-lots";
+  const prefix = state.transferReceiveOnly ? "/api/public/transfer-lots" : "/api/transfer-lots";
   return `${prefix}/${encodeURIComponent(transferLotId)}`;
 }
 
@@ -1663,7 +1663,7 @@ function renderTransferReceivePage(lot) {
           <span>Falta</span>
           <span>Status</span>
         </div>
-        ${lot.items.map(transferReceiveItemRow).join("")}
+        ${transferReceiveRows(lot)}
       </div>
     </section>
   `;
@@ -1674,6 +1674,13 @@ function renderTransferReceivePage(lot) {
   $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id));
   $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
   schedulePrimaryInputFocus(["#transferReceiveInput"]);
+}
+
+function transferReceiveRows(lot) {
+  const pendingItems = (lot.items || []).filter((item) => Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) > 0);
+  return pendingItems.length
+    ? pendingItems.map(transferReceiveItemRow).join("")
+    : '<p class="muted transfer-empty">Todos os itens desta remessa foram conferidos e transferidos.</p>';
 }
 
 function transferReceiveItemRow(item) {
@@ -1709,10 +1716,12 @@ async function receiveTransferCurrent(transferLotId) {
       body: JSON.stringify({ code })
     });
     renderTransferReceivePage(response.lot);
+    playTransferSuccessSound();
     const message = $("#transferReceiveMessage");
-    message.style.color = response.status === "over" ? "#a35c00" : "#0f766e";
-    message.textContent = response.status === "over" ? "Item conferido acima do planejado." : "Item conferido.";
+    message.style.color = "#0f766e";
+    message.textContent = `${response.item?.sku || code} conferido e transferido com sucesso.`;
   } catch (error) {
+    playTransferErrorSound();
     $("#transferReceiveMessage").style.color = "";
     $("#transferReceiveMessage").textContent = error.message;
     input.select();
@@ -1720,6 +1729,36 @@ async function receiveTransferCurrent(transferLotId) {
     button.disabled = false;
     schedulePrimaryInputFocus(["#transferReceiveInput"]);
   }
+}
+
+function playTransferSuccessSound() {
+  playToneSequence([880, 1175], 0.09, 0.04);
+}
+
+function playTransferErrorSound() {
+  playToneSequence([220, 180], 0.12, 0.03);
+}
+
+function playToneSequence(frequencies, duration = 0.1, gap = 0.04) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = new AudioContext();
+  let start = context.currentTime;
+  frequencies.forEach((frequency) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.18, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration);
+    start += duration + gap;
+  });
+  setTimeout(() => context.close().catch(() => {}), (start - context.currentTime + 0.1) * 1000);
 }
 
 async function startTransferCamera(transferLotId) {

@@ -70,6 +70,7 @@ import {
   scanTransferLot,
   searchProducts,
   suggestCatalogUpdate,
+  undoPublicTransferLotScan,
   updateUserPassword,
   saveUserBlingIntegration,
   saveBlingAppConfig,
@@ -333,10 +334,14 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (r
 });
 
 app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, res) => {
+  let result = null;
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
-    res.json(await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code }));
+    result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code });
+    const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+    res.json({ ...result, transfer: transferResult });
   } catch (error) {
+    if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);
     sendError(res, error);
   }
 });
@@ -412,6 +417,19 @@ function transferItemsForBling(lot, { requireReceived = false } = {}) {
       quantidade: Number(requireReceived || hasReceived ? item.quantidadeConferida || 0 : item.quantidade || 0)
     }))
     .filter((item) => Number(item.quantidade || 0) > 0);
+}
+
+async function syncSingleReceivedTransferItem(lot, item) {
+  if (!lot?.userId) throw new Error("Dono da remessa nao encontrado para transferir no Bling.");
+  const integration = await getRequiredBlingCredentials(lot.userId);
+  return syncBlingStockTransfers({
+    integration,
+    items: [{ ...item, quantidade: 1 }],
+    depositoOrigemName: lot.depositoOrigem,
+    depositoDestinoName: lot.depositoDestino,
+    observacao: `Transferencia Etiquefacil ${lot.name} - conferencia QR`,
+    saveIntegration: (payload) => saveUserBlingIntegration(lot.userId, payload)
+  });
 }
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
