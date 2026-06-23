@@ -760,7 +760,7 @@ export async function getPublicTransferLotDetail(transferLotId) {
   return summarizeTransferLot(lot, db.transferItems || []);
 }
 
-async function buildTransferLotWithAutomaticNamePg({ userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+async function buildTransferLotWithAutomaticNamePg({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
   const creatorId = createdByUserId || userId;
   const [creatorResult, sequenceResult] = await Promise.all([
     query("select * from users where id = $1 limit 1", [creatorId]),
@@ -772,6 +772,7 @@ async function buildTransferLotWithAutomaticNamePg({ userId, depositoOrigem, dep
   const creator = creatorResult.rows[0] ? userFromRow(creatorResult.rows[0]) : null;
   return buildTransferLotRecord({
     userId,
+    descricao,
     depositoOrigem,
     depositoDestino,
     createdByUserId,
@@ -780,7 +781,7 @@ async function buildTransferLotWithAutomaticNamePg({ userId, depositoOrigem, dep
   });
 }
 
-function buildTransferLotWithAutomaticName(db, { userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+function buildTransferLotWithAutomaticName(db, { userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
   const creatorId = createdByUserId || userId;
   const creator = (db.users || []).find((user) => user.id === creatorId) || null;
   const existingCount = (db.transferLots || []).filter((lot) => (
@@ -788,6 +789,7 @@ function buildTransferLotWithAutomaticName(db, { userId, depositoOrigem, deposit
   )).length;
   return buildTransferLotRecord({
     userId,
+    descricao,
     depositoOrigem,
     depositoDestino,
     createdByUserId,
@@ -796,12 +798,13 @@ function buildTransferLotWithAutomaticName(db, { userId, depositoOrigem, deposit
   });
 }
 
-function buildTransferLotRecord({ userId, depositoOrigem, depositoDestino, createdByUserId = null, creator = null, sequence = 1 }) {
+function buildTransferLotRecord({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null, creator = null, sequence = 1 }) {
   const createdAt = new Date().toISOString();
   return {
     id: randomUUID(),
     userId,
     name: formatTransferLotName({ creator, sequence, createdAt }),
+    descricao: String(descricao || "").trim().slice(0, 80),
     depositoOrigem,
     depositoDestino,
     status: "open",
@@ -826,7 +829,7 @@ function formatCompactDate(value) {
   return `${day}${month}${year}`;
 }
 
-export async function createTransferLot({ userId, depositoOrigem, depositoDestino, createdByUserId = null }) {
+export async function createTransferLot({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
   await ensureStore();
   const depositoOrigemValue = String(depositoOrigem || "").trim();
   const depositoDestinoValue = String(depositoDestino || "").trim();
@@ -837,6 +840,7 @@ export async function createTransferLot({ userId, depositoOrigem, depositoDestin
   if (hasPostgres()) {
     const lot = await buildTransferLotWithAutomaticNamePg({
       userId,
+      descricao,
       depositoOrigem: depositoOrigemValue,
       depositoDestino: depositoDestinoValue,
       createdByUserId
@@ -848,6 +852,7 @@ export async function createTransferLot({ userId, depositoOrigem, depositoDestin
   const db = await readDb();
   const lot = buildTransferLotWithAutomaticName(db, {
     userId,
+    descricao,
     depositoOrigem: depositoOrigemValue,
     depositoDestino: depositoDestinoValue,
     createdByUserId
@@ -1622,6 +1627,7 @@ async function ensurePgStore() {
       id text primary key,
       user_id text not null references users(id) on delete cascade,
       name text not null,
+      descricao text not null default '',
       deposito_origem text not null,
       deposito_destino text not null,
       status text not null default 'open',
@@ -1736,6 +1742,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
+    alter table transfer_lots add column if not exists descricao text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
@@ -2110,11 +2117,12 @@ async function insertTransferLotRows(client, lots = []) {
   await insertRows(
     target,
     "transfer_lots",
-    ["id", "user_id", "name", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at"],
+    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
       lot.name,
+      lot.descricao || "",
       lot.depositoOrigem,
       lot.depositoDestino,
       lot.status || "open",
@@ -3522,6 +3530,7 @@ function transferLotFromRow(row) {
     id: row.id,
     userId: row.user_id,
     name: row.name,
+    descricao: row.descricao || "",
     depositoOrigem: row.deposito_origem,
     depositoDestino: row.deposito_destino,
     status: row.status || "open",

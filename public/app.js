@@ -1632,6 +1632,7 @@ function renderTransferReceivePage(lot) {
         <div>
           <span class="muted">${escapeHtml(lot.depositoOrigem)} â†’ ${escapeHtml(lot.depositoDestino)}</span>
           <h2>${escapeHtml(lot.name)}</h2>
+          ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
         <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
       </div>
@@ -1893,6 +1894,7 @@ function renderTransferLots() {
   wrapper.innerHTML = state.transferLots.map((lot) => `
     <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
       <strong>${escapeHtml(lot.name)}</strong>
+      ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
       <span class="badge ${lot.status === "synced" ? "" : "excess"}">${lot.status === "synced" ? "enviado" : "aberto"}</span>
@@ -1932,6 +1934,7 @@ function renderTransferDetail(lot) {
         <div>
           <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
           <h2>${escapeHtml(lot.name)}</h2>
+          ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
         <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
       </div>
@@ -2089,7 +2092,7 @@ function showTransferQrLabel(transferLotId) {
     <section class="transfer-qr-label">
       <strong>REMESSA</strong>
       <img src="/api/transfer-lots/${encodeURIComponent(transferLotId)}/qr.svg" alt="QR Code da remessa" />
-      <span>${escapeHtml(lot?.name || transferLotId)}</span>
+      <span>${escapeHtml([lot?.name || transferLotId, lot?.descricao].filter(Boolean).join(" - "))}</span>
       <small>${escapeHtml(receiveUrl)}</small>
     </section>
   `;
@@ -3087,7 +3090,7 @@ function primaryInputSelectors() {
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
     "#transferScanInput",
-    "#transferLotForm input[name='name']",
+    "#transferLotForm input[name='descricao']",
     "#loginForm input[name='email']",
     "#adminUsersTab:not(.hidden) #adminCreateUserForm input[name='name']",
     "#adminCatalogTab:not(.hidden) #adminCatalogSearchForm input[name='q']",

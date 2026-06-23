@@ -1249,6 +1249,11 @@ h3 {
   gap: 14px;
 }
 
+.transfer-description {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .transfer-table {
   margin-top: 4px;
 }
