@@ -1399,6 +1399,10 @@ ensureStore()
     console.error("Falha ao inicializar o banco:", error);
   });
 
+app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling"], (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
+
 app.listen(config.port, () => {
   console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
 });
