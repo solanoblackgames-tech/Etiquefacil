@@ -133,6 +133,7 @@ function bindEvents() {
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
+  $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
@@ -209,8 +210,29 @@ async function uploadLot(event) {
 async function createDiverseLot(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const button = form.querySelector("button");
+  await createNoSheetLotFromForm(form, {
+    messageSelector: "#diverseLotMessage",
+    successMessage: "Lote criado. Pode comecar a bipar."
+  });
+}
+
+async function handleLotDetailSubmit(event) {
+  if (event.target.id !== "noSheetLotForm") return;
+  event.preventDefault();
+  await createNoSheetLotFromForm(event.target, {
+    messageSelector: "#noSheetLotMessage",
+    successMessage: "Lote sem planilha criado. Pode comecar a bipar."
+  });
+}
+
+async function createNoSheetLotFromForm(form, { messageSelector, successMessage }) {
+  const button = form.querySelector("button[type='submit']");
+  const message = $(messageSelector);
   $("#diverseLotMessage").textContent = "";
+  if (message) {
+    message.textContent = "";
+    message.style.color = "";
+  }
   button.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form));
@@ -220,15 +242,20 @@ async function createDiverseLot(event) {
       body: JSON.stringify(payload)
     });
     state.selectedDiverseLotId = response.lot.id;
-    $("#diverseLotMessage").style.color = "#0f766e";
-    $("#diverseLotMessage").textContent = "Lote criado. Pode comecar a bipar.";
+    if (message) {
+      message.style.color = "#0f766e";
+      message.textContent = successMessage;
+    }
+    form.reset();
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
-    updateRoute("/perfil");
+    updateRoute(lotPath(response.lot.id));
     $("#diverseRzForm input[name='codigoRz']").focus();
   } catch (error) {
-    $("#diverseLotMessage").style.color = "";
-    $("#diverseLotMessage").textContent = error.message;
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    }
   } finally {
     button.disabled = false;
   }
@@ -2147,7 +2174,7 @@ function clearLotDetail() {
   document.body.classList.remove("lot-focus");
   state.previewLotId = null;
   $("#lotDetail").classList.add("empty");
-  $("#lotDetail").textContent = "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
+  $("#lotDetail").innerHTML = emptyLotDetailMarkup();
   hideNoSheetPanel();
 }
 
@@ -2155,7 +2182,7 @@ function renderLots() {
   const wrapper = $("#lots");
   wrapper.innerHTML = "";
   if (!state.lots.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhuma planilha importada ainda.</p>';
+    wrapper.innerHTML = '<p class="muted">Nenhum lote criado ainda.</p>';
     return;
   }
 
@@ -2324,6 +2351,30 @@ function renderLotDetail(lot) {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
   schedulePrimaryInputFocus(noSheetLot ? undefined : ["#rzSearchInput"]);
+}
+
+function emptyLotDetailMarkup() {
+  if (state.user?.role === "operator") {
+    return "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
+  }
+
+  return `
+    <section class="empty-lot-start">
+      <div>
+        <span class="muted">Novo lote</span>
+        <h2>Criar lote sem planilha</h2>
+      </div>
+      <form id="noSheetLotForm" class="diverse-form">
+        <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
+        <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+        <label>Custo medio unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+        <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
+        <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+        <button type="submit">Criar lote</button>
+      </form>
+      <p id="noSheetLotMessage" class="message"></p>
+    </section>
+  `;
 }
 
 async function deleteLot(lot) {
