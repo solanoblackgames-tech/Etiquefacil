@@ -58,6 +58,7 @@ import {
   markTransferLotSynced,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
+  listLotsForAdmin,
   listOperatorsForUser,
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
@@ -180,6 +181,10 @@ app.post("/api/logout", (req, res) => {
 
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   res.json({ users: await listUsersForAdmin() });
+});
+
+app.get("/api/admin/lots", requireAdmin, async (req, res) => {
+  res.json({ lots: await listLotsForAdmin() });
 });
 
 app.get("/api/admin/catalog-requests", requireAdmin, async (req, res) => {

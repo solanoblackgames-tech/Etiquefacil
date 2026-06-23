@@ -17,6 +17,7 @@ let storeReady;
 
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
+const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
 
 const emptyDb = () => ({
   users: [],
@@ -88,18 +89,35 @@ async function migrateJsonStore() {
   const db = { ...emptyDb(), ...JSON.parse(raw || "{}") };
   let changed = normalizeDbTenants(db);
   const rejectedInQueue = (db.catalogRequests || []).filter((request) => request.status === "rejected");
-  if (!rejectedInQueue.length) {
-    if (changed) await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
-    return;
+  if (rejectedInQueue.length) {
+    const archivedOriginalIds = new Set((db.catalogRejectedRequests || []).map((request) => request.originalRequestId));
+    const archived = rejectedInQueue
+      .filter((request) => !archivedOriginalIds.has(request.id))
+      .map((request) => buildRejectedCatalogRequest(request, request.reviewedAt || new Date().toISOString()));
+    db.catalogRejectedRequests = [...(db.catalogRejectedRequests || []), ...archived];
+    db.catalogRequests = (db.catalogRequests || []).filter((request) => request.status !== "rejected");
+    changed = true;
   }
 
-  const archivedOriginalIds = new Set((db.catalogRejectedRequests || []).map((request) => request.originalRequestId));
-  const archived = rejectedInQueue
-    .filter((request) => !archivedOriginalIds.has(request.id))
-    .map((request) => buildRejectedCatalogRequest(request, request.reviewedAt || new Date().toISOString()));
-  db.catalogRejectedRequests = [...(db.catalogRejectedRequests || []), ...archived];
-  db.catalogRequests = (db.catalogRequests || []).filter((request) => request.status !== "rejected");
-  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+  if (backfillJsonCatalogLotSuggestions(db)) changed = true;
+  if (changed) await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+}
+
+function backfillJsonCatalogLotSuggestions(db) {
+  db.appSettings = db.appSettings || {};
+  if (db.appSettings[CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY]) return false;
+
+  const lotsById = new Map((db.lots || []).map((lot) => [lot.id, lot]));
+  for (const product of db.products || []) {
+    if ((product.origem || "planilha") !== "planilha") continue;
+    if (!normalizeCode(product.codigoMl)) continue;
+    const lot = lotsById.get(product.lotId);
+    if (!lot?.userId) continue;
+    mergePendingCatalogRequest(db.catalogRequests, buildLotCatalogRequest(db, { userId: lot.userId, lot, product }));
+  }
+
+  db.appSettings[CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY] = new Date().toISOString();
+  return true;
 }
 
 export async function readDb() {
@@ -346,6 +364,32 @@ export async function listUsersForAdmin() {
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return groupAdminUsersWithOperators(users);
+}
+
+export async function listLotsForAdmin() {
+  await ensureStore();
+  if (hasPostgres()) {
+    const [db, usersResult] = await Promise.all([
+      readPgDb(),
+      query("select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users")
+    ]);
+    const usersById = new Map(usersResult.rows.map((row) => [row.id, sanitizeUser(userFromRow(row))]));
+    return db.lots
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((lot) => ({
+        ...summarizeLot(db, lot),
+        user: usersById.get(lot.userId) || null
+      }));
+  }
+
+  const db = await readDb();
+  const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
+  return db.lots
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((lot) => ({
+      ...summarizeLot(db, lot),
+      user: usersById.get(lot.userId) || null
+    }));
 }
 
 function groupAdminUsersWithOperators(users) {
@@ -622,6 +666,9 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
     try {
       await client.query("begin");
       await insertLotRows(client, { lots: [lot], products, rzItems });
+      for (const product of products) {
+        await mergePendingCatalogRequestPg(client, await buildLotCatalogRequestPg(client, { userId, lot, product }));
+      }
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
@@ -636,6 +683,9 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
   db.lots.push(lot);
   db.products.push(...products);
   db.rzItems.push(...rzItems);
+  for (const product of products) {
+    mergePendingCatalogRequest(db.catalogRequests, buildLotCatalogRequest(db, { userId, lot, product }));
+  }
   await writeDb(db);
   return summarizeLot(db, lot);
 }
@@ -1676,6 +1726,8 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      scope text not null default 'individual',
+      alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now(),
       reviewed_at timestamptz
@@ -1700,6 +1752,8 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      scope text not null default 'individual',
+      alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
       created_at timestamptz not null,
       rejected_at timestamptz not null default now()
@@ -1736,11 +1790,15 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists ean text not null default '';
     alter table catalog_requests add column if not exists link text not null default '';
     alter table catalog_requests add column if not exists foto text not null default '';
+    alter table catalog_requests add column if not exists scope text not null default 'individual';
+    alter table catalog_requests add column if not exists alert_message text not null default '';
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
     alter table catalog_requests add column if not exists created_by_user_id text references users(id) on delete set null;
     alter table catalog_requests add column if not exists operator_user_id text references users(id) on delete set null;
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
+    alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
+    alter table catalog_rejected_requests add column if not exists alert_message text not null default '';
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_lots add column if not exists descricao text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
@@ -1827,6 +1885,54 @@ async function ensurePgStore() {
     on conflict (id) do nothing
   `);
   await query("delete from catalog_requests where status = 'rejected'");
+  await backfillPgCatalogLotSuggestions();
+}
+
+async function backfillPgCatalogLotSuggestions() {
+  const flag = await query("select value from app_settings where key = $1 limit 1", [CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY]);
+  if (flag.rows.length) return;
+
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const products = await client.query(`
+      select
+        p.*,
+        l.id as lot__id,
+        l.user_id as lot__user_id,
+        l.nome_arquivo as lot__nome_arquivo,
+        l.percentual_arremate as lot__percentual_arremate,
+        l.custo_medio_unitario as lot__custo_medio_unitario,
+        l.fornecedor as lot__fornecedor,
+        l.prefixo_sku as lot__prefixo_sku,
+        l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
+        l.created_at as lot__created_at
+      from products p
+      join lots l on l.id = p.lot_id
+      where p.origem = 'planilha'
+        and trim(coalesce(p.codigo_ml, '')) <> ''
+      order by p.created_at asc
+    `);
+
+    for (const row of products.rows) {
+      const product = productFromRow(row);
+      const lot = lotFromPrefixedRow(row, "lot__");
+      await mergePendingCatalogRequestPg(client, await buildLotCatalogRequestPg(client, { userId: lot.userId, lot, product }));
+    }
+
+    await client.query(
+      `insert into app_settings (key, value, updated_at)
+       values ($1, $2, now())
+       on conflict (key) do nothing`,
+      [CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY, { completedAt: new Date().toISOString(), products: products.rows.length }]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function readPgDb() {
@@ -2193,6 +2299,8 @@ async function insertCatalogRequestRows(client, requests = []) {
       "ean",
       "link",
       "foto",
+      "scope",
+      "alert_message",
       "double_checks",
       "created_at",
       "reviewed_at"
@@ -2215,6 +2323,8 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.ean || "",
       request.link || "",
       request.foto || "",
+      request.scope || "individual",
+      request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
       request.createdAt,
       request.reviewedAt || null
@@ -2245,6 +2355,8 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "ean",
       "link",
       "foto",
+      "scope",
+      "alert_message",
       "double_checks",
       "created_at",
       "rejected_at"
@@ -2268,6 +2380,8 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.ean || "",
       request.link || "",
       request.foto || "",
+      request.scope || "individual",
+      request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
       request.createdAt,
       request.rejectedAt
@@ -3012,9 +3126,41 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     ean: payload.ean || product.ean || "",
     link: payload.link || product.link || "",
     foto: payload.foto || product.foto || "",
+    scope: payload.scope || "individual",
+    alertMessage: payload.alertMessage || "",
     createdAt: new Date().toISOString(),
     reviewedAt: null
   };
+}
+
+function buildLotCatalogRequest(db, { userId, lot, product }) {
+  const existing = findCatalogProduct(db, product.codigoMl);
+  return buildCatalogRequest({
+    userId,
+    lot,
+    product,
+    type: "create",
+    payload: {
+      ...product,
+      scope: "lot",
+      alertMessage: existing ? `Codigo ML ja cadastrado previamente no banco historico: ${existing.descricao || existing.codigoMl}.` : ""
+    }
+  });
+}
+
+async function buildLotCatalogRequestPg(client, { userId, lot, product }) {
+  const existing = await findPgCatalogProduct(client, product.codigoMl);
+  return buildCatalogRequest({
+    userId,
+    lot,
+    product,
+    type: "create",
+    payload: {
+      ...product,
+      scope: "lot",
+      alertMessage: existing ? `Codigo ML ja cadastrado previamente no banco historico: ${existing.descricao || existing.codigoMl}.` : ""
+    }
+  });
 }
 
 export function mergePendingCatalogRequest(requests, request) {
@@ -3025,7 +3171,14 @@ export function mergePendingCatalogRequest(requests, request) {
     return request;
   }
 
-  if (catalogRequestHasUserCheck(target, catalogRequestActorId(request))) return target;
+  const promoteToLot = (request.scope || "individual") === "lot";
+  const shouldForceLotDoubleCheck = promoteToLot && (target.scope || "individual") !== "lot";
+  if ((request.scope || "individual") === "lot") {
+    target.scope = "lot";
+    if (request.alertMessage) target.alertMessage = request.alertMessage;
+  }
+
+  if (catalogRequestHasUserCheck(target, catalogRequestActorId(request)) && !shouldForceLotDoubleCheck) return target;
 
   target.doubleChecks = [...normalizeDoubleChecks(target.doubleChecks), buildCatalogDoubleCheck(request)];
   return target;
@@ -3035,7 +3188,7 @@ async function mergePendingCatalogRequestPg(client, request) {
   const mergeable = request.type === "create"
     ? await client.query(
         `
-          select id, user_id, created_by_user_id, operator_user_id, double_checks
+          select id, user_id, created_by_user_id, operator_user_id, scope, double_checks
           from catalog_requests
           where status = 'pending'
             and type = 'create'
@@ -3054,7 +3207,12 @@ async function mergePendingCatalogRequestPg(client, request) {
     return request;
   }
 
-  if (catalogRequestHasUserCheck(catalogRequestFromRow(mergeable.rows[0]), catalogRequestActorId(request))) {
+  const mergeableRequest = catalogRequestFromRow(mergeable.rows[0]);
+  const shouldForceLotDoubleCheck = (request.scope || "individual") === "lot" && mergeableRequest.scope !== "lot";
+  if (catalogRequestHasUserCheck(mergeableRequest, catalogRequestActorId(request)) && !shouldForceLotDoubleCheck) {
+    if ((request.scope || "individual") === "lot") {
+      await promoteCatalogRequestToLotScopePg(client, mergeable.rows[0].id, request.alertMessage || "");
+    }
     return { ...request, id: mergeable.rows[0].id };
   }
 
@@ -3062,12 +3220,28 @@ async function mergePendingCatalogRequestPg(client, request) {
   await client.query(
     `
       update catalog_requests
-      set double_checks = coalesce(double_checks, '[]'::jsonb) || $2::jsonb
+      set
+        double_checks = coalesce(double_checks, '[]'::jsonb) || $2::jsonb,
+        scope = case when $3 = 'lot' then 'lot' else scope end,
+        alert_message = case when $3 = 'lot' and $4 <> '' then $4 else alert_message end
       where id = $1
     `,
-    [mergeable.rows[0].id, JSON.stringify([check])]
+    [mergeable.rows[0].id, JSON.stringify([check]), request.scope || "individual", request.alertMessage || ""]
   );
   return { ...request, id: mergeable.rows[0].id };
+}
+
+async function promoteCatalogRequestToLotScopePg(client, requestId, alertMessage = "") {
+  await client.query(
+    `
+      update catalog_requests
+      set
+        scope = 'lot',
+        alert_message = case when $2 <> '' then $2 else alert_message end
+      where id = $1
+    `,
+    [requestId, alertMessage]
+  );
 }
 
 function findMergeableCatalogRequest(requests, request) {
@@ -3096,6 +3270,8 @@ function buildCatalogDoubleCheck(request) {
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
+    scope: request.scope || "individual",
+    alertMessage: request.alertMessage || "",
     createdAt: request.createdAt || new Date().toISOString()
   };
 }
@@ -3129,6 +3305,8 @@ export function buildRejectedCatalogRequest(request, rejectedAt) {
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
+    scope: request.scope || "individual",
+    alertMessage: request.alertMessage || "",
     doubleChecks: normalizeDoubleChecks(request.doubleChecks),
     createdAt: request.createdAt || rejectedAt,
     rejectedAt
@@ -3416,6 +3594,8 @@ function catalogRequestFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    scope: row.scope || "individual",
+    alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
     createdAt: iso(row.created_at),
     reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : null,
@@ -3443,6 +3623,8 @@ function catalogRejectedRequestFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    scope: row.scope || "individual",
+    alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
     createdAt: iso(row.created_at),
     rejectedAt: iso(row.rejected_at)

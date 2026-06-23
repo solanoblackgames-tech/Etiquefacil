@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "../src/lots.js";
+import { sanitizeUser } from "../src/store.js";
 
 test("summarizeLot calculates lot and RZ progress from scoped records", () => {
   const db = {
@@ -229,4 +230,31 @@ test("findProductHistory returns previous products from same user even before ca
     findProductHistory(db, "user-1", "current-lot", "ML-PENDING").map((product) => product.id),
     ["same-user-history"]
   );
+});
+
+test("admin lot summaries can include lots from different users with owner data", () => {
+  const db = {
+    users: [
+      { id: "user-1", name: "Loja A", email: "a@example.com" },
+      { id: "user-2", name: "Loja B", email: "b@example.com" }
+    ],
+    lots: [
+      { id: "lot-1", userId: "user-1", nomeArquivo: "Lote A", createdAt: "2026-06-18T00:00:00.000Z" },
+      { id: "lot-2", userId: "user-2", nomeArquivo: "Lote B", createdAt: "2026-06-19T00:00:00.000Z" }
+    ],
+    products: [
+      { id: "product-1", lotId: "lot-1", origem: "planilha" },
+      { id: "product-2", lotId: "lot-2", origem: "planilha" }
+    ],
+    rzItems: []
+  };
+  const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
+  const lots = db.lots
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((lot) => ({ ...summarizeLot(db, lot), user: usersById.get(lot.userId) }));
+
+  assert.deepEqual(lots.map((lot) => [lot.nomeArquivo, lot.user.email]), [
+    ["Lote B", "b@example.com"],
+    ["Lote A", "a@example.com"]
+  ]);
 });

@@ -1313,6 +1313,7 @@ h3 {
 }
 
 #adminUsersTab,
+#adminLotsTab,
 #adminCatalogTab {
   display: grid;
   gap: 18px;
@@ -1364,6 +1365,22 @@ h3 {
 
 .catalog-product-row {
   grid-template-columns: minmax(260px, 1.7fr) minmax(120px, 0.65fr) minmax(110px, 0.6fr) minmax(100px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.6fr) minmax(180px, 0.8fr);
+}
+
+.admin-lot-row {
+  grid-template-columns: minmax(240px, 1.4fr) minmax(220px, 1fr) minmax(70px, 0.35fr) minmax(70px, 0.35fr) minmax(150px, 0.75fr) minmax(110px, 0.55fr);
+}
+
+.catalog-request-section {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.catalog-request-section h3 {
+  color: var(--ink);
+  font-size: 15px;
+  margin: 0;
 }
 
 .admin-row:last-child {
@@ -1466,6 +1483,18 @@ h3 {
 .catalog-link {
   color: #075e57;
   font-weight: 800;
+}
+
+.catalog-alert {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  color: #9a3412;
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 6px;
+  padding: 5px 7px;
 }
 
 .catalog-request-summary {
@@ -1845,6 +1874,7 @@ h3 {
   .admin-form,
   .admin-row,
   .admin-user-main,
+  .admin-lot-row,
   .admin-operator-item {
     grid-template-columns: 1fr;
   }

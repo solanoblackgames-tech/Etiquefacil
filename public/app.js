@@ -1,6 +1,7 @@
 const state = {
   user: null,
   adminUsers: [],
+  adminLots: [],
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
@@ -81,6 +82,7 @@ function bindEvents() {
   $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
 
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
+  $("#adminLotsRefreshButton").addEventListener("click", loadAdminLots);
   $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogReviewLists);
   $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
 
@@ -780,6 +782,7 @@ async function showApp(user) {
     $("#adminApp").classList.remove("hidden");
     $("#adminName").textContent = `${user.name} (${user.email})`;
     await loadAdminUsers();
+    await loadAdminLots();
     await loadAdminCatalogReviewLists();
     await loadAdminCatalogProducts();
     schedulePrimaryInputFocus();
@@ -1212,6 +1215,12 @@ async function loadAdminUsers() {
   renderAdminUsers();
 }
 
+async function loadAdminLots() {
+  const response = await api("/api/admin/lots");
+  state.adminLots = response.lots;
+  renderAdminLots();
+}
+
 async function loadAdminCatalogRequests() {
   const response = await api("/api/admin/catalog-requests");
   state.adminCatalogRequests = response.requests;
@@ -1242,6 +1251,7 @@ async function loadAdminCatalogProducts(event) {
 function setAdminTab(tab) {
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
   $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
+  $("#adminLotsTab").classList.toggle("hidden", tab !== "lots");
   $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
   schedulePrimaryInputFocus();
 }
@@ -1293,6 +1303,49 @@ function renderAdminUsers() {
   `;
 }
 
+function renderAdminLots() {
+  const wrapper = $("#adminLots");
+  if (!state.adminLots.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum lote encontrado.</p>';
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row admin-lot-row admin-row-head">
+        <span>Lote</span>
+        <span>Usuario</span>
+        <span>SKUs</span>
+        <span>RZs</span>
+        <span>Conferencia</span>
+        <span>Criado em</span>
+      </div>
+      ${state.adminLots.map(adminLotRow).join("")}
+    </div>
+  `;
+}
+
+function adminLotRow(lot) {
+  const user = lot.user || {};
+  const qty = lot.progress || {};
+  return `
+    <article class="admin-row admin-lot-row" data-admin-lot-id="${escapeHtml(lot.id)}">
+      <div>
+        <strong>${escapeHtml(lot.nomeArquivo)}</strong>
+        <span class="muted">${escapeHtml(lot.prefixoSku || "")} - ${escapeHtml(lot.fornecedor || "")}</span>
+      </div>
+      <div>
+        <strong>${escapeHtml(user.tenantName || user.name || "Usuario removido")}</strong>
+        <span class="muted">${escapeHtml(user.email || "")}</span>
+      </div>
+      <span>${lot.totalProducts || 0}</span>
+      <span>${(lot.rzs || []).length}</span>
+      <span>${qty.checkedQty || 0}/${qty.expectedQty || 0}<small class="muted">${money(qty.checkedValue || 0)} / ${money(qty.expectedValue || 0)}</small></span>
+      <span>${formatDate(lot.createdAt)}</span>
+    </article>
+  `;
+}
+
 function renderAdminCatalogRequests() {
   const wrapper = $("#adminCatalogRequests");
   if (!state.adminCatalogRequests.length) {
@@ -1300,18 +1353,36 @@ function renderAdminCatalogRequests() {
     return;
   }
 
+  const lotRequests = state.adminCatalogRequests.filter((request) => request.scope === "lot");
+  const individualRequests = state.adminCatalogRequests.filter((request) => request.scope !== "lot");
   wrapper.innerHTML = `
-    <div class="admin-table">
-      <div class="admin-row catalog-request-row admin-row-head">
-        <span>Sugestao</span>
-        <span>Codigo ML</span>
-        <span>Preco</span>
-        <span>Cadastros</span>
-        <span>Status</span>
-        <span>Acoes</span>
-      </div>
-      ${state.adminCatalogRequests.map(adminCatalogRequestRow).join("")}
-    </div>
+    ${adminCatalogRequestSection("Sugestoes de lotes", lotRequests)}
+    ${adminCatalogRequestSection("Sugestoes individuais", individualRequests)}
+  `;
+}
+
+function adminCatalogRequestSection(title, requests) {
+  return `
+    <section class="catalog-request-section">
+      <h3>${escapeHtml(title)}</h3>
+      ${
+        requests.length
+          ? `
+            <div class="admin-table">
+              <div class="admin-row catalog-request-row admin-row-head">
+                <span>Sugestao</span>
+                <span>Codigo ML</span>
+                <span>Preco</span>
+                <span>Cadastros</span>
+                <span>Status</span>
+                <span>Acoes</span>
+              </div>
+              ${requests.map(adminCatalogRequestRow).join("")}
+            </div>
+          `
+          : '<p class="muted">Nenhuma sugestao nesta lista.</p>'
+      }
+    </section>
   `;
 }
 
@@ -1403,6 +1474,7 @@ function adminCatalogRequestRow(request) {
   const actor = catalogActorLabel(request);
   const pending = request.status === "pending";
   const options = catalogApprovalOptions(request);
+  const alertHtml = request.alertMessage ? `<span class="catalog-alert">${escapeHtml(request.alertMessage)}</span>` : "";
   const choiceHtml = options.length > 1
     ? `
       <details class="double-checks" open>
@@ -1421,6 +1493,7 @@ function adminCatalogRequestRow(request) {
         <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
         <span class="muted">${escapeHtml(actor)} - ${formatDate(request.createdAt)}</span>
         <span class="muted">${escapeHtml(request.descricao)}</span>
+        ${alertHtml}
         </div>
       </div>
       <span>${escapeHtml(request.codigoMl)}</span>

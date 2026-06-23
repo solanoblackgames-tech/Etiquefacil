@@ -135,6 +135,78 @@ test("mergePendingCatalogRequest accepts double check from another operator in t
   assert.equal(requests[0].doubleChecks[0].operatorUserId, "operator-2");
 });
 
+test("mergePendingCatalogRequest promotes manual suggestion to lot suggestion when spreadsheet confirms the same ML", () => {
+  const requests = [
+    {
+      id: "request-1",
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      type: "create",
+      status: "pending",
+      scope: "individual",
+      codigoMl: "ML123",
+      descricao: "Produto manual",
+      valorUnit: 100,
+      createdAt: "2026-06-18T10:00:00.000Z"
+    }
+  ];
+
+  mergePendingCatalogRequest(requests, {
+    id: "request-2",
+    userId: "owner-1",
+    createdByUserId: "owner-1",
+    lotId: "lot-2",
+    productId: "product-2",
+    type: "create",
+    status: "pending",
+    scope: "lot",
+    alertMessage: "Codigo ML ja cadastrado previamente no banco historico: Produto aprovado.",
+    codigoMl: "ML123",
+    descricao: "Produto da planilha",
+    valorUnit: 105,
+    createdAt: "2026-06-18T11:00:00.000Z"
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].scope, "lot");
+  assert.equal(requests[0].alertMessage, "Codigo ML ja cadastrado previamente no banco historico: Produto aprovado.");
+  assert.equal(requests[0].doubleChecks.length, 1);
+  assert.equal(requests[0].doubleChecks[0].scope, "lot");
+  assert.equal(requests[0].doubleChecks[0].descricao, "Produto da planilha");
+});
+
+test("mergePendingCatalogRequest keeps non-matching manual suggestions in the individual list", () => {
+  const requests = [
+    {
+      id: "request-1",
+      userId: "owner-1",
+      type: "create",
+      status: "pending",
+      scope: "individual",
+      codigoMl: "ML123",
+      descricao: "Produto manual",
+      valorUnit: 100,
+      createdAt: "2026-06-18T10:00:00.000Z"
+    }
+  ];
+
+  mergePendingCatalogRequest(requests, {
+    id: "request-2",
+    userId: "owner-1",
+    type: "create",
+    status: "pending",
+    scope: "lot",
+    codigoMl: "ML456",
+    descricao: "Produto da planilha",
+    valorUnit: 105,
+    createdAt: "2026-06-18T11:00:00.000Z"
+  });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].scope, "individual");
+  assert.equal(requests[1].scope, "lot");
+});
+
 test("selectCatalogApprovalPayload uses the selected double check values", () => {
   const request = {
     id: "request-1",
