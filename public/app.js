@@ -49,6 +49,11 @@ await bootstrap();
 async function bootstrap() {
   bindEvents();
   state.config = await api("/api/config");
+  const transferReceiveRequest = getTransferReceiveRequest();
+  if (transferReceiveRequest) {
+    await showTransferReceiveOnly(transferReceiveRequest);
+    return;
+  }
   const me = await api("/api/me");
   if (me.user) showApp(me.user);
   else showAuth();
@@ -99,6 +104,12 @@ function bindEvents() {
   $("#uploadForm").addEventListener("submit", uploadLot);
 
   window.addEventListener("popstate", () => {
+    if (state.transferReceiveOnly) {
+      const transferReceiveRequest = getTransferReceiveRequest();
+      if (transferReceiveRequest) showTransferReceiveOnly(transferReceiveRequest);
+      else window.location.href = "/";
+      return;
+    }
     if (state.user && !state.scanOnly) applyRouteFromLocation();
   });
 
@@ -1600,11 +1611,16 @@ async function showTransferReceiveOnly({ transferLotId }) {
   $("#transferDetail").classList.remove("empty");
   $("#transferDetail").innerHTML = '<p class="muted">Carregando remessa...</p>';
   try {
-    const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}`);
+    const response = await api(`${transferReceiveApiBase(transferLotId)}`);
     renderTransferReceivePage(response.lot);
   } catch (error) {
     $("#transferDetail").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
   }
+}
+
+function transferReceiveApiBase(transferLotId) {
+  const prefix = state.user ? "/api/transfer-lots" : "/api/public/transfer-lots";
+  return `${prefix}/${encodeURIComponent(transferLotId)}`;
 }
 
 function renderTransferReceivePage(lot) {
@@ -1687,7 +1703,7 @@ async function receiveTransferCurrent(transferLotId) {
   if (!code) return;
   button.disabled = true;
   try {
-    const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/receive-scan`, {
+    const response = await api(`${transferReceiveApiBase(transferLotId)}/receive-scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code })

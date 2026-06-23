@@ -45,6 +45,7 @@ import {
   getLotBlingData,
   getPgPool,
   getExternalExcessProduct,
+  getPublicTransferLotDetail,
   getStoreHealth,
   getTransferLotDetail,
   getPublicUserById,
@@ -61,6 +62,7 @@ import {
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
   recordOperatorActivity,
+  receivePublicTransferLotScan,
   receiveTransferLotScan,
   releaseTransferLotForStore,
   reviewCatalogRequest,
@@ -294,6 +296,12 @@ app.get("/api/transfer-lots/:transferLotId", requireAuth, async (req, res) => {
   res.json({ lot });
 });
 
+app.get("/api/public/transfer-lots/:transferLotId", async (req, res) => {
+  const lot = await getPublicTransferLotDetail(req.params.transferLotId);
+  if (!lot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+  res.json({ lot });
+});
+
 app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res) => {
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
@@ -319,6 +327,15 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (r
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code });
     res.json(await receiveTransferLotScan({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, res) => {
+  try {
+    const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
+    res.json(await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code }));
   } catch (error) {
     sendError(res, error);
   }

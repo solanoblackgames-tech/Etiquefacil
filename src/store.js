@@ -744,6 +744,22 @@ export async function getTransferLotDetail(userId, transferLotId) {
   return summarizeTransferLot(lot, db.transferItems || []);
 }
 
+export async function getPublicTransferLotDetail(transferLotId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const lotResult = await query("select * from transfer_lots where id = $1 limit 1", [transferLotId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) return null;
+    const items = await query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]);
+    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow));
+  }
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
+  if (!lot) return null;
+  return summarizeTransferLot(lot, db.transferItems || []);
+}
+
 export async function createTransferLot({ userId, name, depositoOrigem, depositoDestino, createdByUserId = null }) {
   await ensureStore();
   const lot = {
@@ -823,6 +839,26 @@ export async function receiveTransferLotScan({ userId, transferLotId, code }) {
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+  if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
+  if (!item) throw notFound("Produto nao previsto nesta remessa.");
+  item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  updateTransferLotReceivingStatus(lot, db.transferItems || []);
+  await writeDb(db);
+  return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
+export async function receivePublicTransferLotScan({ transferLotId, code }) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
+  if (hasPostgres()) return receiveTransferLotScanPg({ transferLotId, code: normalized });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
@@ -2504,7 +2540,9 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
   let result;
   try {
     await client.query("begin");
-    const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
+    const lotResult = userId
+      ? await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId])
+      : await client.query("select * from transfer_lots where id = $1 limit 1 for update", [transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
     if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
@@ -2536,7 +2574,7 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
     client.release();
   }
 
-  return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
+  return { ...result, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
 
 async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
