@@ -890,7 +890,7 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req
 
     if (!preview && result?.product?.id) {
       try {
-        result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+        result.bling = await syncSingleNoSheetProductStockEntry(userId, result.lot, result.product, codigoRz);
       } catch (blingError) {
         result.bling = { ok: false, error: blingError.message };
       }
@@ -1295,6 +1295,30 @@ async function syncSingleLotProductToBling(userId, lot, product) {
   return syncBlingProducts({
     integration,
     products: withLotSupplier([product], lot),
+    saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+  });
+}
+
+async function syncSingleNoSheetProductStockEntry(userId, lot, product, codigoRz) {
+  const integration = await getRequiredBlingCredentials(userId);
+  return syncBlingStockMovement({
+    integration,
+    item: {
+      sku: product.sku || "",
+      codigoMl: product.codigoMl || "",
+      ean: product.ean || "",
+      descricao: product.descricao || "",
+      valorUnit: Number(product.valorUnit || 0),
+      precoCusto: Number(product.precoCusto || 0),
+      fornecedor: lot.fornecedor || "",
+      link: product.link || "",
+      foto: product.foto || "",
+      quantidade: 1,
+      qtdConferida: 1
+    },
+    depositoName: BLING_STOCK_DEPOSIT,
+    operation: "entry",
+    observacao: `Entrada automatica lote sem planilha RZ ${codigoRz}`,
     saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
   });
 }

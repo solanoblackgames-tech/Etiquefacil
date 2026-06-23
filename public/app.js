@@ -327,7 +327,8 @@ async function addDiverseItem(event) {
 async function showDiverseBlingSyncStatus(response, baseMessage) {
   const message = $("#diverseScanMessage");
   try {
-    const bling = await syncDiverseProductToBling(response.lot.id, response.product.id);
+    if (response.bling?.ok === false) throw new Error(response.bling.error || "Erro ao sincronizar produto.");
+    const bling = response.bling || await syncDiverseProductToBling(response.lot.id, response.product.id);
     message.style.color = "#0f766e";
     message.textContent = `${baseMessage} ${blingProductSyncMessage(bling)}`;
   } catch (error) {
@@ -344,6 +345,7 @@ function syncDiverseProductToBling(lotId, productId) {
 
 function blingProductSyncMessage(result) {
   const item = (result.results || [])[0];
+  if (item?.status === "entered") return `Produto sincronizado e saldo lancado no deposito ${result.deposito?.descricao || "Geral"}.`;
   if (item?.status === "created") return "Produto criado no Bling.";
   if (item?.status === "updated") return "Produto atualizado no Bling.";
   return "Produto sincronizado no Bling.";
