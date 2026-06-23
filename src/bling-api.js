@@ -74,14 +74,23 @@ export function buildBlingStockExitPayload(item, { productId, depositoId, observ
 }
 
 export function buildBlingStockTransferPayload(item, { productId, depositoOrigemId, depositoDestinoId, observacao = "" } = {}) {
-  return compactObject({
-    produto: { id: Number(productId), codigo: item.sku || "" },
-    deposito: { id: Number(depositoOrigemId) },
-    depositoDestino: { id: Number(depositoDestinoId) },
-    operacao: "T",
-    quantidade: numberOrZero(item.qtdConferida || item.quantidadeConferida || item.quantidade),
-    observacoes: observacao
-  });
+  const transferItem = {
+    ...item,
+    quantidade: item.qtdConferida || item.quantidadeConferida || item.quantidade || 1,
+    qtdConferida: item.qtdConferida || item.quantidadeConferida || item.quantidade || 1
+  };
+  return {
+    saida: buildBlingStockExitPayload(transferItem, {
+      productId,
+      depositoId: depositoOrigemId,
+      observacao
+    }),
+    entrada: buildBlingStockEntryPayload(transferItem, {
+      productId,
+      depositoId: depositoDestinoId,
+      observacao
+    })
+  };
 }
 
 export async function syncBlingProducts({ integration, products, saveIntegration }) {
@@ -274,15 +283,15 @@ export async function syncBlingStockTransfers({ integration, items, depositoOrig
     const product = await client.findProductBySku(item.sku);
     if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
 
-    const response = await client.createStockEntry(
-      buildBlingStockTransferPayload(item, {
-        productId: product.id,
-        depositoOrigemId: origem.id,
-        depositoDestinoId: destino.id,
-        observacao
-      })
-    );
-    results.push({ sku: item.sku, status: "transferred", blingProductId: product.id, response });
+    const payloads = buildBlingStockTransferPayload(item, {
+      productId: product.id,
+      depositoOrigemId: origem.id,
+      depositoDestinoId: destino.id,
+      observacao
+    });
+    const saida = await client.createStockEntry(payloads.saida);
+    const entrada = await client.createStockEntry(payloads.entrada);
+    results.push({ sku: item.sku, status: "transferred", blingProductId: product.id, response: { saida, entrada } });
   }
 
   return {

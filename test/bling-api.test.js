@@ -107,12 +107,17 @@ test("Bling stock transfer payload maps origin and destination deposits", () => 
     }
   );
 
-  assert.deepEqual(payload.produto, { id: 123, codigo: "AMZ04L0001" });
-  assert.deepEqual(payload.deposito, { id: 456 });
-  assert.deepEqual(payload.depositoDestino, { id: 789 });
-  assert.equal(payload.operacao, "T");
-  assert.equal(payload.quantidade, 3);
-  assert.equal(payload.observacoes, "Transferencia Etiquefacil");
+  assert.deepEqual(payload.saida.produto, { id: 123, codigo: "AMZ04L0001" });
+  assert.deepEqual(payload.saida.deposito, { id: 456 });
+  assert.equal(payload.saida.operacao, "S");
+  assert.equal(payload.saida.quantidade, 3);
+  assert.equal(payload.saida.observacoes, "Transferencia Etiquefacil");
+
+  assert.deepEqual(payload.entrada.produto, { id: 123, codigo: "AMZ04L0001" });
+  assert.deepEqual(payload.entrada.deposito, { id: 789 });
+  assert.equal(payload.entrada.operacao, "E");
+  assert.equal(payload.entrada.quantidade, 3);
+  assert.equal(payload.entrada.observacoes, "Transferencia Etiquefacil");
 });
 
 test("Bling stock exit payload maps decremented item to stock output", () => {
