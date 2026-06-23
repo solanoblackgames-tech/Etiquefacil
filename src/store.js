@@ -795,6 +795,46 @@ export async function scanTransferLot({ userId, transferLotId, code }) {
   return { status: existing ? "updated" : "added", product, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
+export async function releaseTransferLotForStore({ userId, transferLotId }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update transfer_lots set status = 'waiting_store' where id = $1 and user_id = $2 and status <> 'synced' returning *",
+      [transferLotId, userId]
+    );
+    if (!result.rows.length) throw notFound("Lote de transferencia nao encontrado.");
+    return { lot: await getTransferLotDetail(userId, transferLotId) };
+  }
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+  if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
+  lot.status = "waiting_store";
+  await writeDb(db);
+  return { lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
+export async function receiveTransferLotScan({ userId, transferLotId, code }) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
+  if (hasPostgres()) return receiveTransferLotScanPg({ userId, transferLotId, code: normalized });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+  if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
+  if (!item) throw notFound("Produto nao previsto nesta remessa.");
+  item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  updateTransferLotReceivingStatus(lot, db.transferItems || []);
+  await writeDb(db);
+  return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
 export async function decrementTransferLotItem({ userId, transferLotId, itemId }) {
   await ensureStore();
   if (hasPostgres()) return decrementTransferLotItemPg({ userId, transferLotId, itemId });
@@ -1560,6 +1600,7 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists operator_user_id text references users(id) on delete set null;
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
+    alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
@@ -1954,7 +1995,7 @@ async function insertTransferItemRows(client, items = []) {
   await insertRows(
     target,
     "transfer_items",
-    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "created_at"],
+    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "created_at"],
     items.map((item) => [
       item.id,
       item.transferLotId,
@@ -1965,6 +2006,7 @@ async function insertTransferItemRows(client, items = []) {
       item.descricao,
       item.ean || "",
       item.quantidade || 0,
+      item.quantidadeConferida || 0,
       item.createdAt
     ])
   );
@@ -2457,6 +2499,46 @@ async function scanTransferLotPg({ userId, transferLotId, code }) {
   return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
 }
 
+async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+    if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+    if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+    const itemResult = await client.query(
+      `select * from transfer_items
+       where transfer_lot_id = $1
+         and (upper(trim(codigo_ml)) = upper(trim($2)) or upper(trim(sku)) = upper(trim($2)) or upper(trim(ean)) = upper(trim($2)))
+       limit 1 for update`,
+      [lot.id, code]
+    );
+    if (!itemResult.rows.length) throw notFound("Produto nao previsto nesta remessa.");
+
+    const item = transferItemFromRow(itemResult.rows[0]);
+    const nextReceived = Number(item.quantidadeConferida || 0) + 1;
+    await client.query("update transfer_items set quantidade_conferida = $2 where id = $1", [item.id, nextReceived]);
+
+    const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
+    const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived } : transferItemFromRow(row));
+    updateTransferLotReceivingStatus(lot, items);
+    await client.query("update transfer_lots set status = $2 where id = $1", [lot.id, lot.status]);
+    result = { status: nextReceived > Number(item.quantidade || 0) ? "over" : "received", item: { ...item, quantidadeConferida: nextReceived } };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
+}
+
 async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
   const client = await getPgPool().connect();
   try {
@@ -2756,7 +2838,6 @@ function normalizeManualProduct(input = {}, codigoMl) {
     codigoMl: normalizeCode(codigoMl),
     descricao,
     valorUnit,
-    precoCusto: roundMoney(Number(input.precoCusto || 0)),
     categoria: String(input.categoria || "").trim(),
     subcategoria: String(input.subcategoria || "").trim(),
     ean: String(input.ean || "").trim(),
@@ -2977,12 +3058,49 @@ function summarizeTransferLots(lots, items) {
 
 function summarizeTransferLot(lot, items) {
   const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
+  const totalQty = lotItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+  const totalReceived = lotItems.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
   return {
     ...lot,
     totalSkus: lotItems.length,
-    totalQty: lotItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0),
-    items: lotItems.sort((a, b) => a.sku.localeCompare(b.sku))
+    totalQty,
+    totalPlanned: totalQty,
+    totalReceived,
+    totalPending: Math.max(0, totalQty - totalReceived),
+    items: lotItems.sort((a, b) => a.sku.localeCompare(b.sku)).map((item) => ({
+      ...item,
+      quantidadeConferida: Number(item.quantidadeConferida || 0),
+      falta: Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0)),
+      statusConferencia: transferItemReceiveStatus(item)
+    }))
   };
+}
+
+function transferItemReceiveStatus(item) {
+  const planned = Number(item.quantidade || 0);
+  const received = Number(item.quantidadeConferida || 0);
+  if (!received) return "pendente";
+  if (received < planned) return "parcial";
+  if (received === planned) return "ok";
+  return "sobra";
+}
+
+function findTransferItemForReceive(items, transferLotId, code) {
+  const normalized = normalizeCode(code);
+  return (items || []).find((item) => {
+    return item.transferLotId === transferLotId &&
+      (normalizeCode(item.codigoMl) === normalized || normalizeCode(item.sku) === normalized || normalizeCode(item.ean) === normalized);
+  });
+}
+
+function updateTransferLotReceivingStatus(lot, items) {
+  const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
+  const hasItems = lotItems.length > 0;
+  const hasOver = lotItems.some((item) => Number(item.quantidadeConferida || 0) > Number(item.quantidade || 0));
+  const allOk = hasItems && lotItems.every((item) => Number(item.quantidadeConferida || 0) === Number(item.quantidade || 0));
+  if (hasOver) lot.status = "divergent";
+  else if (allOk) lot.status = "ready_sync";
+  else lot.status = "checking";
 }
 
 function findTransferProduct(db, userId, code) {
@@ -3008,6 +3126,7 @@ function buildTransferItem(transferLotId, product) {
     descricao: product.descricao || "",
     ean: product.ean || "",
     quantidade: 1,
+    quantidadeConferida: 0,
     createdAt: new Date().toISOString()
   };
 }
@@ -3285,6 +3404,7 @@ function transferItemFromRow(row) {
     descricao: row.descricao,
     ean: row.ean || "",
     quantidade: Number(row.quantidade || 0),
+    quantidadeConferida: Number(row.quantidade_conferida || 0),
     createdAt: iso(row.created_at)
   };
 }

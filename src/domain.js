@@ -343,7 +343,7 @@ export function buildBlingStockTransferCsv(items, { depositoOrigem = "", deposit
     "Nome do Produto": item.descricao || "",
     "Deposito origem*": depositoOrigem,
     "Deposito destino*": depositoDestino,
-    "Quantidade*": String(Number(item.quantidade || item.qtdConferida || 0)),
+    "Quantidade*": String(Number(item.qtdConferida || item.quantidadeConferida || item.quantidade || 0)),
     Observacao: observacao
   }));
 

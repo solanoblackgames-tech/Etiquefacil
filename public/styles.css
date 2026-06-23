@@ -1076,6 +1076,11 @@ h3 {
   color: #9a3412;
 }
 
+.badge.danger {
+  background: #fee4e2;
+  color: var(--danger);
+}
+
 .search-bar {
   display: grid;
   gap: 10px;
@@ -1249,7 +1254,24 @@ h3 {
 }
 
 .transfer-row {
-  grid-template-columns: 1fr 1fr 2.2fr 0.5fr 0.8fr;
+  grid-template-columns: 1fr 1fr 2.2fr 0.45fr 0.55fr 0.55fr 0.8fr;
+}
+
+.camera-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.camera-panel video {
+  background: #101820;
+  border-radius: 6px;
+  max-height: 360px;
+  object-fit: cover;
+  width: 100%;
 }
 
 .transfer-empty {
@@ -1594,6 +1616,52 @@ h3 {
   width: 60mm;
 }
 
+.transfer-qr-label {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #cfd6dc;
+  box-sizing: border-box;
+  color: #111;
+  display: grid;
+  grid-template-columns: 23mm 1fr;
+  grid-template-rows: 6mm 22mm 1fr;
+  height: 40mm;
+  overflow: hidden;
+  padding: 3mm;
+  width: 60mm;
+}
+
+.transfer-qr-label strong {
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  grid-column: 1 / -1;
+  letter-spacing: 1px;
+}
+
+.transfer-qr-label img {
+  grid-row: 2 / 4;
+  height: 23mm;
+  width: 23mm;
+}
+
+.transfer-qr-label span {
+  align-self: end;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.transfer-qr-label small {
+  align-self: start;
+  color: #333;
+  font-family: Arial, sans-serif;
+  font-size: 5px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
 .label-print.has-note {
   grid-template-rows: 8mm 10.5mm 3mm 5mm 4.5mm;
   padding-bottom: 1.5mm;
@@ -1821,7 +1889,8 @@ h3 {
     width: 60mm;
   }
 
-  .label-print {
+  .label-print,
+  .transfer-qr-label {
     border: 0;
     height: 40mm;
     page-break-after: avoid;

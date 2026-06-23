@@ -79,7 +79,7 @@ export function buildBlingStockTransferPayload(item, { productId, depositoOrigem
     deposito: { id: Number(depositoOrigemId) },
     depositoDestino: { id: Number(depositoDestinoId) },
     operacao: "T",
-    quantidade: numberOrZero(item.quantidade || item.qtdConferida),
+    quantidade: numberOrZero(item.qtdConferida || item.quantidadeConferida || item.quantidade),
     observacoes: observacao
   });
 }

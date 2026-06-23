@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
+import QRCode from "qrcode";
 import "dotenv/config";
 import {
   deleteBlingProductBySku,
@@ -60,6 +61,8 @@ import {
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
   recordOperatorActivity,
+  receiveTransferLotScan,
+  releaseTransferLotForStore,
   reviewCatalogRequest,
   scanLotRz,
   scanTransferLot,
@@ -301,9 +304,42 @@ app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res)
   }
 });
 
+app.post("/api/transfer-lots/:transferLotId/release", requireAuth, async (req, res) => {
+  try {
+    const result = await releaseTransferLotForStore({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId });
+    await recordOperatorActivity(req.session.user, "release_transfer_lot", { transferLotId: req.params.transferLotId });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (req, res) => {
+  try {
+    const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
+    await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code });
+    res.json(await receiveTransferLotScan({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAuth, async (req, res) => {
   try {
     res.json(await decrementTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, async (req, res) => {
+  try {
+    const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+    const url = `${req.protocol}://${req.get("host")}/transferencias/${encodeURIComponent(lot.id)}/loja`;
+    const svg = await QRCode.toString(url, { type: "svg", margin: 1, width: 240, errorCorrectionLevel: "M" });
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+    res.send(svg);
   } catch (error) {
     sendError(res, error);
   }
@@ -314,7 +350,7 @@ app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, async (req, res)
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
     if (!lot.items.length) return res.status(404).json({ error: "Nenhum item bipado neste lote." });
-    const csv = buildBlingStockTransferCsv(lot.items, {
+    const csv = buildBlingStockTransferCsv(transferItemsForBling(lot), {
       depositoOrigem: lot.depositoOrigem,
       depositoDestino: lot.depositoDestino,
       observacao: `Transferencia ${lot.name}`
@@ -333,10 +369,12 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req
     const lot = await getTransferLotDetail(userId, req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
     if (!lot.items.length) throw new Error("Nenhum item bipado neste lote.");
+    const items = transferItemsForBling(lot, { requireReceived: true });
+    if (!items.length) throw new Error("Nenhum item conferido pela loja nesta remessa.");
     const integration = await getRequiredBlingCredentials(userId);
     const result = await syncBlingStockTransfers({
       integration,
-      items: lot.items,
+      items,
       depositoOrigemName: lot.depositoOrigem,
       depositoDestinoName: lot.depositoDestino,
       observacao: `Transferencia Etiquefacil ${lot.name}`,
@@ -348,6 +386,16 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req
     sendError(res, error);
   }
 });
+
+function transferItemsForBling(lot, { requireReceived = false } = {}) {
+  const hasReceived = (lot.items || []).some((item) => Number(item.quantidadeConferida || 0) > 0);
+  return (lot.items || [])
+    .map((item) => ({
+      ...item,
+      quantidade: Number(requireReceived || hasReceived ? item.quantidadeConferida || 0 : item.quantidade || 0)
+    }))
+    .filter((item) => Number(item.quantidade || 0) > 0);
+}
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
   const [integration, appConfig] = await Promise.all([

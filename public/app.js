@@ -19,6 +19,11 @@ const state = {
   selectedDiverseRz: null,
   selectedRz: null,
   scanOnly: false,
+  transferReceiveOnly: false,
+  transferCameraStream: null,
+  transferCameraTimer: null,
+  lastCameraCode: "",
+  lastCameraScanAt: 0,
   pendingScan: false,
   pendingDecrement: false,
   labelProduct: null,
@@ -342,7 +347,6 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const code = $("#manualProductCode");
     const description = $("#manualProductDescription");
     const price = $("#manualProductPrice");
-    const cost = $("#manualProductCost");
     const ean = $("#manualProductEan");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
@@ -369,7 +373,6 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       event.preventDefault();
       const descricao = description.value.trim();
       const valorUnit = parseMoneyInput(price.value);
-      const precoCusto = cost.value.trim() ? parseMoneyInput(cost.value) : 0;
       if (!descricao) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -380,15 +383,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         price.focus();
         return;
       }
-      if (!Number.isFinite(precoCusto) || precoCusto < 0) {
-        error.textContent = "Informe um custo valido.";
-        cost.focus();
-        return;
-      }
       const result = {
         descricao,
         valorUnit,
-        precoCusto,
         ean: ean.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
@@ -736,6 +733,11 @@ async function showApp(user) {
     await showScanOnly(scanRequest);
     return;
   }
+  const transferReceiveRequest = getTransferReceiveRequest();
+  if (transferReceiveRequest) {
+    await showTransferReceiveOnly(transferReceiveRequest);
+    return;
+  }
   await loadLots();
   await loadTransferLots();
   await applyRouteFromLocation({ replace: true });
@@ -751,6 +753,7 @@ function applyUserPermissions(user) {
 function showAuth() {
   document.body.classList.remove("scan-only");
   document.body.classList.remove("lot-focus");
+  stopTransferCamera();
   $("#auth").classList.remove("hidden");
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
@@ -1028,6 +1031,7 @@ function parseRoute(pathname) {
   const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length || parts[0] === "entradas" || parts[0] === "perfil" || parts[0] === "bling") return { view: "profile" };
   if (parts[0] === "busca") return { view: "search" };
+  if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
   if (parts[0] === "lotes" && parts[1]) return { view: "lot", lotId: parts[1] };
@@ -1096,6 +1100,16 @@ function getScanRequest() {
 
   const route = parseRoute(window.location.pathname);
   if (route.view === "lotRz") return { lotId: route.lotId, codigoRz: route.codigoRz };
+  return null;
+}
+
+function getTransferReceiveRequest() {
+  const params = new URLSearchParams(window.location.search);
+  const transferLotId = params.get("receiveTransfer");
+  if (transferLotId) return { transferLotId };
+
+  const route = parseRoute(window.location.pathname);
+  if (route.view === "transferReceive") return { transferLotId: route.transferLotId };
   return null;
 }
 
@@ -1569,6 +1583,168 @@ async function handleAdminCatalogProductsClick(event) {
   }
 }
 
+async function showTransferReceiveOnly({ transferLotId }) {
+  state.transferReceiveOnly = true;
+  state.selectedTransferLotId = transferLotId;
+  document.body.classList.add("scan-only");
+  $("#auth").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  $("#adminApp").classList.add("hidden");
+  $("#app .app-nav")?.classList.add("hidden");
+  $(".upload-band").classList.add("hidden");
+  $("#lotsTab").classList.add("hidden");
+  $("#searchTab").classList.add("hidden");
+  $("#profileTab").classList.add("hidden");
+  $("#transfersTab").classList.remove("hidden");
+  $("#transferLots").innerHTML = "";
+  $("#transferDetail").classList.remove("empty");
+  $("#transferDetail").innerHTML = '<p class="muted">Carregando remessa...</p>';
+  try {
+    const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}`);
+    renderTransferReceivePage(response.lot);
+  } catch (error) {
+    $("#transferDetail").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderTransferReceivePage(lot) {
+  const detail = $("#transferDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="scan-page transfer-receive-page">
+      <div class="scan-heading">
+        <div>
+          <span class="muted">${escapeHtml(lot.depositoOrigem)} â†’ ${escapeHtml(lot.depositoDestino)}</span>
+          <h2>${escapeHtml(lot.name)}</h2>
+        </div>
+        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+      </div>
+      <div class="summary-grid">
+        ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
+        ${metric("Conferido", lot.totalReceived || 0)}
+        ${metric("Falta", lot.totalPending ?? 0)}
+        ${metric("SKUs", lot.totalSkus)}
+      </div>
+      <div class="camera-panel">
+        <video id="transferCameraVideo" playsinline muted></video>
+        <div class="actions">
+          <button type="button" id="transferCameraButton">Ler com camera</button>
+          <button type="button" id="transferCameraStopButton" class="ghost">Parar camera</button>
+        </div>
+      </div>
+      <form id="transferReceiveForm" class="scan-box">
+        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" autofocus />
+        <button type="submit">Conferir</button>
+      </form>
+      <div id="transferReceiveMessage" class="message"></div>
+      <div class="diverse-table transfer-table">
+        <div class="diverse-row transfer-row diverse-row-head">
+          <span>SKU</span>
+          <span>Codigo</span>
+          <span>Produto</span>
+          <span>CD</span>
+          <span>Loja</span>
+          <span>Falta</span>
+          <span>Status</span>
+        </div>
+        ${lot.items.map(transferReceiveItemRow).join("")}
+      </div>
+    </section>
+  `;
+  $("#transferReceiveForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    receiveTransferCurrent(lot.id);
+  });
+  $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id));
+  $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
+  schedulePrimaryInputFocus(["#transferReceiveInput"]);
+}
+
+function transferReceiveItemRow(item) {
+  const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
+  return `
+    <article class="diverse-row transfer-row">
+      <strong>${escapeHtml(item.sku)}</strong>
+      <span>${escapeHtml(item.codigoMl)}</span>
+      <span>${escapeHtml(item.descricao)}</span>
+      <span>${item.quantidade}</span>
+      <span>${item.quantidadeConferida || 0}</span>
+      <span>${falta}</span>
+      <span>${escapeHtml(receiveStatusLabel(item.statusConferencia))}</span>
+    </article>
+  `;
+}
+
+function receiveStatusLabel(status) {
+  return ({ pendente: "Pendente", parcial: "Parcial", ok: "OK", sobra: "Sobra" })[status] || "";
+}
+
+async function receiveTransferCurrent(transferLotId) {
+  const input = $("#transferReceiveInput");
+  const button = $("#transferReceiveForm button");
+  const code = normalizeCode(input.value);
+  input.value = code;
+  if (!code) return;
+  button.disabled = true;
+  try {
+    const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/receive-scan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+    renderTransferReceivePage(response.lot);
+    const message = $("#transferReceiveMessage");
+    message.style.color = response.status === "over" ? "#a35c00" : "#0f766e";
+    message.textContent = response.status === "over" ? "Item conferido acima do planejado." : "Item conferido.";
+  } catch (error) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = error.message;
+    input.select();
+  } finally {
+    button.disabled = false;
+    schedulePrimaryInputFocus(["#transferReceiveInput"]);
+  }
+}
+
+async function startTransferCamera(transferLotId) {
+  if (!("BarcodeDetector" in window)) {
+    $("#transferReceiveMessage").textContent = "Este navegador nao possui leitor de codigo nativo. Use o campo de bipagem.";
+    return;
+  }
+  stopTransferCamera();
+  try {
+    const detector = new BarcodeDetector({ formats: ["qr_code", "ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e"] });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    state.transferCameraStream = stream;
+    const video = $("#transferCameraVideo");
+    video.srcObject = stream;
+    await video.play();
+    state.transferCameraTimer = window.setInterval(async () => {
+      if (!video.videoWidth) return;
+      const codes = await detector.detect(video).catch(() => []);
+      const code = codes[0]?.rawValue ? normalizeCode(codes[0].rawValue) : "";
+      const now = Date.now();
+      if (!code || (code === state.lastCameraCode && now - state.lastCameraScanAt < 1800)) return;
+      state.lastCameraCode = code;
+      state.lastCameraScanAt = now;
+      $("#transferReceiveInput").value = code;
+      await receiveTransferCurrent(transferLotId);
+    }, 700);
+    $("#transferReceiveMessage").style.color = "#0f766e";
+    $("#transferReceiveMessage").textContent = "Camera ativa. Aponte para o codigo de barras.";
+  } catch (error) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = `Nao foi possivel abrir a camera: ${error.message}`;
+  }
+}
+
+function stopTransferCamera() {
+  if (state.transferCameraTimer) window.clearInterval(state.transferCameraTimer);
+  state.transferCameraTimer = null;
+  if (state.transferCameraStream) state.transferCameraStream.getTracks().forEach((track) => track.stop());
+  state.transferCameraStream = null;
+}
+
 async function loadTransferLots(selectId = state.selectedTransferLotId) {
   try {
     const response = await api("/api/transfer-lots");
@@ -1692,6 +1868,7 @@ async function selectTransferLot(transferLotId) {
 function renderTransferDetail(lot) {
   const canSync = state.user?.role !== "operator";
   const synced = lot.status === "synced";
+  const cdLocked = lot.status !== "open";
   const detail = $("#transferDetail");
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -1701,32 +1878,43 @@ function renderTransferDetail(lot) {
           <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
           <h2>${escapeHtml(lot.name)}</h2>
         </div>
-        <span class="badge ${synced ? "" : "excess"}">${synced ? "Enviado ao Bling" : "Aberto"}</span>
+        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
       </div>
       <form id="transferScanForm" class="search-bar">
-        <input id="transferScanInput" name="code" placeholder="Bipe Codigo ML ou SKU" autocomplete="off" ${synced ? "disabled" : ""} required />
-        <button type="submit" ${synced ? "disabled" : ""}>Adicionar</button>
+        <input id="transferScanInput" name="code" placeholder="CD: bipe Codigo ML ou SKU para montar a remessa" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
+        <button type="submit" ${synced || cdLocked ? "disabled" : ""}>Adicionar</button>
       </form>
       <p id="transferScanMessage" class="message"></p>
       <div class="summary-grid">
         ${metric("SKUs", lot.totalSkus)}
-        ${metric("Unidades", lot.totalQty)}
+        ${metric("Planejado CD", lot.totalPlanned ?? lot.totalQty)}
+        ${metric("Conferido loja", lot.totalReceived || 0)}
+        ${metric("Falta", lot.totalPending ?? 0)}
+      </div>
+      <div class="summary-grid">
         ${metric("Origem", lot.depositoOrigem)}
         ${metric("Destino", lot.depositoDestino)}
       </div>
+      <div class="actions">
+        <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da remessa</button>
+        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>Liberar para loja</button>
+        <a class="button-link" href="/transferencias/${encodeURIComponent(lot.id)}/loja">Abrir conferencia da loja</a>
+      </div>
       <div class="actions ${canSync ? "" : "hidden"}">
         <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar CSV</a>
-        <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length ? "disabled" : ""}>Enviar transferencia ao Bling</button>
+        <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length || !(lot.totalReceived || 0) ? "disabled" : ""}>Enviar transferencia ao Bling</button>
       </div>
       <div class="diverse-table transfer-table">
         <div class="diverse-row transfer-row diverse-row-head">
           <span>SKU</span>
           <span>Codigo</span>
           <span>Produto</span>
-          <span>Qtd</span>
+          <span>CD</span>
+          <span>Loja</span>
+          <span>Falta</span>
           <span>Acoes</span>
         </div>
-        ${lot.items.length ? lot.items.map((item) => transferItemRow(item, synced)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
+        ${lot.items.length ? lot.items.map((item) => transferItemRow(item, synced || cdLocked)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
       </div>
     </section>
   `;
@@ -1734,15 +1922,35 @@ function renderTransferDetail(lot) {
 }
 
 function transferItemRow(item, synced) {
+  const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
       <span>${escapeHtml(item.codigoMl)}</span>
       <span>${escapeHtml(item.descricao)}</span>
       <span>${item.quantidade}</span>
+      <span>${item.quantidadeConferida || 0}</span>
+      <span>${falta}</span>
       <span><button type="button" class="danger ghost" data-transfer-decrement="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Diminuir</button></span>
     </article>
   `;
+}
+
+function transferStatusLabel(status) {
+  return ({
+    open: "CD montando",
+    waiting_store: "Liberada para loja",
+    checking: "Loja conferindo",
+    ready_sync: "Conferida",
+    divergent: "Divergente",
+    synced: "Enviada"
+  })[status] || "Aberta";
+}
+
+function transferStatusClass(status) {
+  if (status === "synced" || status === "ready_sync") return "";
+  if (status === "divergent") return "danger";
+  return "excess";
 }
 
 async function handleTransferDetailSubmit(event) {
@@ -1792,6 +2000,46 @@ async function handleTransferDetailClick(event) {
 
   const sync = event.target.closest("[data-sync-transfer]");
   if (sync) await syncTransferLot(sync.dataset.syncTransfer, sync);
+
+  const release = event.target.closest("[data-release-transfer]");
+  if (release) await releaseTransferLot(release.dataset.releaseTransfer, release);
+
+  const qr = event.target.closest("[data-print-transfer-qr]");
+  if (qr) showTransferQrLabel(qr.dataset.printTransferQr);
+}
+
+async function releaseTransferLot(transferLotId, button) {
+  if (!confirm("Liberar esta remessa para conferencia na loja?")) return;
+  button.disabled = true;
+  try {
+    const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/release`, { method: "POST" });
+    renderTransferDetail(response.lot);
+    await loadTransferLots(transferLotId);
+    $("#transferScanMessage").style.color = "#0f766e";
+    $("#transferScanMessage").textContent = "Remessa liberada para a loja.";
+  } catch (error) {
+    $("#transferScanMessage").style.color = "";
+    $("#transferScanMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function showTransferQrLabel(transferLotId) {
+  const lot = state.transferLots.find((item) => item.id === transferLotId);
+  const receiveUrl = `${window.location.origin}/transferencias/${encodeURIComponent(transferLotId)}/loja`;
+  state.labelProduct = { id: transferLotId };
+  state.labelMeta = null;
+  $("#labelPreview").innerHTML = `
+    <section class="transfer-qr-label">
+      <strong>REMESSA</strong>
+      <img src="/api/transfer-lots/${encodeURIComponent(transferLotId)}/qr.svg" alt="QR Code da remessa" />
+      <span>${escapeHtml(lot?.name || transferLotId)}</span>
+      <small>${escapeHtml(receiveUrl)}</small>
+    </section>
+  `;
+  $("#labelModal").classList.remove("hidden");
+  $("#labelModal").focus();
 }
 
 async function syncTransferLot(transferLotId, button) {
@@ -2701,7 +2949,7 @@ function formatLabelDateTime(value) {
 }
 
 function printCurrentLabel() {
-  if (!state.labelProduct || $("#labelModal").classList.contains("hidden")) return;
+  if (!$("#labelPreview")?.innerHTML || $("#labelModal").classList.contains("hidden")) return;
   cleanupLabelPrintRoot();
   const printRoot = document.createElement("div");
   printRoot.id = "labelPrintRoot";
