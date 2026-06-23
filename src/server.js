@@ -629,13 +629,7 @@ app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, require
     const product = (lot.products || []).find((item) => item.id === req.params.productId);
     if (!product) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
 
-    const integration = await getRequiredBlingCredentials(userId);
-    const result = await syncBlingProducts({
-      integration,
-      products: withLotSupplier([product], lot),
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
-    res.json(result);
+    res.json(await syncSingleLotProductToBling(userId, lot, product));
   } catch (error) {
     sendError(res, error);
   }
@@ -878,21 +872,31 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
 
 app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     const codigoRz = String(req.body.codigoRz || "").trim();
-    res.json(
-      await addDiverseLotItem({
-        userId: workspaceUserId(req),
-        createdByUserId: req.session.user?.id,
-        operatorUserId: operatorUserId(req),
-        lotId: req.params.lotId,
-        codigoMl,
-        codigoRz,
-        manualProduct: req.body.manualProduct,
-        valorUnitOverride: req.body.valorUnitOverride,
-        preview: Boolean(req.body.preview)
-      })
-    );
+    const preview = Boolean(req.body.preview);
+    const result = await addDiverseLotItem({
+      userId,
+      createdByUserId: req.session.user?.id,
+      operatorUserId: operatorUserId(req),
+      lotId: req.params.lotId,
+      codigoMl,
+      codigoRz,
+      manualProduct: req.body.manualProduct,
+      valorUnitOverride: req.body.valorUnitOverride,
+      preview
+    });
+
+    if (!preview && result?.product?.id) {
+      try {
+        result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+      } catch (blingError) {
+        result.bling = { ok: false, error: blingError.message };
+      }
+    }
+
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -1284,6 +1288,15 @@ function buildStockEntryCsvForRz(data) {
 
 function withLotSupplier(items, lot) {
   return (items || []).map((item) => ({ ...item, fornecedor: item.fornecedor || lot?.fornecedor || "" }));
+}
+
+async function syncSingleLotProductToBling(userId, lot, product) {
+  const integration = await getRequiredBlingCredentials(userId);
+  return syncBlingProducts({
+    integration,
+    products: withLotSupplier([product], lot),
+    saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+  });
 }
 
 function buildPalletReport(lot, codigoRz) {
