@@ -289,9 +289,8 @@ async function addDiverseItem(event) {
     input.value = "";
     renderDiverseLot(response.lot);
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
-    $("#diverseScanMessage").style.color = "#0f766e";
-    $("#diverseScanMessage").textContent = diverseScanStatusMessage(response, codigoRz, parent);
     await loadLots(response.lot.id);
+    await showDiverseBlingSyncStatus(response, diverseScanStatusMessage(response, codigoRz, parent));
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
     schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
   } catch (error) {
@@ -305,9 +304,8 @@ async function addDiverseItem(event) {
         const response = await createDiverseItem({ codigoMl, codigoRz, manualProduct });
         input.value = "";
         renderDiverseLot(response.lot);
-        $("#diverseScanMessage").style.color = "#0f766e";
-        $("#diverseScanMessage").textContent = `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
         await loadLots(response.lot.id);
+        await showDiverseBlingSyncStatus(response, `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`);
         if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
         schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
         return;
@@ -324,6 +322,31 @@ async function addDiverseItem(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+async function showDiverseBlingSyncStatus(response, baseMessage) {
+  const message = $("#diverseScanMessage");
+  try {
+    const bling = await syncDiverseProductToBling(response.lot.id, response.product.id);
+    message.style.color = "#0f766e";
+    message.textContent = `${baseMessage} ${blingProductSyncMessage(bling)}`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = `${baseMessage} Produto nao criado no Bling: ${error.message}`;
+  }
+}
+
+function syncDiverseProductToBling(lotId, productId) {
+  return api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(productId)}/bling/sync`, {
+    method: "POST"
+  });
+}
+
+function blingProductSyncMessage(result) {
+  const item = (result.results || [])[0];
+  if (item?.status === "created") return "Produto criado no Bling.";
+  if (item?.status === "updated") return "Produto atualizado no Bling.";
+  return "Produto sincronizado no Bling.";
 }
 
 async function previewDiverseItem(codigoMl, codigoRz) {

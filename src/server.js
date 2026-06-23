@@ -620,6 +620,27 @@ app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner
   }
 });
 
+app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const lot = await getUserLotDetail(userId, req.params.lotId);
+    if (!lot) return res.status(404).json({ error: "Lote nao encontrado." });
+
+    const product = (lot.products || []).find((item) => item.id === req.params.productId);
+    if (!product) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingProducts({
+      integration,
+      products: withLotSupplier([product], lot),
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/bling/stock-balance/sync", requireAuth, requireOwner, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
