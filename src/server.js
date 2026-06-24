@@ -548,7 +548,7 @@ app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   }
 });
 
-app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/diverse-lots", requireAuth, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
@@ -875,7 +875,7 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
   }
 });
 
-app.post("/api/lots/:lotId/diverse-items", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();

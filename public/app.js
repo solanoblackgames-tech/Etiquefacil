@@ -2407,8 +2407,8 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
-    ${noSheetLot && canManage ? '<div id="diversePanelMount"></div>' : ""}
-    ${noSheetLot && canManage ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    ${noSheetLot ? '<div id="diversePanelMount"></div>' : ""}
+    ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
     <div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
@@ -2471,10 +2471,6 @@ function renderLotDetail(lot) {
 }
 
 function emptyLotDetailMarkup() {
-  if (state.user?.role === "operator") {
-    return "Selecione um lote para conferir RZs e baixar arquivos do Bling.";
-  }
-
   return `
     <section class="empty-lot-start">
       <div>
