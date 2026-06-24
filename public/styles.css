@@ -1674,47 +1674,107 @@ h3 {
 }
 
 .transfer-qr-label {
-  align-items: center;
   background: #fff;
   border: 1px solid #cfd6dc;
   box-sizing: border-box;
   color: #111;
   display: grid;
-  grid-template-columns: 23mm 1fr;
-  grid-template-rows: 6mm 22mm 1fr;
+  gap: 1mm 2.4mm;
+  grid-template-columns: 25.5mm 1fr;
+  grid-template-rows: 6.8mm 1fr;
   height: 40mm;
   overflow: hidden;
-  padding: 3mm;
+  padding: 2.6mm 3.2mm 2mm;
   width: 60mm;
 }
 
-.transfer-qr-label strong {
-  font-family: Arial, sans-serif;
-  font-size: 12px;
+.transfer-label-header {
+  align-items: end;
+  display: flex;
+  gap: 2mm;
   grid-column: 1 / -1;
-  letter-spacing: 1px;
+  min-width: 0;
+}
+
+.transfer-label-header strong {
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.transfer-label-header span {
+  font-family: Arial, sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.05;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transfer-qr-label img {
-  grid-row: 2 / 4;
-  height: 23mm;
-  width: 23mm;
+  align-self: start;
+  height: 25.5mm;
+  image-rendering: pixelated;
+  width: 25.5mm;
 }
 
-.transfer-qr-label span {
-  align-self: end;
+.transfer-label-info {
+  align-content: start;
+  display: grid;
+  gap: 1.2mm;
   font-family: Arial, sans-serif;
-  font-size: 9px;
+  min-width: 0;
+}
+
+.transfer-label-info p {
+  font-size: 8.5px;
   font-weight: 700;
   line-height: 1.1;
+  margin: 0;
+  max-height: 5.8mm;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
-.transfer-qr-label small {
-  align-self: start;
+.transfer-label-info dl {
+  display: grid;
+  gap: 0.7mm;
+  margin: 0;
+}
+
+.transfer-label-info dl div {
+  border-top: 0.25mm solid #111;
+  display: grid;
+  gap: 0.3mm;
+  padding-top: 0.7mm;
+}
+
+.transfer-label-info dt,
+.transfer-label-info dd {
+  margin: 0;
+}
+
+.transfer-label-info dt {
   color: #333;
-  font-family: Arial, sans-serif;
-  font-size: 5px;
+  font-size: 5.8px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.transfer-label-info dd {
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.05;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.transfer-label-info small {
+  color: #333;
+  font-size: 4.6px;
   line-height: 1.1;
   overflow-wrap: anywhere;
 }

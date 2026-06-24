@@ -2215,10 +2215,29 @@ function showTransferQrLabel(transferLotId) {
   state.labelMeta = null;
   $("#labelPreview").innerHTML = `
     <section class="transfer-qr-label">
-      <strong>REMESSA</strong>
+      <header class="transfer-label-header">
+        <strong>REMESSA</strong>
+        <span>${escapeHtml(lot?.name || transferLotId)}</span>
+      </header>
       <img src="/api/transfer-lots/${encodeURIComponent(transferLotId)}/qr.svg" alt="QR Code da remessa" />
-      <span>${escapeHtml([lot?.name || transferLotId, lot?.descricao].filter(Boolean).join(" - "))}</span>
-      <small>${escapeHtml(receiveUrl)}</small>
+      <div class="transfer-label-info">
+        ${lot?.descricao ? `<p>${escapeHtml(lot.descricao)}</p>` : ""}
+        <dl>
+          <div>
+            <dt>ORIGEM</dt>
+            <dd>${escapeHtml(lot?.depositoOrigem || "-")}</dd>
+          </div>
+          <div>
+            <dt>DESTINO</dt>
+            <dd>${escapeHtml(lot?.depositoDestino || "-")}</dd>
+          </div>
+          <div>
+            <dt>ITENS</dt>
+            <dd>${escapeHtml(String(lot?.totalQty || 0))} un. / ${escapeHtml(String(lot?.totalSkus || 0))} SKUs</dd>
+          </div>
+        </dl>
+        <small>${escapeHtml(receiveUrl)}</small>
+      </div>
     </section>
   `;
   $("#labelModal").classList.remove("hidden");
