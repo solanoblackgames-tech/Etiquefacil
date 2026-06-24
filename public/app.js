@@ -2442,6 +2442,14 @@ function renderLotDetail(lot) {
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
     ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    ${noSheetLot ? `
+      <form id="lotDiverseRzForm" class="diverse-rz-form">
+        <input name="codigoRz" placeholder="Novo RZ" autocomplete="off" />
+        <button type="submit">Gerar/usar RZ</button>
+        <strong id="lotDiverseActiveRz">Nenhuma remessa ativa</strong>
+        <span></span>
+      </form>
+    ` : ""}
     <div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
@@ -2494,6 +2502,7 @@ function renderLotDetail(lot) {
   $("#rzSearchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
+  $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
       if (noSheetLot) openNoSheetRz(lot, button.dataset.scanRz);
@@ -2503,7 +2512,7 @@ function renderLotDetail(lot) {
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
-  schedulePrimaryInputFocus(["#rzSearchInput"]);
+  schedulePrimaryInputFocus(noSheetLot ? ["#lotDiverseRzForm input[name='codigoRz']", "#rzSearchInput"] : ["#rzSearchInput"]);
 }
 
 function emptyLotDetailMarkup() {
@@ -2568,6 +2577,14 @@ function openRzFromSearch(lot) {
   else renderRz(lot, rz.codigoRz);
 }
 
+function createLotDetailNoSheetRz(event, lot) {
+  event.preventDefault();
+  const input = event.currentTarget.querySelector("input[name='codigoRz']");
+  const codigoRz = normalizeCode(input.value) || defaultDiverseRz(lot);
+  input.value = "";
+  openNoSheetRz(lot, codigoRz);
+}
+
 function openNoSheetRz(lot, codigoRz) {
   const normalizedRz = normalizeCode(codigoRz);
   if (!normalizedRz) return;
@@ -2583,6 +2600,9 @@ function openNoSheetRz(lot, codigoRz) {
     message.style.color = "#0f766e";
     message.textContent = `Remessa ${normalizedRz} ativa.`;
   }
+
+  const activeRz = $("#lotDiverseActiveRz");
+  if (activeRz) activeRz.textContent = `Remessa ativa: ${normalizedRz}`;
 
   const input = $("#rzSearchInput");
   if (input) input.value = "";
@@ -3328,6 +3348,7 @@ function primaryInputSelectors() {
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",
+    "#lotDiverseRzForm input[name='codigoRz']",
     "#diverseRzForm input[name='codigoRz']",
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
