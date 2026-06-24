@@ -253,13 +253,11 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
       message.style.color = "#0f766e";
       message.textContent = successMessage;
     }
-    state.selectedDiverseRz = defaultDiverseRz(response.lot);
     form.reset();
     updateNoSheetCostFields(form);
-    renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
     updateRoute(lotPath(response.lot.id));
-    $("#diverseScanForm input[name='codigoMl']").focus();
+    $("#rzSearchInput")?.focus();
   } catch (error) {
     if (message) {
       message.style.color = "";
@@ -2384,11 +2382,7 @@ async function selectLot(lotId, { push = true } = {}) {
   const response = await api(`/api/lots/${lotId}`);
   renderLots();
   renderLotDetail(response.lot);
-  if (isNoSheetLot(response.lot)) {
-    renderDiverseLot(response.lot);
-  } else {
-    hideNoSheetPanel();
-  }
+  hideNoSheetPanel();
   document.body.classList.add("lot-focus");
   if (push) updateRoute(lotPath(lotId));
   return response.lot;
@@ -2447,7 +2441,6 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>
-    ${noSheetLot ? '<div id="diversePanelMount"></div>' : ""}
     ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
     <div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
@@ -2502,12 +2495,15 @@ function renderLotDetail(lot) {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
-    button.addEventListener("click", () => renderRz(lot, button.dataset.scanRz));
+    button.addEventListener("click", () => {
+      if (noSheetLot) openNoSheetRz(lot, button.dataset.scanRz);
+      else renderRz(lot, button.dataset.scanRz);
+    });
   });
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
-  schedulePrimaryInputFocus(noSheetLot ? undefined : ["#rzSearchInput"]);
+  schedulePrimaryInputFocus(["#rzSearchInput"]);
 }
 
 function emptyLotDetailMarkup() {
@@ -2556,6 +2552,10 @@ function openRzFromSearch(lot) {
   const message = $("#rzSearchMessage");
   const typed = normalizeCode(input.value);
   const rz = lot.rzs.find((item) => normalizeCode(item.codigoRz) === typed);
+  if (!rz && isNoSheetLot(lot) && typed) {
+    openNoSheetRz(lot, typed);
+    return;
+  }
   if (!rz) {
     message.style.color = "";
     message.textContent = "RZ não encontrado neste lote.";
@@ -2564,7 +2564,40 @@ function openRzFromSearch(lot) {
   }
   message.textContent = "";
   input.value = "";
-  renderRz(lot, rz.codigoRz);
+  if (isNoSheetLot(lot)) openNoSheetRz(lot, rz.codigoRz);
+  else renderRz(lot, rz.codigoRz);
+}
+
+function openNoSheetRz(lot, codigoRz) {
+  const normalizedRz = normalizeCode(codigoRz);
+  if (!normalizedRz) return;
+
+  state.selectedDiverseRz = normalizedRz;
+  state.selectedRz = null;
+  document.querySelectorAll(".rz-card").forEach((card) => {
+    card.classList.toggle("selected", normalizeCode(card.dataset.rz) === normalizedRz);
+  });
+
+  const message = $("#rzSearchMessage");
+  if (message) {
+    message.style.color = "#0f766e";
+    message.textContent = `Remessa ${normalizedRz} ativa.`;
+  }
+
+  const input = $("#rzSearchInput");
+  if (input) input.value = "";
+
+  const rzDetail = $("#rzDetail");
+  if (rzDetail) rzDetail.innerHTML = '<div id="diversePanelMount"></div>';
+
+  renderDiverseLot(lot);
+
+  const scanMessage = $("#diverseScanMessage");
+  if (scanMessage) {
+    scanMessage.style.color = "#0f766e";
+    scanMessage.textContent = `Remessa ${normalizedRz} ativa.`;
+  }
+  $("#diverseScanForm input[name='codigoMl']")?.focus();
 }
 
 async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") {
@@ -2722,7 +2755,10 @@ function renderPallet(lot, codigoRz) {
       </div>
     </section>
   `;
-  $("#rzDetail [data-scan-rz]").addEventListener("click", () => renderRz(lot, codigoRz));
+  $("#rzDetail [data-scan-rz]").addEventListener("click", () => {
+    if (isNoSheetLot(lot)) openNoSheetRz(lot, codigoRz);
+    else renderRz(lot, codigoRz);
+  });
 }
 
 function openScanWindow(lotId, codigoRz) {
