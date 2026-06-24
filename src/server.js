@@ -554,11 +554,17 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
     const startSequence = Number(req.body.startSequence);
+    const costMode = String(req.body.costMode || "fixed").trim();
     const averageCost = Number(req.body.averageCost);
+    const costPercent = Number(req.body.costPercent);
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
     if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
-    if (!Number.isFinite(averageCost) || averageCost <= 0) throw new Error("Informe o custo medio por unidade.");
+    if (costMode === "variable") {
+      if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do custo variavel.");
+    } else if (!Number.isFinite(averageCost) || averageCost <= 0) {
+      throw new Error("Informe o custo medio por unidade.");
+    }
 
     const lot = await createDiverseLot({
       userId: workspaceUserId(req),
@@ -566,7 +572,9 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
       fornecedor,
       skuPrefix,
       startSequence,
-      averageCost
+      averageCost,
+      costMode,
+      costPercent
     });
     res.json({ lot });
   } catch (error) {

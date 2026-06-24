@@ -79,7 +79,9 @@
             <form id="diverseLotForm" class="diverse-form">
               <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
               <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-              <label>Custo medio unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+              <label>Tipo de custo<select name="costMode"><option value="fixed">Custo fixo</option><option value="variable">Custo variavel</option></select></label>
+              <label data-cost-field="fixed">Custo fixo unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+              <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
               <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
               <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
               <button type="submit">Subir lote sem planilha</button>

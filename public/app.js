@@ -145,6 +145,7 @@ function bindEvents() {
     button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
   });
   document.addEventListener("input", handleCodigoMlInput);
+  document.addEventListener("change", handleNoSheetCostModeChange);
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
   $("#labelCloseButton").addEventListener("click", () => hideLabelPreview());
@@ -231,6 +232,7 @@ async function handleLotDetailSubmit(event) {
 }
 
 async function createNoSheetLotFromForm(form, { messageSelector, successMessage }) {
+  updateNoSheetCostFields(form);
   const button = form.querySelector("button[type='submit']");
   const message = $(messageSelector);
   $("#diverseLotMessage").textContent = "";
@@ -252,6 +254,7 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
       message.textContent = successMessage;
     }
     form.reset();
+    updateNoSheetCostFields(form);
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
     updateRoute(lotPath(response.lot.id));
@@ -264,6 +267,24 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
   } finally {
     button.disabled = false;
   }
+}
+
+function handleNoSheetCostModeChange(event) {
+  if (event.target?.name !== "costMode") return;
+  const form = event.target.closest("form");
+  if (form) updateNoSheetCostFields(form);
+}
+
+function updateNoSheetCostFields(form) {
+  const mode = form.querySelector('[name="costMode"]')?.value === "variable" ? "variable" : "fixed";
+  const fixed = form.querySelector('[data-cost-field="fixed"]');
+  const variable = form.querySelector('[data-cost-field="variable"]');
+  const averageCost = form.querySelector('[name="averageCost"]');
+  const costPercent = form.querySelector('[name="costPercent"]');
+  fixed?.classList.toggle("hidden", mode !== "fixed");
+  variable?.classList.toggle("hidden", mode !== "variable");
+  if (averageCost) averageCost.required = mode === "fixed";
+  if (costPercent) costPercent.required = mode === "variable";
 }
 
 async function addDiverseItem(event) {
@@ -2483,7 +2504,9 @@ function emptyLotDetailMarkup() {
       <form id="noSheetLotForm" class="diverse-form">
         <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
         <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-        <label>Custo medio unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+        <label>Tipo de custo<select name="costMode"><option value="fixed">Custo fixo</option><option value="variable">Custo variavel</option></select></label>
+        <label data-cost-field="fixed">Custo fixo unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
+        <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
         <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
         <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
         <button type="submit">Criar lote</button>

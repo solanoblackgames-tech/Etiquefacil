@@ -690,12 +690,17 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
   return summarizeLot(db, lot);
 }
 
-export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost }) {
+export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost, costMode = "fixed", costPercent = 0 }) {
   await ensureStore();
   const sequence = Math.max(1, Number.parseInt(startSequence, 10) || 1);
-  const custoMedioUnitario = roundMoney(Number(averageCost || 0));
-  if (!Number.isFinite(custoMedioUnitario) || custoMedioUnitario <= 0) {
+  const tipoCusto = costMode === "variable" ? "variable" : "fixed";
+  const percentualCusto = tipoCusto === "variable" ? roundMoney(Number(costPercent || 0)) : 0;
+  const custoMedioUnitario = tipoCusto === "fixed" ? roundMoney(Number(averageCost || 0)) : 0;
+  if (tipoCusto === "fixed" && (!Number.isFinite(custoMedioUnitario) || custoMedioUnitario <= 0)) {
     throw new Error("Informe o custo medio por unidade para criar lote sem planilha.");
+  }
+  if (tipoCusto === "variable" && (!Number.isFinite(percentualCusto) || percentualCusto <= 0)) {
+    throw new Error("Informe o percentual do custo variavel para criar lote sem planilha.");
   }
   const lot = {
     id: randomUUID(),
@@ -703,6 +708,8 @@ export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, st
     nomeArquivo: name,
     percentualArremate: 0,
     custoMedioUnitario,
+    tipoCusto,
+    percentualCusto,
     fornecedor,
     prefixoSku: skuPrefix,
     proximoSequencialSku: sequence,
@@ -1475,6 +1482,8 @@ export async function searchProducts(userId, codigoMl) {
           l.nome_arquivo as lot__nome_arquivo,
           l.percentual_arremate as lot__percentual_arremate,
           l.custo_medio_unitario as lot__custo_medio_unitario,
+          l.tipo_custo as lot__tipo_custo,
+          l.percentual_custo as lot__percentual_custo,
           l.fornecedor as lot__fornecedor,
           l.prefixo_sku as lot__prefixo_sku,
           l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
@@ -1519,6 +1528,8 @@ export async function createLabel(userId, productId) {
           l.nome_arquivo as lot__nome_arquivo,
           l.percentual_arremate as lot__percentual_arremate,
           l.custo_medio_unitario as lot__custo_medio_unitario,
+          l.tipo_custo as lot__tipo_custo,
+          l.percentual_custo as lot__percentual_custo,
           l.fornecedor as lot__fornecedor,
           l.prefixo_sku as lot__prefixo_sku,
           l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
@@ -1586,6 +1597,8 @@ async function ensurePgStore() {
       nome_arquivo text not null,
       percentual_arremate numeric not null,
       custo_medio_unitario numeric not null default 0,
+      tipo_custo text not null default 'fixed',
+      percentual_custo numeric not null default 0,
       fornecedor text not null,
       prefixo_sku text not null,
       proximo_sequencial_sku integer not null,
@@ -1781,6 +1794,8 @@ async function ensurePgStore() {
     alter table users alter column tenant_id set not null;
     alter table users alter column tenant_name set not null;
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
+    alter table lots add column if not exists tipo_custo text not null default 'fixed';
+    alter table lots add column if not exists percentual_custo numeric not null default 0;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists link text not null default '';
     alter table products add column if not exists foto text not null default '';
@@ -1912,6 +1927,8 @@ async function backfillPgCatalogLotSuggestions() {
         l.nome_arquivo as lot__nome_arquivo,
         l.percentual_arremate as lot__percentual_arremate,
         l.custo_medio_unitario as lot__custo_medio_unitario,
+        l.tipo_custo as lot__tipo_custo,
+        l.percentual_custo as lot__percentual_custo,
         l.fornecedor as lot__fornecedor,
         l.prefixo_sku as lot__prefixo_sku,
         l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
@@ -2016,13 +2033,15 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "lots",
-      ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
+      ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "tipo_custo", "percentual_custo", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
       (db.lots || []).map((lot) => [
         lot.id,
         lot.userId,
         lot.nomeArquivo,
         lot.percentualArremate,
         lot.custoMedioUnitario || 0,
+        lot.tipoCusto || "fixed",
+        lot.percentualCusto || 0,
         lot.fornecedor,
         lot.prefixoSku,
         lot.proximoSequencialSku,
@@ -2133,13 +2152,15 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "lots",
-    ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
+    ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "tipo_custo", "percentual_custo", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
       lot.nomeArquivo,
       lot.percentualArremate,
       lot.custoMedioUnitario || 0,
+      lot.tipoCusto || "fixed",
+      lot.percentualCusto || 0,
       lot.fornecedor,
       lot.prefixoSku,
       lot.proximoSequencialSku,
@@ -2841,6 +2862,8 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         l.nome_arquivo as lot__nome_arquivo,
         l.percentual_arremate as lot__percentual_arremate,
         l.custo_medio_unitario as lot__custo_medio_unitario,
+        l.tipo_custo as lot__tipo_custo,
+        l.percentual_custo as lot__percentual_custo,
         l.fornecedor as lot__fornecedor,
         l.prefixo_sku as lot__prefixo_sku,
         l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
@@ -2920,6 +2943,8 @@ async function findPgPreviousProductHistory(client, userId, currentLotId, codigo
         l.nome_arquivo as lot__nome_arquivo,
         l.percentual_arremate as lot__percentual_arremate,
         l.custo_medio_unitario as lot__custo_medio_unitario,
+        l.tipo_custo as lot__tipo_custo,
+        l.percentual_custo as lot__percentual_custo,
         l.fornecedor as lot__fornecedor,
         l.prefixo_sku as lot__prefixo_sku,
         l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
@@ -3067,7 +3092,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
     descricao: history.descricao,
     valorUnit,
-    precoCusto: roundMoney(Number(lot.custoMedioUnitario || history.precoCusto || 0)),
+    precoCusto: noSheetProductCost(lot, history, valorUnit),
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
@@ -3079,6 +3104,13 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
   };
   const item = buildDiverseRzItem(lot, product, codigoRz);
   return { product, item };
+}
+
+function noSheetProductCost(lot, history, valorUnit) {
+  if (lot?.tipoCusto === "variable") {
+    return roundMoney(Number(valorUnit || 0) * (Number(lot.percentualCusto || 0) / 100));
+  }
+  return roundMoney(Number(lot?.custoMedioUnitario || history?.precoCusto || 0));
 }
 
 function buildDiverseRzItem(lot, product, codigoRz) {
@@ -3526,6 +3558,8 @@ function lotFromRow(row) {
     nomeArquivo: row.nome_arquivo,
     percentualArremate: num(row.percentual_arremate),
     custoMedioUnitario: num(row.custo_medio_unitario),
+    tipoCusto: row.tipo_custo || "fixed",
+    percentualCusto: num(row.percentual_custo),
     fornecedor: row.fornecedor,
     prefixoSku: row.prefixo_sku,
     proximoSequencialSku: Number(row.proximo_sequencial_sku),
@@ -3540,6 +3574,8 @@ function lotFromPrefixedRow(row, prefix) {
     nomeArquivo: row[`${prefix}nome_arquivo`],
     percentualArremate: num(row[`${prefix}percentual_arremate`]),
     custoMedioUnitario: num(row[`${prefix}custo_medio_unitario`]),
+    tipoCusto: row[`${prefix}tipo_custo`] || "fixed",
+    percentualCusto: num(row[`${prefix}percentual_custo`]),
     fornecedor: row[`${prefix}fornecedor`],
     prefixoSku: row[`${prefix}prefixo_sku`],
     proximoSequencialSku: Number(row[`${prefix}proximo_sequencial_sku`]),
