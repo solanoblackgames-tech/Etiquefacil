@@ -253,12 +253,13 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
       message.style.color = "#0f766e";
       message.textContent = successMessage;
     }
+    state.selectedDiverseRz = defaultDiverseRz(response.lot);
     form.reset();
     updateNoSheetCostFields(form);
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
     updateRoute(lotPath(response.lot.id));
-    $("#diverseRzForm input[name='codigoRz']").focus();
+    $("#diverseScanForm input[name='codigoMl']").focus();
   } catch (error) {
     if (message) {
       message.style.color = "";
@@ -641,8 +642,8 @@ function renderDiverseLot(lot) {
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
   const rzs = diverseRzs(lot);
-  if (state.selectedDiverseRz && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
-  if (!state.selectedDiverseRz && rzs.length) state.selectedDiverseRz = rzs[0].codigoRz;
+  if (state.selectedDiverseRz && rzs.length && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
+  if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || defaultDiverseRz(lot);
   mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
@@ -682,6 +683,7 @@ function moveDiversePanelToHome() {
 function isNoSheetLot(lot) {
   if (!lot) return false;
   if (Number(lot.custoMedioUnitario || 0) > 0 && Number(lot.percentualArremate || 0) === 0) return true;
+  if ((lot.tipoCusto === "variable" || Number(lot.percentualCusto || 0) > 0) && Number(lot.percentualArremate || 0) === 0) return true;
   return (lot.products || []).some((product) => product.origem === "lote_sem_planilha" || product.origem === "lote_sem_planilha_manual" || product.origem === "entrada_diversos");
 }
 
@@ -691,13 +693,22 @@ function renderDiverseRzControls(lot) {
   $("#diverseDownloadRzButton").disabled = !active;
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
   $("#diverseScanForm button").disabled = !active;
-  $("#diverseRzList").innerHTML = diverseRzs(lot)
+  $("#diverseRzList").innerHTML = diverseRzsWithActive(lot)
     .map((rz) => `
       <button type="button" class="${rz.codigoRz === active ? "active" : ""}" data-diverse-rz="${escapeHtml(rz.codigoRz)}">
         ${escapeHtml(rz.codigoRz)} <span>${rz.items}</span>
       </button>
     `)
     .join("");
+}
+
+function diverseRzsWithActive(lot) {
+  const rzs = diverseRzs(lot);
+  const active = state.selectedDiverseRz;
+  if (active && !rzs.some((rz) => rz.codigoRz === active)) {
+    return [{ codigoRz: active, items: 0 }, ...rzs];
+  }
+  return rzs;
 }
 
 function diverseRzs(lot) {
@@ -709,6 +720,11 @@ function diverseRzs(lot) {
     byRz.set(item.codigoRz, current);
   }
   return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz));
+}
+
+function defaultDiverseRz(lot) {
+  const base = normalizeCode(lot?.nomeArquivo || lot?.prefixoSku || "RZ1").replace(/[^A-Z0-9]+/g, "");
+  return base.slice(0, 24) || "RZ1";
 }
 
 async function downloadDiverseRzBling(lotId, codigoRz) {
