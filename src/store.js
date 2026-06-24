@@ -1891,6 +1891,15 @@ async function ensurePgStore() {
 async function backfillPgCatalogLotSuggestions() {
   const flag = await query("select value from app_settings where key = $1 limit 1", [CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY]);
   if (flag.rows.length) return;
+  if (process.env.BACKFILL_CATALOG_LOT_SUGGESTIONS !== "true") {
+    await query(
+      `insert into app_settings (key, value, updated_at)
+       values ($1, $2, now())
+       on conflict (key) do nothing`,
+      [CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY, { skippedAt: new Date().toISOString(), reason: "disabled_on_startup" }]
+    );
+    return;
+  }
 
   const client = await getPgPool().connect();
   try {
@@ -3779,7 +3788,8 @@ function summarizeOperatorActivities(activities, operatorUserId) {
 }
 
 function iso(value) {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "1970-01-01T00:00:00.000Z" : date.toISOString();
 }
 
 function num(value) {

@@ -41,7 +41,10 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const formatDate = (value) => new Date(value).toLocaleDateString("pt-BR");
+const formatDate = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString("pt-BR");
+};
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
 
