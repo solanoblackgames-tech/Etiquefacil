@@ -120,6 +120,25 @@ test("Bling stock transfer payload maps origin and destination deposits", () => 
   assert.equal(payload.entrada.observacoes, "Transferencia Etiquefacil");
 });
 
+test("Bling stock transfer payload prefers explicit quantity over accumulated conference count", () => {
+  const payload = buildBlingStockTransferPayload(
+    {
+      sku: "AMZ04L0001",
+      quantidade: 1,
+      quantidadeConferida: 7
+    },
+    {
+      productId: 123,
+      depositoOrigemId: 456,
+      depositoDestinoId: 789,
+      observacao: "Transferencia Etiquefacil - conferencia QR"
+    }
+  );
+
+  assert.equal(payload.saida.quantidade, 1);
+  assert.equal(payload.entrada.quantidade, 1);
+});
+
 test("Bling stock exit payload maps decremented item to stock output", () => {
   const payload = buildBlingStockExitPayload(
     {

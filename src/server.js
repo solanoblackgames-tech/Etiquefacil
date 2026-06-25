@@ -344,6 +344,10 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, re
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code });
     const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+    if (Number(result.lot?.totalPending || 0) === 0) {
+      await markTransferLotSynced(result.lot.userId, result.lot.id);
+      result.lot.status = "synced";
+    }
     res.json({ ...result, transfer: transferResult });
   } catch (error) {
     if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);

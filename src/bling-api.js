@@ -74,10 +74,11 @@ export function buildBlingStockExitPayload(item, { productId, depositoId, observ
 }
 
 export function buildBlingStockTransferPayload(item, { productId, depositoOrigemId, depositoDestinoId, observacao = "" } = {}) {
+  const quantidade = item.quantidade ?? item.qtdConferida ?? item.quantidadeConferida ?? 1;
   const transferItem = {
     ...item,
-    quantidade: item.qtdConferida || item.quantidadeConferida || item.quantidade || 1,
-    qtdConferida: item.qtdConferida || item.quantidadeConferida || item.quantidade || 1
+    quantidade,
+    qtdConferida: quantidade
   };
   return {
     saida: buildBlingStockExitPayload(transferItem, {
