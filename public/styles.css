@@ -1301,6 +1301,7 @@ h3 {
   display: grid;
   gap: 10px;
   padding: 12px;
+  position: relative;
 }
 
 .camera-panel video {
@@ -1310,6 +1311,25 @@ h3 {
   max-height: 420px;
   object-fit: cover;
   width: 100%;
+}
+
+.camera-panel.has-confirmation video {
+  filter: brightness(0.45);
+}
+
+.camera-confirmation {
+  align-items: center;
+  display: flex;
+  inset: 12px 12px 82px;
+  justify-content: center;
+  position: absolute;
+  z-index: 2;
+}
+
+.camera-confirmation .transfer-confirm-panel {
+  box-shadow: 0 16px 36px rgb(6 78 59 / 0.22);
+  max-width: 520px;
+  width: min(100%, 520px);
 }
 
 .transfer-confirm-panel {
@@ -2016,6 +2036,28 @@ h3 {
     padding: 12px;
   }
 
+  .transfer-layout {
+    min-height: auto;
+  }
+
+  .transfer-receive-page {
+    margin-top: 0;
+  }
+
+  .scan-heading h2,
+  .work-heading h2 {
+    font-size: 22px;
+    line-height: 1.18;
+  }
+
+  .metric {
+    padding: 10px;
+  }
+
+  .metric strong {
+    font-size: 18px;
+  }
+
   .transfer-receive-page {
     max-width: none;
   }
@@ -2027,6 +2069,10 @@ h3 {
 
   .camera-panel {
     padding: 10px;
+  }
+
+  .camera-confirmation {
+    inset: 10px 10px 104px;
   }
 
   .detail,

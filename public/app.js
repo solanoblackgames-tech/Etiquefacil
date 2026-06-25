@@ -1840,6 +1840,7 @@ function renderTransferReceivePage(lot) {
       </div>
       <div class="camera-panel">
         <video id="transferCameraVideo" playsinline muted></video>
+        ${pending ? `<div class="camera-confirmation">${transferPendingConfirmation(pending)}</div>` : ""}
         <div class="actions">
           <button type="button" id="transferCameraButton">Ler com camera</button>
           <button type="button" id="transferCameraStopButton" class="ghost">Parar camera</button>
@@ -1849,7 +1850,6 @@ function renderTransferReceivePage(lot) {
         <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" autofocus ${pending ? "disabled" : ""} />
         <button type="submit" ${pending ? "disabled" : ""}>Ler etiqueta</button>
       </form>
-      ${pending ? transferPendingConfirmation(pending) : ""}
       <div id="transferReceiveMessage" class="message"></div>
       <details class="transfer-items-panel">
         <summary>
@@ -1956,7 +1956,11 @@ function prepareTransferReceiveConfirmation(lot) {
   }
   state.pendingTransferConfirmation = { transferLotId: lot.id, code, item };
   input.value = "";
-  renderTransferReceivePage(lot);
+  if (state.transferCameraStream) {
+    mountTransferCameraConfirmation(lot);
+  } else {
+    renderTransferReceivePage(lot);
+  }
   const message = $("#transferReceiveMessage");
   message.style.color = "#0f766e";
   message.textContent = "Confira o produto em maos e confirme a entrada no estoque.";
@@ -1964,8 +1968,35 @@ function prepareTransferReceiveConfirmation(lot) {
 
 function cancelTransferReceiveConfirmation(lot) {
   state.pendingTransferConfirmation = null;
-  renderTransferReceivePage(lot);
+  if (state.transferCameraStream) {
+    clearTransferCameraConfirmation();
+    const input = $("#transferReceiveInput");
+    const button = $("#transferReceiveForm button");
+    if (input) input.disabled = false;
+    if (button) button.disabled = false;
+  } else {
+    renderTransferReceivePage(lot);
+  }
   $("#transferReceiveMessage").textContent = "Leitura cancelada.";
+}
+
+function mountTransferCameraConfirmation(lot) {
+  const cameraPanel = $(".camera-panel");
+  const input = $("#transferReceiveInput");
+  const button = $("#transferReceiveForm button");
+  if (input) input.disabled = true;
+  if (button) button.disabled = true;
+  if (!cameraPanel || !state.pendingTransferConfirmation) return;
+  clearTransferCameraConfirmation();
+  cameraPanel.classList.add("has-confirmation");
+  cameraPanel.insertAdjacentHTML("beforeend", `<div class="camera-confirmation">${transferPendingConfirmation(state.pendingTransferConfirmation)}</div>`);
+  cameraPanel.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
+  cameraPanel.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
+}
+
+function clearTransferCameraConfirmation() {
+  $(".camera-panel")?.classList.remove("has-confirmation");
+  $(".camera-confirmation")?.remove();
 }
 
 async function confirmTransferReceiveCurrent(transferLotId) {
@@ -1980,6 +2011,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
   if (input) input.disabled = true;
   if (button) button.disabled = true;
   if (confirmButton) confirmButton.disabled = true;
+  const shouldResumeCamera = Boolean(state.transferCameraStream);
   try {
     const response = await api(`${transferReceiveApiBase(transferLotId)}/receive-scan`, {
       method: "POST",
@@ -1987,11 +2019,13 @@ async function confirmTransferReceiveCurrent(transferLotId) {
       body: JSON.stringify({ code })
     });
     state.pendingTransferConfirmation = null;
+    if (shouldResumeCamera) stopTransferCamera();
     renderTransferReceivePage(response.lot);
     playTransferSuccessSound();
     const message = $("#transferReceiveMessage");
     message.style.color = "#0f766e";
     message.textContent = `${response.item?.sku || code} confirmado no estoque.`;
+    if (shouldResumeCamera) await startTransferCamera(transferLotId, response.lot);
   } catch (error) {
     playTransferErrorSound();
     $("#transferReceiveMessage").style.color = "";
@@ -2064,7 +2098,6 @@ async function startTransferCamera(transferLotId, lot) {
       if (!code || (code === state.lastCameraCode && now - state.lastCameraScanAt < 10000)) return;
       state.lastCameraCode = code;
       state.lastCameraScanAt = now;
-      stopTransferCamera();
       $("#transferReceiveInput").value = code;
       prepareTransferReceiveConfirmation(lot);
     }, 700);
