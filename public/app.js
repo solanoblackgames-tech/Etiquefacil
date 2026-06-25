@@ -1819,9 +1819,15 @@ function transferReceiveApiBase(transferLotId) {
   return `${prefix}/${encodeURIComponent(transferLotId)}`;
 }
 
-function renderTransferReceivePage(lot) {
+function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
   const detail = $("#transferDetail");
   const pending = state.pendingTransferConfirmation?.transferLotId === lot.id ? state.pendingTransferConfirmation : null;
+  const cameraActive = Boolean(state.transferCameraStream) || suppressInputFocus;
+  if (!pending && isTransferReceiveComplete(lot)) {
+    stopTransferCamera();
+    renderTransferReceiveCompletePage(lot);
+    return;
+  }
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -1847,7 +1853,7 @@ function renderTransferReceivePage(lot) {
         </div>
       </div>
       <form id="transferReceiveForm" class="scan-box">
-        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" autofocus ${pending ? "disabled" : ""} />
+        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" ${cameraActive ? "" : "autofocus"} ${pending ? "disabled" : ""} />
         <button type="submit" ${pending ? "disabled" : ""}>Ler etiqueta</button>
       </form>
       <div id="transferReceiveMessage" class="message"></div>
@@ -1879,7 +1885,55 @@ function renderTransferReceivePage(lot) {
   detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
   $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id, lot));
   $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
-  if (!pending) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+  if (!pending && !cameraActive) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+}
+
+function isTransferReceiveComplete(lot) {
+  const planned = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
+  const pending = Number(lot.totalPending ?? planned - Number(lot.totalReceived || 0));
+  return planned > 0 && pending <= 0;
+}
+
+function renderTransferReceiveCompletePage(lot) {
+  const detail = $("#transferDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="scan-page transfer-receive-page transfer-complete-page">
+      <div class="transfer-complete-hero">
+        <span class="transfer-complete-icon" aria-hidden="true">OK</span>
+        <div>
+          <span class="muted">${escapeHtml(lot.depositoOrigem)} para ${escapeHtml(lot.depositoDestino)}</span>
+          <h2>Conferencia encerrada</h2>
+          <p>Todas as quantidades desta remessa foram conferidas.</p>
+        </div>
+        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+      </div>
+      <div class="summary-grid">
+        ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
+        ${metric("Conferido", lot.totalReceived || 0)}
+        ${metric("Falta", lot.totalPending ?? 0)}
+      </div>
+      <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
+      <details class="transfer-items-panel">
+        <summary>
+          <span>Itens conferidos</span>
+          <strong>${lot.totalSkus || 0} SKUs</strong>
+        </summary>
+        <div class="diverse-table transfer-table">
+          <div class="diverse-row transfer-row diverse-row-head">
+            <span>SKU</span>
+            <span>Codigo</span>
+            <span>Produto</span>
+            <span>CD</span>
+            <span>Loja</span>
+            <span>Falta</span>
+            <span>Status</span>
+          </div>
+          ${transferReceiveAllRows(lot)}
+        </div>
+      </details>
+    </section>
+  `;
 }
 
 function transferPendingConfirmation(pending) {
@@ -1904,6 +1958,12 @@ function transferReceiveRows(lot) {
   return pendingItems.length
     ? pendingItems.map(transferReceiveItemRow).join("")
     : '<p class="muted transfer-empty">Todos os itens desta remessa foram conferidos e transferidos.</p>';
+}
+
+function transferReceiveAllRows(lot) {
+  return (lot.items || []).length
+    ? lot.items.map(transferReceiveItemRow).join("")
+    : '<p class="muted transfer-empty">Nenhum item encontrado nesta remessa.</p>';
 }
 
 function transferReceiveItemRow(item) {
@@ -2020,12 +2080,12 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     });
     state.pendingTransferConfirmation = null;
     if (shouldResumeCamera) stopTransferCamera();
-    renderTransferReceivePage(response.lot);
+    renderTransferReceivePage(response.lot, { suppressInputFocus: shouldResumeCamera });
     playTransferSuccessSound();
     const message = $("#transferReceiveMessage");
     message.style.color = "#0f766e";
     message.textContent = `${response.item?.sku || code} confirmado no estoque.`;
-    if (shouldResumeCamera) await startTransferCamera(transferLotId, response.lot);
+    if (shouldResumeCamera && !isTransferReceiveComplete(response.lot)) await startTransferCamera(transferLotId, response.lot);
   } catch (error) {
     playTransferErrorSound();
     $("#transferReceiveMessage").style.color = "";
@@ -2038,7 +2098,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     if (currentInput) currentInput.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentButton) currentButton.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentConfirmButton) currentConfirmButton.disabled = false;
-    if (!state.pendingTransferConfirmation) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+    if (!state.pendingTransferConfirmation && !state.transferCameraStream) schedulePrimaryInputFocus(["#transferReceiveInput"]);
   }
 }
 

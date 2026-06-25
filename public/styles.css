@@ -1294,6 +1294,51 @@ h3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.transfer-complete-page {
+  gap: 16px;
+}
+
+.transfer-complete-hero {
+  align-items: center;
+  background: #ecfdf5;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 18px;
+}
+
+.transfer-complete-hero h2 {
+  color: #064e3b;
+  font-size: 28px;
+  line-height: 1.15;
+  margin-top: 4px;
+}
+
+.transfer-complete-hero p {
+  color: #0f766e;
+  font-weight: 700;
+  margin: 8px 0 0;
+}
+
+.transfer-complete-icon {
+  align-items: center;
+  background: #0f766e;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 900;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+
+.transfer-complete-message {
+  color: #0f766e;
+}
+
 .camera-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -2056,6 +2101,16 @@ h3 {
 
   .metric strong {
     font-size: 18px;
+  }
+
+  .transfer-complete-hero {
+    align-items: start;
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .transfer-complete-hero h2 {
+    font-size: 24px;
   }
 
   .transfer-receive-page {
