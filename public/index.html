@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260624-transfer-label" />
+    <link rel="stylesheet" href="/styles.css?v=20260625-receive-confirm" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -97,8 +97,8 @@
                 <button type="button" id="diverseDownloadButton">Baixar Bling</button>
               </div>
               <form id="diverseRzForm" class="diverse-rz-form">
-                <input name="codigoRz" placeholder="Novo RZ" autocomplete="off" required />
-                <button type="submit">Gerar/usar RZ</button>
+                <span id="diverseNextRz" class="muted">Proxima RZ</span>
+                <button type="submit">Gerar RZ</button>
                 <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
                 <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling da remessa</button>
               </form>
@@ -345,6 +345,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20260623-auto-bling-product" type="module"></script>
+    <script src="/app.js?v=20260625-receive-confirm" type="module"></script>
   </body>
 </html>

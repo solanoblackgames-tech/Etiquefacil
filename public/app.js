@@ -25,6 +25,8 @@ const state = {
   transferCameraTimer: null,
   lastCameraCode: "",
   lastCameraScanAt: 0,
+  pendingTransferReceive: false,
+  pendingTransferConfirmation: null,
   pendingScan: false,
   pendingDecrement: false,
   labelProduct: null,
@@ -612,11 +614,9 @@ function openDecisionModal({ title, rows = [], fields = [], actions = [], onSubm
 
 function createDiverseRz(event) {
   event.preventDefault();
-  const input = event.currentTarget.querySelector("input[name='codigoRz']");
-  const codigoRz = normalizeCode(input.value);
+  const codigoRz = nextNoSheetRzCode(state.selectedDiverseLot);
   if (!codigoRz) return;
   setDiverseRz(codigoRz);
-  input.value = "";
   $("#diverseScanMessage").style.color = "#0f766e";
   $("#diverseScanMessage").textContent = `Remessa ${codigoRz} ativa.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
@@ -687,6 +687,7 @@ function isNoSheetLot(lot) {
 
 function renderDiverseRzControls(lot) {
   const active = state.selectedDiverseRz;
+  $("#diverseNextRz").textContent = `Proxima RZ: ${nextNoSheetRzCode(lot)}`;
   $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
   $("#diverseDownloadRzButton").disabled = !active;
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
@@ -723,6 +724,38 @@ function diverseRzs(lot) {
 function defaultDiverseRz(lot) {
   const base = normalizeCode(lot?.nomeArquivo || lot?.prefixoSku || "RZ1").replace(/[^A-Z0-9]+/g, "");
   return base.slice(0, 24) || "RZ1";
+}
+
+function nextNoSheetRzCode(lot) {
+  const lotCode = noSheetLotRzPrefix(lot);
+  const operatorCode = noSheetOperatorRzCode();
+  const base = `${lotCode}-${operatorCode}`;
+  const usedSequences = new Set();
+
+  for (const rz of diverseRzsWithActive(lot)) {
+    const code = normalizeCode(rz.codigoRz);
+    if (!code.startsWith(`${base}-`)) continue;
+    const match = code.slice(base.length + 1).match(/^(\d+)$/);
+    if (match) usedSequences.add(Number(match[1]));
+  }
+
+  let sequence = 1;
+  while (usedSequences.has(sequence)) sequence += 1;
+  return `${base}-${String(sequence).padStart(3, "0")}`;
+}
+
+function noSheetLotRzPrefix(lot) {
+  const raw = normalizeCode(lot?.prefixoSku || lot?.nomeArquivo || "LOTE").replace(/[^A-Z0-9]+/g, "");
+  return (raw || "LOTE").slice(0, 12);
+}
+
+function noSheetOperatorRzCode() {
+  if (state.user?.operatorCode) return String(state.user.operatorCode).replace(/[^0-9A-Z]+/gi, "").toUpperCase();
+  if (state.user?.role === "operator") {
+    const fallback = normalizeCode(state.user.email || state.user.name || state.user.id || "OP").replace(/[^A-Z0-9]+/g, "");
+    return (fallback || "OP").slice(0, 8);
+  }
+  return "OWNER";
 }
 
 async function downloadDiverseRzBling(lotId, codigoRz) {
@@ -1788,12 +1821,13 @@ function transferReceiveApiBase(transferLotId) {
 
 function renderTransferReceivePage(lot) {
   const detail = $("#transferDetail");
+  const pending = state.pendingTransferConfirmation?.transferLotId === lot.id ? state.pendingTransferConfirmation : null;
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
       <div class="scan-heading">
         <div>
-          <span class="muted">${escapeHtml(lot.depositoOrigem)} â†’ ${escapeHtml(lot.depositoDestino)}</span>
+          <span class="muted">${escapeHtml(lot.depositoOrigem)} para ${escapeHtml(lot.depositoDestino)}</span>
           <h2>${escapeHtml(lot.name)}</h2>
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
@@ -1803,7 +1837,6 @@ function renderTransferReceivePage(lot) {
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
         ${metric("Conferido", lot.totalReceived || 0)}
         ${metric("Falta", lot.totalPending ?? 0)}
-        ${metric("SKUs", lot.totalSkus)}
       </div>
       <div class="camera-panel">
         <video id="transferCameraVideo" playsinline muted></video>
@@ -1813,31 +1846,57 @@ function renderTransferReceivePage(lot) {
         </div>
       </div>
       <form id="transferReceiveForm" class="scan-box">
-        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" autofocus />
-        <button type="submit">Conferir</button>
+        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" autofocus ${pending ? "disabled" : ""} />
+        <button type="submit" ${pending ? "disabled" : ""}>Ler etiqueta</button>
       </form>
+      ${pending ? transferPendingConfirmation(pending) : ""}
       <div id="transferReceiveMessage" class="message"></div>
-      <div class="diverse-table transfer-table">
-        <div class="diverse-row transfer-row diverse-row-head">
-          <span>SKU</span>
-          <span>Codigo</span>
-          <span>Produto</span>
-          <span>CD</span>
-          <span>Loja</span>
-          <span>Falta</span>
-          <span>Status</span>
+      <details class="transfer-items-panel">
+        <summary>
+          <span>Ver itens da remessa</span>
+          <strong>${lot.totalPending ?? 0} faltando</strong>
+        </summary>
+        <div class="diverse-table transfer-table">
+          <div class="diverse-row transfer-row diverse-row-head">
+            <span>SKU</span>
+            <span>Codigo</span>
+            <span>Produto</span>
+            <span>CD</span>
+            <span>Loja</span>
+            <span>Falta</span>
+            <span>Status</span>
+          </div>
+          ${transferReceiveRows(lot)}
         </div>
-        ${transferReceiveRows(lot)}
-      </div>
+      </details>
     </section>
   `;
   $("#transferReceiveForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    receiveTransferCurrent(lot.id);
+    prepareTransferReceiveConfirmation(lot);
   });
-  $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id));
+  detail.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
+  detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
+  $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id, lot));
   $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
-  schedulePrimaryInputFocus(["#transferReceiveInput"]);
+  if (!pending) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+}
+
+function transferPendingConfirmation(pending) {
+  const item = pending.item;
+  const title = item ? escapeHtml(item.descricao) : "Produto nao identificado na remessa";
+  const subtitle = item ? `${escapeHtml(item.sku)} · ${escapeHtml(item.codigoMl)}` : escapeHtml(pending.code);
+  return `
+    <section class="transfer-confirm-panel">
+      <span class="muted">Etiqueta lida</span>
+      <strong>${title}</strong>
+      <span>${subtitle}</span>
+      <div class="transfer-confirm-actions">
+        <button type="button" data-confirm-transfer-entry>Confirmar entrada no estoque</button>
+        <button type="button" class="ghost" data-cancel-transfer-entry>Cancelar leitura</button>
+      </div>
+    </section>
+  `;
 }
 
 function transferReceiveRows(lot) {
@@ -1866,37 +1925,95 @@ function receiveStatusLabel(status) {
   return ({ pendente: "Pendente", parcial: "Parcial", ok: "OK", sobra: "Sobra" })[status] || "";
 }
 
-async function receiveTransferCurrent(transferLotId) {
+function findTransferReceiveItem(lot, code) {
+  const normalized = normalizeCode(code);
+  return (lot.items || []).find((item) => {
+    return [item.codigoMl, item.sku, item.ean].some((value) => normalizeCode(value) === normalized);
+  }) || null;
+}
+
+function prepareTransferReceiveConfirmation(lot) {
+  if (state.pendingTransferReceive || state.pendingTransferConfirmation) return;
   const input = $("#transferReceiveInput");
-  const button = $("#transferReceiveForm button");
+  if (!input) return;
   const code = normalizeCode(input.value);
   input.value = code;
   if (!code) return;
-  button.disabled = true;
+  const item = findTransferReceiveItem(lot, code);
+  const missing = item ? Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) : 0;
+  playTransferReadSound();
+  if (!item) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = "Codigo lido, mas nao previsto nesta remessa.";
+    input.select();
+    return;
+  }
+  if (missing <= 0) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = "Este produto ja foi totalmente conferido.";
+    input.select();
+    return;
+  }
+  state.pendingTransferConfirmation = { transferLotId: lot.id, code, item };
+  input.value = "";
+  renderTransferReceivePage(lot);
+  const message = $("#transferReceiveMessage");
+  message.style.color = "#0f766e";
+  message.textContent = "Confira o produto em maos e confirme a entrada no estoque.";
+}
+
+function cancelTransferReceiveConfirmation(lot) {
+  state.pendingTransferConfirmation = null;
+  renderTransferReceivePage(lot);
+  $("#transferReceiveMessage").textContent = "Leitura cancelada.";
+}
+
+async function confirmTransferReceiveCurrent(transferLotId) {
+  if (state.pendingTransferReceive) return;
+  const pending = state.pendingTransferConfirmation;
+  if (!pending || pending.transferLotId !== transferLotId) return;
+  const button = $("#transferReceiveForm button");
+  const confirmButton = $("[data-confirm-transfer-entry]");
+  const input = $("#transferReceiveInput");
+  const code = pending.code;
+  state.pendingTransferReceive = true;
+  if (input) input.disabled = true;
+  if (button) button.disabled = true;
+  if (confirmButton) confirmButton.disabled = true;
   try {
     const response = await api(`${transferReceiveApiBase(transferLotId)}/receive-scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code })
     });
+    state.pendingTransferConfirmation = null;
     renderTransferReceivePage(response.lot);
     playTransferSuccessSound();
     const message = $("#transferReceiveMessage");
     message.style.color = "#0f766e";
-    message.textContent = `${response.item?.sku || code} conferido e transferido com sucesso.`;
+    message.textContent = `${response.item?.sku || code} confirmado no estoque.`;
   } catch (error) {
     playTransferErrorSound();
     $("#transferReceiveMessage").style.color = "";
     $("#transferReceiveMessage").textContent = error.message;
-    input.select();
   } finally {
-    button.disabled = false;
-    schedulePrimaryInputFocus(["#transferReceiveInput"]);
+    state.pendingTransferReceive = false;
+    const currentInput = $("#transferReceiveInput");
+    const currentButton = $("#transferReceiveForm button");
+    const currentConfirmButton = $("[data-confirm-transfer-entry]");
+    if (currentInput) currentInput.disabled = Boolean(state.pendingTransferConfirmation);
+    if (currentButton) currentButton.disabled = Boolean(state.pendingTransferConfirmation);
+    if (currentConfirmButton) currentConfirmButton.disabled = false;
+    if (!state.pendingTransferConfirmation) schedulePrimaryInputFocus(["#transferReceiveInput"]);
   }
 }
 
 function playTransferSuccessSound() {
   playToneSequence([880, 1175], 0.09, 0.04);
+}
+
+function playTransferReadSound() {
+  playToneSequence([660], 0.08, 0);
 }
 
 function playTransferErrorSound() {
@@ -1925,7 +2042,7 @@ function playToneSequence(frequencies, duration = 0.1, gap = 0.04) {
   setTimeout(() => context.close().catch(() => {}), (start - context.currentTime + 0.1) * 1000);
 }
 
-async function startTransferCamera(transferLotId) {
+async function startTransferCamera(transferLotId, lot) {
   if (!("BarcodeDetector" in window)) {
     $("#transferReceiveMessage").textContent = "Este navegador nao possui leitor de codigo nativo. Use o campo de bipagem.";
     return;
@@ -1939,15 +2056,17 @@ async function startTransferCamera(transferLotId) {
     video.srcObject = stream;
     await video.play();
     state.transferCameraTimer = window.setInterval(async () => {
+      if (state.pendingTransferReceive || state.pendingTransferConfirmation) return;
       if (!video.videoWidth) return;
       const codes = await detector.detect(video).catch(() => []);
       const code = codes[0]?.rawValue ? normalizeCode(codes[0].rawValue) : "";
       const now = Date.now();
-      if (!code || (code === state.lastCameraCode && now - state.lastCameraScanAt < 1800)) return;
+      if (!code || (code === state.lastCameraCode && now - state.lastCameraScanAt < 10000)) return;
       state.lastCameraCode = code;
       state.lastCameraScanAt = now;
+      stopTransferCamera();
       $("#transferReceiveInput").value = code;
-      await receiveTransferCurrent(transferLotId);
+      prepareTransferReceiveConfirmation(lot);
     }, 700);
     $("#transferReceiveMessage").style.color = "#0f766e";
     $("#transferReceiveMessage").textContent = "Camera ativa. Aponte para o codigo de barras.";
@@ -1962,6 +2081,8 @@ function stopTransferCamera() {
   state.transferCameraTimer = null;
   if (state.transferCameraStream) state.transferCameraStream.getTracks().forEach((track) => track.stop());
   state.transferCameraStream = null;
+  state.lastCameraCode = "";
+  state.lastCameraScanAt = 0;
 }
 
 async function loadTransferLots(selectId = state.selectedTransferLotId) {
@@ -2444,8 +2565,8 @@ function renderLotDetail(lot) {
     ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
     ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
-        <input name="codigoRz" placeholder="Novo RZ" autocomplete="off" />
-        <button type="submit">Gerar/usar RZ</button>
+        <span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>
+        <button type="submit">Gerar RZ</button>
         <strong id="lotDiverseActiveRz">Nenhuma remessa ativa</strong>
         <span></span>
       </form>
@@ -2512,7 +2633,7 @@ function renderLotDetail(lot) {
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
-  schedulePrimaryInputFocus(noSheetLot ? ["#lotDiverseRzForm input[name='codigoRz']", "#rzSearchInput"] : ["#rzSearchInput"]);
+  schedulePrimaryInputFocus(["#rzSearchInput"]);
 }
 
 function emptyLotDetailMarkup() {
@@ -2562,7 +2683,9 @@ function openRzFromSearch(lot) {
   const typed = normalizeCode(input.value);
   const rz = lot.rzs.find((item) => normalizeCode(item.codigoRz) === typed);
   if (!rz && isNoSheetLot(lot) && typed) {
-    openNoSheetRz(lot, typed);
+    message.style.color = "";
+    message.textContent = "Use Gerar RZ para criar o proximo codigo automaticamente.";
+    input.select();
     return;
   }
   if (!rz) {
@@ -2579,10 +2702,7 @@ function openRzFromSearch(lot) {
 
 function createLotDetailNoSheetRz(event, lot) {
   event.preventDefault();
-  const input = event.currentTarget.querySelector("input[name='codigoRz']");
-  const codigoRz = normalizeCode(input.value) || defaultDiverseRz(lot);
-  input.value = "";
-  openNoSheetRz(lot, codigoRz);
+  openNoSheetRz(lot, nextNoSheetRzCode(lot));
 }
 
 function openNoSheetRz(lot, codigoRz) {
@@ -2860,7 +2980,10 @@ function bindScanControls(lotId, codigoRz) {
   });
   bindLabelTextControls();
   $("#scanInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") scanCurrent(lotId, codigoRz);
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (!event.repeat) scanCurrent(lotId, codigoRz);
+    }
   });
   schedulePrimaryInputFocus(["#scanInput"]);
 }
@@ -2888,13 +3011,15 @@ function bindLabelTextControls() {
 async function scanCurrent(lotId, codigoRz) {
   if (state.pendingScan) return;
   const input = $("#scanInput");
+  if (!input) return;
   const codigoMl = normalizeCodigoMl(input.value);
-  input.value = codigoMl;
+  input.value = "";
   if (!codigoMl) return;
 
   try {
     state.pendingScan = true;
     $("#scanButton").disabled = true;
+    input.disabled = true;
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2938,6 +3063,8 @@ async function scanCurrent(lotId, codigoRz) {
     state.pendingScan = false;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = false;
+    const scanInput = $("#scanInput");
+    if (scanInput) scanInput.disabled = false;
     schedulePrimaryInputFocus(["#scanInput"]);
   }
 }
@@ -3348,8 +3475,6 @@ function primaryInputSelectors() {
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",
-    "#lotDiverseRzForm input[name='codigoRz']",
-    "#diverseRzForm input[name='codigoRz']",
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
     "#transferScanInput",

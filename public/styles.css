@@ -1285,6 +1285,15 @@ h3 {
   grid-template-columns: 1fr 1fr 2.2fr 0.45fr 0.55fr 0.55fr 0.8fr;
 }
 
+.transfer-receive-page {
+  margin: 0 auto;
+  max-width: 760px;
+}
+
+.transfer-receive-page .summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .camera-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1297,9 +1306,62 @@ h3 {
 .camera-panel video {
   background: #101820;
   border-radius: 6px;
-  max-height: 360px;
+  aspect-ratio: 4 / 3;
+  max-height: 420px;
   object-fit: cover;
   width: 100%;
+}
+
+.transfer-confirm-panel {
+  background: #ecfdf5;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.transfer-confirm-panel strong {
+  color: #064e3b;
+  font-size: 20px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.transfer-confirm-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+  margin-top: 6px;
+}
+
+.transfer-items-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.transfer-items-panel summary {
+  align-items: center;
+  background: var(--panel);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  list-style: none;
+  padding: 14px 16px;
+}
+
+.transfer-items-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.transfer-items-panel summary span {
+  font-weight: 800;
+}
+
+.transfer-items-panel summary strong {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .transfer-empty {
@@ -1948,6 +2010,23 @@ h3 {
   .pallet-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .transfer-shell {
+    padding: 12px;
+  }
+
+  .transfer-receive-page {
+    max-width: none;
+  }
+
+  .transfer-receive-page .summary-grid,
+  .transfer-confirm-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-panel {
+    padding: 10px;
   }
 
   .detail,
