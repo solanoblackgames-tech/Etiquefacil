@@ -1032,6 +1032,7 @@ async function showApp(user) {
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
+  document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", operator);
   document.body.classList.toggle("operator-view", operator);
 }
 
@@ -1951,6 +1952,7 @@ async function showTransferReceiveOnly({ transferLotId }) {
   $("#searchTab").classList.add("hidden");
   $("#profileTab").classList.add("hidden");
   $("#transfersTab").classList.remove("hidden");
+  document.querySelector(".transfer-create-panel")?.classList.add("hidden");
   $("#transferLots").innerHTML = "";
   $("#transferDetail").classList.remove("empty");
   $("#transferDetail").innerHTML = '<p class="muted">Carregando remessa...</p>';
