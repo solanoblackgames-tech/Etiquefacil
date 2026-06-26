@@ -135,6 +135,10 @@ h3 {
   padding-top: 18px;
 }
 
+.invite-auth-panel {
+  max-width: 720px;
+}
+
 .message {
   color: var(--danger);
   font-weight: 700;
@@ -168,6 +172,35 @@ h3 {
   gap: 6px;
   margin: 14px 0;
   padding: 16px;
+}
+
+.operator-invite-panel,
+.operator-invite-result {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 14px;
+}
+
+.operator-invite-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.operator-invite-panel strong,
+.operator-invite-panel span {
+  display: block;
+}
+
+.operator-invite-result {
+  background: #f8fbfa;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.operator-invite-result input {
+  font-size: 13px;
 }
 
 .operator-dashboard {
@@ -2062,6 +2095,8 @@ h3 {
   .rz-search,
   .scan-box,
   .custom-text-row,
+  .operator-invite-panel,
+  .operator-invite-result,
   .item-row,
   .preview-rz-row,
   .diverse-rz-form,

@@ -30,6 +30,22 @@
       </section>
     </main>
 
+    <main id="operatorInviteAuth" class="auth hidden">
+      <section class="auth-panel invite-auth-panel">
+        <div>
+          <h1>Cadastro de operador</h1>
+          <p id="operatorInviteDetails" class="muted"></p>
+        </div>
+        <form id="operatorInviteForm" class="form">
+          <label>Nome<input name="name" required /></label>
+          <label>E-mail<input name="email" type="email" required /></label>
+          <label>Senha<input name="password" type="password" required /></label>
+          <button type="submit">Concluir cadastro</button>
+        </form>
+        <p id="operatorInviteMessage" class="message"></p>
+      </section>
+    </main>
+
     <main id="app" class="app hidden">
       <header class="topbar">
         <div>
@@ -140,6 +156,18 @@
             <div class="panel-heading">
               <span class="muted">Perfil</span>
               <h3>Operadores</h3>
+            </div>
+            <div class="operator-invite-panel">
+              <div>
+                <strong>Cadastro por link</strong>
+                <span class="muted">Gere um link temporario para o operador criar o proprio acesso.</span>
+              </div>
+              <button id="operatorInviteButton" type="button">Gerar link</button>
+            </div>
+            <div id="operatorInviteResult" class="operator-invite-result hidden">
+              <input id="operatorInviteUrl" readonly aria-label="Link de cadastro do operador" />
+              <button id="operatorInviteCopyButton" type="button" class="ghost">Copiar</button>
+              <span id="operatorInviteExpires" class="muted"></span>
             </div>
             <form id="operatorForm" class="settings-form">
               <label>Nome<input name="name" required /></label>

@@ -27,10 +27,12 @@ const state = {
   lastCameraScanAt: 0,
   pendingTransferReceive: false,
   pendingTransferConfirmation: null,
+  operatorInviteToken: null,
   pendingScan: false,
   pendingDecrement: false,
   labelProduct: null,
   labelMeta: null,
+  labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
@@ -47,6 +49,12 @@ const formatDate = (value) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString("pt-BR");
 };
+const formatDateTime = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "--"
+    : date.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+};
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
 
@@ -55,6 +63,11 @@ await bootstrap();
 async function bootstrap() {
   bindEvents();
   state.config = await api("/api/config");
+  const operatorInviteRequest = getOperatorInviteRequest();
+  if (operatorInviteRequest) {
+    await showOperatorInviteAuth(operatorInviteRequest);
+    return;
+  }
   const transferReceiveRequest = getTransferReceiveRequest();
   if (transferReceiveRequest) {
     await showTransferReceiveOnly(transferReceiveRequest);
@@ -75,6 +88,8 @@ function bindEvents() {
     event.preventDefault();
     await submitAuth("/api/register", event.currentTarget);
   });
+
+  $("#operatorInviteForm").addEventListener("submit", acceptOperatorInvite);
 
   $("#logoutButton").addEventListener("click", async () => {
     await logout();
@@ -144,6 +159,8 @@ function bindEvents() {
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
+  $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
+  $("#operatorInviteCopyButton").addEventListener("click", copyOperatorInviteLink);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
   });
@@ -191,6 +208,52 @@ async function submitAuth(url, form) {
     showApp(response.user);
   } catch (error) {
     $("#authMessage").textContent = error.message;
+  }
+}
+
+function getOperatorInviteRequest() {
+  const match = window.location.pathname.match(/^\/operadores\/cadastro\/([^/]+)$/);
+  return match ? { token: decodeURIComponent(match[1]) } : null;
+}
+
+async function showOperatorInviteAuth({ token }) {
+  state.operatorInviteToken = token;
+  $("#auth").classList.add("hidden");
+  $("#app").classList.add("hidden");
+  $("#adminApp").classList.add("hidden");
+  $("#operatorInviteAuth").classList.remove("hidden");
+  $("#operatorInviteMessage").textContent = "";
+  $("#operatorInviteForm").classList.add("hidden");
+
+  try {
+    const response = await api(`/api/operator-invites/${encodeURIComponent(token)}`);
+    $("#operatorInviteDetails").textContent = `${response.invite.ownerName} enviou um convite. O link expira em ${formatDateTime(response.invite.expiresAt)}.`;
+    $("#operatorInviteForm").classList.remove("hidden");
+    schedulePrimaryInputFocus(["#operatorInviteForm input[name='name']"]);
+  } catch (error) {
+    $("#operatorInviteDetails").textContent = "";
+    $("#operatorInviteMessage").textContent = error.message;
+  }
+}
+
+async function acceptOperatorInvite(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  $("#operatorInviteMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api(`/api/operator-invites/${encodeURIComponent(state.operatorInviteToken)}/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    history.replaceState(null, "", "/lotes");
+    await showApp(response.user);
+  } catch (error) {
+    $("#operatorInviteMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -996,6 +1059,7 @@ function openProductEditModal(product) {
 async function showApp(user) {
   state.user = user;
   $("#auth").classList.add("hidden");
+  $("#operatorInviteAuth").classList.add("hidden");
   if (user.role === "admin") {
     $("#app").classList.add("hidden");
     $("#adminApp").classList.remove("hidden");
@@ -1041,6 +1105,7 @@ function showAuth() {
   document.body.classList.remove("lot-focus");
   stopTransferCamera();
   $("#auth").classList.remove("hidden");
+  $("#operatorInviteAuth").classList.add("hidden");
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
   schedulePrimaryInputFocus(["#loginForm input[name='email']"]);
@@ -1271,6 +1336,56 @@ async function createOperator(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+async function generateOperatorInvite() {
+  const button = $("#operatorInviteButton");
+  $("#operatorMessage").textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api("/api/operator-invites", { method: "POST" });
+    $("#operatorInviteResult").classList.remove("hidden");
+    $("#operatorInviteUrl").value = response.url;
+    $("#operatorInviteExpires").textContent = `Expira em ${formatDateTime(response.invite.expiresAt)}`;
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Link gerado. Envie para o operador concluir o cadastro.";
+    await copyText(response.url).catch(() => null);
+  } catch (error) {
+    $("#operatorMessage").style.color = "";
+    $("#operatorMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyOperatorInviteLink() {
+  const url = $("#operatorInviteUrl").value;
+  if (!url) return;
+  try {
+    await copyText(url);
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Link copiado.";
+  } catch {
+    $("#operatorInviteUrl").select();
+    $("#operatorMessage").style.color = "";
+    $("#operatorMessage").textContent = "Selecione e copie o link manualmente.";
+  }
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("Nao foi possivel copiar.");
 }
 
 async function recordOperatorActivity(action, metadata = {}) {
@@ -3545,9 +3660,10 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   return matches[0]?.product || null;
 }
 
-function showLabel(product, { autoPrint = false, meta = null } = {}) {
+function showLabel(product, { autoPrint = false, meta = null, returnFocusSelectors = null } = {}) {
   state.labelProduct = product;
   state.labelMeta = meta;
+  state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
   $("#labelPreview").innerHTML = labelMarkup(product, meta);
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
@@ -3684,6 +3800,7 @@ function printCurrentLabel() {
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
   window.print();
+  setTimeout(finishLabelPrint, 250);
 }
 
 function bindPrintCloseFallback() {
@@ -3717,11 +3834,21 @@ function hideLabelPreview() {
   $("#labelPreview").innerHTML = "";
   state.labelProduct = null;
   state.labelMeta = null;
-  scheduleScanInputFocus();
+  const returnFocusSelectors = state.labelReturnFocusSelectors;
+  state.labelReturnFocusSelectors = null;
+  scheduleScanInputFocus(returnFocusSelectors);
 }
 
-function scheduleScanInputFocus() {
-  schedulePrimaryInputFocus(["#scanInput", "#diverseScanForm input[name='codigoMl']"]);
+function scheduleScanInputFocus(preferredSelectors = null) {
+  schedulePrimaryInputFocus(preferredSelectors || ["#scanInput", "#diverseScanForm input[name='codigoMl']"]);
+}
+
+function currentLabelReturnFocusSelectors() {
+  const active = document.activeElement;
+  if (active?.id === "scanInput") return ["#scanInput"];
+  if (active?.matches?.("#diverseScanForm input[name='codigoMl']")) return ["#diverseScanForm input[name='codigoMl']"];
+  if (active?.matches?.("#searchForm input[name='codigoMl']")) return ["#searchForm input[name='codigoMl']"];
+  return ["#scanInput", "#diverseScanForm input[name='codigoMl']", "#searchForm input[name='codigoMl']"];
 }
 
 function schedulePrimaryInputFocus(preferredSelectors) {

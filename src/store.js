@@ -31,6 +31,7 @@ const emptyDb = () => ({
   transferLots: [],
   transferItems: [],
   operatorActivities: [],
+  operatorInvites: [],
   catalogProducts: [],
   catalogRequests: [],
   catalogRejectedRequests: []
@@ -184,6 +185,62 @@ export async function createUser({ name, email, password, parentUserId = null })
 
 export async function createOperator({ ownerUserId, name, email, password }) {
   return createUser({ name, email, password, parentUserId: ownerUserId });
+}
+
+export async function createOperatorInvite({ ownerUserId, tokenHash, expiresAt }) {
+  await ensureStore();
+  const owner = await getUserById(ownerUserId);
+  if (!owner || owner.parentUserId) throw new Error("Usuario principal nao encontrado.");
+  const invite = {
+    id: randomUUID(),
+    ownerUserId,
+    tokenHash,
+    expiresAt,
+    createdAt: new Date().toISOString()
+  };
+
+  if (hasPostgres()) {
+    await query("delete from operator_invites where owner_user_id = $1 or expires_at <= now()", [ownerUserId]);
+    await query(
+      `insert into operator_invites (id, owner_user_id, token_hash, expires_at, created_at)
+       values ($1, $2, $3, $4, $5)`,
+      [invite.id, invite.ownerUserId, invite.tokenHash, invite.expiresAt, invite.createdAt]
+    );
+    return publicOperatorInvite(invite, owner);
+  }
+
+  const db = await readDb();
+  const now = new Date();
+  db.operatorInvites = (db.operatorInvites || []).filter((item) => item.ownerUserId !== ownerUserId && new Date(item.expiresAt) > now);
+  db.operatorInvites.push(invite);
+  await writeDb(db);
+  return publicOperatorInvite(invite, owner);
+}
+
+export async function getOperatorInvite(tokenHash) {
+  await ensureStore();
+  const invite = await getOperatorInviteByTokenHash(tokenHash);
+  if (!invite) throw notFound("Link de cadastro invalido ou expirado.");
+  const owner = await getUserById(invite.ownerUserId);
+  if (!owner) throw notFound("Usuario principal nao encontrado.");
+  return publicOperatorInvite(invite, owner);
+}
+
+export async function acceptOperatorInvite({ tokenHash, name, email, password }) {
+  await ensureStore();
+  const invite = await getOperatorInviteByTokenHash(tokenHash);
+  if (!invite) throw notFound("Link de cadastro invalido ou expirado.");
+  const operator = await createOperator({ ownerUserId: invite.ownerUserId, name, email, password });
+
+  if (hasPostgres()) {
+    await query("delete from operator_invites where id = $1", [invite.id]);
+  } else {
+    const db = await readDb();
+    db.operatorInvites = (db.operatorInvites || []).filter((item) => item.id !== invite.id);
+    await writeDb(db);
+  }
+
+  return operator;
 }
 
 export async function verifyUser(email, password) {
@@ -452,6 +509,7 @@ export async function deleteUser(userId) {
   db.scans = db.scans.filter((scan) => !lotIds.has(scan.lotId));
   db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
+  db.operatorInvites = (db.operatorInvites || []).filter((invite) => invite.ownerUserId !== userId);
   await writeDb(db);
   return { ok: true };
 }
@@ -1765,6 +1823,14 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists operator_invites (
+      id text primary key,
+      owner_user_id text not null references users(id) on delete cascade,
+      token_hash text not null unique,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists catalog_requests (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
@@ -1882,6 +1948,8 @@ async function ensurePgStore() {
     create index if not exists operator_activities_operator_user_id_idx on operator_activities(operator_user_id);
     create index if not exists operator_activities_action_idx on operator_activities(action);
     create index if not exists operator_activities_created_at_idx on operator_activities(created_at);
+    create index if not exists operator_invites_owner_user_id_idx on operator_invites(owner_user_id);
+    create index if not exists operator_invites_expires_at_idx on operator_invites(expires_at);
     create index if not exists transfer_lots_user_id_idx on transfer_lots(user_id);
     create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
     create index if not exists transfer_items_sku_idx on transfer_items(sku);
@@ -3938,6 +4006,43 @@ function operatorActivityFromRow(row) {
     action: row.action,
     metadata: parseJsonObject(row.metadata),
     createdAt: iso(row.created_at)
+  };
+}
+
+function operatorInviteFromRow(row) {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    tokenHash: row.token_hash,
+    expiresAt: iso(row.expires_at),
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function getOperatorInviteByTokenHash(tokenHash) {
+  const now = new Date();
+  if (hasPostgres()) {
+    await query("delete from operator_invites where expires_at <= now()");
+    const result = await query("select * from operator_invites where token_hash = $1 and expires_at > now() limit 1", [tokenHash]);
+    return result.rows[0] ? operatorInviteFromRow(result.rows[0]) : null;
+  }
+
+  const db = await readDb();
+  const invite = (db.operatorInvites || []).find((item) => item.tokenHash === tokenHash && new Date(item.expiresAt) > now) || null;
+  const hasExpired = (db.operatorInvites || []).some((item) => new Date(item.expiresAt) <= now);
+  if (hasExpired) {
+    db.operatorInvites = (db.operatorInvites || []).filter((item) => new Date(item.expiresAt) > now);
+    await writeDb(db);
+  }
+  return invite;
+}
+
+function publicOperatorInvite(invite, owner) {
+  return {
+    id: invite.id,
+    ownerName: owner.tenantName || owner.name,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt
   };
 }
 

@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import QRCode from "qrcode";
@@ -32,6 +32,7 @@ import {
   createLotFromImport,
   createManualExternalExcess,
   createOperator,
+  createOperatorInvite,
   createUser,
   deleteExternalExcess,
   deleteUserBlingIntegration,
@@ -43,6 +44,7 @@ import {
   ensureStore,
   getBlingAppConfig,
   getLotBlingData,
+  getOperatorInvite,
   getPgPool,
   getExternalExcessProduct,
   getPublicTransferLotDetail,
@@ -76,6 +78,7 @@ import {
   updateUserPassword,
   saveUserBlingIntegration,
   saveBlingAppConfig,
+  acceptOperatorInvite,
   verifyUser
 } from "./store.js";
 
@@ -257,6 +260,42 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
     res.json({ operator: await createOperator({ ownerUserId: workspaceUserId(req), name, email, password }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/operator-invites", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const token = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const invite = await createOperatorInvite({
+      ownerUserId: workspaceUserId(req),
+      tokenHash: hashInviteToken(token),
+      expiresAt
+    });
+    res.json({ invite, url: `${req.protocol}://${req.get("host")}/operadores/cadastro/${encodeURIComponent(token)}` });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/operator-invites/:token", async (req, res) => {
+  try {
+    res.json({ invite: await getOperatorInvite(hashInviteToken(req.params.token)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/operator-invites/:token/accept", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
+    const user = await acceptOperatorInvite({ tokenHash: hashInviteToken(req.params.token), name, email, password });
+    req.session.user = user;
+    await recordOperatorActivity(user, "login");
+    res.json({ user });
   } catch (error) {
     sendError(res, error);
   }
@@ -1018,7 +1057,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/perfil"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/perfil", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -1062,6 +1101,10 @@ function operatorUserId(req) {
 
 function isAdminLogin(email, password) {
   return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
+}
+
+function hashInviteToken(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
 }
 
 function sendError(res, error) {
@@ -1549,7 +1592,7 @@ ensureStore()
     console.error("Falha ao inicializar o banco:", error);
   });
 
-app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling"], (req, res) => {
+app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 

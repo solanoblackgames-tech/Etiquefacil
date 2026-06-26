@@ -89,16 +89,21 @@ export const BLING_STOCK_TRANSFER_HEADERS = [
 const REQUIRED_COLUMNS = [
   "codigoMl",
   "codigoRz",
-  "qtd",
   "descricao",
   "valorUnit",
   "valorTotal"
 ];
 
+const QUANTITY_COLUMNS = ["qtd", "saldo1", "saldo2", "saldo3", "saldo4"];
+
 const COLUMN_ALIASES = {
   codigoMl: ["Código ML", "Código Meli", "Codigo ML", "Codigo Meli"],
   codigoRz: ["Código RZ", "Codigo RZ"],
   qtd: ["Qtd", "Quantidade"],
+  saldo1: ["Saldo 1", "Saldo1", "Saldo_1"],
+  saldo2: ["Saldo 2", "Saldo2", "Saldo_2"],
+  saldo3: ["Saldo 3", "Saldo3", "Saldo_3"],
+  saldo4: ["Saldo 4", "Saldo4", "Saldo_4"],
   descricao: ["Descrição do Item", "Descricao do Item", "Descrição", "Descricao"],
   valorUnit: ["Valor Unit", "Valor Unitário", "Valor Unitario"],
   valorTotal: ["Valor Total"],
@@ -169,6 +174,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
   const indexByColumn = buildColumnIndex(header);
   const missing = REQUIRED_COLUMNS.filter((name) => !indexByColumn.has(name));
   if (missing.length) throw new Error(`Colunas obrigatórias ausentes: ${missing.map(labelForColumn).join(", ")}.`);
+  if (!hasQuantityColumn(indexByColumn)) throw new Error(`Colunas obrigatórias ausentes: ${quantityColumnLabels()}.`);
 
   const get = (row, column) => row[indexByColumn.get(column)];
   const byMl = new Map();
@@ -181,7 +187,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     const codigoRz = String(get(row, "codigoRz") ?? "").trim();
     if (!codigoMl || !codigoRz) continue;
 
-    const qtd = Math.max(0, Math.round(parseNumber(get(row, "qtd"))));
+    const qtd = readQuantity(row, indexByColumn, get);
     const valorUnit = parseNumber(get(row, "valorUnit"));
     const valorTotal = parseNumber(get(row, "valorTotal"));
     const descricao = String(get(row, "descricao") ?? "").trim();
@@ -248,7 +254,7 @@ function findImportableSheet(sheets) {
 
 function hasRequiredColumns(row) {
   const index = buildColumnIndex(row.map((cell) => String(cell ?? "").trim()));
-  return REQUIRED_COLUMNS.every((name) => index.has(name));
+  return REQUIRED_COLUMNS.every((name) => index.has(name)) && hasQuantityColumn(index);
 }
 
 function buildColumnIndex(header) {
@@ -266,7 +272,25 @@ function labelForColumn(column) {
 }
 
 function requiredColumnLabels() {
-  return REQUIRED_COLUMNS.map(labelForColumn).join(", ");
+  return `${REQUIRED_COLUMNS.map(labelForColumn).join(", ")} e ${quantityColumnLabels()}`;
+}
+
+function quantityColumnLabels() {
+  return "Qtd/Quantidade ou Saldo 1 + Saldo 2 + Saldo 3 + Saldo 4";
+}
+
+function hasQuantityColumn(indexByColumn) {
+  return QUANTITY_COLUMNS.some((name) => indexByColumn.has(name));
+}
+
+function readQuantity(row, indexByColumn, get) {
+  if (indexByColumn.has("qtd")) return Math.max(0, Math.round(parseNumber(get(row, "qtd"))));
+
+  const total = ["saldo1", "saldo2", "saldo3", "saldo4"].reduce((sum, column) => {
+    if (!indexByColumn.has(column)) return sum;
+    return sum + parseNumber(row[indexByColumn.get(column)]);
+  }, 0);
+  return Math.max(0, Math.round(total));
 }
 
 export function buildBlingCsv(products, lot) {

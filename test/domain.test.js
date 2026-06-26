@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, roundMoney } from "../src/domain.js";
+import XLSX from "xlsx";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
@@ -53,6 +54,24 @@ test("Bling stock transfer CSV maps origin destination and quantity", () => {
 
 test("auction cost rounds to Brazilian money precision", () => {
   assert.equal(roundMoney(1659.17 * 0.2), 331.83);
+});
+
+test("specialist import sums Saldo 1 to Saldo 4 when quantity column is absent", async () => {
+  const rows = [
+    ["Codigo ML", "Codigo RZ", "Saldo 1", "Saldo 2", "Saldo 3", "Saldo 4", "Descricao", "Valor Unit", "Valor Total"],
+    ["ML-1", "RZ-1", 1, 2, 0, 3, "Produto com saldos", 10, 60],
+    ["ML-1", "RZ-2", 0, 1, 1, 0, "Produto com saldos", 10, 20]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Itens");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  const result = await importSpecialistWorkbook(buffer, { skuPrefix: "sal", auctionPercent: 20 });
+
+  assert.equal(result.products[0].qtdTotal, 8);
+  assert.equal(result.items[0].qtdEsperada, 6);
+  assert.equal(result.items[1].qtdEsperada, 2);
 });
 
 test("Bling CSV maps SKU, ML brand and total stock", () => {
