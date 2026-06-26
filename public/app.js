@@ -2136,7 +2136,12 @@ function receiveStatusLabel(status) {
 function findTransferReceiveItem(lot, code) {
   const normalized = normalizeCode(code);
   return (lot.items || []).find((item) => {
-    return [item.codigoMl, item.sku, item.ean].some((value) => normalizeCode(value) === normalized);
+    return (
+      normalizeCode(item.codigoMl) === normalized ||
+      normalizeCode(item.sku) === normalized ||
+      normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
+      normalizeCode(item.ean) === normalized
+    );
   }) || null;
 }
 
@@ -2301,7 +2306,7 @@ async function startTransferCamera(transferLotId, lot) {
       if (state.pendingTransferReceive || state.pendingTransferConfirmation) return;
       if (!video.videoWidth) return;
       const codes = await detector.detect(video).catch(() => []);
-      const code = codes[0]?.rawValue ? normalizeCode(codes[0].rawValue) : "";
+      const code = chooseTransferCameraCode(codes, lot);
       const now = Date.now();
       if (!code || (code === state.lastCameraCode && now - state.lastCameraScanAt < 10000)) return;
       state.lastCameraCode = code;
@@ -2315,6 +2320,19 @@ async function startTransferCamera(transferLotId, lot) {
     $("#transferReceiveMessage").style.color = "";
     $("#transferReceiveMessage").textContent = `Nao foi possivel abrir a camera: ${error.message}`;
   }
+}
+
+function chooseTransferCameraCode(codes, lot) {
+  const normalizedCodes = (codes || [])
+    .map((item) => ({ value: normalizeCode(item.rawValue), format: String(item.format || "").toLowerCase() }))
+    .filter((item) => item.value);
+  const matchingCodes = normalizedCodes.filter((item) => findTransferReceiveItem(lot, item.value));
+  return (
+    matchingCodes.find((item) => item.format === "code_39")?.value ||
+    matchingCodes.find((item) => item.format === "code_128")?.value ||
+    matchingCodes[0]?.value ||
+    ""
+  );
 }
 
 function stopTransferCamera() {
@@ -3513,7 +3531,12 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   const normalizedMl = normalizeCodigoMl(codigoMl);
   const matches = lot.items.filter((item) => {
     const product = item.product || {};
-    return item.codigoRz === codigoRz && (normalizeCodigoMl(product.codigoMl) === normalizedMl || normalizeCodigoMl(product.sku) === normalizedMl);
+    return (
+      item.codigoRz === codigoRz &&
+      (normalizeCodigoMl(product.codigoMl) === normalizedMl ||
+        normalizeCodigoMl(product.sku) === normalizedMl ||
+        normalizeCodigoMl(code39BarcodeValue(product.sku)) === normalizedMl)
+    );
   });
   const productIds = new Set(matches.map((item) => item.product?.id).filter(Boolean));
   if (productIds.size > 1) return null;
@@ -3577,11 +3600,13 @@ function code39Svg(value) {
     "*": "nwnnwnwnn"
   };
 
-  const encoded = `*${String(value).toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "-")}*`;
+  const barcodeValue = code39BarcodeValue(value);
+  const encoded = `*${barcodeValue}*`;
   const narrow = 2;
   const wide = 5;
   const height = 78;
-  let x = 0;
+  const quietZone = 24;
+  let x = quietZone;
   let bars = "";
 
   for (const char of encoded) {
@@ -3596,7 +3621,12 @@ function code39Svg(value) {
     x += narrow;
   }
 
-  return `<svg class="label-barcode" viewBox="0 0 ${x} ${height}" role="img" aria-label="Código de barras">${bars}</svg>`;
+  x += quietZone;
+  return `<svg class="label-barcode" viewBox="0 0 ${x} ${height}" preserveAspectRatio="xMidYMid meet" data-barcode-value="${escapeHtml(barcodeValue)}" role="img" aria-label="Codigo de barras">${bars}</svg>`;
+}
+
+function code39BarcodeValue(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "-");
 }
 
 function labelMarkup(product, meta = null) {
@@ -3605,11 +3635,12 @@ function labelMarkup(product, meta = null) {
   const hasCustomText = Boolean(customText);
   const footer = labelFooterText(meta);
   const hasMeta = Boolean(footer);
+  const sku = code39BarcodeValue(product.sku);
   return `
     <section class="label-print ${hasCustomText ? "has-note" : ""} ${hasMeta ? "has-meta" : ""}">
       <p class="label-desc">${escapeHtml(product.descricao)}</p>
-      ${code39Svg(product.sku)}
-      <strong class="label-sku">${escapeHtml(product.sku)}</strong>
+      ${code39Svg(sku)}
+      <strong class="label-sku">${escapeHtml(sku)}</strong>
       <strong class="label-price">${escapeHtml(price)}</strong>
       <strong class="label-note">${escapeHtml(customText)}</strong>
       <span class="label-footer">${escapeHtml(footer)}</span>

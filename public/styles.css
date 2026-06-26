@@ -1950,6 +1950,7 @@ h3 {
   height: 15mm;
   justify-self: center;
   margin-top: 2px;
+  shape-rendering: crispEdges;
   width: 49mm;
 }
 

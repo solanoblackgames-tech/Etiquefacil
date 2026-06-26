@@ -1301,7 +1301,9 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
     const product = candidate.product || {};
     return (
       candidate.codigoRz === codigoRz &&
-      (String(product.codigoMl || "").trim().toUpperCase() === normalizedMl || String(product.sku || "").trim().toUpperCase() === normalizedMl)
+      (normalizeServerCode(product.codigoMl) === normalizedMl ||
+        normalizeServerCode(product.sku) === normalizedMl ||
+        code39BarcodeValue(product.sku) === normalizedMl)
     );
   });
   const productIds = new Set(matches.map((candidate) => candidate.product?.id).filter(Boolean));
@@ -1335,6 +1337,14 @@ function buildStockEntryCsvForRz(data) {
 
 function withLotSupplier(items, lot) {
   return (items || []).map((item) => ({ ...item, fornecedor: item.fornecedor || lot?.fornecedor || "" }));
+}
+
+function normalizeServerCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function code39BarcodeValue(value) {
+  return normalizeServerCode(value).replace(/[^0-9A-Z .$/+%-]/g, "-");
 }
 
 async function syncSingleLotProductToBling(userId, lot, product) {

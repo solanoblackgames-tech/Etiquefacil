@@ -2492,7 +2492,11 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
         join products p on p.id = ri.product_id
         where ri.lot_id = $1
           and ri.codigo_rz = $2
-          and (upper(trim(p.codigo_ml)) = upper(trim($3)) or upper(trim(p.sku)) = upper(trim($3)))
+          and (
+            upper(trim(p.codigo_ml)) = upper(trim($3))
+            or upper(trim(p.sku)) = upper(trim($3))
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($3))
+          )
         order by ri.created_at asc
         for update of ri
       `,
@@ -2516,7 +2520,11 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
           select id
           from products
           where lot_id = $1
-            and (upper(trim(codigo_ml)) = upper(trim($2)) or upper(trim(sku)) = upper(trim($2)))
+            and (
+              upper(trim(codigo_ml)) = upper(trim($2))
+              or upper(trim(sku)) = upper(trim($2))
+              or regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+            )
         `,
         [lot.id, codigoMl]
       );
@@ -2566,7 +2574,11 @@ async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
         join products p on p.id = ri.product_id
         where ri.lot_id = $1
           and ri.codigo_rz = $2
-          and (upper(trim(p.codigo_ml)) = upper(trim($3)) or upper(trim(p.sku)) = upper(trim($3)))
+          and (
+            upper(trim(p.codigo_ml)) = upper(trim($3))
+            or upper(trim(p.sku)) = upper(trim($3))
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($3))
+          )
         order by ri.created_at asc
         for update of ri
       `,
@@ -2864,7 +2876,12 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
     const itemResult = await client.query(
       `select * from transfer_items
        where transfer_lot_id = $1
-         and (upper(trim(codigo_ml)) = upper(trim($2)) or upper(trim(sku)) = upper(trim($2)) or upper(trim(ean)) = upper(trim($2)))
+         and (
+           upper(trim(codigo_ml)) = upper(trim($2))
+           or upper(trim(sku)) = upper(trim($2))
+           or regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+           or upper(trim(ean)) = upper(trim($2))
+         )
        limit 1 for update`,
       [lot.id, code]
     );
@@ -2980,7 +2997,11 @@ async function findPgTransferProduct(client, userId, code) {
       from products p
       join lots l on l.id = p.lot_id
       where l.user_id = $1
-        and (upper(trim(p.codigo_ml)) = upper(trim($2)) or upper(trim(p.sku)) = upper(trim($2)))
+        and (
+          upper(trim(p.codigo_ml)) = upper(trim($2))
+          or upper(trim(p.sku)) = upper(trim($2))
+          or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+        )
       order by p.created_at desc
       limit 1
     `,
@@ -3534,7 +3555,10 @@ function findTransferItemForReceive(items, transferLotId, code) {
   const normalized = normalizeCode(code);
   return (items || []).find((item) => {
     return item.transferLotId === transferLotId &&
-      (normalizeCode(item.codigoMl) === normalized || normalizeCode(item.sku) === normalized || normalizeCode(item.ean) === normalized);
+      (normalizeCode(item.codigoMl) === normalized ||
+        normalizeCode(item.sku) === normalized ||
+        normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
+        normalizeCode(item.ean) === normalized);
   });
 }
 
@@ -3553,7 +3577,12 @@ function findTransferProduct(db, userId, code) {
   const normalized = normalizeCode(code);
   const product = (db.products || [])
     .filter((candidate) => lotIds.has(candidate.lotId))
-    .filter((candidate) => normalizeCode(candidate.codigoMl) === normalized || normalizeCode(candidate.sku) === normalized)
+    .filter(
+      (candidate) =>
+        normalizeCode(candidate.codigoMl) === normalized ||
+        normalizeCode(candidate.sku) === normalized ||
+        normalizeCode(code39BarcodeValue(candidate.sku)) === normalized
+    )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!product) return null;
   const sourceLot = (db.lots || []).find((lot) => lot.id === product.lotId);
@@ -3792,7 +3821,7 @@ function findLotProductByScannedCode(products, lotId, code) {
 function productMatchesScannedCode(product, code) {
   if (!product) return false;
   const normalized = normalizeCode(code);
-  return normalizeCode(product.codigoMl) === normalized || normalizeCode(product.sku) === normalized;
+  return normalizeCode(product.codigoMl) === normalized || normalizeCode(product.sku) === normalized || normalizeCode(code39BarcodeValue(product.sku)) === normalized;
 }
 
 function ensureUnambiguousItemMatches(items) {
@@ -3952,6 +3981,10 @@ function num(value) {
 
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function code39BarcodeValue(value) {
+  return normalizeCode(value).replace(/[^0-9A-Z .$/+%-]/g, "-");
 }
 
 function normalizeText(value) {
