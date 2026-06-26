@@ -128,6 +128,7 @@ function bindEvents() {
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
+  $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#diverseDownloadButton").addEventListener("click", () => {
     if (state.selectedDiverseLotId) downloadBling(state.selectedDiverseLotId, "complete", "#diverseScanMessage");
@@ -691,7 +692,8 @@ function renderDiverseRzControls(lot) {
   $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
   $("#diverseDownloadRzButton").disabled = !active;
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
-  $("#diverseScanForm button").disabled = !active;
+  $("#diverseScanForm button[type='submit']").disabled = !active;
+  $("#generateCodigoMlButton").disabled = !active;
   $("#diverseRzList").innerHTML = diverseRzsWithActive(lot)
     .map((rz) => `
       <button type="button" class="${rz.codigoRz === active ? "active" : ""}" data-diverse-rz="${escapeHtml(rz.codigoRz)}">
@@ -756,6 +758,34 @@ function noSheetOperatorRzCode() {
     return (fallback || "OP").slice(0, 8);
   }
   return "OWNER";
+}
+
+function generateRandomCodigoMlForNoSheet() {
+  const input = $("#diverseScanForm input[name='codigoMl']");
+  if (!input || !state.selectedDiverseLot || !state.selectedDiverseRz) return;
+  input.value = randomNoSheetCodigoMl(state.selectedDiverseLot);
+  input.focus();
+  input.select();
+  $("#diverseScanMessage").style.color = "#0f766e";
+  $("#diverseScanMessage").textContent = "Codigo ML aleatorio gerado com referencia do lote e operadora.";
+}
+
+function randomNoSheetCodigoMl(lot) {
+  const lotRef = noSheetLotRzPrefix(lot);
+  const operatorRef = noSheetOperatorRzCode();
+  const usedCodes = new Set((lot.items || []).map((item) => normalizeCodigoMl(item.product?.codigoMl)));
+  let candidate = "";
+  do {
+    candidate = `ML-${lotRef}-${operatorRef}-${randomCodeChunk(6)}`;
+  } while (usedCodes.has(candidate));
+  return candidate;
+}
+
+function randomCodeChunk(length) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((value) => alphabet[value % alphabet.length]).join("");
 }
 
 async function downloadDiverseRzBling(lotId, codigoRz) {
@@ -832,17 +862,73 @@ function bindDiverseLabelOptions() {
   });
 }
 
-function handleDiverseItemsClick(event) {
-  const button = event.target.closest("[data-diverse-label]");
-  if (!button) return;
-  const product = findDiverseProduct(button.dataset.diverseLabel);
-  if (product) showLabel(product, { autoPrint: true, meta: labelMeta() });
+async function handleDiverseItemsClick(event) {
+  const labelButton = event.target.closest("[data-diverse-label]");
+  if (labelButton) {
+    const product = findDiverseProduct(labelButton.dataset.diverseLabel);
+    if (product) showLabel(product, { autoPrint: true, meta: labelMeta() });
+    return;
+  }
+
+  const editButton = event.target.closest("[data-diverse-edit]");
+  if (!editButton) return;
+  const product = findDiverseProduct(editButton.dataset.diverseEdit);
+  if (product) await editDiverseProduct(product);
 }
 
 function findDiverseProduct(productId) {
   const lot = state.selectedDiverseLot;
   if (!lot?.items) return null;
   return lot.items.find((item) => item.product?.id === productId)?.product || null;
+}
+
+async function editDiverseProduct(product) {
+  const edited = await openDecisionModal({
+    title: "Editar produto",
+    rows: [
+      ["Codigo ML", product.codigoMl],
+      ["SKU", product.sku]
+    ],
+    fields: [
+      { name: "descricao", label: "Nome/descricao do produto", value: product.descricao || "" },
+      { name: "valorUnit", label: "Preco de venda", value: String(product.valorUnit || "").replace(".", ",") },
+      { name: "precoCusto", label: "Custo", value: String(product.precoCusto || "").replace(".", ",") },
+      { name: "ean", label: "EAN", value: product.ean || "" },
+      { name: "link", label: "Link do produto", value: product.link || "" },
+      { name: "foto", label: "URL/foto do produto", value: product.foto || "" }
+    ],
+    actions: [
+      { id: "save", label: "Salvar", primary: true, value: "save" },
+      { id: "cancel", label: "Cancelar", value: null }
+    ],
+    onSubmit: (action, values) => {
+      if (!action) return null;
+      const valorUnit = parseMoneyInput(values.valorUnit);
+      const precoCusto = parseMoneyInput(values.precoCusto);
+      if (!values.descricao?.trim()) throw new Error("Informe o nome/descricao do produto.");
+      if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe um preco valido.");
+      if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
+      return { ...values, valorUnit, precoCusto };
+    }
+  });
+  if (!edited) return;
+
+  const message = $("#diverseScanMessage");
+  message.textContent = "";
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/products/${encodeURIComponent(product.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(edited)
+    });
+    renderDiverseLot(response.lot);
+    await loadLots(response.lot.id);
+    message.style.color = "#0f766e";
+    message.textContent = "Produto atualizado.";
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  }
 }
 
 async function showApp(user) {
@@ -3704,7 +3790,7 @@ function diverseItemsTable(lot) {
         <span>Qtd</span>
         <span>Venda</span>
         <span>Custo</span>
-        <span>Etiqueta</span>
+        <span>Acoes</span>
       </div>
       ${sortedItems.map((item, index) => diverseItemRow(item, sortedItems[index - 1]?.codigoRz !== item.codigoRz)).join("")}
     </div>
@@ -3727,7 +3813,10 @@ function diverseItemRow(item, startsRz = false) {
       <span>${item.qtdEsperada || 0}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
-      <span><button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Imprimir</button></span>
+      <span class="diverse-row-actions">
+        <button type="button" class="ghost" data-diverse-edit="${escapeHtml(product.id || "")}">Editar</button>
+        <button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Reimprimir</button>
+      </span>
     </article>
   `;
 }

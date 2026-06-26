@@ -750,6 +750,50 @@ export async function getUserLotDetail(userId, lotId) {
   return lot ? summarizeLot(db, lot, true) : null;
 }
 
+export async function updateLotProduct({ userId, lotId, productId, payload }) {
+  await ensureStore();
+  const normalized = normalizeEditableProduct(payload);
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        update products
+        set descricao = $4,
+            valor_unit = $5,
+            preco_custo = $6,
+            ean = $7,
+            link = $8,
+            foto = $9
+        where id = $1
+          and lot_id = $2
+          and exists (select 1 from lots where id = $2 and user_id = $3)
+        returning *
+      `,
+      [
+        productId,
+        lotId,
+        userId,
+        normalized.descricao,
+        normalized.valorUnit,
+        normalized.precoCusto,
+        normalized.ean,
+        normalized.link,
+        normalized.foto
+      ]
+    );
+    if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
+    return { product: productFromRow(result.rows[0]), lot: await getUserLotDetail(userId, lotId) };
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
+  if (!product) throw notFound("Produto nao encontrado neste lote.");
+  Object.assign(product, normalized);
+  await writeDb(db);
+  return { product, lot: summarizeLot(db, lot, true) };
+}
+
 export async function getLotBlingData(userId, lotId, kind) {
   await ensureStore();
   if (hasPostgres()) {
@@ -3141,6 +3185,24 @@ function normalizeManualProduct(input = {}, codigoMl) {
     valorUnit,
     categoria: String(input.categoria || "").trim(),
     subcategoria: String(input.subcategoria || "").trim(),
+    ean: String(input.ean || "").trim(),
+    link: String(input.link || "").trim(),
+    foto: String(foto || "").trim()
+  };
+}
+
+function normalizeEditableProduct(input = {}) {
+  const descricao = String(input.descricao || input.nome || "").trim();
+  const valorUnit = roundMoney(Number(input.valorUnit ?? input.preco ?? 0));
+  const precoCusto = roundMoney(Number(input.precoCusto ?? input.custo ?? 0));
+  const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
+  if (!descricao) throw new Error("Informe o nome/descricao do produto.");
+  if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
+  if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
+  return {
+    descricao,
+    valorUnit,
+    precoCusto,
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
     foto: String(foto || "").trim()

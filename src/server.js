@@ -72,6 +72,7 @@ import {
   searchProducts,
   suggestCatalogUpdate,
   undoPublicTransferLotScan,
+  updateLotProduct,
   updateUserPassword,
   saveUserBlingIntegration,
   saveBlingAppConfig,
@@ -647,6 +648,21 @@ app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, require
     if (!product) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
 
     res.json(await syncSingleLotProductToBling(userId, lot, product));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) => {
+  try {
+    res.json(
+      await updateLotProduct({
+        userId: workspaceUserId(req),
+        lotId: req.params.lotId,
+        productId: req.params.productId,
+        payload: req.body
+      })
+    );
   } catch (error) {
     sendError(res, error);
   }

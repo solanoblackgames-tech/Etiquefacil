@@ -1110,6 +1110,10 @@ h3 {
   grid-template-columns: 1fr auto;
 }
 
+#diverseScanForm.search-bar {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .result-card {
   align-items: center;
   display: grid;
@@ -1212,7 +1216,7 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 0.65fr 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr 0.8fr;
+  grid-template-columns: 0.65fr 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr minmax(160px, 0.95fr);
   padding: 10px;
 }
 
@@ -1229,6 +1233,13 @@ h3 {
   font-size: 12px;
   min-height: 32px;
   padding: 0 10px;
+}
+
+.diverse-row-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .diverse-row:last-child {
@@ -2119,6 +2130,10 @@ h3 {
 
   .transfer-receive-page .summary-grid,
   .transfer-confirm-actions {
+    grid-template-columns: 1fr;
+  }
+
+  #diverseScanForm.search-bar {
     grid-template-columns: 1fr;
   }
 
