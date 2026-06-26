@@ -771,12 +771,12 @@ function generateRandomCodigoMlForNoSheet() {
 }
 
 function randomNoSheetCodigoMl(lot) {
-  const lotRef = noSheetLotRzPrefix(lot);
-  const operatorRef = noSheetOperatorRzCode();
+  const lotRef = noSheetLotRzPrefix(lot).slice(0, 4);
+  const operatorRef = noSheetOperatorRzCode().slice(-4);
   const usedCodes = new Set((lot.items || []).map((item) => normalizeCodigoMl(item.product?.codigoMl)));
   let candidate = "";
   do {
-    candidate = `ML-${lotRef}-${operatorRef}-${randomCodeChunk(6)}`;
+    candidate = `ML${lotRef}${operatorRef}${randomCodeChunk(3)}`;
   } while (usedCodes.has(candidate));
   return candidate;
 }
@@ -883,34 +883,7 @@ function findDiverseProduct(productId) {
 }
 
 async function editDiverseProduct(product) {
-  const edited = await openDecisionModal({
-    title: "Editar produto",
-    rows: [
-      ["Codigo ML", product.codigoMl],
-      ["SKU", product.sku]
-    ],
-    fields: [
-      { name: "descricao", label: "Nome/descricao do produto", value: product.descricao || "" },
-      { name: "valorUnit", label: "Preco de venda", value: String(product.valorUnit || "").replace(".", ",") },
-      { name: "precoCusto", label: "Custo", value: String(product.precoCusto || "").replace(".", ",") },
-      { name: "ean", label: "EAN", value: product.ean || "" },
-      { name: "link", label: "Link do produto", value: product.link || "" },
-      { name: "foto", label: "URL/foto do produto", value: product.foto || "" }
-    ],
-    actions: [
-      { id: "save", label: "Salvar", primary: true, value: "save" },
-      { id: "cancel", label: "Cancelar", value: null }
-    ],
-    onSubmit: (action, values) => {
-      if (!action) return null;
-      const valorUnit = parseMoneyInput(values.valorUnit);
-      const precoCusto = parseMoneyInput(values.precoCusto);
-      if (!values.descricao?.trim()) throw new Error("Informe o nome/descricao do produto.");
-      if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe um preco valido.");
-      if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
-      return { ...values, valorUnit, precoCusto };
-    }
-  });
+  const edited = await openProductEditModal(product);
   if (!edited) return;
 
   const message = $("#diverseScanMessage");
@@ -929,6 +902,90 @@ async function editDiverseProduct(product) {
     message.style.color = "";
     message.textContent = error.message;
   }
+}
+
+function openProductEditModal(product) {
+  return new Promise((resolve) => {
+    const modal = $("#productEditModal");
+    const form = $("#productEditForm");
+    const code = $("#productEditCode");
+    const sku = $("#productEditSku");
+    const description = $("#productEditDescription");
+    const price = $("#productEditPrice");
+    const cost = $("#productEditCost");
+    const ean = $("#productEditEan");
+    const link = $("#productEditLink");
+    const photo = $("#productEditPhoto");
+    const error = $("#productEditError");
+    const cancel = $("#productEditCancel");
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      form.onsubmit = null;
+      cancel.onclick = null;
+      modal.onkeydown = null;
+      form.reset();
+      error.textContent = "";
+      setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
+    };
+
+    code.textContent = product.codigoMl || "";
+    sku.textContent = product.sku || "";
+    description.value = product.descricao || "";
+    price.value = String(product.valorUnit || "").replace(".", ",");
+    cost.value = String(product.precoCusto || "").replace(".", ",");
+    ean.value = product.ean || "";
+    link.value = product.link || "";
+    photo.value = product.foto || "";
+    error.textContent = "";
+    modal.classList.remove("hidden");
+
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const valorUnit = parseMoneyInput(price.value);
+      const precoCusto = parseMoneyInput(cost.value);
+      if (!description.value.trim()) {
+        error.textContent = "Informe o nome/descricao do produto.";
+        description.focus();
+        return;
+      }
+      if (!Number.isFinite(valorUnit) || valorUnit <= 0) {
+        error.textContent = "Informe um preco valido.";
+        price.focus();
+        return;
+      }
+      if (!Number.isFinite(precoCusto) || precoCusto < 0) {
+        error.textContent = "Informe um custo valido.";
+        cost.focus();
+        return;
+      }
+      const result = {
+        descricao: description.value.trim(),
+        valorUnit,
+        precoCusto,
+        ean: ean.value.trim(),
+        link: link.value.trim(),
+        foto: photo.value.trim()
+      };
+      cleanup();
+      resolve(result);
+    };
+
+    cancel.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    modal.onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    setTimeout(() => description.focus(), 0);
+  });
 }
 
 async function showApp(user) {
@@ -3651,6 +3708,7 @@ function focusPrimaryInput(preferredSelectors) {
 function primaryInputSelectors() {
   return [
     "#manualProductModal:not(.hidden) #manualProductDescription",
+    "#productEditModal:not(.hidden) #productEditDescription",
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",

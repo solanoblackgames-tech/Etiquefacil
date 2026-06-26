@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260626-no-sheet-actions" />
+    <link rel="stylesheet" href="/styles.css?v=20260626-no-sheet-edit-v2" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -346,6 +346,45 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20260626-no-sheet-actions" type="module"></script>
+    <section id="productEditModal" class="label-modal hidden" aria-live="polite" tabindex="-1">
+      <form id="productEditForm" class="decision-stage">
+        <h2>Editar produto</h2>
+        <div class="decision-body-row">
+          <span>Codigo ML</span>
+          <strong id="productEditCode"></strong>
+        </div>
+        <div class="decision-body-row">
+          <span>SKU</span>
+          <strong id="productEditSku"></strong>
+        </div>
+        <div class="decision-fields">
+          <label>Nome/descricao do produto
+            <input id="productEditDescription" name="descricao" required />
+          </label>
+          <label>Preco de venda
+            <input id="productEditPrice" name="valorUnit" required />
+          </label>
+          <label>Custo
+            <input id="productEditCost" name="precoCusto" required />
+          </label>
+          <label>EAN
+            <input id="productEditEan" name="ean" />
+          </label>
+          <label>Link do produto
+            <input id="productEditLink" name="link" />
+          </label>
+          <label>URL/foto do produto
+            <input id="productEditPhoto" name="foto" />
+          </label>
+          <p id="productEditError" class="message"></p>
+        </div>
+        <div class="label-controls">
+          <button type="submit">Salvar</button>
+          <button id="productEditCancel" type="button" class="ghost">Cancelar</button>
+        </div>
+      </form>
+    </section>
+
+    <script src="/app.js?v=20260626-no-sheet-edit-v2" type="module"></script>
   </body>
 </html>
