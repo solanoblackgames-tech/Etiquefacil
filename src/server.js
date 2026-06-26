@@ -655,14 +655,19 @@ app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, require
 
 app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) => {
   try {
-    res.json(
-      await updateLotProduct({
-        userId: workspaceUserId(req),
-        lotId: req.params.lotId,
-        productId: req.params.productId,
-        payload: req.body
-      })
-    );
+    const userId = workspaceUserId(req);
+    const result = await updateLotProduct({
+      userId,
+      lotId: req.params.lotId,
+      productId: req.params.productId,
+      payload: req.body
+    });
+    try {
+      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+    } catch (blingError) {
+      result.bling = { ok: false, error: blingError.message };
+    }
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }

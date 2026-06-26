@@ -896,8 +896,13 @@ async function editDiverseProduct(product) {
     });
     renderDiverseLot(response.lot);
     await loadLots(response.lot.id);
-    message.style.color = "#0f766e";
-    message.textContent = "Produto atualizado.";
+    if (response.bling?.ok === false) {
+      message.style.color = "";
+      message.textContent = `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`;
+    } else {
+      message.style.color = "#0f766e";
+      message.textContent = `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
+    }
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
