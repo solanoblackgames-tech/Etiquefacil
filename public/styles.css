@@ -1437,6 +1437,31 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.transfer-confirm-panel p {
+  margin: 0;
+}
+
+.transfer-confirm-panel label {
+  color: var(--text);
+  display: grid;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.transfer-confirm-panel textarea {
+  min-height: 104px;
+  resize: vertical;
+}
+
+.force-transfer-panel {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.force-transfer-panel strong {
+  color: #9a3412;
+}
+
 .transfer-confirm-actions {
   display: grid;
   gap: 10px;

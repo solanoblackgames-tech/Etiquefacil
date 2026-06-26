@@ -2204,14 +2204,21 @@ function renderTransferReceiveCompletePage(lot) {
 function transferPendingConfirmation(pending) {
   const item = pending.item;
   const title = item ? escapeHtml(item.descricao) : "Produto nao identificado na remessa";
+  const force = pending.force === true;
   const subtitle = item ? `${escapeHtml(item.sku)} · ${escapeHtml(item.codigoMl)}` : escapeHtml(pending.code);
   return `
-    <section class="transfer-confirm-panel">
-      <span class="muted">Etiqueta lida</span>
+    <section class="transfer-confirm-panel ${force ? "force-transfer-panel" : ""}">
+      <span class="muted">${force ? "Codigo fora da remessa" : "Etiqueta lida"}</span>
       <strong>${title}</strong>
       <span>${subtitle}</span>
+      ${force ? `
+        <p>Deseja forcar a transferencia deste item no Bling?</p>
+        <label>Descreva o ocorrido antes de finalizar
+          <textarea id="forceTransferReason" rows="4" maxlength="1000" placeholder="Ex.: item fisico veio junto na caixa, mas nao estava previsto na remessa."></textarea>
+        </label>
+      ` : ""}
       <div class="transfer-confirm-actions">
-        <button type="button" data-confirm-transfer-entry>Confirmar entrada no estoque</button>
+        <button type="button" data-confirm-transfer-entry>${force ? "Forcar transferencia no Bling" : "Confirmar entrada no estoque"}</button>
         <button type="button" class="ghost" data-cancel-transfer-entry>Cancelar leitura</button>
       </div>
     </section>
@@ -2233,6 +2240,7 @@ function transferReceiveAllRows(lot) {
 
 function transferReceiveItemRow(item) {
   const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
+  const status = item.forceReason ? "Sobra forcada" : receiveStatusLabel(item.statusConferencia);
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
@@ -2241,7 +2249,7 @@ function transferReceiveItemRow(item) {
       <span>${item.quantidade}</span>
       <span>${item.quantidadeConferida || 0}</span>
       <span>${falta}</span>
-      <span>${escapeHtml(receiveStatusLabel(item.statusConferencia))}</span>
+      <span>${escapeHtml(status)}</span>
     </article>
   `;
 }
@@ -2270,12 +2278,21 @@ function prepareTransferReceiveConfirmation(lot) {
   input.value = code;
   if (!code) return;
   const item = findTransferReceiveItem(lot, code);
+  const forcedExcess = item && Number(item.quantidade || 0) === 0;
   const missing = item ? Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) : 0;
   playTransferReadSound();
-  if (!item) {
-    $("#transferReceiveMessage").style.color = "";
-    $("#transferReceiveMessage").textContent = "Codigo lido, mas nao previsto nesta remessa.";
-    input.select();
+  if (!item || forcedExcess) {
+    state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, force: true };
+    input.value = "";
+    if (state.transferCameraStream) {
+      mountTransferCameraConfirmation(lot);
+    } else {
+      renderTransferReceivePage(lot);
+    }
+    const message = $("#transferReceiveMessage");
+    message.style.color = "";
+    message.textContent = "Codigo lido, mas nao previsto nesta remessa. Confirme se deseja forcar a transferencia no Bling.";
+    schedulePrimaryInputFocus(["#forceTransferReason"]);
     return;
   }
   if (missing <= 0) {
@@ -2337,16 +2354,24 @@ async function confirmTransferReceiveCurrent(transferLotId) {
   const confirmButton = $("[data-confirm-transfer-entry]");
   const input = $("#transferReceiveInput");
   const code = pending.code;
+  const reason = pending.force ? String($("#forceTransferReason")?.value || "").trim() : "";
+  if (pending.force && reason.length < 5) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = "Descreva o ocorrido antes de forcar a transferencia.";
+    schedulePrimaryInputFocus(["#forceTransferReason"]);
+    return;
+  }
   state.pendingTransferReceive = true;
   if (input) input.disabled = true;
   if (button) button.disabled = true;
   if (confirmButton) confirmButton.disabled = true;
   const shouldResumeCamera = Boolean(state.transferCameraStream);
   try {
-    const response = await api(`${transferReceiveApiBase(transferLotId)}/receive-scan`, {
+    const endpoint = pending.force ? "force-receive-scan" : "receive-scan";
+    const response = await api(`${transferReceiveApiBase(transferLotId)}/${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code })
+      body: JSON.stringify(pending.force ? { code, reason } : { code })
     });
     state.pendingTransferConfirmation = null;
     if (shouldResumeCamera) stopTransferCamera();
@@ -2354,7 +2379,9 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     playTransferSuccessSound();
     const message = $("#transferReceiveMessage");
     message.style.color = "#0f766e";
-    message.textContent = `${response.item?.sku || code} confirmado no estoque.`;
+    message.textContent = pending.force
+      ? `${response.item?.sku || code} transferido no Bling com ocorrencia registrada.`
+      : `${response.item?.sku || code} confirmado no estoque.`;
     if (shouldResumeCamera && !isTransferReceiveComplete(response.lot)) await startTransferCamera(transferLotId, response.lot);
   } catch (error) {
     playTransferErrorSound();
@@ -3422,12 +3449,8 @@ async function scanCurrent(lotId, codigoRz) {
     } else {
       message.textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       const scannedProduct = findScannedProduct(response.lot, codigoRz, codigoMl);
-      if (state.scanOnly) {
-        renderScanPage(response.lot, codigoRz);
-        $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
-      } else {
-        renderLotDetail(response.lot);
-      }
+      renderScanPage(response.lot, codigoRz);
+      $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       if (scannedProduct && state.labelOptions.autoPrint) {
         showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
         await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
@@ -3463,13 +3486,8 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
     });
 
     const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.`;
-    if (state.scanOnly) {
-      renderScanPage(response.lot, codigoRz);
-      $("#scanMessage").textContent = successMessage;
-    } else {
-      renderLotDetail(response.lot);
-      $("#scanMessage").textContent = successMessage;
-    }
+    renderScanPage(response.lot, codigoRz);
+    $("#scanMessage").textContent = successMessage;
     if (response.product && state.labelOptions.autoPrint) {
       showLabel(response.product, { autoPrint: true, meta: labelMeta() });
       await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
@@ -3496,12 +3514,8 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
       body: JSON.stringify({ codigoMl })
     });
     if (input && !codigoMlFromButton) input.value = "";
-    if (state.scanOnly) {
-      renderScanPage(response.lot, codigoRz);
-      $("#scanMessage").textContent = "Quantidade bipada diminuida.";
-    } else {
-      renderLotDetail(response.lot);
-    }
+    renderScanPage(response.lot, codigoRz);
+    $("#scanMessage").textContent = "Quantidade bipada diminuida.";
     await syncDecrementStockExit(lotId, codigoRz, codigoMl);
   } catch (error) {
     $("#scanMessage").textContent = error.message;
@@ -3560,12 +3574,8 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ codigoMl })
     });
-    if (state.scanOnly) {
-      renderScanPage(response.lot, codigoRz);
-      $("#scanMessage").textContent = "Excedente externo cadastrado.";
-    } else {
-      renderLotDetail(response.lot);
-    }
+    renderScanPage(response.lot, codigoRz);
+    $("#scanMessage").textContent = "Excedente externo cadastrado.";
     if (response.product && state.labelOptions.autoPrint) {
       showLabel(response.product, { autoPrint: true, meta: labelMeta() });
       await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);

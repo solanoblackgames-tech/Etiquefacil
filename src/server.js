@@ -42,6 +42,7 @@ import {
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
+  forceReceivePublicTransferLotScan,
   getBlingAppConfig,
   getLotBlingData,
   getOperatorInvite,
@@ -388,6 +389,20 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, re
       await markTransferLotSynced(result.lot.userId, result.lot.id);
       result.lot.status = "synced";
     }
+    res.json({ ...result, transfer: transferResult });
+  } catch (error) {
+    if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);
+    sendError(res, error);
+  }
+});
+
+app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", async (req, res) => {
+  let result = null;
+  try {
+    const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
+    const reason = String(req.body.reason || req.body.descricao || "").trim();
+    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason });
+    const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
     res.json({ ...result, transfer: transferResult });
   } catch (error) {
     if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);

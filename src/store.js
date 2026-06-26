@@ -30,6 +30,7 @@ const emptyDb = () => ({
   appSettings: {},
   transferLots: [],
   transferItems: [],
+  transferForcedOccurrences: [],
   operatorActivities: [],
   operatorInvites: [],
   catalogProducts: [],
@@ -1106,6 +1107,53 @@ export async function receivePublicTransferLotScan({ transferLotId, code }) {
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
+export async function forceReceivePublicTransferLotScan({ transferLotId, code, reason }) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  const normalizedReason = normalizeForceTransferReason(reason);
+  if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
+  if (hasPostgres()) return forceReceiveTransferLotScanPg({ transferLotId, code: normalized, reason: normalizedReason });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
+  if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+  if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+  const product = findTransferProduct(db, lot.userId, normalized);
+  if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
+  const existingPlanned = (db.transferItems || []).find((item) => item.transferLotId === lot.id && item.productId === product.id && Number(item.quantidade || 0) > 0);
+  if (existingPlanned) throw new Error("Produto previsto na remessa. Use a conferencia normal.");
+
+  const existingForced = (db.transferItems || []).find((item) => item.transferLotId === lot.id && item.productId === product.id && Number(item.quantidade || 0) === 0);
+  const now = new Date().toISOString();
+  const occurrence = buildForcedTransferOccurrence({ transferLotId: lot.id, code: normalized, reason: normalizedReason, itemId: existingForced?.id || null, createdAt: now });
+  db.transferForcedOccurrences = db.transferForcedOccurrences || [];
+  if (existingForced) {
+    existingForced.quantidadeConferida = Number(existingForced.quantidadeConferida || 0) + 1;
+    existingForced.forceReason = normalizedReason;
+    existingForced.forceCode = normalized;
+    existingForced.forceAt = now;
+    occurrence.itemId = existingForced.id;
+  } else {
+    const item = {
+      ...buildTransferItem(lot.id, product),
+      quantidade: 0,
+      quantidadeConferida: 1,
+      forceReason: normalizedReason,
+      forceCode: normalized,
+      forceAt: now
+    };
+    db.transferItems.push(item);
+    occurrence.itemId = item.id;
+  }
+  db.transferForcedOccurrences.push(occurrence);
+  updateTransferLotReceivingStatus(lot, db.transferItems || []);
+  await writeDb(db);
+  const item = (db.transferItems || []).find((candidate) => candidate.id === occurrence.itemId);
+  return { status: "forced", item, occurrence, lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
 export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
   await ensureStore();
   if (hasPostgres()) {
@@ -1114,6 +1162,10 @@ export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
       [itemId, transferLotId]
     );
     if (!result.rows.length) return null;
+    const changedItem = transferItemFromRow(result.rows[0]);
+    if (Number(changedItem.quantidade || 0) === 0 && Number(changedItem.quantidadeConferida || 0) === 0) {
+      await query("delete from transfer_items where id = $1 and transfer_lot_id = $2", [itemId, transferLotId]);
+    }
     const lotResult = await query("select * from transfer_lots where id = $1 limit 1", [transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (lot) {
@@ -1128,6 +1180,9 @@ export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
   const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === transferLotId);
   if (!item) return null;
   item.quantidadeConferida = Math.max(0, Number(item.quantidadeConferida || 0) - 1);
+  if (Number(item.quantidade || 0) === 0 && Number(item.quantidadeConferida || 0) === 0) {
+    db.transferItems = (db.transferItems || []).filter((candidate) => candidate.id !== item.id);
+  }
   const lot = (db.transferLots || []).find((candidate) => candidate.id === transferLotId);
   if (lot) updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
@@ -1811,6 +1866,18 @@ async function ensurePgStore() {
       descricao text not null,
       ean text not null default '',
       quantidade integer not null default 0,
+      force_reason text not null default '',
+      force_code text not null default '',
+      force_at timestamptz,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists transfer_forced_occurrences (
+      id text primary key,
+      transfer_lot_id text not null references transfer_lots(id) on delete cascade,
+      transfer_item_id text references transfer_items(id) on delete set null,
+      code text not null,
+      reason text not null,
       created_at timestamptz not null default now()
     );
 
@@ -1925,6 +1992,9 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
     alter table catalog_rejected_requests add column if not exists alert_message text not null default '';
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
+    alter table transfer_items add column if not exists force_reason text not null default '';
+    alter table transfer_items add column if not exists force_code text not null default '';
+    alter table transfer_items add column if not exists force_at timestamptz;
     alter table transfer_lots add column if not exists descricao text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
@@ -1953,6 +2023,7 @@ async function ensurePgStore() {
     create index if not exists transfer_lots_user_id_idx on transfer_lots(user_id);
     create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
     create index if not exists transfer_items_sku_idx on transfer_items(sku);
+    create index if not exists transfer_forced_occurrences_transfer_lot_id_idx on transfer_forced_occurrences(transfer_lot_id);
     create index if not exists catalog_requests_status_idx on catalog_requests(status);
     create index if not exists catalog_requests_codigo_ml_idx on catalog_requests(codigo_ml);
     create index if not exists catalog_rejected_requests_codigo_ml_idx on catalog_rejected_requests(codigo_ml);
@@ -2074,7 +2145,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -2084,6 +2155,7 @@ async function readPgDb() {
     query("select * from bling_integrations order by updated_at asc"),
     query("select * from transfer_lots order by created_at asc"),
     query("select * from transfer_items order by created_at asc"),
+    query("select * from transfer_forced_occurrences order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
     query("select * from catalog_requests order by created_at asc"),
@@ -2100,6 +2172,7 @@ async function readPgDb() {
     blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
     transferLots: transferLots.rows.map(transferLotFromRow),
     transferItems: transferItems.rows.map(transferItemFromRow),
+    transferForcedOccurrences: transferForcedOccurrences.rows.map(transferForcedOccurrenceFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
     catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
@@ -2114,6 +2187,7 @@ async function writePgDb(db) {
     await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
     await client.query("delete from operator_activities");
+    await client.query("delete from transfer_forced_occurrences");
     await client.query("delete from transfer_items");
     await client.query("delete from transfer_lots");
     await client.query("delete from bling_integrations");
@@ -2223,6 +2297,7 @@ async function writePgDb(db) {
     await insertBlingIntegrationRows(client, db.blingIntegrations || []);
     await insertTransferLotRows(client, db.transferLots || []);
     await insertTransferItemRows(client, db.transferItems || []);
+    await insertTransferForcedOccurrenceRows(client, db.transferForcedOccurrences || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
@@ -2386,7 +2461,7 @@ async function insertTransferItemRows(client, items = []) {
   await insertRows(
     target,
     "transfer_items",
-    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "created_at"],
+    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "force_reason", "force_code", "force_at", "created_at"],
     items.map((item) => [
       item.id,
       item.transferLotId,
@@ -2398,7 +2473,27 @@ async function insertTransferItemRows(client, items = []) {
       item.ean || "",
       item.quantidade || 0,
       item.quantidadeConferida || 0,
+      item.forceReason || "",
+      item.forceCode || "",
+      item.forceAt || null,
       item.createdAt
+    ])
+  );
+}
+
+async function insertTransferForcedOccurrenceRows(client, occurrences = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "transfer_forced_occurrences",
+    ["id", "transfer_lot_id", "transfer_item_id", "code", "reason", "created_at"],
+    occurrences.map((occurrence) => [
+      occurrence.id,
+      occurrence.transferLotId,
+      occurrence.itemId || null,
+      occurrence.code,
+      occurrence.reason,
+      occurrence.createdAt
     ])
   );
 }
@@ -2976,6 +3071,64 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
   return { ...result, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
 
+async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 limit 1 for update", [transferLotId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+    if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+    if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+    const product = await findPgTransferProduct(client, lot.userId, code);
+    if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
+    const existingResult = await client.query(
+      "select * from transfer_items where transfer_lot_id = $1 and product_id = $2 for update",
+      [lot.id, product.id]
+    );
+    const existingItems = existingResult.rows.map(transferItemFromRow);
+    if (existingItems.some((item) => Number(item.quantidade || 0) > 0)) throw new Error("Produto previsto na remessa. Use a conferencia normal.");
+
+    const now = new Date().toISOString();
+    let item = existingItems.find((candidate) => Number(candidate.quantidade || 0) === 0);
+    if (item) {
+      const nextReceived = Number(item.quantidadeConferida || 0) + 1;
+      await client.query(
+        "update transfer_items set quantidade_conferida = $2, force_reason = $3, force_code = $4, force_at = $5 where id = $1",
+        [item.id, nextReceived, reason, code, now]
+      );
+      item = { ...item, quantidadeConferida: nextReceived, forceReason: reason, forceCode: code, forceAt: now };
+    } else {
+      item = {
+        ...buildTransferItem(lot.id, product),
+        quantidade: 0,
+        quantidadeConferida: 1,
+        forceReason: reason,
+        forceCode: code,
+        forceAt: now
+      };
+      await insertTransferItemRows(client, [item]);
+    }
+    const occurrence = buildForcedTransferOccurrence({ transferLotId: lot.id, itemId: item.id, code, reason, createdAt: now });
+    await insertTransferForcedOccurrenceRows(client, [occurrence]);
+
+    const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
+    updateTransferLotReceivingStatus(lot, itemsResult.rows.map(transferItemFromRow));
+    await client.query("update transfer_lots set status = $2 where id = $1", [lot.id, lot.status]);
+    result = { status: "forced", item, occurrence };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getPublicTransferLotDetail(transferLotId) };
+}
+
 async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
   const client = await getPgPool().connect();
   try {
@@ -3069,6 +3222,7 @@ async function findPgTransferProduct(client, userId, code) {
           upper(trim(p.codigo_ml)) = upper(trim($2))
           or upper(trim(p.sku)) = upper(trim($2))
           or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+          or upper(trim(p.ean)) = upper(trim($2))
         )
       order by p.created_at desc
       limit 1
@@ -3673,6 +3827,24 @@ function buildTransferItem(transferLotId, product) {
   };
 }
 
+function normalizeForceTransferReason(reason) {
+  const normalized = String(reason || "").trim();
+  if (normalized.length < 5) throw new Error("Descreva o ocorrido antes de forcar a transferencia.");
+  if (normalized.length > 1000) throw new Error("A descricao do ocorrido deve ter no maximo 1000 caracteres.");
+  return normalized;
+}
+
+function buildForcedTransferOccurrence({ transferLotId, itemId = null, code, reason, createdAt = new Date().toISOString() }) {
+  return {
+    id: randomUUID(),
+    transferLotId,
+    itemId,
+    code,
+    reason,
+    createdAt
+  };
+}
+
 function blingOriginsForKind(kind) {
   if (kind === "complete") return ["planilha", ...NO_SHEET_ORIGINS, "lote_sem_planilha_manual"];
   if (kind === "excess") return EXCESS_EXPORT_ORIGINS;
@@ -3994,6 +4166,20 @@ function transferItemFromRow(row) {
     ean: row.ean || "",
     quantidade: Number(row.quantidade || 0),
     quantidadeConferida: Number(row.quantidade_conferida || 0),
+    forceReason: row.force_reason || "",
+    forceCode: row.force_code || "",
+    forceAt: row.force_at ? iso(row.force_at) : null,
+    createdAt: iso(row.created_at)
+  };
+}
+
+function transferForcedOccurrenceFromRow(row) {
+  return {
+    id: row.id,
+    transferLotId: row.transfer_lot_id,
+    itemId: row.transfer_item_id || null,
+    code: row.code,
+    reason: row.reason,
     createdAt: iso(row.created_at)
   };
 }
