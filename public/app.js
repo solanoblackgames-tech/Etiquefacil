@@ -3047,7 +3047,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   $("#rzDetail").innerHTML = `
     <div class="scan-box">
-      <input id="scanInput" placeholder="Bipe o Código ML no ${escapeHtml(codigoRz)}" autofocus />
+      <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
       <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
@@ -3172,7 +3172,7 @@ function renderScanPage(lot, codigoRz) {
         </div>
       </div>
       <div class="scan-box">
-        <input id="scanInput" placeholder="Bipe o Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
+        <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
         <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
@@ -3511,7 +3511,13 @@ async function printLabel(productId) {
 
 function findScannedProduct(lot, codigoRz, codigoMl) {
   const normalizedMl = normalizeCodigoMl(codigoMl);
-  return lot.items.find((item) => item.codigoRz === codigoRz && normalizeCodigoMl(item.product?.codigoMl) === normalizedMl)?.product || null;
+  const matches = lot.items.filter((item) => {
+    const product = item.product || {};
+    return item.codigoRz === codigoRz && (normalizeCodigoMl(product.codigoMl) === normalizedMl || normalizeCodigoMl(product.sku) === normalizedMl);
+  });
+  const productIds = new Set(matches.map((item) => item.product?.id).filter(Boolean));
+  if (productIds.size > 1) return null;
+  return matches[0]?.product || null;
 }
 
 function showLabel(product, { autoPrint = false, meta = null } = {}) {

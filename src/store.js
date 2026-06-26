@@ -1122,7 +1122,7 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
   const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
-  const sameRzItems = rzItems.filter((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItems = findRzItemsByScannedCode(rzItems, db.products, normalizedMl);
   const sameRzItem = chooseRzItemForScan(sameRzItems);
   const scan = {
     id: randomUUID(),
@@ -1142,7 +1142,7 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
       scan.status = "excedente";
     }
   } else {
-    const sameLotProduct = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
+    const sameLotProduct = findLotProductByScannedCode(db.products, lot.id, normalizedMl);
     if (sameLotProduct) {
       scan.status = "outro_rz";
     } else {
@@ -1169,7 +1169,7 @@ export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) 
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
   const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === codigoRz);
-  const sameRzItems = rzItems.filter((item) => db.products.find((product) => product.id === item.productId)?.codigoMl === normalizedMl);
+  const sameRzItems = findRzItemsByScannedCode(rzItems, db.products, normalizedMl);
   const sameRzItem = chooseRzItemForDecrement(sameRzItems);
   if (!sameRzItem) throw notFound("CÃ³digo ML nÃ£o encontrado neste RZ.");
   if (sameRzItem.qtdConferida <= 0) throw new Error("Este CÃ³digo ML jÃ¡ estÃ¡ com quantidade conferida zerada.");
@@ -2486,16 +2486,20 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
         select
           ri.*,
           p.codigo_ml as product_codigo_ml,
+          p.sku as product_sku,
           p.origem as product_origem
         from rz_items ri
         join products p on p.id = ri.product_id
-        where ri.lot_id = $1 and ri.codigo_rz = $2 and p.codigo_ml = $3
+        where ri.lot_id = $1
+          and ri.codigo_rz = $2
+          and (upper(trim(p.codigo_ml)) = upper(trim($3)) or upper(trim(p.sku)) = upper(trim($3)))
         order by ri.created_at asc
         for update of ri
       `,
       [lot.id, codigoRz, codigoMl]
     );
 
+    ensureUnambiguousPgScanRows(sameRzResult.rows);
     const sameRzItem = choosePgRzItemForScan(sameRzResult.rows);
     if (sameRzItem) {
       const nextQtdConferida = Number(sameRzItem.qtd_conferida) + 1;
@@ -2507,7 +2511,16 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
       }
       if (nextQtdConferida > Number(sameRzItem.qtd_esperada)) scan.status = "excedente";
     } else {
-      const sameLotProduct = await client.query("select id from products where lot_id = $1 and codigo_ml = $2 limit 1", [lot.id, codigoMl]);
+      const sameLotProduct = await client.query(
+        `
+          select id
+          from products
+          where lot_id = $1
+            and (upper(trim(codigo_ml)) = upper(trim($2)) or upper(trim(sku)) = upper(trim($2)))
+        `,
+        [lot.id, codigoMl]
+      );
+      ensureUnambiguousPgScanRows(sameLotProduct.rows);
       if (sameLotProduct.rows.length) {
         scan.status = "outro_rz";
       } else {
@@ -2546,16 +2559,21 @@ async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
       `
         select
           ri.*,
+          p.codigo_ml as product_codigo_ml,
+          p.sku as product_sku,
           p.origem as product_origem
         from rz_items ri
         join products p on p.id = ri.product_id
-        where ri.lot_id = $1 and ri.codigo_rz = $2 and p.codigo_ml = $3
+        where ri.lot_id = $1
+          and ri.codigo_rz = $2
+          and (upper(trim(p.codigo_ml)) = upper(trim($3)) or upper(trim(p.sku)) = upper(trim($3)))
         order by ri.created_at asc
         for update of ri
       `,
       [lot.id, codigoRz, codigoMl]
     );
 
+    ensureUnambiguousPgScanRows(sameRzResult.rows);
     const sameRzItem = choosePgRzItemForDecrement(sameRzResult.rows);
     if (!sameRzItem) throw notFound("CÃ³digo ML nÃ£o encontrado neste RZ.");
     if (Number(sameRzItem.qtd_conferida) <= 0) throw new Error("Este CÃ³digo ML jÃ¡ estÃ¡ com quantidade conferida zerada.");
@@ -3756,6 +3774,44 @@ function rzItemFromRow(row) {
 
 function chooseRzItemForScan(items) {
   return items.find((item) => item.qtdConferida < item.qtdEsperada) || items[0] || null;
+}
+
+function findRzItemsByScannedCode(rzItems, products, code) {
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const matches = rzItems.filter((item) => productMatchesScannedCode(productsById.get(item.productId), code));
+  ensureUnambiguousItemMatches(matches);
+  return matches;
+}
+
+function findLotProductByScannedCode(products, lotId, code) {
+  const matches = products.filter((product) => product.lotId === lotId && productMatchesScannedCode(product, code));
+  ensureUnambiguousProductMatches(matches);
+  return matches[0] || null;
+}
+
+function productMatchesScannedCode(product, code) {
+  if (!product) return false;
+  const normalized = normalizeCode(code);
+  return normalizeCode(product.codigoMl) === normalized || normalizeCode(product.sku) === normalized;
+}
+
+function ensureUnambiguousItemMatches(items) {
+  ensureUnambiguousProductIds(items.map((item) => item.productId));
+}
+
+function ensureUnambiguousProductMatches(products) {
+  ensureUnambiguousProductIds(products.map((product) => product.id));
+}
+
+function ensureUnambiguousProductIds(productIds) {
+  const uniqueProductIds = new Set(productIds.filter(Boolean));
+  if (uniqueProductIds.size > 1) {
+    throw new Error("Codigo bipado corresponde a mais de um produto neste lote. Confira se a etiqueta e o Codigo ML nao estao duplicados.");
+  }
+}
+
+function ensureUnambiguousPgScanRows(rows) {
+  ensureUnambiguousProductIds(rows.map((row) => row.product_id || row.id));
 }
 
 function chooseRzItemForDecrement(items) {

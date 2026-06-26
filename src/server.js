@@ -785,7 +785,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync-one", requireAuth, asyn
   try {
     const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
-    if (!codigoMl) throw new Error("Informe o Codigo ML.");
+    if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML.");
 
     const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
     if (!item) return res.status(404).json({ error: "Produto conferido nao encontrado nesta RZ." });
@@ -809,7 +809,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
   try {
     const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
-    if (!codigoMl) throw new Error("Informe o Codigo ML.");
+    if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML.");
 
     const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
     if (!item) return res.status(404).json({ error: "Produto nao encontrado nesta RZ." });
@@ -832,7 +832,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
-    if (!codigoMl) throw new Error("Informe o Código ML.");
+    if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML.");
     await recordOperatorActivity(req.session.user, "scan_ml", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await scanLotRz({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
@@ -843,7 +843,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
-    if (!codigoMl) throw new Error("Informe o Código ML para diminuir.");
+    if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML para diminuir.");
     await recordOperatorActivity(req.session.user, "decrement_scan", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await decrementLotRzScan({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
@@ -1297,9 +1297,18 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
   if (!lot) return null;
 
   const normalizedMl = String(codigoMl || "").trim().toUpperCase();
-  const item = (lot.items || []).find((candidate) => {
-    return candidate.codigoRz === codigoRz && String(candidate.product?.codigoMl || "").trim().toUpperCase() === normalizedMl;
+  const matches = (lot.items || []).filter((candidate) => {
+    const product = candidate.product || {};
+    return (
+      candidate.codigoRz === codigoRz &&
+      (String(product.codigoMl || "").trim().toUpperCase() === normalizedMl || String(product.sku || "").trim().toUpperCase() === normalizedMl)
+    );
   });
+  const productIds = new Set(matches.map((candidate) => candidate.product?.id).filter(Boolean));
+  if (productIds.size > 1) {
+    throw new Error("Codigo bipado corresponde a mais de um produto nesta RZ. Confira se a etiqueta e o Codigo ML nao estao duplicados.");
+  }
+  const item = matches[0];
   if (!item?.product) return null;
 
   return {
