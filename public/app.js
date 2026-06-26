@@ -380,7 +380,7 @@ async function addDiverseItem(event) {
     input.value = "";
     renderDiverseLot(response.lot);
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
-    await loadLots(response.lot.id);
+    await refreshLotsList(response.lot.id);
     await showDiverseBlingSyncStatus(response, diverseScanStatusMessage(response, codigoRz, parent));
     if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
     schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
@@ -395,7 +395,7 @@ async function addDiverseItem(event) {
         const response = await createDiverseItem({ codigoMl, codigoRz, manualProduct });
         input.value = "";
         renderDiverseLot(response.lot);
-        await loadLots(response.lot.id);
+        await refreshLotsList(response.lot.id);
         await showDiverseBlingSyncStatus(response, `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`);
         if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
         schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
@@ -958,7 +958,7 @@ async function editDiverseProduct(product) {
       body: JSON.stringify(edited)
     });
     renderDiverseLot(response.lot);
-    await loadLots(response.lot.id);
+    await refreshLotsList(response.lot.id);
     if (response.bling?.ok === false) {
       message.style.color = "";
       message.textContent = `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`;
@@ -2847,6 +2847,16 @@ async function loadLots(selectId = state.selectedLotId) {
     $("#lots").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
     $("#uploadMessage").textContent = error.message;
   }
+}
+
+async function refreshLotsList(activeLotId = state.selectedLotId) {
+  const response = await api("/api/lots");
+  state.lots = response.lots;
+  if (activeLotId && state.lots.some((lot) => lot.id === activeLotId)) {
+    state.selectedLotId = activeLotId;
+    state.previewLotId = null;
+  }
+  renderLots();
 }
 
 function clearLotDetail() {
