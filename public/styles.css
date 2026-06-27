@@ -209,6 +209,58 @@ h3 {
   margin-top: 16px;
 }
 
+.operator-filter {
+  align-items: end;
+  background: #fff;
+  border: 1px solid #cfdcd2;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgb(30 58 38 / 0.12);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  padding: 14px 18px;
+}
+
+.operator-filter-title {
+  align-items: center;
+  color: #000;
+  display: flex;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.operator-filter-title span {
+  align-items: center;
+  color: #f5a400;
+  display: inline-flex;
+  font-size: 18px;
+  font-weight: 900;
+  justify-content: center;
+  width: 20px;
+}
+
+.operator-filter-title strong {
+  font-size: 17px;
+}
+
+.operator-filter-fields {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(150px, 198px)) repeat(4, auto);
+}
+
+.operator-filter-fields label {
+  color: #2d4d37;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.operator-filter-fields input,
+.operator-filter-fields button {
+  min-height: 40px;
+}
+
 .operator-metrics {
   display: grid;
   gap: 10px;
@@ -331,7 +383,7 @@ h3 {
 .operator-table {
   border: 1px solid #c9d9ca;
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .operator-row {
@@ -340,7 +392,8 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.5fr) minmax(58px, 0.45fr) repeat(7, minmax(72px, 0.65fr)) minmax(110px, 0.9fr);
+  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(10, minmax(72px, 0.6fr)) minmax(130px, 0.9fr);
+  min-width: 1240px;
   padding: 14px 12px;
 }
 
@@ -2114,6 +2167,8 @@ h3 {
   .upload-grid,
   .layout,
   .summary-grid,
+  .operator-filter,
+  .operator-filter-fields,
   .operator-metrics,
   .operator-podium,
   .operator-row,
@@ -2147,6 +2202,10 @@ h3 {
   .pallet-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .operator-row {
+    min-width: 0;
   }
 
   .transfer-shell {

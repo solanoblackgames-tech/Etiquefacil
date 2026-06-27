@@ -253,7 +253,12 @@ app.get("/api/lots", requireAuth, async (req, res) => {
 });
 
 app.get("/api/operators", requireAuth, requireOwner, async (req, res) => {
-  res.json({ operators: await listOperatorsForUser(workspaceUserId(req)) });
+  res.json({
+    operators: await listOperatorsForUser(workspaceUserId(req), {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    })
+  });
 });
 
 app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {

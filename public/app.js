@@ -7,6 +7,7 @@ const state = {
   adminCatalogProducts: [],
   blingIntegration: null,
   operators: [],
+  operatorDateFilter: null,
   transferLots: [],
   selectedTransferLotId: null,
   blingDeposits: [],
@@ -54,6 +55,17 @@ const formatDateTime = (value) => {
   return Number.isNaN(date.getTime())
     ? "--"
     : date.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+};
+const formatInputDate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+const addDays = (date, days) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 };
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
@@ -161,6 +173,9 @@ function bindEvents() {
   $("#operatorForm").addEventListener("submit", createOperator);
   $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
   $("#operatorInviteCopyButton").addEventListener("click", copyOperatorInviteLink);
+  $("#operatorList").addEventListener("submit", handleOperatorFilterSubmit);
+  $("#operatorList").addEventListener("change", handleOperatorFilterChange);
+  $("#operatorList").addEventListener("click", handleOperatorFilterClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
   });
@@ -1172,7 +1187,11 @@ function setProfileSection(section = "entries") {
 
 async function loadOperators() {
   try {
-    const response = await api("/api/operators");
+    if (!state.operatorDateFilter) state.operatorDateFilter = defaultOperatorDateFilter();
+    const params = new URLSearchParams();
+    if (state.operatorDateFilter.startDate) params.set("startDate", state.operatorDateFilter.startDate);
+    if (state.operatorDateFilter.endDate) params.set("endDate", state.operatorDateFilter.endDate);
+    const response = await api(`/api/operators?${params.toString()}`);
     state.operators = response.operators || [];
     renderOperators();
   } catch (error) {
@@ -1182,8 +1201,14 @@ async function loadOperators() {
 
 function renderOperators() {
   const wrapper = $("#operatorList");
+  const filter = normalizeOperatorDateFilter(state.operatorDateFilter);
   if (!state.operators.length) {
-    wrapper.innerHTML = '<p class="empty">Nenhum operador cadastrado.</p>';
+    wrapper.innerHTML = `
+      <section class="operator-dashboard">
+        ${operatorDateFilterMarkup(filter)}
+        <p class="empty">Nenhum operador cadastrado.</p>
+      </section>
+    `;
     return;
   }
   const operators = state.operators.map(operatorViewModel);
@@ -1195,16 +1220,28 @@ function renderOperators() {
     acc.creates += operator.creates;
     acc.lotViews += operator.lotViews;
     acc.palletViews += operator.palletViews;
+    acc.activeOperators += operator.activity > 0 ? 1 : 0;
     if (!acc.lastActivityAt || (operator.lastActivityAt && operator.lastActivityAt > acc.lastActivityAt)) {
       acc.lastActivityAt = operator.lastActivityAt;
     }
+    if (!acc.bestDay || operator.bestDayTotal > acc.bestDay.total) {
+      acc.bestDay = {
+        total: operator.bestDayTotal,
+        date: operator.bestDayDate,
+        operatorName: operator.name
+      };
+    }
     return acc;
-  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, lastActivityAt: null });
+  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
   const topOperators = [...operators].sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name)).slice(0, 3);
   const leader = topOperators[0];
+  const periodDays = operatorPeriodDays(filter);
+  const avgPerActiveOperatorDay = totals.activeOperators && periodDays ? totals.activity / totals.activeOperators / periodDays : 0;
 
   wrapper.innerHTML = `
     <section class="operator-dashboard">
+      ${operatorDateFilterMarkup(filter)}
+
       <div class="operator-metrics">
         <article class="operator-metric">
           <span>Atividades no periodo</span>
@@ -1217,14 +1254,19 @@ function renderOperators() {
           <small>${totals.searches} buscas / ${totals.scans} bipagens</small>
         </article>
         <article class="operator-metric">
-          <span>Operador destaque</span>
-          <strong>${leader ? leader.activity : 0}</strong>
-          <small>${leader ? escapeHtml(leader.name) : "Sem atividade"}</small>
+          <span>Capacidade media</span>
+          <strong>${formatDecimal(avgPerActiveOperatorDay)}</strong>
+          <small>atividades por operador em dia do periodo</small>
         </article>
         <article class="operator-metric">
-          <span>Ultima atividade</span>
-          <strong>${totals.lastActivityAt ? formatDate(totals.lastActivityAt) : "--"}</strong>
-          <small>${totals.logins} logins registrados</small>
+          <span>Melhor dia de um operador</span>
+          <strong>${totals.bestDay?.total || 0}</strong>
+          <small>${totals.bestDay?.operatorName ? `${escapeHtml(totals.bestDay.operatorName)}${totals.bestDay.date ? ` - ${formatShortDate(totals.bestDay.date)}` : ""}` : "Sem atividade"}</small>
+        </article>
+        <article class="operator-metric">
+          <span>Operadores ativos</span>
+          <strong>${totals.activeOperators}</strong>
+          <small>${operators.length} operadores cadastrados</small>
         </article>
       </div>
 
@@ -1244,6 +1286,9 @@ function renderOperators() {
           <span>Cadastros</span>
           <span>Lotes</span>
           <span>Pallets</span>
+          <span>Dias trab.</span>
+          <span>Media/dia</span>
+          <span>Melhor dia</span>
           <span>Ultima ativ.</span>
         </div>
         ${operators
@@ -1255,6 +1300,97 @@ function renderOperators() {
   `;
 }
 
+function defaultOperatorDateFilter() {
+  const today = new Date();
+  return {
+    startDate: formatInputDate(addDays(today, -6)),
+    endDate: formatInputDate(today)
+  };
+}
+
+function operatorPeriodDays(filter) {
+  if (!filter.startDate || !filter.endDate) return 0;
+  const start = new Date(`${filter.startDate}T00:00:00`);
+  const end = new Date(`${filter.endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+
+function formatDecimal(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+}
+
+function formatShortDate(value) {
+  if (!value) return "--";
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+function normalizeOperatorDateFilter(filter = {}) {
+  let startDate = filter.startDate || "";
+  let endDate = filter.endDate || "";
+  if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
+  state.operatorDateFilter = { startDate, endDate };
+  return state.operatorDateFilter;
+}
+
+function operatorDateFilterMarkup(filter) {
+  return `
+    <form class="operator-filter" id="operatorDateFilter">
+      <div class="operator-filter-title">
+        <span aria-hidden="true">!</span>
+        <strong>Desempenho da Equipe</strong>
+      </div>
+      <div class="operator-filter-fields">
+        <label>
+          Data inicial
+          <input type="date" name="startDate" value="${escapeHtml(filter.startDate)}" />
+        </label>
+        <label>
+          Data final
+          <input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" />
+        </label>
+        <button type="button" class="ghost" data-operator-period="today">Hoje</button>
+        <button type="button" class="ghost" data-operator-period="7">7 dias</button>
+        <button type="button" class="ghost" data-operator-period="30">30 dias</button>
+        <button type="submit" class="ghost operator-refresh" aria-label="Atualizar desempenho">Atualizar</button>
+      </div>
+    </form>
+  `;
+}
+
+function handleOperatorFilterSubmit(event) {
+  if (!event.target.matches("#operatorDateFilter")) return;
+  event.preventDefault();
+  applyOperatorFilterFromForm(event.target);
+}
+
+function handleOperatorFilterChange(event) {
+  if (!event.target.closest("#operatorDateFilter") || !event.target.matches('input[type="date"]')) return;
+  applyOperatorFilterFromForm(event.target.form);
+}
+
+function handleOperatorFilterClick(event) {
+  const button = event.target.closest("[data-operator-period]");
+  if (!button) return;
+  const days = button.dataset.operatorPeriod;
+  const today = new Date();
+  state.operatorDateFilter = {
+    startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
+    endDate: formatInputDate(today)
+  };
+  loadOperators();
+}
+
+function applyOperatorFilterFromForm(form) {
+  const data = new FormData(form);
+  state.operatorDateFilter = normalizeOperatorDateFilter({
+    startDate: data.get("startDate") || "",
+    endDate: data.get("endDate") || ""
+  });
+  loadOperators();
+}
+
 function operatorViewModel(operator) {
   const stats = operator.stats || {};
   const logins = stats.logins || 0;
@@ -1263,6 +1399,14 @@ function operatorViewModel(operator) {
   const creates = stats.creates || 0;
   const lotViews = stats.lotViews || 0;
   const palletViews = stats.palletViews || 0;
+  const dailyTotals = stats.dailyTotals || {};
+  const activeDays = Object.values(dailyTotals).filter((total) => Number(total || 0) > 0).length;
+  const bestDay = Object.entries(dailyTotals).reduce((best, [date, total]) => {
+    const normalizedTotal = Number(total || 0);
+    if (!best || normalizedTotal > best.total) return { date, total: normalizedTotal };
+    return best;
+  }, null);
+  const activity = logins + searches + scans + creates + lotViews + palletViews;
   return {
     name: operator.name || "Operador",
     email: operator.email || "",
@@ -1273,7 +1417,11 @@ function operatorViewModel(operator) {
     creates,
     lotViews,
     palletViews,
-    activity: logins + searches + scans + creates + lotViews + palletViews,
+    activeDays,
+    averagePerDay: activeDays ? activity / activeDays : 0,
+    bestDayDate: bestDay?.date || "",
+    bestDayTotal: bestDay?.total || 0,
+    activity,
     lastActivityAt: stats.lastActivityAt || null
   };
 }
@@ -1285,10 +1433,10 @@ function operatorPodiumCard(operator, index) {
     <article class="operator-podium-card ${rankClass}">
       <div class="operator-medal">${rank}</div>
       <strong>${escapeHtml(operator.name)}</strong>
-      <span>${escapeHtml(operator.email)}</span>
+      <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.activity}</b>
       <small>atividades registradas</small>
-      <em>${operator.searches + operator.scans} buscas/bipagens</em>
+      <em>${operator.bestDayTotal} no melhor dia</em>
     </article>
   `;
 }
@@ -1309,7 +1457,10 @@ function operatorTableRow(operator, index) {
       <span>${operator.creates}</span>
       <span>${operator.lotViews}</span>
       <span>${operator.palletViews}</span>
-      <span>${operator.lastActivityAt ? formatDate(operator.lastActivityAt) : "Sem atividade"}</span>
+      <strong>${operator.activeDays}</strong>
+      <strong>${formatDecimal(operator.averagePerDay)}</strong>
+      <strong>${operator.bestDayTotal}</strong>
+      <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
     </div>
   `;
 }

@@ -305,13 +305,15 @@ async function nextOperatorCode(ownerUserId) {
   return Math.max(firstCode - 1, maxCode) + 1;
 }
 
-export async function listOperatorsForUser(ownerUserId) {
+export async function listOperatorsForUser(ownerUserId, period = {}) {
   await ensureStore();
+  const range = normalizeOperatorActivityRange(period);
   if (hasPostgres()) {
     const result = await query(
       `
         select
           u.*,
+          coalesce(od.day_totals, '{}'::jsonb) as day_totals,
           count(oa.id)::int as activity_total,
           max(oa.created_at) as last_activity_at,
           count(oa.id) filter (where oa.action = 'login')::int as login_total,
@@ -322,11 +324,28 @@ export async function listOperatorsForUser(ownerUserId) {
           count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total
         from users u
         left join operator_activities oa on oa.operator_user_id = u.id
+          and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
+          and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
+        left join (
+          select operator_user_id, jsonb_object_agg(activity_day, day_total) as day_totals
+          from (
+            select
+              operator_user_id,
+              to_char(created_at, 'YYYY-MM-DD') as activity_day,
+              count(*)::int as day_total
+            from operator_activities
+            where owner_user_id = $1
+              and ($2::timestamptz is null or created_at >= $2::timestamptz)
+              and ($3::timestamptz is null or created_at <= $3::timestamptz)
+            group by operator_user_id, to_char(created_at, 'YYYY-MM-DD')
+          ) daily_operator_activity
+          group by operator_user_id
+        ) od on od.operator_user_id = u.id
         where u.parent_user_id = $1
-        group by u.id
+        group by u.id, od.day_totals
         order by u.created_at desc
       `,
-      [ownerUserId]
+      [ownerUserId, range.startAt, range.endAt]
     );
     return result.rows.map((row) => ({ ...sanitizeUser(userFromRow(row)), stats: operatorStatsFromRow(row) }));
   }
@@ -335,7 +354,7 @@ export async function listOperatorsForUser(ownerUserId) {
   return db.users
     .filter((user) => user.parentUserId === ownerUserId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id) }));
+    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id, range) }));
 }
 
 export async function recordOperatorActivity(user, action, metadata = {}) {
@@ -4241,15 +4260,19 @@ function operatorStatsFromRow(row) {
     creates: Number(row.create_total || 0),
     lotViews: Number(row.lot_view_total || 0),
     palletViews: Number(row.pallet_view_total || 0),
+    dailyTotals: normalizeDailyTotals(row.day_totals),
     lastActivityAt: row.last_activity_at ? iso(row.last_activity_at) : null
   };
 }
 
-function summarizeOperatorActivities(activities, operatorUserId) {
-  const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, lastActivityAt: null };
+function summarizeOperatorActivities(activities, operatorUserId, range = {}) {
+  const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, dailyTotals: {}, lastActivityAt: null };
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
+    if (!isOperatorActivityInRange(activity, range)) continue;
     stats.total += 1;
+    const day = activity.createdAt ? activity.createdAt.slice(0, 10) : "";
+    if (day) stats.dailyTotals[day] = (stats.dailyTotals[day] || 0) + 1;
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
     if (activity.action === "scan_ml" || activity.action === "scan_transfer") stats.scans += 1;
@@ -4259,6 +4282,36 @@ function summarizeOperatorActivities(activities, operatorUserId) {
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
   }
   return stats;
+}
+
+function normalizeDailyTotals(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    Object.entries(source)
+      .map(([day, total]) => [day, Number(total || 0)])
+      .filter(([day, total]) => /^\d{4}-\d{2}-\d{2}$/.test(day) && total > 0)
+  );
+}
+
+function normalizeOperatorActivityRange(period = {}) {
+  let startAt = parseOperatorDateBound(period.startDate, false);
+  let endAt = parseOperatorDateBound(period.endDate, true);
+  if (startAt && endAt && startAt > endAt) [startAt, endAt] = [endAt, startAt];
+  return { startAt, endAt };
+}
+
+function parseOperatorDateBound(value, endOfDay) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function isOperatorActivityInRange(activity, range) {
+  const createdAt = activity.createdAt || "";
+  if (range.startAt && createdAt < range.startAt) return false;
+  if (range.endAt && createdAt > range.endAt) return false;
+  return true;
 }
 
 function iso(value) {
