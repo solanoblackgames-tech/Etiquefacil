@@ -1605,7 +1605,7 @@ h3 {
 }
 
 .catalog-request-row {
-  grid-template-columns: minmax(280px, 1.5fr) minmax(130px, 0.7fr) minmax(100px, 0.55fr) minmax(120px, 0.6fr) minmax(100px, 0.5fr) minmax(190px, 0.8fr);
+  grid-template-columns: minmax(42px, 0.2fr) minmax(280px, 1.5fr) minmax(130px, 0.7fr) minmax(100px, 0.55fr) minmax(120px, 0.6fr) minmax(100px, 0.5fr) minmax(190px, 0.8fr);
 }
 
 .catalog-rejected-row {
@@ -1630,6 +1630,70 @@ h3 {
   color: var(--ink);
   font-size: 15px;
   margin: 0;
+}
+
+.catalog-request-filters {
+  align-items: end;
+  background: #f8fafb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.4fr) auto auto auto auto;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.catalog-request-filters label {
+  display: grid;
+  gap: 6px;
+}
+
+.catalog-check-filter,
+.catalog-select-all,
+.catalog-select-row {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.catalog-check-filter {
+  align-self: center;
+  color: var(--ink);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.catalog-filter-count {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.catalog-bulk-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.catalog-select-all {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  margin-right: 6px;
+}
+
+.catalog-select-row {
+  justify-content: center;
+}
+
+.catalog-select-row input,
+.catalog-select-all input,
+.catalog-check-filter input {
+  height: 18px;
+  width: 18px;
 }
 
 .admin-row:last-child {
@@ -2185,6 +2249,7 @@ h3 {
   .diverse-row,
   .pallet-row,
   .result-card,
+  .catalog-request-filters,
   .admin-form,
   .admin-row,
   .admin-user-main,
@@ -2194,6 +2259,7 @@ h3 {
   }
 
   .admin-actions,
+  .catalog-bulk-actions,
   .password-form,
   .admin-heading,
   .work-heading,

@@ -5,6 +5,11 @@ const state = {
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
+  adminCatalogRequestFilters: {
+    creator: "",
+    date: "",
+    doubleCheckOnly: false
+  },
   blingIntegration: null,
   operators: [],
   operatorDateFilter: null,
@@ -120,6 +125,8 @@ function bindEvents() {
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
   $("#adminCatalogRequests").addEventListener("click", handleAdminCatalogRequestsClick);
+  $("#adminCatalogRequests").addEventListener("submit", handleAdminCatalogRequestsFilter);
+  $("#adminCatalogRequests").addEventListener("change", handleAdminCatalogRequestsChange);
   $("#adminCatalogProducts").addEventListener("click", handleAdminCatalogProductsClick);
 
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
@@ -1835,16 +1842,55 @@ function adminLotRow(lot) {
 function renderAdminCatalogRequests() {
   const wrapper = $("#adminCatalogRequests");
   if (!state.adminCatalogRequests.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhuma sugestao enviada ainda.</p>';
+    wrapper.innerHTML = `
+      ${adminCatalogRequestFiltersHtml()}
+      <p class="muted">Nenhuma sugestao enviada ainda.</p>
+    `;
     return;
   }
 
-  const lotRequests = state.adminCatalogRequests.filter((request) => request.scope === "lot");
-  const individualRequests = state.adminCatalogRequests.filter((request) => request.scope !== "lot");
+  const filteredRequests = filteredAdminCatalogRequests();
+  const lotRequests = filteredRequests.filter((request) => request.scope === "lot");
+  const individualRequests = filteredRequests.filter((request) => request.scope !== "lot");
   wrapper.innerHTML = `
+    ${adminCatalogRequestFiltersHtml()}
     ${adminCatalogRequestSection("Sugestoes de lotes", lotRequests)}
     ${adminCatalogRequestSection("Sugestoes individuais", individualRequests)}
   `;
+}
+
+function adminCatalogRequestFiltersHtml() {
+  const filters = state.adminCatalogRequestFilters;
+  const visibleCount = filteredAdminCatalogRequests().length;
+  return `
+    <form class="catalog-request-filters" data-catalog-request-filters>
+      <label>Login criador
+        <input name="creator" value="${escapeHtml(filters.creator)}" placeholder="E-mail, nome ou operador" autocomplete="off" />
+      </label>
+      <label>Data
+        <input name="date" type="date" value="${escapeHtml(filters.date)}" />
+      </label>
+      <label class="catalog-check-filter">
+        <input name="doubleCheckOnly" type="checkbox" ${filters.doubleCheckOnly ? "checked" : ""} />
+        Com double check
+      </label>
+      <button type="submit">Filtrar</button>
+      <button type="button" class="ghost" data-clear-catalog-filters>Limpar filtros</button>
+      <span class="catalog-filter-count">${visibleCount} sugestao${visibleCount === 1 ? "" : "es"}</span>
+    </form>
+  `;
+}
+
+function filteredAdminCatalogRequests() {
+  const filters = state.adminCatalogRequestFilters;
+  const creator = normalizeFilterText(filters.creator);
+  const date = String(filters.date || "").trim();
+  return state.adminCatalogRequests.filter((request) => {
+    if (creator && !normalizeFilterText(catalogActorSearchText(request)).includes(creator)) return false;
+    if (date && !isSameInputDate(request.createdAt, date)) return false;
+    if (filters.doubleCheckOnly && catalogApprovalOptions(request).length < 2) return false;
+    return true;
+  });
 }
 
 function adminCatalogRequestSection(title, requests) {
@@ -1854,8 +1900,17 @@ function adminCatalogRequestSection(title, requests) {
       ${
         requests.length
           ? `
+            <div class="catalog-bulk-actions">
+              <label class="catalog-select-all">
+                <input type="checkbox" data-select-catalog-visible />
+                Selecionar visiveis
+              </label>
+              <button type="button" data-review-catalog-bulk="approve">Aprovar selecionadas</button>
+              <button type="button" class="danger" data-review-catalog-bulk="reject">Rejeitar selecionadas</button>
+            </div>
             <div class="admin-table">
               <div class="admin-row catalog-request-row admin-row-head">
+                <span>Sel.</span>
                 <span>Sugestao</span>
                 <span>Codigo ML</span>
                 <span>Preco</span>
@@ -1973,6 +2028,9 @@ function adminCatalogRequestRow(request) {
     : "";
   return `
     <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
+      <label class="catalog-select-row" title="Selecionar sugestao">
+        <input type="checkbox" data-select-catalog-request ${pending ? "" : "disabled"} />
+      </label>
       <div class="catalog-request-summary">
         ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
         <div>
@@ -2029,6 +2087,18 @@ function catalogActorLabel(item) {
   const actor = operator || createdBy;
   if (actor && actor !== owner) return `${owner} / operador ${actor}`;
   return actor || owner;
+}
+
+function catalogActorSearchText(item) {
+  return [
+    item.user?.email,
+    item.user?.name,
+    item.createdByUser?.email,
+    item.createdByUser?.name,
+    item.operatorUser?.email,
+    item.operatorUser?.name,
+    catalogActorLabel(item)
+  ].filter(Boolean).join(" ");
 }
 
 function catalogPhotoFrame(photo, className = "") {
@@ -2162,18 +2232,29 @@ async function handleAdminUsersClick(event) {
 }
 
 async function handleAdminCatalogRequestsClick(event) {
+  const clearFiltersButton = event.target.closest("[data-clear-catalog-filters]");
+  if (clearFiltersButton) {
+    state.adminCatalogRequestFilters = { creator: "", date: "", doubleCheckOnly: false };
+    renderAdminCatalogRequests();
+    return;
+  }
+
+  const bulkButton = event.target.closest("[data-review-catalog-bulk]");
+  if (bulkButton) {
+    await reviewSelectedCatalogRequests(bulkButton.dataset.reviewCatalogBulk, bulkButton);
+    return;
+  }
+
   const button = event.target.closest("[data-review-catalog]");
   if (!button) return;
   const row = button.closest("[data-catalog-request-id]");
   const action = button.dataset.reviewCatalog;
   const selectedCheckId = row.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base";
+  const actionLabel = action === "approve" ? "aprovar" : "rejeitar";
+  if (!confirm(`Deseja ${actionLabel} esta sugestao?`)) return;
   button.disabled = true;
   try {
-    await api(`/api/admin/catalog-requests/${encodeURIComponent(row.dataset.catalogRequestId)}/${encodeURIComponent(action)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(action === "approve" ? { selectedCheckId } : {})
-    });
+    await reviewCatalogRequestById(row.dataset.catalogRequestId, action, selectedCheckId);
     $("#adminMessage").style.color = "#0f766e";
     $("#adminMessage").textContent = action === "approve" ? "Sugestao aprovada." : "Sugestao rejeitada.";
     await loadAdminCatalogReviewLists();
@@ -2183,6 +2264,78 @@ async function handleAdminCatalogRequestsClick(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function handleAdminCatalogRequestsFilter(event) {
+  const form = event.target.closest("[data-catalog-request-filters]");
+  if (!form) return;
+  event.preventDefault();
+  updateAdminCatalogRequestFilters(form);
+}
+
+function handleAdminCatalogRequestsChange(event) {
+  const selectVisible = event.target.closest("[data-select-catalog-visible]");
+  if (selectVisible) {
+    selectVisible.closest(".catalog-request-section")
+      ?.querySelectorAll("[data-select-catalog-request]:not(:disabled)")
+      .forEach((checkbox) => { checkbox.checked = selectVisible.checked; });
+    return;
+  }
+
+  const filterInput = event.target.closest("[data-catalog-request-filters] input");
+  if (filterInput) {
+    updateAdminCatalogRequestFilters(event.target.form);
+  }
+}
+
+function updateAdminCatalogRequestFilters(form) {
+  const data = new FormData(form);
+  state.adminCatalogRequestFilters = {
+    creator: String(data.get("creator") || ""),
+    date: String(data.get("date") || ""),
+    doubleCheckOnly: data.get("doubleCheckOnly") === "on"
+  };
+  renderAdminCatalogRequests();
+}
+
+async function reviewSelectedCatalogRequests(action, button) {
+  const rows = [...document.querySelectorAll("#adminCatalogRequests [data-catalog-request-id]")]
+    .filter((row) => row.querySelector("[data-select-catalog-request]:checked"));
+  if (!rows.length) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = "Selecione pelo menos uma sugestao.";
+    return;
+  }
+
+  const actionLabel = action === "approve" ? "aprovar" : "rejeitar";
+  if (!confirm(`Deseja ${actionLabel} ${rows.length} sugestao${rows.length === 1 ? "" : "es"} selecionada${rows.length === 1 ? "" : "s"}?`)) return;
+
+  const buttons = [...document.querySelectorAll("#adminCatalogRequests button, #adminCatalogRequests input")];
+  buttons.forEach((control) => { control.disabled = true; });
+  button.disabled = true;
+  try {
+    for (const row of rows) {
+      const selectedCheckId = row.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base";
+      await reviewCatalogRequestById(row.dataset.catalogRequestId, action, selectedCheckId);
+    }
+    $("#adminMessage").style.color = "#0f766e";
+    $("#adminMessage").textContent = action === "approve"
+      ? `${rows.length} sugestao${rows.length === 1 ? "" : "es"} aprovada${rows.length === 1 ? "" : "s"}.`
+      : `${rows.length} sugestao${rows.length === 1 ? "" : "es"} rejeitada${rows.length === 1 ? "" : "s"}.`;
+    await loadAdminCatalogReviewLists();
+  } catch (error) {
+    $("#adminMessage").style.color = "";
+    $("#adminMessage").textContent = error.message;
+    await loadAdminCatalogReviewLists();
+  }
+}
+
+async function reviewCatalogRequestById(requestId, action, selectedCheckId = "base") {
+  return api(`/api/admin/catalog-requests/${encodeURIComponent(requestId)}/${encodeURIComponent(action)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(action === "approve" ? { selectedCheckId } : {})
+  });
 }
 
 async function handleAdminCatalogProductsClick(event) {
@@ -4273,4 +4426,18 @@ function escapeHtml(value) {
 
 function normalizeCode(value) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+function normalizeFilterText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isSameInputDate(value, inputDate) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  return formatInputDate(date) === inputDate;
 }
