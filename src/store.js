@@ -331,18 +331,21 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         left join operator_activities oa on oa.operator_user_id = u.id
           and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
           and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
+          and not ((lower(coalesce(u.name, '')) like '%eduarda%' or lower(coalesce(u.email, '')) like '%eduarda%') and oa.created_at::date = date '2026-06-26')
         left join (
           select operator_user_id, jsonb_object_agg(activity_day, day_total) as day_totals
           from (
             select
-              operator_user_id,
-              to_char(created_at, 'YYYY-MM-DD') as activity_day,
+              oa.operator_user_id,
+              to_char(oa.created_at, 'YYYY-MM-DD') as activity_day,
               count(*)::int as day_total
-            from operator_activities
-            where owner_user_id = $1
-              and ($2::timestamptz is null or created_at >= $2::timestamptz)
-              and ($3::timestamptz is null or created_at <= $3::timestamptz)
-            group by operator_user_id, to_char(created_at, 'YYYY-MM-DD')
+            from operator_activities oa
+            join users ou on ou.id = oa.operator_user_id
+            where oa.owner_user_id = $1
+              and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
+              and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
+              and not ((lower(coalesce(ou.name, '')) like '%eduarda%' or lower(coalesce(ou.email, '')) like '%eduarda%') and oa.created_at::date = date '2026-06-26')
+            group by oa.operator_user_id, to_char(oa.created_at, 'YYYY-MM-DD')
           ) daily_operator_activity
           group by operator_user_id
         ) od on od.operator_user_id = u.id
@@ -359,7 +362,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
   return db.users
     .filter((user) => user.parentUserId === ownerUserId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id, range) }));
+    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id, range, user) }));
 }
 
 export async function recordOperatorActivity(user, action, metadata = {}) {
@@ -4279,11 +4282,12 @@ function operatorStatsFromRow(row) {
   };
 }
 
-function summarizeOperatorActivities(activities, operatorUserId, range = {}) {
+function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}) {
   const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, dailyTotals: {}, lastActivityAt: null };
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
     if (!isOperatorActivityInRange(activity, range)) continue;
+    if (isIgnoredOperatorActivity(activity, operator)) continue;
     stats.total += 1;
     const day = activity.createdAt ? activity.createdAt.slice(0, 10) : "";
     if (day) stats.dailyTotals[day] = (stats.dailyTotals[day] || 0) + 1;
@@ -4296,6 +4300,11 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}) {
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
   }
   return stats;
+}
+
+function isIgnoredOperatorActivity(activity, operator = {}) {
+  const operatorText = `${operator.name || ""} ${operator.email || ""}`;
+  return activity?.createdAt?.slice(0, 10) === "2026-06-26" && /eduarda/i.test(operatorText);
 }
 
 function normalizeDailyTotals(value) {

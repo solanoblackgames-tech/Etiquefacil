@@ -1271,11 +1271,6 @@ function renderOperators() {
           <strong>${totals.bestDay?.total || 0}</strong>
           <small>${totals.bestDay?.operatorName ? `${escapeHtml(totals.bestDay.operatorName)}${totals.bestDay.date ? ` - ${formatShortDate(totals.bestDay.date)}` : ""}` : "Sem atividade"}</small>
         </article>
-        <article class="operator-metric">
-          <span>Operadores ativos</span>
-          <strong>${totals.activeOperators}</strong>
-          <small>${operators.length} operadores cadastrados</small>
-        </article>
       </div>
 
       <div class="operator-podium">
