@@ -18,6 +18,7 @@ let storeReady;
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
+const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
 
 const emptyDb = () => ({
   users: [],
@@ -40,6 +41,10 @@ const emptyDb = () => ({
 
 export function hasPostgres() {
   return Boolean(process.env.DATABASE_URL);
+}
+
+export function isStandardMlCode(codigoMl) {
+  return STANDARD_ML_CODE_PATTERN.test(normalizeCode(codigoMl));
 }
 
 export function getPgPool() {
@@ -112,7 +117,7 @@ function backfillJsonCatalogLotSuggestions(db) {
   const lotsById = new Map((db.lots || []).map((lot) => [lot.id, lot]));
   for (const product of db.products || []) {
     if ((product.origem || "planilha") !== "planilha") continue;
-    if (!normalizeCode(product.codigoMl)) continue;
+    if (!isStandardMlCode(product.codigoMl)) continue;
     const lot = lotsById.get(product.lotId);
     if (!lot?.userId) continue;
     mergePendingCatalogRequest(db.catalogRequests, buildLotCatalogRequest(db, { userId: lot.userId, lot, product }));
@@ -1527,6 +1532,7 @@ export async function listCatalogRequestsForAdmin() {
       from catalog_requests cr
       left join users u on u.id = cr.user_id
       where cr.status = 'pending'
+        and upper(trim(cr.codigo_ml)) ~ '^[A-Z]{4}[0-9]{5}$'
       order by cr.created_at desc
     `),
       query("select id, name, email, created_at from users")
@@ -1538,7 +1544,7 @@ export async function listCatalogRequestsForAdmin() {
   const db = await readDb();
   const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRequests || [])
-    .filter((request) => request.status === "pending")
+    .filter((request) => request.status === "pending" && isStandardMlCode(request.codigoMl))
     .map((request) => enrichCatalogRequestDoubleChecks({
       ...request,
       user: usersById.get(request.userId) || null
@@ -1554,6 +1560,7 @@ export async function listRejectedCatalogRequestsForAdmin() {
       select crr.*, u.name as user_name, u.email as user_email
       from catalog_rejected_requests crr
       left join users u on u.id = crr.user_id
+      where upper(trim(crr.codigo_ml)) ~ '^[A-Z]{4}[0-9]{5}$'
       order by crr.rejected_at desc
       limit 200
     `),
@@ -1569,6 +1576,7 @@ export async function listRejectedCatalogRequestsForAdmin() {
   const db = await readDb();
   const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRejectedRequests || [])
+    .filter((request) => isStandardMlCode(request.codigoMl))
     .map((request) => enrichCatalogRequestDoubleChecks({
       ...request,
       user: usersById.get(request.userId) || null
@@ -1628,6 +1636,7 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
   const request = (db.catalogRequests || []).find((item) => item.id === requestId);
   if (!request) throw notFound("Sugestao nao encontrada.");
   if (request.status !== "pending") throw new Error("Esta sugestao ja foi analisada.");
+  if (!isStandardMlCode(request.codigoMl)) throw new Error("Codigo ML fora do padrao aceito para sugestoes.");
 
   if (action === "approve") {
     upsertCatalogProduct(db, selectCatalogApprovalPayload(request, options.selectedCheckId));
@@ -3332,6 +3341,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
     const request = result.rows[0] && catalogRequestFromRow(result.rows[0]);
     if (!request) throw notFound("Sugestao nao encontrada.");
     if (request.status !== "pending") throw new Error("Esta sugestao ja foi analisada.");
+    if (!isStandardMlCode(request.codigoMl)) throw new Error("Codigo ML fora do padrao aceito para sugestoes.");
 
     if (action === "approve") {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
@@ -3546,6 +3556,8 @@ async function buildLotCatalogRequestPg(client, { userId, lot, product }) {
 }
 
 export function mergePendingCatalogRequest(requests, request) {
+  if (!isStandardMlCode(request.codigoMl)) return null;
+
   const target = findMergeableCatalogRequest(requests, request);
   if (!target) {
     request.doubleChecks = normalizeDoubleChecks(request.doubleChecks);
@@ -3567,6 +3579,8 @@ export function mergePendingCatalogRequest(requests, request) {
 }
 
 async function mergePendingCatalogRequestPg(client, request) {
+  if (!isStandardMlCode(request.codigoMl)) return null;
+
   const mergeable = request.type === "create"
     ? await client.query(
         `
@@ -3735,6 +3749,7 @@ export function selectCatalogApprovalPayload(request, selectedCheckId) {
 function upsertCatalogProduct(db, request) {
   const now = new Date().toISOString();
   const codigoMl = normalizeCode(request.codigoMl);
+  if (!isStandardMlCode(codigoMl)) throw new Error("Codigo ML fora do padrao aceito para sugestoes.");
   const existing = (db.catalogProducts || []).find((product) => normalizeCode(product.codigoMl) === codigoMl);
   const record = {
     id: existing?.id || randomUUID(),

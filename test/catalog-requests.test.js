@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRejectedCatalogRequest, mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
+import { buildRejectedCatalogRequest, isStandardMlCode, mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
 
 test("mergePendingCatalogRequest groups repeated pending create suggestions by Codigo ML", () => {
   const requests = [
@@ -11,7 +11,7 @@ test("mergePendingCatalogRequest groups repeated pending create suggestions by C
       productId: "product-1",
       type: "create",
       status: "pending",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto inicial",
       valorUnit: 100,
       precoCusto: 0,
@@ -26,7 +26,7 @@ test("mergePendingCatalogRequest groups repeated pending create suggestions by C
     productId: "product-2",
     type: "create",
     status: "pending",
-    codigoMl: " ml123 ",
+    codigoMl: " abcd12345 ",
     descricao: "Produto confirmado",
     valorUnit: 105,
     precoCusto: 0,
@@ -46,7 +46,7 @@ test("mergePendingCatalogRequest keeps rejected suggestions separated", () => {
       id: "request-1",
       type: "create",
       status: "rejected",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto rejeitado",
       valorUnit: 100,
       createdAt: "2026-06-18T10:00:00.000Z"
@@ -58,7 +58,7 @@ test("mergePendingCatalogRequest keeps rejected suggestions separated", () => {
     userId: "user-2",
     type: "create",
     status: "pending",
-    codigoMl: "ML123",
+    codigoMl: "ABCD12345",
     descricao: "Nova tentativa",
     valorUnit: 105,
     createdAt: "2026-06-18T11:00:00.000Z"
@@ -76,7 +76,7 @@ test("mergePendingCatalogRequest ignores repeated confirmations from the same ac
       createdByUserId: "operator-1",
       type: "create",
       status: "pending",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto inicial",
       valorUnit: 100,
       createdAt: "2026-06-18T10:00:00.000Z"
@@ -89,7 +89,7 @@ test("mergePendingCatalogRequest ignores repeated confirmations from the same ac
     createdByUserId: "operator-1",
     type: "create",
     status: "pending",
-    codigoMl: "ML123",
+    codigoMl: "ABCD12345",
     descricao: "Produto repetido",
     valorUnit: 105,
     createdAt: "2026-06-18T11:00:00.000Z"
@@ -108,7 +108,7 @@ test("mergePendingCatalogRequest accepts double check from another operator in t
       createdByUserId: "operator-1",
       type: "create",
       status: "pending",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto inicial",
       valorUnit: 100,
       createdAt: "2026-06-18T10:00:00.000Z"
@@ -122,7 +122,7 @@ test("mergePendingCatalogRequest accepts double check from another operator in t
     operatorUserId: "operator-2",
     type: "create",
     status: "pending",
-    codigoMl: "ML123",
+    codigoMl: "ABCD12345",
     descricao: "Produto confirmado",
     valorUnit: 105,
     createdAt: "2026-06-18T11:00:00.000Z"
@@ -144,7 +144,7 @@ test("mergePendingCatalogRequest promotes manual suggestion to lot suggestion wh
       type: "create",
       status: "pending",
       scope: "individual",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto manual",
       valorUnit: 100,
       createdAt: "2026-06-18T10:00:00.000Z"
@@ -161,7 +161,7 @@ test("mergePendingCatalogRequest promotes manual suggestion to lot suggestion wh
     status: "pending",
     scope: "lot",
     alertMessage: "Codigo ML ja cadastrado previamente no banco historico: Produto aprovado.",
-    codigoMl: "ML123",
+    codigoMl: "ABCD12345",
     descricao: "Produto da planilha",
     valorUnit: 105,
     createdAt: "2026-06-18T11:00:00.000Z"
@@ -183,7 +183,7 @@ test("mergePendingCatalogRequest keeps non-matching manual suggestions in the in
       type: "create",
       status: "pending",
       scope: "individual",
-      codigoMl: "ML123",
+      codigoMl: "ABCD12345",
       descricao: "Produto manual",
       valorUnit: 100,
       createdAt: "2026-06-18T10:00:00.000Z"
@@ -196,7 +196,7 @@ test("mergePendingCatalogRequest keeps non-matching manual suggestions in the in
     type: "create",
     status: "pending",
     scope: "lot",
-    codigoMl: "ML456",
+    codigoMl: "WXYZ45678",
     descricao: "Produto da planilha",
     valorUnit: 105,
     createdAt: "2026-06-18T11:00:00.000Z"
@@ -207,17 +207,38 @@ test("mergePendingCatalogRequest keeps non-matching manual suggestions in the in
   assert.equal(requests[1].scope, "lot");
 });
 
+test("mergePendingCatalogRequest ignores suggestions outside the standard ML pattern", () => {
+  const requests = [];
+
+  const merged = mergePendingCatalogRequest(requests, {
+    id: "request-1",
+    userId: "owner-1",
+    type: "create",
+    status: "pending",
+    scope: "individual",
+    codigoMl: "ML123",
+    descricao: "Produto fora do padrao",
+    valorUnit: 100,
+    createdAt: "2026-06-18T10:00:00.000Z"
+  });
+
+  assert.equal(merged, null);
+  assert.equal(requests.length, 0);
+  assert.equal(isStandardMlCode("ABCD12345"), true);
+  assert.equal(isStandardMlCode("ML123"), false);
+});
+
 test("selectCatalogApprovalPayload uses the selected double check values", () => {
   const request = {
     id: "request-1",
-    codigoMl: "ML123",
+    codigoMl: "ABCD12345",
     descricao: "Produto inicial",
     valorUnit: 100,
     precoCusto: 0,
     doubleChecks: [
       {
         id: "check-1",
-        codigoMl: "ML123",
+        codigoMl: "ABCD12345",
         descricao: "Produto confirmado",
         valorUnit: 105,
         precoCusto: 7,
@@ -231,7 +252,7 @@ test("selectCatalogApprovalPayload uses the selected double check values", () =>
   const selected = selectCatalogApprovalPayload(request, "check-1");
 
   assert.equal(selected.id, "request-1");
-  assert.equal(selected.codigoMl, "ML123");
+  assert.equal(selected.codigoMl, "ABCD12345");
   assert.equal(selected.descricao, "Produto confirmado");
   assert.equal(selected.valorUnit, 105);
   assert.equal(selected.precoCusto, 7);
@@ -249,7 +270,7 @@ test("buildRejectedCatalogRequest archives rejected suggestion data", () => {
       productId: "product-1",
       type: "create",
       status: "pending",
-      codigoMl: " ml123 ",
+      codigoMl: " abcd12345 ",
       descricao: "Produto rejeitado",
       valorUnit: 100,
       precoCusto: 7,
@@ -261,7 +282,7 @@ test("buildRejectedCatalogRequest archives rejected suggestion data", () => {
 
   assert.equal(archived.originalRequestId, "request-1");
   assert.equal(archived.status, "rejected");
-  assert.equal(archived.codigoMl, "ML123");
+  assert.equal(archived.codigoMl, "ABCD12345");
   assert.equal(archived.rejectedAt, "2026-06-18T11:00:00.000Z");
   assert.deepEqual(archived.doubleChecks, [{ id: "check-1", descricao: "Conferencia" }]);
 });
