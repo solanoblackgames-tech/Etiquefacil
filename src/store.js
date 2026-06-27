@@ -1526,7 +1526,7 @@ export async function listCatalogRequestsForAdmin() {
       select cr.*, u.name as user_name, u.email as user_email
       from catalog_requests cr
       left join users u on u.id = cr.user_id
-      where cr.status <> 'rejected'
+      where cr.status = 'pending'
       order by cr.created_at desc
     `),
       query("select id, name, email, created_at from users")
@@ -1538,7 +1538,7 @@ export async function listCatalogRequestsForAdmin() {
   const db = await readDb();
   const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRequests || [])
-    .filter((request) => request.status !== "rejected")
+    .filter((request) => request.status === "pending")
     .map((request) => enrichCatalogRequestDoubleChecks({
       ...request,
       user: usersById.get(request.userId) || null
@@ -1631,8 +1631,7 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
 
   if (action === "approve") {
     upsertCatalogProduct(db, selectCatalogApprovalPayload(request, options.selectedCheckId));
-    request.status = "approved";
-    request.reviewedAt = new Date().toISOString();
+    db.catalogRequests = (db.catalogRequests || []).filter((item) => item.id !== requestId);
   } else if (action === "reject") {
     const reviewedAt = new Date().toISOString();
     db.catalogRejectedRequests = db.catalogRejectedRequests || [];
@@ -3353,7 +3352,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
         `,
         [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || ""]
       );
-      await client.query("update catalog_requests set status = 'approved', reviewed_at = now() where id = $1", [requestId]);
+      await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
       await insertCatalogRejectedRequestRows(client, [buildRejectedCatalogRequest(request, new Date().toISOString())]);
       await client.query("delete from catalog_requests where id = $1", [requestId]);
