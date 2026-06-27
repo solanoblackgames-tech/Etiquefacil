@@ -158,6 +158,10 @@ h3 {
   width: 100%;
 }
 
+#profileOperators .entry-panel {
+  padding: 14px 16px 16px;
+}
+
 .settings-form {
   display: grid;
   gap: 14px;
@@ -210,34 +214,60 @@ h3 {
 }
 
 .operator-page-header {
-  align-items: start;
-  display: grid;
+  align-items: center;
+  display: flex;
   gap: 14px;
-  grid-template-columns: minmax(160px, 0.3fr) minmax(0, 1fr);
-  margin-bottom: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  min-width: 0;
+  width: 100%;
 }
 
 .operator-page-header .panel-heading {
+  flex: 0 0 auto;
   margin-bottom: 0;
 }
 
 .operator-header-actions {
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
+  background: #f8fbfa;
+  border: 1px solid #d8e7e3;
+  border-radius: 6px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  padding: 10px 12px;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+}
+
+.operator-header-actions > div {
+  align-items: baseline;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
 }
 
 .operator-header-actions strong,
 .operator-header-actions span {
-  display: block;
+  display: inline;
 }
 
 .operator-header-actions .muted {
   font-size: 13px;
+  line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-header-actions button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .operator-manual-form {
@@ -248,10 +278,20 @@ h3 {
   padding: 12px;
 }
 
+#profileOperators #operatorMessage {
+  margin: 0;
+  min-height: 0;
+}
+
+#profileOperators #operatorMessage:not(:empty) {
+  margin: 8px 0;
+  min-height: 20px;
+}
+
 .operator-dashboard {
   display: grid;
   gap: 14px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .operator-filter {
@@ -2284,8 +2324,6 @@ h3 {
   .rz-search,
   .scan-box,
   .custom-text-row,
-  .operator-page-header,
-  .operator-header-actions,
   .operator-invite-panel,
   .operator-invite-result,
   .item-row,
@@ -2303,6 +2341,10 @@ h3 {
   .admin-lot-row,
   .admin-operator-item {
     grid-template-columns: 1fr;
+  }
+
+  .operator-page-header {
+    gap: 10px;
   }
 
   .admin-actions,
