@@ -179,6 +179,7 @@ function bindEvents() {
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
   $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
+  $("#operatorManualToggle").addEventListener("click", toggleOperatorManualForm);
   $("#operatorInviteCopyButton").addEventListener("click", copyOperatorInviteLink);
   $("#operatorList").addEventListener("submit", handleOperatorFilterSubmit);
   $("#operatorList").addEventListener("change", handleOperatorFilterChange);
@@ -1472,6 +1473,16 @@ function operatorTableRow(operator, index) {
   `;
 }
 
+function toggleOperatorManualForm(forceOpen) {
+  const form = $("#operatorForm");
+  const button = $("#operatorManualToggle");
+  const open = typeof forceOpen === "boolean" ? forceOpen : form.classList.contains("hidden");
+  form.classList.toggle("hidden", !open);
+  button.setAttribute("aria-expanded", String(open));
+  button.textContent = open ? "Fechar cadastro" : "Criar manualmente";
+  if (open) schedulePrimaryInputFocus(["#operatorForm input[name='name']"]);
+}
+
 async function createOperator(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1485,6 +1496,7 @@ async function createOperator(event) {
       body: JSON.stringify(Object.fromEntries(new FormData(form)))
     });
     form.reset();
+    toggleOperatorManualForm(false);
     $("#operatorMessage").style.color = "#0f766e";
     $("#operatorMessage").textContent = "Operador criado.";
     await loadOperators();

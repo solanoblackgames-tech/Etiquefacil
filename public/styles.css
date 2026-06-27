@@ -152,6 +152,12 @@ h3 {
   padding: 24px;
 }
 
+#profileOperators.settings-shell {
+  max-width: none;
+  padding: 0;
+  width: 100%;
+}
+
 .settings-form {
   display: grid;
   gap: 14px;
@@ -203,10 +209,49 @@ h3 {
   font-size: 13px;
 }
 
+.operator-page-header {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(160px, 0.3fr) minmax(0, 1fr);
+  margin-bottom: 12px;
+}
+
+.operator-page-header .panel-heading {
+  margin-bottom: 0;
+}
+
+.operator-header-actions {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 10px 12px;
+}
+
+.operator-header-actions strong,
+.operator-header-actions span {
+  display: block;
+}
+
+.operator-header-actions .muted {
+  font-size: 13px;
+}
+
+.operator-manual-form {
+  background: #f8fbfa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+}
+
 .operator-dashboard {
   display: grid;
   gap: 14px;
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 .operator-filter {
@@ -2239,6 +2284,8 @@ h3 {
   .rz-search,
   .scan-box,
   .custom-text-row,
+  .operator-page-header,
+  .operator-header-actions,
   .operator-invite-panel,
   .operator-invite-result,
   .item-row,
