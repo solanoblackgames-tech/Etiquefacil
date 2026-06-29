@@ -549,7 +549,22 @@ function promptManualProduct(codigoMl, focusSelector, initialValues = {}) {
 }
 
 function parseMoneyInput(value) {
-  return Number(String(value || "").trim().replace(/\./g, "").replace(",", "."));
+  return Number(normalizeMoneyText(value));
+}
+
+function normalizeMoneyText(value) {
+  const clean = String(value || "").trim().replace(/[^\d,.-]/g, "");
+  if (clean.includes(",") && clean.includes(".")) {
+    return clean.lastIndexOf(",") > clean.lastIndexOf(".")
+      ? clean.replace(/\./g, "").replace(",", ".")
+      : clean.replace(/,/g, "");
+  }
+  if (clean.includes(",")) return clean.replace(",", ".");
+  if (!clean.includes(".")) return clean;
+  const parts = clean.split(".");
+  if (parts.length === 2 && parts[1].length === 3 && parts[0].length > 3) return clean;
+  if (parts.length > 1 && parts.slice(1).every((part) => part.length === 3)) return clean.replace(/\./g, "");
+  return clean;
 }
 
 function askPriceSuggestion({ codigoMl, product }) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import XLSX from "xlsx";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, roundMoney } from "../src/domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, parseNumber, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
@@ -54,6 +54,14 @@ test("Bling stock transfer CSV maps origin destination and quantity", () => {
 
 test("auction cost rounds to Brazilian money precision", () => {
   assert.equal(roundMoney(1659.17 * 0.2), 331.83);
+});
+
+test("parseNumber accepts Amazon decimal prices with trailing zeros", () => {
+  assert.equal(parseNumber("1305.000"), 1305);
+  assert.equal(parseNumber("1344.04140"), 1344.0414);
+  assert.equal(parseNumber("1659.17"), 1659.17);
+  assert.equal(parseNumber("1.305,00"), 1305);
+  assert.equal(parseNumber("1.305.000"), 1305000);
 });
 
 test("specialist import sums Saldo 1 to Saldo 4 when quantity column is absent", async () => {

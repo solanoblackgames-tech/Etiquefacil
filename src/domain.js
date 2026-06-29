@@ -129,9 +129,24 @@ export function parseNumber(value) {
   if (typeof value === "number") return value;
   const text = String(value ?? "").trim();
   if (!text) return 0;
-  const normalized = text.replace(/\./g, "").replace(",", ".");
+  const normalized = normalizeNumberText(text);
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeNumberText(text) {
+  const clean = String(text || "").replace(/[^\d,.-]/g, "");
+  if (clean.includes(",") && clean.includes(".")) {
+    return clean.lastIndexOf(",") > clean.lastIndexOf(".")
+      ? clean.replace(/\./g, "").replace(",", ".")
+      : clean.replace(/,/g, "");
+  }
+  if (clean.includes(",")) return clean.replace(",", ".");
+  if (!clean.includes(".")) return clean;
+  const parts = clean.split(".");
+  if (parts.length === 2 && parts[1].length === 3 && parts[0].length > 3) return clean;
+  if (parts.length > 1 && parts.slice(1).every((part) => part.length === 3)) return clean.replace(/\./g, "");
+  return clean;
 }
 
 export function formatSku(prefix, sequence) {
