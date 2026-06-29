@@ -24,6 +24,7 @@ const state = {
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
   selectedDiverseRz: null,
+  noSheetSuggestionTimer: null,
   selectedRz: null,
   scanOnly: false,
   transferReceiveOnly: false,
@@ -162,6 +163,7 @@ function bindEvents() {
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
+  $("#noSheetSuggestionUploadForm").addEventListener("submit", uploadNoSheetSuggestions);
   $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#diverseDownloadButton").addEventListener("click", () => {
@@ -438,6 +440,67 @@ async function addDiverseItem(event) {
   }
 }
 
+async function loadNoSheetSuggestionMatches(query) {
+  if (!state.selectedDiverseLotId) return [];
+  const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/no-sheet-suggestions?q=${encodeURIComponent(query)}`);
+  return response.suggestions || [];
+}
+
+function renderManualDescriptionSuggestions(suggestions) {
+  const menu = $("#manualProductDescriptionSuggestions");
+  if (!menu || !suggestions.length) {
+    hideManualDescriptionSuggestions();
+    return;
+  }
+  menu.innerHTML = suggestions.map((suggestion, index) => `
+    <button type="button" data-manual-description-suggestion="${index}">
+      <strong>${escapeHtml(suggestion.descricao)}</strong>
+      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}</span>
+    </button>
+  `).join("");
+  menu._suggestions = suggestions;
+  menu.classList.remove("hidden");
+}
+
+function hideManualDescriptionSuggestions() {
+  const menu = $("#manualProductDescriptionSuggestions");
+  if (!menu) return;
+  menu.classList.add("hidden");
+  menu.innerHTML = "";
+  menu._suggestions = [];
+}
+
+async function uploadNoSheetSuggestions(event) {
+  event.preventDefault();
+  if (!state.selectedDiverseLotId) return;
+  await uploadNoSheetSuggestionsFromForm(event.currentTarget, $("#noSheetSuggestionUploadStatus"), state.selectedDiverseLotId);
+}
+
+async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
+  const file = form.querySelector("input[type='file']")?.files?.[0];
+  if (!file) {
+    status.textContent = "Selecione um arquivo.";
+    return;
+  }
+  status.textContent = "Enviando...";
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/no-sheet-suggestions`, {
+      method: "POST",
+      body
+    });
+    state.selectedDiverseLot = response.lot;
+    form.reset();
+    status.textContent = `${response.suggestions.length} nomes carregados.`;
+    if (state.selectedDiverseLotId === lotId) renderDiverseLot(response.lot);
+    await refreshLotsList(lotId);
+    return response;
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
 async function showDiverseBlingSyncStatus(response, baseMessage) {
   const message = $("#diverseScanMessage");
   try {
@@ -481,8 +544,8 @@ async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitO
   });
 }
 
-function promptManualProduct(codigoMl, focusSelector) {
-  return askManualProduct(codigoMl, focusSelector);
+function promptManualProduct(codigoMl, focusSelector, initialValues = {}) {
+  return askManualProduct(codigoMl, focusSelector, initialValues);
 }
 
 function parseMoneyInput(value) {
@@ -513,11 +576,11 @@ function askPriceSuggestion({ codigoMl, product }) {
   });
 }
 
-function askManualProduct(codigoMl, focusSelector) {
-  return openManualProductModal(codigoMl, focusSelector);
+function askManualProduct(codigoMl, focusSelector, initialValues = {}) {
+  return openManualProductModal(codigoMl, focusSelector, initialValues);
 }
 
-function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']") {
+function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']", initialValues = {}) {
   return new Promise((resolve) => {
     const modal = $("#manualProductModal");
     const form = $("#manualProductForm");
@@ -527,15 +590,19 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const ean = $("#manualProductEan");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
+    const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
     const error = $("#manualProductError");
     const cancel = $("#manualProductCancel");
 
     const cleanup = () => {
       modal.classList.add("hidden");
       form.onsubmit = null;
+      description.oninput = null;
+      descriptionSuggestions.onclick = null;
       ean.onkeydown = null;
       cancel.onclick = null;
       modal.onkeydown = null;
+      hideManualDescriptionSuggestions();
       form.reset();
       error.textContent = "";
       setTimeout(() => $(focusSelector)?.focus(), 0);
@@ -543,8 +610,45 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
 
     code.textContent = codigoMl;
     form.reset();
+    description.value = initialValues.descricao || "";
+    price.value = initialValues.valorUnit ? String(initialValues.valorUnit).replace(".", ",") : "";
+    ean.value = initialValues.ean || "";
+    link.value = initialValues.link || "";
+    photo.value = initialValues.foto || "";
     error.textContent = "";
     modal.classList.remove("hidden");
+
+    description.oninput = () => {
+      const query = description.value.trim();
+      window.clearTimeout(state.noSheetSuggestionTimer);
+      if (query.length < 2) {
+        hideManualDescriptionSuggestions();
+        return;
+      }
+      state.noSheetSuggestionTimer = window.setTimeout(async () => {
+        try {
+          renderManualDescriptionSuggestions(await loadNoSheetSuggestionMatches(query));
+        } catch {
+          hideManualDescriptionSuggestions();
+        }
+      }, 220);
+    };
+
+    descriptionSuggestions.onclick = (event) => {
+      const button = event.target.closest("[data-manual-description-suggestion]");
+      if (!button) return;
+      const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
+      if (!suggestion) return;
+      description.value = suggestion.descricao || "";
+      if (suggestion.source !== "lista_lote") {
+        if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
+        if (suggestion.ean) ean.value = suggestion.ean;
+        if (suggestion.link) link.value = suggestion.link;
+        if (suggestion.foto) photo.value = suggestion.foto;
+      }
+      hideManualDescriptionSuggestions();
+      price.focus();
+    };
 
     form.onsubmit = (event) => {
       event.preventDefault();
@@ -736,6 +840,7 @@ function renderDiverseLot(lot) {
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
+  $("#noSheetSuggestionUploadStatus").textContent = lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : "";
   schedulePrimaryInputFocus();
 }
 
@@ -1850,8 +1955,10 @@ function renderAdminCatalogRequests() {
   const wrapper = $("#adminCatalogRequests");
   if (!state.adminCatalogRequests.length) {
     wrapper.innerHTML = `
-      ${adminCatalogRequestFiltersHtml()}
-      <p class="muted">Nenhuma sugestao enviada ainda.</p>
+      <div class="admin-empty-state">
+        <strong>Nenhuma sugestao pendente agora.</strong>
+        <span>Quando alguem cadastrar ou confirmar um produto novo, ele aparece aqui para aprovar, rejeitar, filtrar por criador/data ou selecionar varios de uma vez.</span>
+      </div>
     `;
     return;
   }
@@ -1937,7 +2044,12 @@ function adminCatalogRequestSection(title, requests) {
 function renderAdminCatalogRejectedRequests() {
   const wrapper = $("#adminCatalogRejectedRequests");
   if (!state.adminCatalogRejectedRequests.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhuma sugestao rejeitada ainda.</p>';
+    wrapper.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhuma sugestao rejeitada ainda.</strong>
+        <span>As sugestoes rejeitadas ficam listadas aqui depois que voce clicar em Rejeitar.</span>
+      </div>
+    `;
     return;
   }
 
@@ -1958,7 +2070,12 @@ function renderAdminCatalogRejectedRequests() {
 function renderAdminCatalogProducts() {
   const wrapper = $("#adminCatalogProducts");
   if (!state.adminCatalogProducts.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhum produto aprovado no banco historico.</p>';
+    wrapper.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhum produto encontrado no banco historico oficial.</strong>
+        <span>Se voce buscou por Codigo ML, EAN ou descricao, tente limpar a busca. Produtos aprovados aparecem aqui.</span>
+      </div>
+    `;
     return;
   }
 
@@ -3288,6 +3405,13 @@ function renderLotDetail(lot) {
     </div>
     ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
     ${noSheetLot ? `
+      <form id="lotNoSheetSuggestionUploadForm" class="suggestion-upload-form">
+        <label>Lista de sugestao do lote<input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" /></label>
+        <button type="submit" class="ghost">Subir lista</button>
+        <span id="lotNoSheetSuggestionUploadStatus" class="muted">${lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : ""}</span>
+      </form>
+    ` : ""}
+    ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
         <span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>
         <button type="submit">Gerar RZ</button>
@@ -3348,6 +3472,11 @@ function renderLotDetail(lot) {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
+  $("#lotNoSheetSuggestionUploadForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const response = await uploadNoSheetSuggestionsFromForm(event.currentTarget, $("#lotNoSheetSuggestionUploadStatus"), lot.id);
+    if (response?.lot) renderLotDetail(response.lot);
+  });
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
       if (noSheetLot) openNoSheetRz(lot, button.dataset.scanRz);
@@ -3375,6 +3504,7 @@ function emptyLotDetailMarkup() {
         <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
         <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
         <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+        <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha, sem codigo"></textarea></label>
         <button type="submit">Criar lote</button>
       </form>
       <p id="noSheetLotMessage" class="message"></p>

@@ -100,6 +100,7 @@
               <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
               <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
               <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+              <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha, sem codigo"></textarea></label>
               <button type="submit">Subir lote sem planilha</button>
             </form>
             <p id="diverseLotMessage" class="message"></p>
@@ -119,8 +120,13 @@
                 <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling da remessa</button>
               </form>
               <div id="diverseRzList" class="diverse-rz-list"></div>
+              <form id="noSheetSuggestionUploadForm" class="suggestion-upload-form">
+                <label>Lista de sugestao do lote<input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" /></label>
+                <button type="submit" class="ghost">Subir lista</button>
+                <span id="noSheetSuggestionUploadStatus" class="muted"></span>
+              </form>
               <form id="diverseScanForm" class="search-bar">
-                <input name="codigoMl" placeholder="Bipe o codigo para buscar no historico" autocomplete="off" required />
+                <input name="codigoMl" placeholder="Bipe ou digite o Codigo ML" autocomplete="off" required />
                 <button type="button" id="generateCodigoMlButton" class="ghost">Gerar Codigo ML</button>
                 <button type="submit">Adicionar</button>
               </form>
@@ -288,14 +294,18 @@
               <h2>Sugestoes para banco historico</h2>
               <button id="adminCatalogRefreshButton" class="ghost" type="button">Atualizar</button>
             </div>
-            <div id="adminCatalogRequests" class="admin-users"></div>
+            <div id="adminCatalogRequests" class="admin-users">
+              <p class="muted admin-empty-state">Carregando sugestoes pendentes...</p>
+            </div>
           </section>
 
           <section class="admin-panel">
             <div class="admin-heading">
               <h2>Sugestoes rejeitadas</h2>
             </div>
-            <div id="adminCatalogRejectedRequests" class="admin-users"></div>
+            <div id="adminCatalogRejectedRequests" class="admin-users">
+              <p class="muted admin-empty-state">Carregando sugestoes rejeitadas...</p>
+            </div>
           </section>
 
           <section class="admin-panel">
@@ -306,7 +316,9 @@
                 <button type="submit">Buscar</button>
               </form>
             </div>
-            <div id="adminCatalogProducts" class="admin-users"></div>
+            <div id="adminCatalogProducts" class="admin-users">
+              <p class="muted admin-empty-state">Carregando banco historico...</p>
+            </div>
           </section>
         </section>
       </section>
@@ -354,7 +366,10 @@
         </div>
         <div class="decision-fields">
           <label>Nome/descricao do produto
-            <input id="manualProductDescription" name="descricao" placeholder="Ex: Kit 4 vestido infantil menina estampado" required />
+            <span class="suggestion-input-wrap">
+              <input id="manualProductDescription" name="descricao" placeholder="Ex: Kit 4 vestido infantil menina estampado" required />
+              <span id="manualProductDescriptionSuggestions" class="suggestion-menu hidden"></span>
+            </span>
           </label>
           <label>Preco de venda para Bling/etiqueta
             <input id="manualProductPrice" name="valorUnit" placeholder="Ex: 129,90" required />

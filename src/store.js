@@ -36,7 +36,8 @@ const emptyDb = () => ({
   operatorInvites: [],
   catalogProducts: [],
   catalogRequests: [],
-  catalogRejectedRequests: []
+  catalogRejectedRequests: [],
+  noSheetSuggestions: []
 });
 
 export function hasPostgres() {
@@ -776,7 +777,7 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
   return summarizeLot(db, lot);
 }
 
-export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost, costMode = "fixed", costPercent = 0 }) {
+export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost, costMode = "fixed", costPercent = 0, suggestions = [] }) {
   await ensureStore();
   const sequence = Math.max(1, Number.parseInt(startSequence, 10) || 1);
   const tipoCusto = costMode === "variable" ? "variable" : "fixed";
@@ -799,6 +800,7 @@ export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, st
     fornecedor,
     prefixoSku: skuPrefix,
     proximoSequencialSku: sequence,
+    noSheetSuggestions: normalizeNoSheetSuggestions(suggestions),
     createdAt: new Date().toISOString()
   };
 
@@ -821,6 +823,78 @@ export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, st
   db.lots.push(lot);
   await writeDb(db);
   return summarizeLot(db, lot, true);
+}
+
+export async function updateNoSheetSuggestions({ userId, lotId, suggestions }) {
+  await ensureStore();
+  const normalized = normalizeNoSheetSuggestions(suggestions);
+  if (hasPostgres()) {
+    const result = await query(
+      "update lots set no_sheet_suggestions = $3 where id = $1 and user_id = $2 returning *",
+      [lotId, userId, JSON.stringify(normalized)]
+    );
+    if (!result.rows.length) throw notFound("Lote nao encontrado.");
+    return { lot: await getUserLotDetail(userId, lotId), suggestions: normalized };
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  lot.noSheetSuggestions = normalized;
+  await writeDb(db);
+  return { lot: summarizeLot(db, lot, true), suggestions: normalized };
+}
+
+export async function suggestNoSheetProducts({ userId, lotId, query: search }) {
+  await ensureStore();
+  const term = normalizeSearchText(search);
+  if (term.length < 2) return { suggestions: [], source: "empty" };
+
+  const lot = await getUserLotDetail(userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const lotSuggestions = (lot.noSheetSuggestions || [])
+    .filter((suggestion) => normalizeSearchText(suggestion.descricao).includes(term))
+    .slice(0, 12)
+    .map((suggestion) => ({ ...suggestion, source: "lista_lote" }));
+  if (lotSuggestions.length) return { suggestions: lotSuggestions, source: "lista_lote" };
+
+  if (hasPostgres()) {
+    const like = `%${term}%`;
+    const rawLike = `%${String(search || "").trim().toLowerCase()}%`;
+    const result = await query(
+      `
+        select distinct on (upper(trim(p.codigo_ml))) p.*
+        from products p
+        join lots l on l.id = p.lot_id
+        where l.user_id = $1
+          and l.id <> $2
+          and (lower(p.descricao) like $3 or lower(p.descricao) like $4)
+        order by upper(trim(p.codigo_ml)), p.created_at desc
+        limit 12
+      `,
+      [userId, lotId, like, rawLike]
+    );
+    return { suggestions: result.rows.map((row) => productSuggestionFromProduct(productFromRow(row))), source: "historico" };
+  }
+
+  const db = await readDb();
+  const userLotIds = new Set(db.lots.filter((candidate) => candidate.userId === userId && candidate.id !== lotId).map((candidate) => candidate.id));
+  const byCode = new Map();
+  for (const product of db.products || []) {
+    if (!userLotIds.has(product.lotId)) continue;
+    if (!normalizeSearchText(product.descricao).includes(term)) continue;
+    const key = normalizeCode(product.codigoMl);
+    const current = byCode.get(key);
+    if (!current || String(product.createdAt || "").localeCompare(String(current.createdAt || "")) > 0) byCode.set(key, product);
+  }
+  return {
+    suggestions: [...byCode.values()]
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+      .slice(0, 12)
+      .map(productSuggestionFromProduct),
+    source: "historico"
+  };
 }
 
 export async function getUserLotDetail(userId, lotId) {
@@ -1789,6 +1863,7 @@ async function ensurePgStore() {
       fornecedor text not null,
       prefixo_sku text not null,
       proximo_sequencial_sku integer not null,
+      no_sheet_suggestions jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now()
     );
 
@@ -2003,6 +2078,7 @@ async function ensurePgStore() {
     alter table lots add column if not exists custo_medio_unitario numeric not null default 0;
     alter table lots add column if not exists tipo_custo text not null default 'fixed';
     alter table lots add column if not exists percentual_custo numeric not null default 0;
+    alter table lots add column if not exists no_sheet_suggestions jsonb not null default '[]'::jsonb;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists link text not null default '';
     alter table products add column if not exists foto text not null default '';
@@ -2369,7 +2445,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "lots",
-    ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "tipo_custo", "percentual_custo", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
+    ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "tipo_custo", "percentual_custo", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "no_sheet_suggestions", "created_at"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
@@ -2381,6 +2457,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       lot.fornecedor,
       lot.prefixoSku,
       lot.proximoSequencialSku,
+      JSON.stringify(normalizeNoSheetSuggestions(lot.noSheetSuggestions)),
       lot.createdAt
     ])
   );
@@ -3465,6 +3542,49 @@ function buildDiverseRzItem(lot, product, codigoRz) {
   };
 }
 
+function normalizeNoSheetSuggestions(input) {
+  const parsed = typeof input === "string" ? safeParseJsonArray(input) : input;
+  const seen = new Set();
+  const suggestions = [];
+  for (const item of parsed || []) {
+    const descricao = String(item?.descricao ?? item?.nome ?? item ?? "").trim();
+    if (!descricao) continue;
+    const key = normalizeSearchText(descricao);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      id: String(item?.id || key).slice(0, 120),
+      descricao
+    });
+  }
+  return suggestions.slice(0, 1000);
+}
+
+function safeParseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function productSuggestionFromProduct(product) {
+  return {
+    id: product.id,
+    source: "historico",
+    codigoMl: product.codigoMl || "",
+    descricao: product.descricao || "",
+    valorUnit: product.valorUnit || 0,
+    precoCusto: product.precoCusto || 0,
+    categoria: product.categoria || "",
+    subcategoria: product.subcategoria || "",
+    ean: product.ean || "",
+    link: product.link || "",
+    foto: product.foto || ""
+  };
+}
+
 function normalizeManualProduct(input = {}, codigoMl) {
   const descricao = String(input.descricao || input.nome || "").trim();
   const valorUnit = roundMoney(Number(input.valorUnit ?? input.preco ?? 0));
@@ -3948,6 +4068,7 @@ function lotFromRow(row) {
     fornecedor: row.fornecedor,
     prefixoSku: row.prefixo_sku,
     proximoSequencialSku: Number(row.proximo_sequencial_sku),
+    noSheetSuggestions: normalizeNoSheetSuggestions(row.no_sheet_suggestions || []),
     createdAt: iso(row.created_at)
   };
 }
@@ -3964,6 +4085,7 @@ function lotFromPrefixedRow(row, prefix) {
     fornecedor: row[`${prefix}fornecedor`],
     prefixoSku: row[`${prefix}prefixo_sku`],
     proximoSequencialSku: Number(row[`${prefix}proximo_sequencial_sku`]),
+    noSheetSuggestions: normalizeNoSheetSuggestions(row[`${prefix}no_sheet_suggestions`] || []),
     createdAt: iso(row[`${prefix}created_at`])
   };
 }
@@ -4348,6 +4470,14 @@ function num(value) {
 
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function code39BarcodeValue(value) {

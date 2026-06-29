@@ -73,8 +73,10 @@ import {
   scanLotRz,
   scanTransferLot,
   searchProducts,
+  suggestNoSheetProducts,
   suggestCatalogUpdate,
   undoPublicTransferLotScan,
+  updateNoSheetSuggestions,
   updateLotProduct,
   updateUserPassword,
   saveUserBlingIntegration,
@@ -621,6 +623,7 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
     const costMode = String(req.body.costMode || "fixed").trim();
     const averageCost = Number(req.body.averageCost);
     const costPercent = Number(req.body.costPercent);
+    const suggestions = parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
     if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
@@ -638,9 +641,27 @@ app.post("/api/diverse-lots", requireAuth, async (req, res) => {
       startSequence,
       averageCost,
       costMode,
-      costPercent
+      costPercent,
+      suggestions
     });
     res.json({ lot });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/no-sheet-suggestions", requireAuth, upload.single("file"), async (req, res) => {
+  try {
+    const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
+    res.json(await updateNoSheetSuggestions({ userId: workspaceUserId(req), lotId: req.params.lotId, suggestions }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/lots/:lotId/no-sheet-suggestions", requireAuth, async (req, res) => {
+  try {
+    res.json(await suggestNoSheetProducts({ userId: workspaceUserId(req), lotId: req.params.lotId, query: req.query.q }));
   } catch (error) {
     sendError(res, error);
   }
@@ -1558,6 +1579,47 @@ function buildPalletPdf(pallet) {
 
     document.end();
   });
+}
+
+function parseNoSheetSuggestionFile(file) {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (ext === ".xlsx" || ext === ".xls") {
+    const workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) return [];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    return parseNoSheetSuggestionRows(rows);
+  }
+  return parseNoSheetSuggestions(file.buffer.toString("utf8"));
+}
+
+function parseNoSheetSuggestionRows(rows) {
+  const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
+  if (!usefulRows.length) return [];
+  const header = usefulRows[0].map((cell) => normalizeHeader(cell));
+  const nameColumn = header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
+  const start = nameColumn >= 0 ? 1 : 0;
+  const column = nameColumn >= 0 ? nameColumn : 0;
+  return usefulRows.slice(start).map((row) => row[column]).filter((value) => String(value ?? "").trim());
+}
+
+function parseNoSheetSuggestions(value) {
+  if (Array.isArray(value)) return value;
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.split(/[;\t,]/)[0])
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeHeader(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function formatCurrency(value) {
