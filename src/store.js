@@ -332,7 +332,13 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         left join operator_activities oa on oa.operator_user_id = u.id
           and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
           and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
-          and not ((lower(coalesce(u.name, '')) like '%eduarda%' or lower(coalesce(u.email, '')) like '%eduarda%') and oa.created_at::date = date '2026-06-26')
+          and not (
+            (lower(coalesce(u.name, '')) like '%eduarda%' or lower(coalesce(u.email, '')) like '%eduarda%')
+            and (
+              oa.created_at::date in (date '2026-06-24', date '2026-06-26')
+              or (oa.created_at at time zone 'America/Sao_Paulo')::date in (date '2026-06-24', date '2026-06-26')
+            )
+          )
         left join (
           select operator_user_id, jsonb_object_agg(activity_day, day_total) as day_totals
           from (
@@ -345,7 +351,13 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
             where oa.owner_user_id = $1
               and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
               and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
-              and not ((lower(coalesce(ou.name, '')) like '%eduarda%' or lower(coalesce(ou.email, '')) like '%eduarda%') and oa.created_at::date = date '2026-06-26')
+              and not (
+                (lower(coalesce(ou.name, '')) like '%eduarda%' or lower(coalesce(ou.email, '')) like '%eduarda%')
+                and (
+                  oa.created_at::date in (date '2026-06-24', date '2026-06-26')
+                  or (oa.created_at at time zone 'America/Sao_Paulo')::date in (date '2026-06-24', date '2026-06-26')
+                )
+              )
             group by oa.operator_user_id, to_char(oa.created_at, 'YYYY-MM-DD')
           ) daily_operator_activity
           group by operator_user_id
@@ -4426,7 +4438,20 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
 
 function isIgnoredOperatorActivity(activity, operator = {}) {
   const operatorText = `${operator.name || ""} ${operator.email || ""}`;
-  return activity?.createdAt?.slice(0, 10) === "2026-06-26" && /eduarda/i.test(operatorText);
+  return /eduarda/i.test(operatorText) && ignoredEduardaActivityDays(activity).some((day) => ["2026-06-24", "2026-06-26"].includes(day));
+}
+
+function ignoredEduardaActivityDays(activity) {
+  if (!activity?.createdAt) return [];
+  const utcDay = activity.createdAt.slice(0, 10);
+  const date = new Date(activity.createdAt);
+  const localDay = Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Sao_Paulo",
+    year: "numeric"
+  }).format(date);
+  return [utcDay, localDay].filter(Boolean);
 }
 
 function normalizeDailyTotals(value) {
