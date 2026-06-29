@@ -1119,7 +1119,7 @@ async function showApp(user) {
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
-  document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", operator);
+  document.querySelector(".transfer-create-panel")?.classList.remove("hidden");
   document.body.classList.toggle("operator-view", operator);
 }
 
