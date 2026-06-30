@@ -860,20 +860,21 @@ export async function updateNoSheetSuggestions({ userId, lotId, suggestions }) {
 export async function suggestNoSheetProducts({ userId, lotId, query: search }) {
   await ensureStore();
   const term = normalizeSearchText(search);
-  if (term.length < 2) return { suggestions: [], source: "empty" };
+  const terms = normalizeSearchTerms(search);
+  if (term.length < 2 || !terms.length) return { suggestions: [], source: "empty" };
 
   const lot = await getUserLotDetail(userId, lotId);
   if (!lot) throw notFound("Lote nao encontrado.");
 
   const lotSuggestions = (lot.noSheetSuggestions || [])
-    .filter((suggestion) => normalizeSearchText(suggestion.descricao).includes(term))
+    .filter((suggestion) => searchTermsMatch(suggestion.descricao, search))
     .slice(0, 12)
     .map((suggestion) => ({ ...suggestion, source: "lista_lote" }));
   if (lotSuggestions.length) return { suggestions: lotSuggestions, source: "lista_lote" };
 
   if (hasPostgres()) {
-    const like = `%${term}%`;
-    const rawLike = `%${String(search || "").trim().toLowerCase()}%`;
+    const params = [userId, lotId];
+    const termWhere = sqlAllTermsCondition("lower(p.descricao)", search, params);
     const result = await query(
       `
         select distinct on (upper(trim(p.codigo_ml))) p.*
@@ -881,11 +882,11 @@ export async function suggestNoSheetProducts({ userId, lotId, query: search }) {
         join lots l on l.id = p.lot_id
         where l.user_id = $1
           and l.id <> $2
-          and (lower(p.descricao) like $3 or lower(p.descricao) like $4)
+          and ${termWhere}
         order by upper(trim(p.codigo_ml)), p.created_at desc
         limit 12
       `,
-      [userId, lotId, like, rawLike]
+      params
     );
     return { suggestions: result.rows.map((row) => productSuggestionFromProduct(productFromRow(row))), source: "historico" };
   }
@@ -895,7 +896,7 @@ export async function suggestNoSheetProducts({ userId, lotId, query: search }) {
   const byCode = new Map();
   for (const product of db.products || []) {
     if (!userLotIds.has(product.lotId)) continue;
-    if (!normalizeSearchText(product.descricao).includes(term)) continue;
+    if (!searchTermsMatch(product.descricao, search)) continue;
     const key = normalizeCode(product.codigoMl);
     const current = byCode.get(key);
     if (!current || String(product.createdAt || "").localeCompare(String(current.createdAt || "")) > 0) byCode.set(key, product);
@@ -1681,8 +1682,7 @@ export async function listCatalogProductsForAdmin(search = "") {
     const params = [];
     let where = "";
     if (term) {
-      params.push(`%${term}%`);
-      where = "where codigo_ml ilike $1 or descricao ilike $1 or ean ilike $1";
+      where = `where ${sqlAllTermsCondition("lower(concat_ws(' ', codigo_ml, descricao, ean))", term, params)}`;
     }
     const result = await query(
       `select * from catalog_products ${where} order by updated_at desc, codigo_ml asc limit 200`,
@@ -1695,7 +1695,7 @@ export async function listCatalogProductsForAdmin(search = "") {
   return (await readDb()).catalogProducts
     .filter((product) => {
       if (!normalized) return true;
-      return product.codigoMl.toLowerCase().includes(normalized) || product.descricao.toLowerCase().includes(normalized) || String(product.ean || "").toLowerCase().includes(normalized);
+      return searchTermsMatch([product.codigoMl, product.descricao, product.ean].join(" "), term);
     })
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
     .slice(0, 200);
@@ -4503,6 +4503,39 @@ function normalizeSearchText(value) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeRawSearchTerms(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function normalizeSearchTerms(value) {
+  return normalizeSearchText(value).split(/\s+/).filter(Boolean);
+}
+
+export function searchTermsMatch(value, search) {
+  const terms = normalizeSearchTerms(search);
+  if (!terms.length) return true;
+  const haystack = normalizeSearchText(value);
+  return terms.every((term) => haystack.includes(term));
+}
+
+function sqlAllTermsCondition(expression, search, params) {
+  const rawTerms = normalizeRawSearchTerms(search);
+  const normalizedTerms = normalizeSearchTerms(search);
+  const conditions = normalizedTerms.map((term, index) => {
+    const alternatives = [...new Set([term, rawTerms[index]].filter(Boolean))];
+    const placeholders = alternatives.map((alternative) => {
+      params.push(`%${alternative}%`);
+      return `${expression} like $${params.length}`;
+    });
+    return `(${placeholders.join(" or ")})`;
+  });
+  return conditions.length ? conditions.join(" and ") : "true";
 }
 
 function code39BarcodeValue(value) {

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRejectedCatalogRequest, isStandardMlCode, mergePendingCatalogRequest, selectCatalogApprovalPayload } from "../src/store.js";
+import { buildRejectedCatalogRequest, isStandardMlCode, mergePendingCatalogRequest, searchTermsMatch, selectCatalogApprovalPayload } from "../src/store.js";
+
+test("searchTermsMatch finds every typed word in any order", () => {
+  assert.equal(searchTermsMatch("Garrafa Térmica Inox 1L", "termica garrafa"), true);
+  assert.equal(searchTermsMatch("Garrafa Térmica Inox 1L", "inox garrafa"), true);
+  assert.equal(searchTermsMatch("Garrafa Térmica Inox 1L", "garrafa plastico"), false);
+});
 
 test("mergePendingCatalogRequest groups repeated pending create suggestions by Codigo ML", () => {
   const requests = [
