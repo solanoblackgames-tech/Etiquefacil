@@ -978,6 +978,50 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
+export async function splitLotProduct({ userId, lotId, productId, codigoRz, payload }) {
+  await ensureStore();
+  const kitQuantity = Math.round(Number(payload?.kitQuantity || 0));
+  const sellableQuantity = Math.round(Number(payload?.sellableQuantity || 0));
+  if (!Number.isFinite(kitQuantity) || kitQuantity < 2) throw new Error("Informe a quantidade original do kit.");
+  if (!Number.isFinite(sellableQuantity) || sellableQuantity < 1) throw new Error("Informe quantas unidades ficaram vendaveis.");
+  if (sellableQuantity > kitQuantity) throw new Error("A quantidade vendavel nao pode ser maior que o kit original.");
+
+  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
+  if (!product) throw notFound("Produto nao encontrado neste lote.");
+  const item = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === product.id && candidate.codigoRz === codigoRz);
+  if (!item) throw notFound("Item nao encontrado nesta RZ.");
+
+  const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity });
+  product.valorUnit = split.valorUnit;
+  product.precoCusto = split.precoCusto;
+  product.qtdTotal = split.qtdTotal;
+  product.descricao = split.descricao;
+  item.qtdEsperada = sellableQuantity;
+  item.qtdConferida = Math.min(Number(item.qtdConferida || 0), sellableQuantity);
+  item.valorTotal = split.valorTotal;
+  item.tipoItem = splitItemType(item.tipoItem);
+
+  await writeDb(db);
+  return { product, lot: summarizeLot(db, lot, true) };
+}
+
+export function calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity }) {
+  const valorUnit = roundMoney(Number(product?.valorUnit || 0) / kitQuantity);
+  const precoCusto = roundMoney(Number(product?.precoCusto || 0) / kitQuantity);
+  return {
+    descricao: splitProductDescription(product?.descricao, kitQuantity, sellableQuantity),
+    valorUnit,
+    precoCusto,
+    qtdTotal: Math.max(0, Number(product?.qtdTotal || 0) - Number(item?.qtdEsperada || 0) + sellableQuantity),
+    valorTotal: roundMoney(valorUnit * sellableQuantity)
+  };
+}
+
 export async function getLotBlingData(userId, lotId, kind) {
   await ensureStore();
   if (hasPostgres()) {
@@ -1800,8 +1844,9 @@ export async function searchProducts(userId, codigoMl) {
     }));
 }
 
-export async function createLabel(userId, productId) {
+export async function createLabel(userId, productId, quantity = 1) {
   await ensureStore();
+  const labelQuantity = Math.max(1, Math.round(Number(quantity || 1)));
   if (hasPostgres()) {
     const result = await query(
       `
@@ -1829,35 +1874,37 @@ export async function createLabel(userId, productId) {
     if (!row) return null;
     const product = productFromRow(row);
     const lot = lotFromPrefixedRow(row, "lot__");
-    const label = {
+    const labels = Array.from({ length: labelQuantity }, () => ({
       id: randomUUID(),
       productId: product.id,
       lotId: lot.id,
       userId,
       createdAt: new Date().toISOString()
-    };
-    await query(
-      `insert into labels (id, product_id, lot_id, user_id, created_at)
-       values ($1, $2, $3, $4, $5)`,
-      [label.id, label.productId, label.lotId, label.userId, label.createdAt]
-    );
-    return { label, product, lot };
+    }));
+    for (const label of labels) {
+      await query(
+        `insert into labels (id, product_id, lot_id, user_id, created_at)
+         values ($1, $2, $3, $4, $5)`,
+        [label.id, label.productId, label.lotId, label.userId, label.createdAt]
+      );
+    }
+    return { label: labels[0], labels, product, lot };
   }
 
   const db = await readDb();
   const product = db.products.find((item) => item.id === productId);
   const lot = product && db.lots.find((item) => item.id === product.lotId && item.userId === userId);
   if (!product || !lot) return null;
-  const label = {
+  const labels = Array.from({ length: labelQuantity }, () => ({
     id: randomUUID(),
     productId: product.id,
     lotId: lot.id,
     userId,
     createdAt: new Date().toISOString()
-  };
-  db.labels.push(label);
+  }));
+  db.labels.push(...labels);
   await writeDb(db);
-  return { label, product, lot };
+  return { label: labels[0], labels, product, lot };
 }
 
 async function ensurePgStore() {
@@ -2845,6 +2892,59 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   }
 
   return { scan, lot: await getUserLotDetail(userId, lotId) };
+}
+
+async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity }) {
+  const client = await getPgPool().connect();
+  let product;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nao encontrado.");
+
+    const productResult = await client.query("select * from products where id = $1 and lot_id = $2 for update", [productId, lot.id]);
+    const current = productResult.rows[0] && productFromRow(productResult.rows[0]);
+    if (!current) throw notFound("Produto nao encontrado neste lote.");
+
+    const itemResult = await client.query(
+      "select * from rz_items where lot_id = $1 and product_id = $2 and codigo_rz = $3 for update",
+      [lot.id, current.id, codigoRz]
+    );
+    const item = itemResult.rows[0];
+    if (!item) throw notFound("Item nao encontrado nesta RZ.");
+
+    const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity });
+    const updatedProduct = await client.query(
+      `update products
+       set descricao = $3,
+           valor_unit = $4,
+           preco_custo = $5,
+           qtd_total = $6
+       where id = $1 and lot_id = $2
+       returning *`,
+      [current.id, lot.id, split.descricao, split.valorUnit, split.precoCusto, split.qtdTotal]
+    );
+    product = productFromRow(updatedProduct.rows[0]);
+
+    await client.query(
+      `update rz_items
+       set qtd_esperada = $4,
+           qtd_conferida = least(qtd_conferida, $4),
+           valor_total = $5,
+           tipo_item = $6
+       where lot_id = $1 and product_id = $2 and codigo_rz = $3`,
+      [lot.id, current.id, codigoRz, sellableQuantity, split.valorTotal, splitItemType(item.tipo_item)]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
 async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
@@ -3890,6 +3990,18 @@ export function selectCatalogApprovalPayload(request, selectedCheckId) {
     reviewedAt: request.reviewedAt,
     doubleChecks: request.doubleChecks
   };
+}
+
+function splitProductDescription(description, kitQuantity, sellableQuantity) {
+  const base = String(description || "").trim();
+  const suffix = `unitario do kit ${kitQuantity} pecas (${sellableQuantity} vendaveis)`;
+  if (!base) return suffix;
+  if (base.toLowerCase().includes("unitario do kit")) return base;
+  return `${base} - ${suffix}`;
+}
+
+function splitItemType(type) {
+  return type === "excedente_outro_rz" ? "esperado" : type || "esperado";
 }
 
 function upsertCatalogProduct(db, request) {

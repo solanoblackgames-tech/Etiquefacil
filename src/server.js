@@ -73,6 +73,7 @@ import {
   scanLotRz,
   scanTransferLot,
   searchProducts,
+  splitLotProduct,
   suggestNoSheetProducts,
   suggestCatalogUpdate,
   undoPublicTransferLotScan,
@@ -753,6 +754,32 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
   }
 });
 
+app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const result = await splitLotProduct({
+      userId,
+      lotId: req.params.lotId,
+      productId: req.params.productId,
+      codigoRz: req.body.codigoRz,
+      payload: req.body
+    });
+    const labelQuantity = Math.max(1, Math.round(Number(req.body.sellableQuantity || 1)));
+    try {
+      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+    } catch (blingError) {
+      result.bling = { ok: false, error: blingError.message };
+    }
+    const labelResult = await createLabel(userId, result.product.id, labelQuantity);
+    result.label = labelResult?.label || null;
+    result.labels = labelResult?.labels || [];
+    result.labelQuantity = labelQuantity;
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/bling/stock-balance/sync", requireAuth, requireOwner, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
@@ -1084,7 +1111,7 @@ app.post("/api/operator-activity", requireAuth, async (req, res) => {
 });
 
 app.post("/api/labels", requireAuth, async (req, res) => {
-  const result = await createLabel(workspaceUserId(req), req.body.productId);
+  const result = await createLabel(workspaceUserId(req), req.body.productId, req.body.quantity);
   if (!result) return res.status(404).json({ error: "Produto não encontrado." });
   res.json(result);
 });

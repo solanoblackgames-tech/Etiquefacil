@@ -1157,6 +1157,19 @@ h3 {
   margin-top: 3px;
 }
 
+.pallet-row-actions {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pallet-row-actions button {
+  font-size: 12px;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
 .scan-box {
   background: #eef4f6;
   border: 1px solid #d8e4e9;
@@ -1223,6 +1236,7 @@ h3 {
 .item-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
 }
@@ -2542,6 +2556,11 @@ h3 {
     width: 60mm;
   }
 
+  body.printing-label {
+    height: auto;
+    overflow: visible;
+  }
+
   body > :not(#labelModal) {
     display: none !important;
   }
@@ -2552,10 +2571,10 @@ h3 {
 
   body.printing-label #labelPrintRoot {
     display: block !important;
-    height: 40mm;
+    height: auto;
     left: 0;
-    overflow: hidden;
-    position: fixed;
+    overflow: visible;
+    position: static;
     top: 0;
     width: 60mm;
   }
@@ -2582,10 +2601,17 @@ h3 {
   .transfer-qr-label {
     border: 0;
     height: 40mm;
-    page-break-after: avoid;
+    break-after: page;
+    page-break-after: always;
     page-break-before: avoid;
     page-break-inside: avoid;
     width: 60mm;
+  }
+
+  .label-print:last-child,
+  .transfer-qr-label:last-child {
+    break-after: auto;
+    page-break-after: avoid;
   }
 
   .label-controls {

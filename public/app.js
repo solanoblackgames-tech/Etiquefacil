@@ -39,6 +39,7 @@ const state = {
   pendingDecrement: false,
   labelProduct: null,
   labelMeta: null,
+  labelQuantity: 1,
   labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
   labelOptions: {
@@ -1076,16 +1077,27 @@ async function handleDiverseItemsClick(event) {
     return;
   }
 
+  const splitButton = event.target.closest("[data-diverse-split]");
+  if (splitButton) {
+    const item = findDiverseItem(splitButton.dataset.diverseSplit);
+    if (item?.product) await splitLotProduct(item.product, item.codigoRz, { lotId: state.selectedDiverseLotId, messageSelector: "#diverseScanMessage", render: renderDiverseLot });
+    return;
+  }
+
   const editButton = event.target.closest("[data-diverse-edit]");
   if (!editButton) return;
   const product = findDiverseProduct(editButton.dataset.diverseEdit);
   if (product) await editDiverseProduct(product);
 }
 
-function findDiverseProduct(productId) {
+function findDiverseItem(productId) {
   const lot = state.selectedDiverseLot;
   if (!lot?.items) return null;
-  return lot.items.find((item) => item.product?.id === productId)?.product || null;
+  return lot.items.find((item) => item.product?.id === productId) || null;
+}
+
+function findDiverseProduct(productId) {
+  return findDiverseItem(productId)?.product || null;
 }
 
 async function editDiverseProduct(product) {
@@ -1196,6 +1208,119 @@ function openProductEditModal(product) {
     };
 
     setTimeout(() => description.focus(), 0);
+  });
+}
+
+async function splitLotProduct(product, codigoRz, { lotId = state.selectedLotId, messageSelector = "#scanMessage", render = null } = {}) {
+  const split = await openProductSplitModal(product);
+  if (!split) return;
+
+  const message = $(messageSelector);
+  if (message) {
+    message.style.color = "";
+    message.textContent = "";
+  }
+
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}/split`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...split, codigoRz })
+    });
+    if (typeof render === "function") render(response.lot);
+    else renderLotRz(response.lot, codigoRz, { replace: false });
+    await refreshLotsList(response.lot.id);
+    showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt), quantity: response.labelQuantity || split.sellableQuantity });
+    if (message) {
+      const printed = response.labelQuantity || split.sellableQuantity;
+      if (response.bling?.ok === false) {
+        message.style.color = "";
+        message.textContent = `Produto desmembrado e ${printed} etiqueta(s) enviada(s) para impressao, mas o Bling nao atualizou: ${response.bling.error}`;
+      } else {
+        message.style.color = "#0f766e";
+        message.textContent = `Produto desmembrado, Bling atualizado e ${printed} etiqueta(s) enviada(s) para impressao.`;
+      }
+    }
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
+}
+
+function openProductSplitModal(product) {
+  return new Promise((resolve) => {
+    const modal = $("#productSplitModal");
+    const form = $("#productSplitForm");
+    const name = $("#productSplitName");
+    const kitQuantity = $("#productSplitKitQuantity");
+    const sellableQuantity = $("#productSplitSellableQuantity");
+    const preview = $("#productSplitPreview");
+    const error = $("#productSplitError");
+    const cancel = $("#productSplitCancel");
+
+    const updatePreview = () => {
+      const kit = Math.round(Number(kitQuantity.value || 0));
+      const sellable = Math.round(Number(sellableQuantity.value || 0));
+      if (kit < 2 || sellable < 1 || sellable > kit) {
+        preview.textContent = "";
+        return;
+      }
+      preview.textContent = `Venda: ${money(Number(product.valorUnit || 0) / kit)} | Custo: ${money(Number(product.precoCusto || 0) / kit)} | Quantidade: ${sellable}`;
+    };
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      form.onsubmit = null;
+      cancel.onclick = null;
+      modal.onkeydown = null;
+      kitQuantity.oninput = null;
+      sellableQuantity.oninput = null;
+      form.reset();
+      preview.textContent = "";
+      error.textContent = "";
+    };
+
+    name.textContent = `${product.sku || ""} ${product.descricao || ""}`.trim();
+    kitQuantity.value = "6";
+    sellableQuantity.value = "5";
+    error.textContent = "";
+    updatePreview();
+    modal.classList.remove("hidden");
+
+    kitQuantity.oninput = updatePreview;
+    sellableQuantity.oninput = updatePreview;
+
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const kit = Math.round(Number(kitQuantity.value || 0));
+      const sellable = Math.round(Number(sellableQuantity.value || 0));
+      if (!Number.isFinite(kit) || kit < 2) {
+        error.textContent = "Informe a quantidade original do kit.";
+        kitQuantity.focus();
+        return;
+      }
+      if (!Number.isFinite(sellable) || sellable < 1 || sellable > kit) {
+        error.textContent = "Informe uma quantidade vendavel valida.";
+        sellableQuantity.focus();
+        return;
+      }
+      cleanup();
+      resolve({ kitQuantity: kit, sellableQuantity: sellable });
+    };
+
+    cancel.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    modal.onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    setTimeout(() => kitQuantity.focus(), 0);
   });
 }
 
@@ -3441,19 +3566,26 @@ function renderLotDetail(lot) {
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
     </div>
     <p id="downloadMessage" class="message"></p>
-    <div class="summary-grid">
-      ${metric("SKUs", lot.totalProducts)}
-      ${metric("Itens esperados", lot.totalItems)}
-      ${metric("RZs", lot.rzs.length)}
-      ${metric("Excedentes externos", lot.totalExcessExternal)}
-    </div>
-    <h3 class="section-title">Progresso do lote</h3>
-    <div class="summary-grid">
-      ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
-      ${progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`)}
-      ${metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0)))}
-      ${metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0)))}
-    </div>
+    ${noSheetLot ? `
+      <div class="summary-grid">
+        ${metric("Quantidade bipada", lot.progress.checkedQty)}
+        ${metric("Valor bipado", money(lot.progress.checkedValue))}
+      </div>
+    ` : `
+      <div class="summary-grid">
+        ${metric("SKUs", lot.totalProducts)}
+        ${metric("Itens esperados", lot.totalItems)}
+        ${metric("RZs", lot.rzs.length)}
+        ${metric("Excedentes externos", lot.totalExcessExternal)}
+      </div>
+      <h3 class="section-title">Progresso do lote</h3>
+      <div class="summary-grid">
+        ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
+        ${progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`)}
+        ${metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0)))}
+        ${metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0)))}
+      </div>
+    `}
     <h3 class="section-title">RZs</h3>
     <div class="rz-search">
       <input id="rzSearchInput" placeholder="Bipe ou digite o Código RZ" />
@@ -3701,7 +3833,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       ${items.map(itemRow).join("")}
     </div>
   `;
-  bindScanControls(lot.id, codigoRz);
+  bindScanControls(lot.id, codigoRz, items);
   if (push) updateRoute(lotRzPath(lot.id, codigoRz));
 }
 
@@ -3768,6 +3900,12 @@ function renderPallet(lot, codigoRz) {
     if (isNoSheetLot(lot)) openNoSheetRz(lot, codigoRz);
     else renderRz(lot, codigoRz);
   });
+  document.querySelectorAll("[data-pallet-split]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = items.find((candidate) => candidate.product?.id === button.dataset.palletSplit);
+      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId: lot.id, messageSelector: "#palletMessage", render: (updatedLot) => renderPallet(updatedLot, codigoRz) });
+    });
+  });
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -3827,10 +3965,10 @@ function renderScanPage(lot, codigoRz) {
       </div>
     </section>
   `;
-  bindScanControls(lot.id, codigoRz);
+  bindScanControls(lot.id, codigoRz, items);
 }
 
-function bindScanControls(lotId, codigoRz) {
+function bindScanControls(lotId, codigoRz, items = []) {
   $("#scanButton").addEventListener("click", () => scanCurrent(lotId, codigoRz));
   $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lotId, codigoRz));
   document.querySelectorAll("[data-decrement-ml]").forEach((button) => {
@@ -3838,6 +3976,12 @@ function bindScanControls(lotId, codigoRz) {
   });
   document.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
     button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
+  });
+  document.querySelectorAll("[data-split-product]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
+      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
+    });
   });
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
@@ -4136,9 +4280,10 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   return matches[0]?.product || null;
 }
 
-function showLabel(product, { autoPrint = false, meta = null, returnFocusSelectors = null } = {}) {
+function showLabel(product, { autoPrint = false, meta = null, quantity = 1, returnFocusSelectors = null } = {}) {
   state.labelProduct = product;
   state.labelMeta = meta;
+  state.labelQuantity = Math.max(1, Math.round(Number(quantity || 1)));
   state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
   $("#labelPreview").innerHTML = labelMarkup(product, meta);
   $("#labelModal").classList.remove("hidden");
@@ -4272,7 +4417,8 @@ function printCurrentLabel() {
   cleanupLabelPrintRoot();
   const printRoot = document.createElement("div");
   printRoot.id = "labelPrintRoot";
-  printRoot.innerHTML = $("#labelPreview").innerHTML;
+  const labelHtml = labelMarkup(state.labelProduct, state.labelMeta);
+  printRoot.innerHTML = Array.from({ length: state.labelQuantity }, () => labelHtml).join("");
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
   window.print();
@@ -4310,6 +4456,7 @@ function hideLabelPreview() {
   $("#labelPreview").innerHTML = "";
   state.labelProduct = null;
   state.labelMeta = null;
+  state.labelQuantity = 1;
   const returnFocusSelectors = state.labelReturnFocusSelectors;
   state.labelReturnFocusSelectors = null;
   scheduleScanInputFocus(returnFocusSelectors);
@@ -4356,6 +4503,7 @@ function primaryInputSelectors() {
   return [
     "#manualProductModal:not(.hidden) #manualProductDescription",
     "#productEditModal:not(.hidden) #productEditDescription",
+    "#productSplitModal:not(.hidden) #productSplitKitQuantity",
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",
@@ -4458,6 +4606,7 @@ function itemRow(item) {
       ${badge}
       <span class="item-actions">
         ${deleteButton}
+        <button type="button" class="ghost" data-split-product="${escapeHtml(product.id || "")}">Desmembrar</button>
         <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
       </span>
     </article>
@@ -4520,6 +4669,7 @@ function diverseItemRow(item, startsRz = false) {
       <span>${money(product.precoCusto)}</span>
       <span class="diverse-row-actions">
         <button type="button" class="ghost" data-diverse-edit="${escapeHtml(product.id || "")}">Editar</button>
+        <button type="button" class="ghost" data-diverse-split="${escapeHtml(product.id || "")}">Desmembrar</button>
         <button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Reimprimir</button>
       </span>
     </article>
@@ -4539,7 +4689,7 @@ function palletRow(item) {
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
       <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
       <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small><small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small></span>
-      <span><span class="badge">${rowStatus}</span></span>
+      <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button></span>
     </article>
   `;
 }
