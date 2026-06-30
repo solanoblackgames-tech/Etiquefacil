@@ -214,3 +214,42 @@ test("Bling product sync keeps retrying while API rate limit is reached", async 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Bling product sync updates existing supplier cost relationship", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 2, descricao: "Fornecedor" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 321, nome: "Fornecedor X" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 321, nome: "Fornecedor X", tiposContato: [{ id: 2, descricao: "Fornecedor" }] } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "AMZ04L0001" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: [{ id: 555, produto: { id: 123 }, fornecedor: { id: 321 } }] })
+    },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 555 } }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingProducts({
+      integration: { accessToken: "token" },
+      products: [{ sku: "AMZ04L0001", descricao: "Prato unitario", valorUnit: 20, precoCusto: 10, fornecedor: "Fornecedor X" }]
+    });
+
+    assert.equal(result.updated, 1);
+    const supplierUpdate = calls.find((call) => call.method === "PUT" && call.url.includes("/produtos/fornecedores/555"));
+    assert.ok(supplierUpdate);
+    assert.equal(supplierUpdate.body.precoCusto, 10);
+    assert.equal(supplierUpdate.body.precoCompra, 10);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

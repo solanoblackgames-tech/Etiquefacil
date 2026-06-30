@@ -344,7 +344,7 @@ class BlingApiClient {
     supplier = supplier || (await this.findOrCreateSupplier(product.fornecedor));
     if (!supplier?.id) throw new Error(`Fornecedor Bling nao retornou ID: ${product.fornecedor}`);
     const existing = await this.findProductSupplier(productId, supplier.id);
-    if (existing?.id) return existing;
+    if (existing?.id) return this.updateProductSupplier(existing.id, buildBlingProductSupplierPayload(product, { productId, supplierId: supplier.id }));
     return this.createProductSupplier(buildBlingProductSupplierPayload(product, { productId, supplierId: supplier.id }));
   }
 
@@ -398,6 +398,10 @@ class BlingApiClient {
 
   async createProductSupplier(payload) {
     return this.request("/produtos/fornecedores", { method: "POST", body: payload });
+  }
+
+  async updateProductSupplier(productSupplierId, payload) {
+    return this.request(`/produtos/fornecedores/${encodeURIComponent(productSupplierId)}`, { method: "PUT", body: payload });
   }
 
   async findDepositByDescription(description) {
