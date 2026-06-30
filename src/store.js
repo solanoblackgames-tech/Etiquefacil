@@ -19,6 +19,16 @@ const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
 const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
+const OPERATOR_DASHBOARD_ACTIONS = [
+  "login",
+  "search_ml",
+  "scan_ml",
+  "scan_transfer",
+  "create_manual_product",
+  "create_external_excess",
+  "view_lot",
+  "view_pallet"
+];
 
 const emptyDb = () => ({
   users: [],
@@ -320,7 +330,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         select
           u.*,
           coalesce(od.day_totals, '{}'::jsonb) as day_totals,
-          count(oa.id)::int as activity_total,
+          count(oa.id) filter (where oa.action = any($4::text[]))::int as activity_total,
           max(oa.created_at) as last_activity_at,
           count(oa.id) filter (where oa.action = 'login')::int as login_total,
           count(oa.id) filter (where oa.action = 'search_ml')::int as search_total,
@@ -344,11 +354,12 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
           from (
             select
               oa.operator_user_id,
-              to_char(oa.created_at, 'YYYY-MM-DD') as activity_day,
+              to_char(oa.created_at at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as activity_day,
               count(*)::int as day_total
             from operator_activities oa
             join users ou on ou.id = oa.operator_user_id
             where oa.owner_user_id = $1
+              and oa.action = any($4::text[])
               and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
               and ($3::timestamptz is null or oa.created_at <= $3::timestamptz)
               and not (
@@ -358,7 +369,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
                   or (oa.created_at at time zone 'America/Sao_Paulo')::date in (date '2026-06-24', date '2026-06-26')
                 )
               )
-            group by oa.operator_user_id, to_char(oa.created_at, 'YYYY-MM-DD')
+            group by oa.operator_user_id, to_char(oa.created_at at time zone 'America/Sao_Paulo', 'YYYY-MM-DD')
           ) daily_operator_activity
           group by operator_user_id
         ) od on od.operator_user_id = u.id
@@ -366,7 +377,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         group by u.id, od.day_totals
         order by u.created_at desc
       `,
-      [ownerUserId, range.startAt, range.endAt]
+      [ownerUserId, range.startAt, range.endAt, OPERATOR_DASHBOARD_ACTIONS]
     );
     return result.rows.map((row) => ({ ...sanitizeUser(userFromRow(row)), stats: operatorStatsFromRow(row) }));
   }
@@ -4422,9 +4433,11 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (activity.operatorUserId !== operatorUserId) continue;
     if (!isOperatorActivityInRange(activity, range)) continue;
     if (isIgnoredOperatorActivity(activity, operator)) continue;
-    stats.total += 1;
-    const day = activity.createdAt ? activity.createdAt.slice(0, 10) : "";
-    if (day) stats.dailyTotals[day] = (stats.dailyTotals[day] || 0) + 1;
+    if (isOperatorDashboardActivity(activity.action)) {
+      stats.total += 1;
+      const day = operatorActivityLocalDay(activity.createdAt);
+      if (day) stats.dailyTotals[day] = (stats.dailyTotals[day] || 0) + 1;
+    }
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
     if (activity.action === "scan_ml" || activity.action === "scan_transfer") stats.scans += 1;
@@ -4436,6 +4449,24 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
   return stats;
 }
 
+function isOperatorDashboardActivity(action) {
+  return OPERATOR_DASHBOARD_ACTIONS.includes(action);
+}
+
+function operatorActivityLocalDay(createdAt) {
+  if (!createdAt) return "";
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Sao_Paulo",
+    year: "numeric"
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return byType.year && byType.month && byType.day ? `${byType.year}-${byType.month}-${byType.day}` : "";
+}
+
 function isIgnoredOperatorActivity(activity, operator = {}) {
   const operatorText = `${operator.name || ""} ${operator.email || ""}`;
   return /eduarda/i.test(operatorText) && ignoredEduardaActivityDays(activity).some((day) => ["2026-06-24", "2026-06-26"].includes(day));
@@ -4444,13 +4475,7 @@ function isIgnoredOperatorActivity(activity, operator = {}) {
 function ignoredEduardaActivityDays(activity) {
   if (!activity?.createdAt) return [];
   const utcDay = activity.createdAt.slice(0, 10);
-  const date = new Date(activity.createdAt);
-  const localDay = Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("en-CA", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "America/Sao_Paulo",
-    year: "numeric"
-  }).format(date);
+  const localDay = operatorActivityLocalDay(activity.createdAt);
   return [utcDay, localDay].filter(Boolean);
 }
 
@@ -4473,7 +4498,7 @@ function normalizeOperatorActivityRange(period = {}) {
 function parseOperatorDateBound(value, endOfDay) {
   const text = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  const date = new Date(`${text}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+  const date = new Date(`${text}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}-03:00`);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
