@@ -11,10 +11,10 @@ test("calculateSplitProductValues divides prices and keeps sellable quantity", (
       qtdTotal: 6
     },
     { qtdEsperada: 6 },
-    { kitQuantity: 6, sellableQuantity: 5 }
+    { kitQuantity: 6, sellableQuantity: 5, descricao: "Prato raso branco" }
   );
 
-  assert.equal(split.descricao, "Kit 6 pratos - unitario do kit 6 pecas (5 vendaveis)");
+  assert.equal(split.descricao, "Prato raso branco");
   assert.equal(split.valorUnit, 20);
   assert.equal(split.precoCusto, 10);
   assert.equal(split.qtdTotal, 5);

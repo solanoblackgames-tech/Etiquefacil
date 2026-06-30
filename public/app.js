@@ -1253,6 +1253,7 @@ function openProductSplitModal(product) {
     const name = $("#productSplitName");
     const kitQuantity = $("#productSplitKitQuantity");
     const sellableQuantity = $("#productSplitSellableQuantity");
+    const description = $("#productSplitDescription");
     const preview = $("#productSplitPreview");
     const error = $("#productSplitError");
     const cancel = $("#productSplitCancel");
@@ -1282,6 +1283,7 @@ function openProductSplitModal(product) {
     name.textContent = `${product.sku || ""} ${product.descricao || ""}`.trim();
     kitQuantity.value = "6";
     sellableQuantity.value = "5";
+    description.value = unitTitleSuggestion(product.descricao || "");
     error.textContent = "";
     updatePreview();
     modal.classList.remove("hidden");
@@ -1293,6 +1295,7 @@ function openProductSplitModal(product) {
       event.preventDefault();
       const kit = Math.round(Number(kitQuantity.value || 0));
       const sellable = Math.round(Number(sellableQuantity.value || 0));
+      const descricao = description.value.trim();
       if (!Number.isFinite(kit) || kit < 2) {
         error.textContent = "Informe a quantidade original do kit.";
         kitQuantity.focus();
@@ -1303,8 +1306,13 @@ function openProductSplitModal(product) {
         sellableQuantity.focus();
         return;
       }
+      if (!descricao) {
+        error.textContent = "Informe o titulo do produto unitario.";
+        description.focus();
+        return;
+      }
       cleanup();
-      resolve({ kitQuantity: kit, sellableQuantity: sellable });
+      resolve({ kitQuantity: kit, sellableQuantity: sellable, descricao });
     };
 
     cancel.onclick = () => {
@@ -1320,8 +1328,22 @@ function openProductSplitModal(product) {
       }
     };
 
-    setTimeout(() => kitQuantity.focus(), 0);
+    setTimeout(() => description.focus(), 0);
   });
+}
+
+function unitTitleSuggestion(description) {
+  return String(description || "")
+    .replace(/\bkit\b/gi, "")
+    .replace(/\bconjunto\b/gi, "")
+    .replace(/\bjogo\b/gi, "")
+    .replace(/\bcom\s+\d+\b/gi, "")
+    .replace(/\b\d+\s*(pecas|peças|unidades|unid|unds|und|pcs|pçs|pç)\b/gi, "")
+    .replace(/\b\d+\s*x\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/^[-,.;:\s]+|[-,.;:\s]+$/g, "")
+    .trim();
 }
 
 async function showApp(user) {
@@ -4503,7 +4525,7 @@ function primaryInputSelectors() {
   return [
     "#manualProductModal:not(.hidden) #manualProductDescription",
     "#productEditModal:not(.hidden) #productEditDescription",
-    "#productSplitModal:not(.hidden) #productSplitKitQuantity",
+    "#productSplitModal:not(.hidden) #productSplitDescription",
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",

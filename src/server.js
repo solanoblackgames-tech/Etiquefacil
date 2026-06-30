@@ -766,7 +766,7 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
     });
     const labelQuantity = Math.max(1, Math.round(Number(req.body.sellableQuantity || 1)));
     try {
-      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+      result.bling = await syncSplitProductToBling(userId, result.lot, result.product, labelQuantity);
     } catch (blingError) {
       result.bling = { ok: false, error: blingError.message };
     }
@@ -1463,6 +1463,30 @@ async function syncSingleLotProductToBling(userId, lot, product) {
   return syncBlingProducts({
     integration,
     products: withLotSupplier([product], lot),
+    saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+  });
+}
+
+async function syncSplitProductToBling(userId, lot, product, quantity) {
+  const integration = await getRequiredBlingCredentials(userId);
+  const item = {
+    sku: product.sku || "",
+    codigoMl: product.codigoMl || "",
+    ean: product.ean || "",
+    descricao: product.descricao || "",
+    valorUnit: Number(product.valorUnit || 0),
+    precoCusto: Number(product.precoCusto || 0),
+    fornecedor: lot.fornecedor || "",
+    link: product.link || "",
+    foto: product.foto || "",
+    quantidade: Number(quantity || 0),
+    qtdConferida: Number(quantity || 0)
+  };
+  return syncBlingStockBalances({
+    integration,
+    items: [item],
+    depositoName: BLING_STOCK_DEPOSIT,
+    observacao: `Desmembramento de produto ${product.sku || ""}`.trim(),
     saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
   });
 }

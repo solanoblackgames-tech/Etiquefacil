@@ -982,11 +982,13 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   await ensureStore();
   const kitQuantity = Math.round(Number(payload?.kitQuantity || 0));
   const sellableQuantity = Math.round(Number(payload?.sellableQuantity || 0));
+  const descricao = String(payload?.descricao || "").trim();
   if (!Number.isFinite(kitQuantity) || kitQuantity < 2) throw new Error("Informe a quantidade original do kit.");
   if (!Number.isFinite(sellableQuantity) || sellableQuantity < 1) throw new Error("Informe quantas unidades ficaram vendaveis.");
   if (sellableQuantity > kitQuantity) throw new Error("A quantidade vendavel nao pode ser maior que o kit original.");
+  if (!descricao) throw new Error("Informe o titulo do produto unitario.");
 
-  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity });
+  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -996,7 +998,7 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   const item = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === product.id && candidate.codigoRz === codigoRz);
   if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
-  const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity });
+  const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
   product.valorUnit = split.valorUnit;
   product.precoCusto = split.precoCusto;
   product.qtdTotal = split.qtdTotal;
@@ -1010,11 +1012,11 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export function calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity }) {
+export function calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao = "" }) {
   const valorUnit = roundMoney(Number(product?.valorUnit || 0) / kitQuantity);
   const precoCusto = roundMoney(Number(product?.precoCusto || 0) / kitQuantity);
   return {
-    descricao: splitProductDescription(product?.descricao, kitQuantity, sellableQuantity),
+    descricao: String(descricao || "").trim() || splitProductDescription(product?.descricao, kitQuantity, sellableQuantity),
     valorUnit,
     precoCusto,
     qtdTotal: Math.max(0, Number(product?.qtdTotal || 0) - Number(item?.qtdEsperada || 0) + sellableQuantity),
@@ -2894,7 +2896,7 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity }) {
+async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {
   const client = await getPgPool().connect();
   let product;
   try {
@@ -2914,7 +2916,7 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
     const item = itemResult.rows[0];
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
-    const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity });
+    const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
     const updatedProduct = await client.query(
       `update products
        set descricao = $3,
