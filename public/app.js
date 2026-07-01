@@ -39,6 +39,7 @@ const state = {
   pendingDecrement: false,
   labelProduct: null,
   labelMeta: null,
+  labelPrintMarkup: "",
   labelQuantity: 1,
   labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
@@ -52,6 +53,8 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const LABEL_PRINT_FALLBACK_MS = 15000;
+let labelPrintFallbackTimer = null;
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const formatDate = (value) => {
   const date = new Date(value);
@@ -3363,9 +3366,11 @@ async function releaseTransferLot(transferLotId, button) {
 function showTransferQrLabel(transferLotId) {
   const lot = state.transferLots.find((item) => item.id === transferLotId);
   const receiveUrl = `${window.location.origin}/transferencias/${encodeURIComponent(transferLotId)}/loja`;
-  state.labelProduct = { id: transferLotId };
+  state.labelProduct = null;
   state.labelMeta = null;
-  $("#labelPreview").innerHTML = `
+  state.labelQuantity = 1;
+  state.labelReturnFocusSelectors = currentLabelReturnFocusSelectors();
+  state.labelPrintMarkup = `
     <section class="transfer-qr-label">
       <header class="transfer-label-header">
         <strong>REMESSA</strong>
@@ -3392,6 +3397,8 @@ function showTransferQrLabel(transferLotId) {
       </div>
     </section>
   `;
+  $("#labelPreview").innerHTML = state.labelPrintMarkup;
+  $("#labelPrintButton").textContent = "Imprimir QR";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
 }
@@ -4305,9 +4312,11 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
 function showLabel(product, { autoPrint = false, meta = null, quantity = 1, returnFocusSelectors = null } = {}) {
   state.labelProduct = product;
   state.labelMeta = meta;
+  state.labelPrintMarkup = labelMarkup(product, meta);
   state.labelQuantity = Math.max(1, Math.round(Number(quantity || 1)));
   state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
-  $("#labelPreview").innerHTML = labelMarkup(product, meta);
+  $("#labelPreview").innerHTML = state.labelPrintMarkup;
+  $("#labelPrintButton").textContent = "Imprimir etiqueta";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
   if (autoPrint) setTimeout(printCurrentLabel, 120);
@@ -4439,12 +4448,16 @@ function printCurrentLabel() {
   cleanupLabelPrintRoot();
   const printRoot = document.createElement("div");
   printRoot.id = "labelPrintRoot";
-  const labelHtml = labelMarkup(state.labelProduct, state.labelMeta);
-  printRoot.innerHTML = Array.from({ length: state.labelQuantity }, () => labelHtml).join("");
+  printRoot.innerHTML = currentLabelPrintMarkup();
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
   window.print();
-  setTimeout(finishLabelPrint, 250);
+  labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
+}
+
+function currentLabelPrintMarkup() {
+  const printMarkup = state.labelPrintMarkup || $("#labelPreview").innerHTML;
+  return Array.from({ length: state.labelQuantity }, () => printMarkup).join("");
 }
 
 function bindPrintCloseFallback() {
@@ -4469,6 +4482,10 @@ function finishLabelPrint() {
 }
 
 function cleanupLabelPrintRoot() {
+  if (labelPrintFallbackTimer) {
+    clearTimeout(labelPrintFallbackTimer);
+    labelPrintFallbackTimer = null;
+  }
   document.body.classList.remove("printing-label");
   $("#labelPrintRoot")?.remove();
 }
@@ -4478,7 +4495,9 @@ function hideLabelPreview() {
   $("#labelPreview").innerHTML = "";
   state.labelProduct = null;
   state.labelMeta = null;
+  state.labelPrintMarkup = "";
   state.labelQuantity = 1;
+  $("#labelPrintButton").textContent = "Imprimir etiqueta";
   const returnFocusSelectors = state.labelReturnFocusSelectors;
   state.labelReturnFocusSelectors = null;
   scheduleScanInputFocus(returnFocusSelectors);
