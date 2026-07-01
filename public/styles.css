@@ -771,6 +771,37 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.transfer-card-title,
+.transfer-status-group {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.transfer-card-title strong {
+  min-width: 0;
+}
+
+.transfer-store-check {
+  align-items: center;
+  background: #0f766e;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.lot-card.transfer-released {
+  border-color: #99f6e4;
+}
+
 .muted {
   color: var(--muted);
   font-size: 13px;

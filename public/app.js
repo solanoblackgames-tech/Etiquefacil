@@ -2729,7 +2729,10 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
           <h2>${escapeHtml(lot.name)}</h2>
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
-        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        <div class="transfer-status-group">
+          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        </div>
       </div>
       <div class="summary-grid">
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
@@ -2798,7 +2801,10 @@ function renderTransferReceiveCompletePage(lot) {
           <h2>Conferencia encerrada</h2>
           <p>Todas as quantidades desta remessa foram conferidas.</p>
         </div>
-        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        <div class="transfer-status-group">
+          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        </div>
       </div>
       <div class="summary-grid">
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
@@ -3206,12 +3212,15 @@ function renderTransferLots() {
     return;
   }
   wrapper.innerHTML = state.transferLots.map((lot) => `
-    <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
-      <strong>${escapeHtml(lot.name)}</strong>
+    <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""} ${isTransferReleasedForStore(lot.status) ? "transfer-released" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
+      <div class="transfer-card-title">
+        <strong>${escapeHtml(lot.name)}</strong>
+        ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
+      </div>
       ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
-      <span class="badge ${lot.status === "synced" ? "" : "excess"}">${lot.status === "synced" ? "enviado" : "aberto"}</span>
+      <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
     </article>
   `).join("");
 }
@@ -3250,7 +3259,10 @@ function renderTransferDetail(lot) {
           <h2>${escapeHtml(lot.name)}</h2>
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
-        <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        <div class="transfer-status-group">
+          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+        </div>
       </div>
       <form id="transferScanForm" class="search-bar">
         <input id="transferScanInput" name="code" placeholder="CD: bipe Codigo ML ou SKU para montar a remessa" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
@@ -3320,6 +3332,10 @@ function transferStatusLabel(status) {
     divergent: "Divergente",
     synced: "Enviada"
   })[status] || "Aberta";
+}
+
+function isTransferReleasedForStore(status) {
+  return ["waiting_store", "checking", "ready_sync", "divergent"].includes(status);
 }
 
 function transferStatusClass(status) {
