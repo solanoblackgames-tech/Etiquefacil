@@ -4448,15 +4448,15 @@ function printCurrentLabel() {
   cleanupLabelPrintRoot();
   const printRoot = document.createElement("div");
   printRoot.id = "labelPrintRoot";
-  printRoot.innerHTML = currentLabelPrintMarkup();
+  printRoot.innerHTML = currentLabelPreviewPrintMarkup();
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
 }
 
-function currentLabelPrintMarkup() {
-  const printMarkup = state.labelPrintMarkup || $("#labelPreview").innerHTML;
+function currentLabelPreviewPrintMarkup() {
+  const printMarkup = $("#labelPreview").innerHTML;
   return Array.from({ length: state.labelQuantity }, () => printMarkup).join("");
 }
 
