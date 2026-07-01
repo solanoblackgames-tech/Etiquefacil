@@ -3269,7 +3269,10 @@ function transferItemRow(item, synced) {
       <span>${item.quantidade}</span>
       <span>${item.quantidadeConferida || 0}</span>
       <span>${falta}</span>
-      <span><button type="button" class="danger ghost" data-transfer-decrement="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Diminuir</button></span>
+      <span class="transfer-row-actions">
+        <button type="button" class="danger ghost" data-transfer-decrement="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Diminuir</button>
+        <button type="button" class="danger ghost" data-transfer-delete="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Excluir</button>
+      </span>
     </article>
   `;
 }
@@ -3323,6 +3326,23 @@ async function handleTransferDetailSubmit(event) {
 }
 
 async function handleTransferDetailClick(event) {
+  const deleteButton = event.target.closest("[data-transfer-delete]");
+  if (deleteButton && state.selectedTransferLotId) {
+    if (!confirm("Excluir este item da remessa?")) return;
+    deleteButton.disabled = true;
+    try {
+      const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/items/${encodeURIComponent(deleteButton.dataset.transferDelete)}`, { method: "DELETE" });
+      renderTransferDetail(response.lot);
+      await loadTransferLots(state.selectedTransferLotId);
+      $("#transferScanMessage").style.color = "#0f766e";
+      $("#transferScanMessage").textContent = "Item excluido da remessa.";
+    } catch (error) {
+      $("#transferScanMessage").style.color = "";
+      $("#transferScanMessage").textContent = error.message;
+    }
+    return;
+  }
+
   const decrement = event.target.closest("[data-transfer-decrement]");
   if (decrement && state.selectedTransferLotId) {
     decrement.disabled = true;

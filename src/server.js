@@ -39,6 +39,7 @@ import {
   deleteCatalogProductForAdmin,
   deleteUser,
   deleteUserLot,
+  deleteTransferLotItem,
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
@@ -421,6 +422,14 @@ app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", async (r
 app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAuth, async (req, res) => {
   try {
     res.json(await decrementTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, async (req, res) => {
+  try {
+    res.json(await deleteTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
   } catch (error) {
     sendError(res, error);
   }

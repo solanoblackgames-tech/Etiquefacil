@@ -1563,6 +1563,12 @@ h3 {
   grid-template-columns: 1fr 1fr 2.2fr 0.45fr 0.55fr 0.55fr 0.8fr;
 }
 
+.transfer-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .transfer-receive-page {
   margin: 0 auto;
   max-width: 760px;

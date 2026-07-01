@@ -1376,6 +1376,21 @@ export async function decrementTransferLotItem({ userId, transferLotId, itemId }
   return { lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
+export async function deleteTransferLotItem({ userId, transferLotId, itemId }) {
+  await ensureStore();
+  if (hasPostgres()) return deleteTransferLotItemPg({ userId, transferLotId, itemId });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
+  if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+  if (lot.status !== "open") throw new Error("So e possivel excluir itens enquanto o CD esta montando a remessa.");
+  const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === lot.id);
+  if (!item) throw notFound("Item nao encontrado no lote.");
+  db.transferItems = (db.transferItems || []).filter((candidate) => candidate.id !== item.id);
+  await writeDb(db);
+  return { lot: summarizeTransferLot(lot, db.transferItems || []) };
+}
+
 export async function markTransferLotSynced(userId, transferLotId) {
   await ensureStore();
   const syncedAt = new Date().toISOString();
@@ -3373,6 +3388,27 @@ async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
     if (!item.rows.length) throw notFound("Item nao encontrado no lote.");
     if (Number(item.rows[0].quantidade || 0) <= 1) await client.query("delete from transfer_items where id = $1", [itemId]);
     else await client.query("update transfer_items set quantidade = quantidade - 1 where id = $1", [itemId]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { lot: await getTransferLotDetail(userId, transferLotId) };
+}
+
+async function deleteTransferLotItemPg({ userId, transferLotId, itemId }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote de transferencia nao encontrado.");
+    if (lot.status !== "open") throw new Error("So e possivel excluir itens enquanto o CD esta montando a remessa.");
+    const item = await client.query("delete from transfer_items where id = $1 and transfer_lot_id = $2 returning id", [itemId, lot.id]);
+    if (!item.rows.length) throw notFound("Item nao encontrado no lote.");
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
