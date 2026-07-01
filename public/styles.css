@@ -477,8 +477,8 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(10, minmax(72px, 0.6fr)) minmax(130px, 0.9fr);
-  min-width: 1240px;
+  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(10, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(210px, 1fr);
+  min-width: 1460px;
   padding: 14px 12px;
 }
 
@@ -504,6 +504,22 @@ h3 {
   font-weight: 500;
   margin-top: 3px;
   overflow-wrap: anywhere;
+}
+
+.operator-password-form {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(120px, 1fr) auto;
+}
+
+.operator-password-form input {
+  min-width: 0;
+  width: 100%;
+}
+
+.operator-password-form button {
+  white-space: nowrap;
 }
 
 .primary-action {

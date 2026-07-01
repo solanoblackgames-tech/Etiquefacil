@@ -80,6 +80,7 @@ import {
   undoPublicTransferLotScan,
   updateNoSheetSuggestions,
   updateLotProduct,
+  updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
   saveBlingAppConfig,
@@ -270,6 +271,14 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
     res.json({ operator: await createOperator({ ownerUserId: workspaceUserId(req), name, email, password }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorPasswordForOwner(workspaceUserId(req), req.params.operatorId, req.body.password));
   } catch (error) {
     sendError(res, error);
   }

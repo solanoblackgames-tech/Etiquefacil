@@ -541,6 +541,29 @@ export async function updateUserPassword(userId, password) {
   return { ok: true };
 }
 
+export async function updateOperatorPasswordForOwner(ownerUserId, operatorUserId, password) {
+  await ensureStore();
+  const normalizedPassword = String(password || "");
+  if (normalizedPassword.length < 4) throw new Error("Informe uma senha com pelo menos 4 caracteres.");
+  const passwordHash = await bcrypt.hash(normalizedPassword, 10);
+
+  if (hasPostgres()) {
+    const result = await query(
+      "update users set password_hash = $1 where id = $2 and parent_user_id = $3 returning id",
+      [passwordHash, operatorUserId, ownerUserId]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const operator = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!operator) throw notFound("Operador nao encontrado.");
+  operator.passwordHash = passwordHash;
+  await writeDb(db);
+  return { ok: true };
+}
+
 export async function deleteUser(userId) {
   await ensureStore();
   if (hasPostgres()) {

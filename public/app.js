@@ -188,6 +188,7 @@ function bindEvents() {
   $("#operatorManualToggle").addEventListener("click", toggleOperatorManualForm);
   $("#operatorInviteCopyButton").addEventListener("click", copyOperatorInviteLink);
   $("#operatorList").addEventListener("submit", handleOperatorFilterSubmit);
+  $("#operatorList").addEventListener("submit", handleOperatorPasswordSubmit);
   $("#operatorList").addEventListener("change", handleOperatorFilterChange);
   $("#operatorList").addEventListener("click", handleOperatorFilterClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
@@ -1563,6 +1564,7 @@ function renderOperators() {
           <span>Media/dia</span>
           <span>Melhor dia</span>
           <span>Ultima ativ.</span>
+          <span>Senha</span>
         </div>
         ${operators
           .sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name))
@@ -1681,6 +1683,7 @@ function operatorViewModel(operator) {
   }, null);
   const activity = logins + searches + scans + creates + lotViews + palletViews;
   return {
+    id: operator.id || "",
     name: operator.name || "Operador",
     email: operator.email || "",
     operatorCode: operator.operatorCode || "",
@@ -1716,7 +1719,7 @@ function operatorPodiumCard(operator, index) {
 
 function operatorTableRow(operator, index) {
   return `
-    <div class="operator-row">
+    <div class="operator-row" data-operator-id="${escapeHtml(operator.id)}">
       <span>${index + 1}</span>
       <span>
         <strong>${escapeHtml(operator.name)}</strong>
@@ -1734,8 +1737,39 @@ function operatorTableRow(operator, index) {
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <strong>${operator.bestDayTotal}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
+      <form class="operator-password-form">
+        <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
+        <button type="submit" class="ghost">Salvar</button>
+      </form>
     </div>
   `;
+}
+
+async function handleOperatorPasswordSubmit(event) {
+  if (!event.target.matches(".operator-password-form")) return;
+  event.preventDefault();
+  const form = event.target;
+  const row = form.closest("[data-operator-id]");
+  const password = new FormData(form).get("password");
+  const button = form.querySelector("button");
+  $("#operatorMessage").textContent = "";
+  $("#operatorMessage").style.color = "";
+  button.disabled = true;
+  try {
+    await api(`/api/operators/${encodeURIComponent(row.dataset.operatorId)}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    form.reset();
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Senha do operador atualizada.";
+  } catch (error) {
+    $("#operatorMessage").style.color = "";
+    $("#operatorMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function toggleOperatorManualForm(forceOpen) {
