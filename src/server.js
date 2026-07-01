@@ -429,7 +429,20 @@ app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAut
 
 app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, async (req, res) => {
   try {
-    res.json(await deleteTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
+    const reason = String(req.body?.reason || req.body?.justificativa || "").trim();
+    if (req.session.user?.role === "operator" && reason.length < 5) {
+      throw new Error("Informe uma justificativa para excluir o item da remessa.");
+    }
+    const result = await deleteTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId });
+    await recordOperatorActivity(req.session.user, "delete_transfer_item", {
+      transferLotId: req.params.transferLotId,
+      itemId: req.params.itemId,
+      codigoMl: result.item?.codigoMl || "",
+      sku: result.item?.sku || "",
+      quantidade: result.item?.quantidade || 0,
+      reason
+    });
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }

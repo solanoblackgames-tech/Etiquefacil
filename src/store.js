@@ -1386,9 +1386,10 @@ export async function deleteTransferLotItem({ userId, transferLotId, itemId }) {
   if (lot.status !== "open") throw new Error("So e possivel excluir itens enquanto o CD esta montando a remessa.");
   const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === lot.id);
   if (!item) throw notFound("Item nao encontrado no lote.");
+  const deletedItem = { ...item };
   db.transferItems = (db.transferItems || []).filter((candidate) => candidate.id !== item.id);
   await writeDb(db);
-  return { lot: summarizeTransferLot(lot, db.transferItems || []) };
+  return { item: deletedItem, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
 export async function markTransferLotSynced(userId, transferLotId) {
@@ -3401,14 +3402,16 @@ async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
 
 async function deleteTransferLotItemPg({ userId, transferLotId, itemId }) {
   const client = await getPgPool().connect();
+  let result = {};
   try {
     await client.query("begin");
     const lotResult = await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Lote de transferencia nao encontrado.");
     if (lot.status !== "open") throw new Error("So e possivel excluir itens enquanto o CD esta montando a remessa.");
-    const item = await client.query("delete from transfer_items where id = $1 and transfer_lot_id = $2 returning id", [itemId, lot.id]);
+    const item = await client.query("delete from transfer_items where id = $1 and transfer_lot_id = $2 returning *", [itemId, lot.id]);
     if (!item.rows.length) throw notFound("Item nao encontrado no lote.");
+    result = { item: transferItemFromRow(item.rows[0]) };
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -3417,7 +3420,7 @@ async function deleteTransferLotItemPg({ userId, transferLotId, itemId }) {
     client.release();
   }
 
-  return { lot: await getTransferLotDetail(userId, transferLotId) };
+  return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
 }
 
 async function findPgProductHistory(client, userId, currentLotId, codigoMl, limit) {

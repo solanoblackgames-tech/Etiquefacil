@@ -3328,10 +3328,24 @@ async function handleTransferDetailSubmit(event) {
 async function handleTransferDetailClick(event) {
   const deleteButton = event.target.closest("[data-transfer-delete]");
   if (deleteButton && state.selectedTransferLotId) {
-    if (!confirm("Excluir este item da remessa?")) return;
+    let reason = "";
+    if (state.user?.role === "operator") {
+      reason = prompt("Informe a justificativa para excluir este item da remessa:")?.trim() || "";
+      if (reason.length < 5) {
+        $("#transferScanMessage").style.color = "";
+        $("#transferScanMessage").textContent = "Informe uma justificativa com pelo menos 5 caracteres.";
+        return;
+      }
+    } else if (!confirm("Excluir este item da remessa?")) {
+      return;
+    }
     deleteButton.disabled = true;
     try {
-      const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/items/${encodeURIComponent(deleteButton.dataset.transferDelete)}`, { method: "DELETE" });
+      const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/items/${encodeURIComponent(deleteButton.dataset.transferDelete)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason })
+      });
       renderTransferDetail(response.lot);
       await loadTransferLots(state.selectedTransferLotId);
       $("#transferScanMessage").style.color = "#0f766e";
