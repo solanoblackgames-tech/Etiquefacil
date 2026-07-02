@@ -3433,10 +3433,11 @@ async function selectTransferLot(transferLotId) {
   renderTransferDetail(response.lot);
 }
 
-function renderTransferDetail(lot) {
+function renderTransferDetail(lot, { lastCode = "" } = {}) {
   const canSync = state.user?.role !== "operator";
   const synced = lot.status === "synced";
   const cdLocked = lot.status !== "open";
+  const displayItems = prioritizeTransferItems(lot.items || [], lastCode);
   const detail = $("#transferDetail");
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -3487,11 +3488,22 @@ function renderTransferDetail(lot) {
           <span>Falta</span>
           <span>Acoes</span>
         </div>
-        ${lot.items.length ? lot.items.map((item) => transferItemRow(item, synced || cdLocked)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
+        ${displayItems.length ? displayItems.map((item) => transferItemRow(item, synced || cdLocked)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
       </div>
     </section>
   `;
   schedulePrimaryInputFocus(["#transferScanInput"]);
+}
+
+function prioritizeTransferItems(items, code) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return items;
+  return [...items].sort((a, b) => Number(transferItemMatchesCode(b, normalized)) - Number(transferItemMatchesCode(a, normalized)));
+}
+
+function transferItemMatchesCode(item, normalizedCode) {
+  return [item.codigoMl, item.sku, code39BarcodeValue(item.sku), item.ean]
+    .some((value) => normalizeCode(value) === normalizedCode);
 }
 
 function transferDivergenceReportsList(lot) {
@@ -3583,7 +3595,7 @@ async function handleTransferDetailSubmit(event) {
       body: JSON.stringify({ code })
     });
     input.value = "";
-    renderTransferDetail(response.lot);
+    renderTransferDetail(response.lot, { lastCode: code });
     await loadTransferLots(response.lot.id);
     $("#transferScanMessage").style.color = "#0f766e";
     $("#transferScanMessage").textContent = `${response.product.sku} adicionado ao lote.`;
@@ -4251,7 +4263,7 @@ function openScanWindow(lotId, codigoRz) {
   return Boolean(scanWindow);
 }
 
-function renderScanPage(lot, codigoRz) {
+function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   state.selectedLotId = lot.id;
   state.selectedRz = codigoRz;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -4262,6 +4274,7 @@ function renderScanPage(lot, codigoRz) {
   }
 
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
+  const displayItems = prioritizeScannedItems(items, lastCodigoMl);
   document.title = `Bipagem ${codigoRz}`;
   $("#lotDetail").classList.remove("empty");
   $("#lotDetail").innerHTML = `
@@ -4296,11 +4309,23 @@ function renderScanPage(lot, codigoRz) {
       </div>
       <div id="scanMessage" class="message"></div>
       <div class="items">
-        ${items.map(itemRow).join("")}
+        ${displayItems.map(itemRow).join("")}
       </div>
     </section>
   `;
   bindScanControls(lot.id, codigoRz, items);
+}
+
+function prioritizeScannedItems(items, codigoMl) {
+  const normalized = normalizeCode(codigoMl);
+  if (!normalized) return items;
+  return [...items].sort((a, b) => Number(itemMatchesScanCode(b, normalized)) - Number(itemMatchesScanCode(a, normalized)));
+}
+
+function itemMatchesScanCode(item, normalizedCode) {
+  const product = item.product || {};
+  return [product.codigoMl, product.sku, code39BarcodeValue(product.sku), product.ean]
+    .some((value) => normalizeCode(value) === normalizedCode);
 }
 
 function bindScanControls(lotId, codigoRz, items = []) {
@@ -4394,7 +4419,7 @@ async function scanCurrent(lotId, codigoRz) {
     } else {
       message.textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       const scannedProduct = findScannedProduct(response.lot, codigoRz, codigoMl);
-      renderScanPage(response.lot, codigoRz);
+      renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
       $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       if (scannedProduct && state.labelOptions.autoPrint) {
         showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
@@ -4431,7 +4456,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
     });
 
     const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.`;
-    renderScanPage(response.lot, codigoRz);
+    renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = successMessage;
     if (response.product && state.labelOptions.autoPrint) {
       showLabel(response.product, { autoPrint: true, meta: labelMeta() });
@@ -4459,7 +4484,7 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
       body: JSON.stringify({ codigoMl })
     });
     if (input && !codigoMlFromButton) input.value = "";
-    renderScanPage(response.lot, codigoRz);
+    renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = "Quantidade bipada diminuida.";
     await syncDecrementStockExit(lotId, codigoRz, codigoMl);
   } catch (error) {

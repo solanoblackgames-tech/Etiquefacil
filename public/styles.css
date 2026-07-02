@@ -709,8 +709,11 @@ h3 {
 .triage-shell {
   display: grid;
   gap: 16px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - 73px);
   margin: 0 auto;
   max-width: 1380px;
+  overflow: hidden;
   padding: 24px;
   width: 100%;
 }
@@ -747,6 +750,8 @@ h3 {
 }
 
 .triage-layout {
+  height: auto;
+  min-height: 0;
   padding: 0;
 }
 
@@ -900,7 +905,9 @@ h3 {
 .layout {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
-  min-height: calc(100vh - 73px);
+  height: calc(100vh - 73px);
+  min-height: 0;
+  overflow: hidden;
   padding: 24px;
 }
 
@@ -908,6 +915,7 @@ h3 {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px 0 0 8px;
+  min-height: 0;
   padding: 18px;
   overflow: auto;
 }
@@ -996,7 +1004,9 @@ h3 {
   border: 1px solid var(--line);
   border-left: 0;
   border-radius: 0 8px 8px 0;
+  min-height: 0;
   min-width: 0;
+  overflow: auto;
 }
 
 .empty {
@@ -1756,6 +1766,9 @@ h3 {
 .transfer-shell {
   display: grid;
   gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - 73px);
+  overflow: hidden;
   padding: 22px 24px;
 }
 
@@ -1767,7 +1780,8 @@ h3 {
 }
 
 .transfer-layout {
-  min-height: 520px;
+  height: auto;
+  min-height: 0;
   padding: 0;
 }
 
@@ -2828,11 +2842,22 @@ h3 {
   }
 
   .transfer-shell {
+    height: auto;
+    overflow: visible;
     padding: 12px;
   }
 
-  .transfer-layout {
+  .transfer-layout,
+  .triage-layout {
+    height: auto;
     min-height: auto;
+    overflow: visible;
+  }
+
+  .triage-shell {
+    height: auto;
+    overflow: visible;
+    padding: 16px;
   }
 
   .transfer-receive-page {
@@ -2889,6 +2914,12 @@ h3 {
   .lot-list {
     border: 1px solid var(--line);
     border-radius: 8px;
+  }
+
+  .layout {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
   }
 }
 
