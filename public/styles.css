@@ -301,14 +301,14 @@ h3 {
 }
 
 .operator-filter {
-  align-items: end;
+  align-items: center;
   background: #fff;
   border: 1px solid #cfdcd2;
   border-radius: 8px;
   box-shadow: 0 8px 18px rgb(30 58 38 / 0.12);
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, auto);
   padding: 14px 18px;
 }
 
@@ -338,7 +338,8 @@ h3 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(150px, 198px)) repeat(4, auto);
+  grid-template-columns: repeat(2, minmax(150px, 198px)) repeat(4, minmax(82px, auto));
+  min-width: 0;
 }
 
 .operator-filter-fields label {
@@ -350,6 +351,21 @@ h3 {
 .operator-filter-fields input,
 .operator-filter-fields button {
   min-height: 40px;
+}
+
+.operator-filter-fields button {
+  white-space: nowrap;
+}
+
+@media (max-width: 1200px) {
+  .operator-filter {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .operator-filter-fields {
+    grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+  }
 }
 
 .operator-metrics {
@@ -578,7 +594,7 @@ h3 {
   overflow-x: auto;
   padding: 6px;
   position: sticky;
-  top: 73px;
+  top: 0;
   z-index: 8;
 }
 
