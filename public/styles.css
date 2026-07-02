@@ -69,7 +69,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
   min-height: 40px;
@@ -78,10 +79,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgb(15 118 110 / 0.14);
   outline: none;
+}
+
+textarea {
+  resize: vertical;
 }
 
 label {
@@ -477,8 +483,8 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(10, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(210px, 1fr);
-  min-width: 1460px;
+  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(11, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(120px, 0.7fr) minmax(210px, 1fr);
+  min-width: 1640px;
   padding: 14px 12px;
 }
 
@@ -835,6 +841,36 @@ h3 {
 
 .triage-fields dd {
   margin: 2px 0 0;
+}
+
+.triage-info .detail-heading {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.triage-info .detail-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.triage-edit-form {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.triage-edit-form.hidden {
+  display: none;
+}
+
+.triage-edit-form .panel-heading,
+.triage-edit-form .message {
+  grid-column: 1 / -1;
 }
 
 .triage-diagnosis-form {
@@ -1759,6 +1795,17 @@ h3 {
   gap: 6px;
 }
 
+.transfer-error-count {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 7px;
+  width: fit-content;
+}
+
 .transfer-receive-page {
   margin: 0 auto;
   max-width: 760px;
@@ -1890,6 +1937,112 @@ h3 {
 
 .force-transfer-panel strong {
   color: #9a3412;
+}
+
+.transfer-divergence-panel,
+.transfer-divergence-list {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.transfer-divergence-panel summary,
+.transfer-divergence-list-heading {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  list-style: none;
+  padding: 14px 16px;
+}
+
+.transfer-divergence-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.transfer-divergence-panel summary span,
+.transfer-divergence-list-heading strong {
+  color: #9a3412;
+  font-weight: 800;
+}
+
+.transfer-divergence-panel summary strong,
+.transfer-divergence-list-heading span {
+  color: #9a3412;
+  font-size: 13px;
+}
+
+.transfer-divergence-form {
+  border-top: 1px solid #fed7aa;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  padding: 14px;
+}
+
+.transfer-divergence-form label {
+  color: var(--text);
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.transfer-divergence-description {
+  grid-column: 1 / -1;
+}
+
+.transfer-divergence-description textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.transfer-divergence-form button {
+  align-self: end;
+}
+
+.transfer-divergence-list {
+  display: grid;
+}
+
+.transfer-divergence-item {
+  background: #fffaf5;
+  border-top: 1px solid #fed7aa;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.transfer-divergence-item div {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transfer-divergence-item strong {
+  color: #9a3412;
+}
+
+.transfer-divergence-item span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.transfer-divergence-item code {
+  background: #ffedd5;
+  border-radius: 6px;
+  color: #9a3412;
+  font-weight: 800;
+  padding: 5px 7px;
+  width: fit-content;
+}
+
+.transfer-divergence-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .transfer-confirm-actions {
@@ -2715,6 +2868,7 @@ h3 {
   }
 
   .transfer-receive-page .summary-grid,
+  .transfer-divergence-form,
   .transfer-confirm-actions {
     grid-template-columns: 1fr;
   }

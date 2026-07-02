@@ -27,7 +27,8 @@ const OPERATOR_DASHBOARD_ACTIONS = [
   "create_manual_product",
   "create_external_excess",
   "view_lot",
-  "view_pallet"
+  "view_pallet",
+  "report_transfer_divergence"
 ];
 
 const emptyDb = () => ({
@@ -42,6 +43,7 @@ const emptyDb = () => ({
   transferLots: [],
   transferItems: [],
   transferForcedOccurrences: [],
+  transferDivergenceReports: [],
   operatorActivities: [],
   operatorInvites: [],
   catalogProducts: [],
@@ -377,7 +379,8 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
           count(oa.id) filter (where oa.action in ('scan_ml', 'scan_transfer'))::int as scan_total,
           count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))::int as create_total,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
-          count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total
+          count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total,
+          count(oa.id) filter (where oa.action = 'report_transfer_divergence')::int as production_error_total
         from users u
         left join operator_activities oa on oa.operator_user_id = u.id
           and ($2::timestamptz is null or oa.created_at >= $2::timestamptz)
@@ -674,6 +677,80 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   item.operatorUserId = operatorUserId || item.operatorUserId || null;
   item.updatedAt = now;
   item.diagnosedAt = now;
+  await writeDb(db);
+  return item;
+}
+
+export async function updateTriageItemDetails({ userId, code, payload = {} }) {
+  await ensureStore();
+  const currentCode = normalizeCode(code);
+  const nextCode = normalizeCode(payload.code || currentCode);
+  if (!nextCode) throw new Error("Informe a identificacao interna.");
+
+  const details = {
+    productCode: normalizeCode(payload.productCode || payload.codigoMl),
+    sku: normalizeCode(payload.sku),
+    ean: String(payload.ean || "").trim(),
+    asin: normalizeCode(payload.asin),
+    codigoBling2: normalizeCode(payload.codigoBling2),
+    descricao: String(payload.descricao || payload.description || "").trim(),
+    serial: String(payload.serial || "").trim()
+  };
+  if (!details.descricao && !details.sku && !details.ean && !details.asin && !details.productCode) {
+    throw new Error("Informe pelo menos uma identificacao do produto.");
+  }
+  const now = new Date().toISOString();
+
+  if (hasPostgres()) {
+    if (nextCode !== currentCode) {
+      const duplicate = await query(
+        "select id from triage_items where user_id = $1 and upper(code) = upper($2) and upper(code) <> upper($3) limit 1",
+        [userId, nextCode, currentCode]
+      );
+      if (duplicate.rows.length) throw new Error("Ja existe um item de triagem com esta identificacao interna.");
+    }
+
+    const result = await query(
+      `update triage_items
+       set code = $3,
+           product_code = $4,
+           sku = $5,
+           ean = $6,
+           asin = $7,
+           codigo_bling2 = $8,
+           descricao = $9,
+           serial = $10,
+           updated_at = $11
+       where user_id = $1 and upper(code) = upper($2)
+       returning *`,
+      [
+        userId,
+        currentCode,
+        nextCode,
+        details.productCode,
+        details.sku,
+        details.ean,
+        details.asin,
+        details.codigoBling2,
+        details.descricao,
+        details.serial,
+        now
+      ]
+    );
+    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+    return triageItemFromRow(result.rows[0]);
+  }
+
+  const db = await readDb();
+  const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === currentCode);
+  if (!item) throw notFound("Item de triagem nao encontrado.");
+  if (nextCode !== currentCode) {
+    const duplicate = (db.triageItems || []).find(
+      (candidate) => candidate.userId === userId && candidate.id !== item.id && normalizeCode(candidate.code) === nextCode
+    );
+    if (duplicate) throw new Error("Ja existe um item de triagem com esta identificacao interna.");
+  }
+  Object.assign(item, details, { code: nextCode, updatedAt: now });
   await writeDb(db);
   return item;
 }
@@ -1244,13 +1321,17 @@ export async function listTransferLots(userId) {
     const items = lotIds.length
       ? await query("select * from transfer_items where transfer_lot_id = any($1::text[]) order by created_at asc", [lotIds])
       : { rows: [] };
-    return summarizeTransferLots(lots.rows.map(transferLotFromRow), items.rows.map(transferItemFromRow));
+    const reports = lotIds.length
+      ? await query("select * from transfer_divergence_reports where transfer_lot_id = any($1::text[]) order by created_at desc", [lotIds])
+      : { rows: [] };
+    return summarizeTransferLots(lots.rows.map(transferLotFromRow), items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
   }
 
   const db = await readDb();
   return summarizeTransferLots(
     (db.transferLots || []).filter((lot) => lot.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    db.transferItems || []
+    db.transferItems || [],
+    db.transferDivergenceReports || []
   );
 }
 
@@ -1260,14 +1341,17 @@ export async function getTransferLotDetail(userId, transferLotId) {
     const lotResult = await query("select * from transfer_lots where id = $1 and user_id = $2 limit 1", [transferLotId, userId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) return null;
-    const items = await query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]);
-    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow));
+    const [items, reports] = await Promise.all([
+      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
+    ]);
+    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
   }
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
   if (!lot) return null;
-  return summarizeTransferLot(lot, db.transferItems || []);
+  return summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || []);
 }
 
 export async function getPublicTransferLotDetail(transferLotId) {
@@ -1276,14 +1360,33 @@ export async function getPublicTransferLotDetail(transferLotId) {
     const lotResult = await query("select * from transfer_lots where id = $1 limit 1", [transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) return null;
-    const items = await query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]);
-    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow));
+    const [items, reports] = await Promise.all([
+      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
+    ]);
+    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
   }
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
   if (!lot) return null;
-  return summarizeTransferLot(lot, db.transferItems || []);
+  return summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || []);
+}
+
+export async function reportTransferLotDivergence({ userId = null, transferLotId, type, description, code = "", reporterName = "", reporterUserId = null }) {
+  await ensureStore();
+  const report = buildTransferDivergenceReport({ transferLotId, type, description, code, reporterName, reporterUserId });
+  if (hasPostgres()) return reportTransferLotDivergencePg({ userId, report });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId && (!userId || item.userId === userId));
+  if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+  db.transferDivergenceReports = db.transferDivergenceReports || [];
+  db.transferDivergenceReports.push(report);
+  lot.status = "divergent";
+  await writeDb(db);
+  return { report, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
 
 async function buildTransferLotWithAutomaticNamePg({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
@@ -2270,6 +2373,17 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists transfer_divergence_reports (
+      id text primary key,
+      transfer_lot_id text not null references transfer_lots(id) on delete cascade,
+      reporter_user_id text references users(id) on delete set null,
+      reporter_name text not null default '',
+      type text not null,
+      code text not null default '',
+      description text not null,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists operator_activities (
       id text primary key,
       owner_user_id text not null references users(id) on delete cascade,
@@ -2439,6 +2553,7 @@ async function ensurePgStore() {
     create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
     create index if not exists transfer_items_sku_idx on transfer_items(sku);
     create index if not exists transfer_forced_occurrences_transfer_lot_id_idx on transfer_forced_occurrences(transfer_lot_id);
+    create index if not exists transfer_divergence_reports_transfer_lot_id_idx on transfer_divergence_reports(transfer_lot_id);
     create index if not exists catalog_requests_status_idx on catalog_requests(status);
     create index if not exists catalog_requests_codigo_ml_idx on catalog_requests(codigo_ml);
     create index if not exists catalog_rejected_requests_codigo_ml_idx on catalog_rejected_requests(codigo_ml);
@@ -2560,7 +2675,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, operatorActivities, triageItems, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -2571,6 +2686,7 @@ async function readPgDb() {
     query("select * from transfer_lots order by created_at asc"),
     query("select * from transfer_items order by created_at asc"),
     query("select * from transfer_forced_occurrences order by created_at asc"),
+    query("select * from transfer_divergence_reports order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
     query("select * from triage_items order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
@@ -2589,6 +2705,7 @@ async function readPgDb() {
     transferLots: transferLots.rows.map(transferLotFromRow),
     transferItems: transferItems.rows.map(transferItemFromRow),
     transferForcedOccurrences: transferForcedOccurrences.rows.map(transferForcedOccurrenceFromRow),
+    transferDivergenceReports: transferDivergenceReports.rows.map(transferDivergenceReportFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     triageItems: triageItems.rows.map(triageItemFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
@@ -2605,6 +2722,7 @@ async function writePgDb(db) {
     await client.query("delete from catalog_requests");
     await client.query("delete from triage_items");
     await client.query("delete from operator_activities");
+    await client.query("delete from transfer_divergence_reports");
     await client.query("delete from transfer_forced_occurrences");
     await client.query("delete from transfer_items");
     await client.query("delete from transfer_lots");
@@ -2717,6 +2835,7 @@ async function writePgDb(db) {
     await insertTransferLotRows(client, db.transferLots || []);
     await insertTransferItemRows(client, db.transferItems || []);
     await insertTransferForcedOccurrenceRows(client, db.transferForcedOccurrences || []);
+    await insertTransferDivergenceReportRows(client, db.transferDivergenceReports || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertTriageItemRows(client, db.triageItems || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
@@ -2915,6 +3034,25 @@ async function insertTransferForcedOccurrenceRows(client, occurrences = []) {
       occurrence.code,
       occurrence.reason,
       occurrence.createdAt
+    ])
+  );
+}
+
+async function insertTransferDivergenceReportRows(client, reports = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "transfer_divergence_reports",
+    ["id", "transfer_lot_id", "reporter_user_id", "reporter_name", "type", "code", "description", "created_at"],
+    reports.map((report) => [
+      report.id,
+      report.transferLotId,
+      report.reporterUserId || null,
+      report.reporterName || "",
+      report.type,
+      report.code || "",
+      report.description,
+      report.createdAt
     ])
   );
 }
@@ -3651,6 +3789,32 @@ async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
   return { ...result, lot: await getPublicTransferLotDetail(transferLotId) };
 }
 
+async function reportTransferLotDivergencePg({ userId = null, report }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lotResult = userId
+      ? await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [report.transferLotId, userId])
+      : await client.query("select * from transfer_lots where id = $1 limit 1 for update", [report.transferLotId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+    if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+    await insertTransferDivergenceReportRows(client, [report]);
+    await client.query("update transfer_lots set status = 'divergent' where id = $1", [lot.id]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return {
+    report,
+    lot: userId ? await getTransferLotDetail(userId, report.transferLotId) : await getPublicTransferLotDetail(report.transferLotId)
+  };
+}
+
 async function decrementTransferLotItemPg({ userId, transferLotId, itemId }) {
   const client = await getPgPool().connect();
   try {
@@ -4346,12 +4510,13 @@ function getUserLotFromDb(db, userId, lotId) {
   return db.lots.find((lot) => lot.id === lotId && lot.userId === userId);
 }
 
-function summarizeTransferLots(lots, items) {
-  return lots.map((lot) => summarizeTransferLot(lot, items));
+function summarizeTransferLots(lots, items, reports = []) {
+  return lots.map((lot) => summarizeTransferLot(lot, items, reports));
 }
 
-function summarizeTransferLot(lot, items) {
+function summarizeTransferLot(lot, items, reports = []) {
   const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
+  const lotReports = (reports || []).filter((report) => report.transferLotId === lot.id);
   const totalQty = lotItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
   const totalReceived = lotItems.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
   return {
@@ -4361,6 +4526,8 @@ function summarizeTransferLot(lot, items) {
     totalPlanned: totalQty,
     totalReceived,
     totalPending: Math.max(0, totalQty - totalReceived),
+    divergenceCount: lotReports.length,
+    divergenceReports: lotReports.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     items: lotItems.sort((a, b) => a.sku.localeCompare(b.sku)).map((item) => ({
       ...item,
       quantidadeConferida: Number(item.quantidadeConferida || 0),
@@ -4391,6 +4558,7 @@ function findTransferItemForReceive(items, transferLotId, code) {
 }
 
 function updateTransferLotReceivingStatus(lot, items) {
+  if (lot.status === "divergent") return;
   const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
   const hasItems = lotItems.length > 0;
   const hasOver = lotItems.some((item) => Number(item.quantidadeConferida || 0) > Number(item.quantidade || 0));
@@ -4417,7 +4585,6 @@ function findTransferProduct(db, userId, code) {
   return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
 }
 
-
 function triageLookupFromProduct(product, row = {}) {
   return {
     productCode: product.codigoMl || "",
@@ -4433,7 +4600,6 @@ function triageLookupFromProduct(product, row = {}) {
     sourceLotName: product.sourceLotName || row.lot__nome_arquivo || ""
   };
 }
-
 
 function buildTransferItem(transferLotId, product) {
   return {
@@ -4455,6 +4621,31 @@ function normalizeForceTransferReason(reason) {
   const normalized = String(reason || "").trim();
   if (normalized.length < 5) throw new Error("Descreva o ocorrido antes de forcar a transferencia.");
   if (normalized.length > 1000) throw new Error("A descricao do ocorrido deve ter no maximo 1000 caracteres.");
+  return normalized;
+}
+
+function buildTransferDivergenceReport({ transferLotId, type, description, code = "", reporterName = "", reporterUserId = null }) {
+  const normalizedType = normalizeTransferDivergenceType(type);
+  const normalizedDescription = String(description || "").trim();
+  if (!transferLotId) throw new Error("Remessa nao informada.");
+  if (normalizedDescription.length < 5) throw new Error("Descreva a divergencia com pelo menos 5 caracteres.");
+  if (normalizedDescription.length > 1000) throw new Error("A descricao da divergencia deve ter no maximo 1000 caracteres.");
+  return {
+    id: randomUUID(),
+    transferLotId,
+    reporterUserId: reporterUserId || null,
+    reporterName: String(reporterName || "").trim().slice(0, 120),
+    type: normalizedType,
+    code: normalizeCode(code || "").slice(0, 120),
+    description: normalizedDescription,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function normalizeTransferDivergenceType(type) {
+  const normalized = String(type || "").trim().toLowerCase();
+  const allowed = new Set(["falta", "sobra", "avaria", "produto_trocado", "outro"]);
+  if (!allowed.has(normalized)) throw new Error("Selecione o tipo da divergencia.");
   return normalized;
 }
 
@@ -4834,6 +5025,19 @@ function transferForcedOccurrenceFromRow(row) {
   };
 }
 
+function transferDivergenceReportFromRow(row) {
+  return {
+    id: row.id,
+    transferLotId: row.transfer_lot_id,
+    reporterUserId: row.reporter_user_id || null,
+    reporterName: row.reporter_name || "",
+    type: row.type,
+    code: row.code || "",
+    description: row.description,
+    createdAt: iso(row.created_at)
+  };
+}
+
 function operatorActivityFromRow(row) {
   return {
     id: row.id,
@@ -4891,13 +5095,14 @@ function operatorStatsFromRow(row) {
     creates: Number(row.create_total || 0),
     lotViews: Number(row.lot_view_total || 0),
     palletViews: Number(row.pallet_view_total || 0),
+    productionErrors: Number(row.production_error_total || 0),
     dailyTotals: normalizeDailyTotals(row.day_totals),
     lastActivityAt: row.last_activity_at ? iso(row.last_activity_at) : null
   };
 }
 
 function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}) {
-  const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, dailyTotals: {}, lastActivityAt: null };
+  const stats = { total: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
     if (!isOperatorActivityInRange(activity, range)) continue;
@@ -4913,6 +5118,7 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (activity.action === "create_manual_product" || activity.action === "create_external_excess") stats.creates += 1;
     if (activity.action === "view_lot") stats.lotViews += 1;
     if (activity.action === "view_pallet") stats.palletViews += 1;
+    if (activity.action === "report_transfer_divergence") stats.productionErrors += 1;
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
   }
   return stats;

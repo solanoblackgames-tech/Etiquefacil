@@ -1513,6 +1513,7 @@ function renderOperators() {
     acc.creates += operator.creates;
     acc.lotViews += operator.lotViews;
     acc.palletViews += operator.palletViews;
+    acc.productionErrors += operator.productionErrors;
     acc.activeOperators += operator.activity > 0 ? 1 : 0;
     if (!acc.lastActivityAt || (operator.lastActivityAt && operator.lastActivityAt > acc.lastActivityAt)) {
       acc.lastActivityAt = operator.lastActivityAt;
@@ -1525,7 +1526,7 @@ function renderOperators() {
       };
     }
     return acc;
-  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
+  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
   const topOperators = [...operators].sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name)).slice(0, 3);
   const leader = topOperators[0];
   const periodDays = operatorPeriodDays(filter);
@@ -1545,6 +1546,11 @@ function renderOperators() {
           <span>Buscas e bipagens</span>
           <strong>${totals.searches + totals.scans}</strong>
           <small>${totals.searches} buscas / ${totals.scans} bipagens</small>
+        </article>
+        <article class="operator-metric">
+          <span>Erros producao</span>
+          <strong>${totals.productionErrors}</strong>
+          <small>divergencias reportadas</small>
         </article>
         <article class="operator-metric">
           <span>Capacidade media</span>
@@ -1574,6 +1580,7 @@ function renderOperators() {
           <span>Cadastros</span>
           <span>Lotes</span>
           <span>Pallets</span>
+          <span>Erros</span>
           <span>Dias trab.</span>
           <span>Media/dia</span>
           <span>Melhor dia</span>
@@ -1717,6 +1724,7 @@ function operatorViewModel(operator) {
   const creates = stats.creates || 0;
   const lotViews = stats.lotViews || 0;
   const palletViews = stats.palletViews || 0;
+  const productionErrors = stats.productionErrors || 0;
   const dailyTotals = stats.dailyTotals || {};
   const activeDays = Object.values(dailyTotals).filter((total) => Number(total || 0) > 0).length;
   const bestDay = Object.entries(dailyTotals).reduce((best, [date, total]) => {
@@ -1724,7 +1732,7 @@ function operatorViewModel(operator) {
     if (!best || normalizedTotal > best.total) return { date, total: normalizedTotal };
     return best;
   }, null);
-  const activity = logins + searches + scans + creates + lotViews + palletViews;
+  const activity = logins + searches + scans + creates + lotViews + palletViews + productionErrors;
   return {
     id: operator.id || "",
     name: operator.name || "Operador",
@@ -1737,6 +1745,7 @@ function operatorViewModel(operator) {
     creates,
     lotViews,
     palletViews,
+    productionErrors,
     activeDays,
     averagePerDay: activeDays ? activity / activeDays : 0,
     bestDayDate: bestDay?.date || "",
@@ -1777,6 +1786,7 @@ function operatorTableRow(operator, index) {
       <span>${operator.creates}</span>
       <span>${operator.lotViews}</span>
       <span>${operator.palletViews}</span>
+      <strong>${operator.productionErrors}</strong>
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <strong>${operator.bestDayTotal}</strong>
@@ -2853,6 +2863,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
         <button type="submit" ${pending ? "disabled" : ""}>Ler etiqueta</button>
       </form>
       <div id="transferReceiveMessage" class="message"></div>
+      ${transferDivergenceReportPanel(lot)}
       <details class="transfer-items-panel">
         <summary>
           <span>Ver itens da remessa</span>
@@ -2879,6 +2890,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
   });
   detail.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
   detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
+  detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
   $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id, lot));
   $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
   if (!pending && !cameraActive) schedulePrimaryInputFocus(["#transferReceiveInput"]);
@@ -2913,6 +2925,7 @@ function renderTransferReceiveCompletePage(lot) {
         ${metric("Falta", lot.totalPending ?? 0)}
       </div>
       <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
+      ${transferDivergenceReportPanel(lot)}
       <details class="transfer-items-panel">
         <summary>
           <span>Itens conferidos</span>
@@ -2933,6 +2946,79 @@ function renderTransferReceiveCompletePage(lot) {
       </details>
     </section>
   `;
+  detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
+}
+
+function transferDivergenceReportPanel(lot) {
+  const disabled = lot.status === "synced";
+  return `
+    <details class="transfer-divergence-panel">
+      <summary>
+        <span>Reportar divergencia</span>
+        <strong>${lot.divergenceCount || 0} reportes</strong>
+      </summary>
+      <form id="transferDivergenceForm" class="transfer-divergence-form">
+        <label>Tipo
+          <select name="type" ${disabled ? "disabled" : ""} required>
+            <option value="falta">Falta de item</option>
+            <option value="sobra">Sobra de item</option>
+            <option value="avaria">Avaria</option>
+            <option value="produto_trocado">Produto trocado</option>
+            <option value="outro">Outro</option>
+          </select>
+        </label>
+        <label>Codigo do item
+          <input name="code" placeholder="Opcional: Codigo ML, SKU ou EAN" autocomplete="off" ${disabled ? "disabled" : ""} />
+        </label>
+        <label>Operador
+          <input name="reporterName" placeholder="Nome de quem esta conferindo" maxlength="120" autocomplete="name" ${disabled ? "disabled" : ""} />
+        </label>
+        <label class="transfer-divergence-description">Descricao
+          <textarea name="description" rows="4" maxlength="1000" placeholder="Descreva o que foi encontrado na remessa" ${disabled ? "disabled" : ""} required></textarea>
+        </label>
+        <button type="submit" ${disabled ? "disabled" : ""}>Enviar reporte</button>
+      </form>
+    </details>
+  `;
+}
+
+async function submitTransferDivergenceReport(event, transferLotId) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const message = $("#transferReceiveMessage") || $("#transferScanMessage");
+  const payload = Object.fromEntries(new FormData(form).entries());
+  payload.code = normalizeCode(payload.code || "");
+  if (String(payload.description || "").trim().length < 5) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = "Descreva a divergencia com pelo menos 5 caracteres.";
+    }
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await api(`${transferReceiveApiBase(transferLotId)}/divergence-reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    form.reset();
+    state.pendingTransferConfirmation = null;
+    renderTransferReceivePage(response.lot);
+    const updatedMessage = $("#transferReceiveMessage");
+    if (updatedMessage) {
+      updatedMessage.style.color = "#0f766e";
+      updatedMessage.textContent = "Divergencia reportada na remessa.";
+    }
+  } catch (error) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    }
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function transferPendingConfirmation(pending) {
@@ -3321,6 +3407,7 @@ function renderTransferLots() {
       ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
+      ${lot.divergenceCount ? `<span class="transfer-error-count">${lot.divergenceCount} erro${lot.divergenceCount === 1 ? "" : "s"} producao</span>` : ""}
       <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
     </article>
   `).join("");
@@ -3380,6 +3467,7 @@ function renderTransferDetail(lot) {
         ${metric("Origem", lot.depositoOrigem)}
         ${metric("Destino", lot.depositoDestino)}
       </div>
+      ${transferDivergenceReportsList(lot)}
       <div class="actions">
         <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da remessa</button>
         <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>Liberar para loja</button>
@@ -3404,6 +3492,39 @@ function renderTransferDetail(lot) {
     </section>
   `;
   schedulePrimaryInputFocus(["#transferScanInput"]);
+}
+
+function transferDivergenceReportsList(lot) {
+  const reports = lot.divergenceReports || [];
+  if (!reports.length) return "";
+  return `
+    <section class="transfer-divergence-list">
+      <div class="transfer-divergence-list-heading">
+        <strong>Divergencias reportadas</strong>
+        <span>${reports.length}</span>
+      </div>
+      ${reports.map((report) => `
+        <article class="transfer-divergence-item">
+          <div>
+            <strong>${transferDivergenceTypeLabel(report.type)}</strong>
+            <span>${formatDateTime(report.createdAt)}${report.reporterName ? ` - ${escapeHtml(report.reporterName)}` : ""}</span>
+          </div>
+          ${report.code ? `<code>${escapeHtml(report.code)}</code>` : ""}
+          <p>${escapeHtml(report.description)}</p>
+        </article>
+      `).join("")}
+    </section>
+  `;
+}
+
+function transferDivergenceTypeLabel(type) {
+  return ({
+    falta: "Falta de item",
+    sobra: "Sobra de item",
+    avaria: "Avaria",
+    produto_trocado: "Produto trocado",
+    outro: "Outro"
+  })[type] || "Divergencia";
 }
 
 function transferItemRow(item, synced) {
@@ -5091,8 +5212,11 @@ function renderTriageDetail(item) {
       </div>
       <div class="triage-info">
         <div class="detail-heading">
-          <span class="muted">Identificacao interna</span>
-          <h2>${escapeHtml(item.code)}</h2>
+          <div>
+            <span class="muted">Identificacao interna</span>
+            <h2>${escapeHtml(item.code)}</h2>
+          </div>
+          <button type="button" class="ghost" data-toggle-triage-edit>Editar dados</button>
         </div>
         <dl class="triage-fields">
           <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
@@ -5110,6 +5234,25 @@ function renderTriageDetail(item) {
         </div>
       </div>
     </section>
+    <form class="triage-edit-form hidden">
+      <div class="panel-heading">
+        <span class="muted">Dados da etiqueta</span>
+        <h3>Editar identificacao e informacoes</h3>
+      </div>
+      <label>Identificacao interna<input name="code" value="${escapeHtml(item.code)}" required /></label>
+      <label>Descricao<input name="descricao" value="${escapeHtml(item.descricao || "")}" /></label>
+      <label>SKU<input name="sku" value="${escapeHtml(item.sku || "")}" /></label>
+      <label>EAN<input name="ean" value="${escapeHtml(item.ean || "")}" /></label>
+      <label>ASIN/COD ML<input name="asin" value="${escapeHtml(item.asin || "")}" /></label>
+      <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
+      <label>Codigo Bling 2<input name="codigoBling2" value="${escapeHtml(item.codigoBling2 || "")}" /></label>
+      <label>Serial<input name="serial" value="${escapeHtml(item.serial || "")}" /></label>
+      <div class="settings-actions">
+        <button type="submit">Salvar dados</button>
+        <button type="button" class="ghost" data-cancel-triage-edit>Cancelar</button>
+      </div>
+      <p class="message" id="triageEditMessage"></p>
+    </form>
     <form class="triage-diagnosis-form">
       <div class="panel-heading">
         <span class="muted">Diagnostico</span>
@@ -5156,6 +5299,10 @@ function renderTriageItemView(item) {
 }
 
 async function handleTriageDetailSubmit(event) {
+  if (event.target.matches(".triage-edit-form")) {
+    await handleTriageEditSubmit(event);
+    return;
+  }
   if (!event.target.matches(".triage-diagnosis-form")) return;
   event.preventDefault();
   const message = $("#triageDetailMessage");
@@ -5175,7 +5322,49 @@ async function handleTriageDetailSubmit(event) {
   }
 }
 
+async function handleTriageEditSubmit(event) {
+  event.preventDefault();
+  const form = event.target;
+  const message = $("#triageEditMessage");
+  try {
+    const previousCode = state.selectedTriageCode;
+    const response = await api(`/api/triage/items/${encodeURIComponent(previousCode)}/details`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    state.selectedTriageCode = response.item.code;
+    state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== previousCode && item.code !== response.item.code)]
+      .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    renderTriageItems();
+    renderTriageDetail(response.item);
+    updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
+    $("#triageDetailMessage").style.color = "#0f766e";
+    $("#triageDetailMessage").textContent = "Dados atualizados.";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
+}
+
 function handleTriageDetailClick(event) {
+  const toggle = event.target.closest("[data-toggle-triage-edit]");
+  if (toggle) {
+    const form = event.currentTarget.querySelector(".triage-edit-form");
+    if (!form) return;
+    form.classList.toggle("hidden");
+    toggle.textContent = form.classList.contains("hidden") ? "Editar dados" : "Fechar edicao";
+    if (!form.classList.contains("hidden")) form.querySelector('input[name="code"]')?.focus();
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-triage-edit]")) {
+    const form = event.currentTarget.querySelector(".triage-edit-form");
+    const toggleButton = event.currentTarget.querySelector("[data-toggle-triage-edit]");
+    form?.classList.add("hidden");
+    if (toggleButton) toggleButton.textContent = "Editar dados";
+    return;
+  }
+
   if (!event.target.closest("[data-print-triage-label]")) return;
   document.body.classList.add("printing-triage-label");
   window.print();

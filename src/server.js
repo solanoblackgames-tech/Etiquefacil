@@ -75,6 +75,7 @@ import {
   receivePublicTransferLotScan,
   receiveTransferLotScan,
   releaseTransferLotForStore,
+  reportTransferLotDivergence,
   reviewCatalogRequest,
   scanLotRz,
   scanTransferLot,
@@ -87,6 +88,7 @@ import {
   updateLotProduct,
   updateOperatorTriageAccess,
   updateTriageDiagnosis,
+  updateTriageItemDetails,
   updateUserTriageAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
@@ -364,6 +366,20 @@ app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req,
   }
 });
 
+app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    const item = await updateTriageItemDetails({
+      userId: workspaceUserId(req),
+      code: req.params.code,
+      payload: req.body || {}
+    });
+    await recordOperatorActivity(req.session.user, "triage_details_update", { code: item.code });
+    res.json({ item: await withTriageQrData(req, item) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     const item = await updateTriageDiagnosis({
@@ -492,13 +508,37 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (r
   }
 });
 
+app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, async (req, res) => {
+  try {
+    const payload = {
+      userId: workspaceUserId(req),
+      transferLotId: req.params.transferLotId,
+      type: req.body.type,
+      code: req.body.code,
+      description: req.body.description,
+      reporterName: req.body.reporterName || req.session.user?.name || "",
+      reporterUserId: req.session.user?.id || null
+    };
+    const result = await reportTransferLotDivergence(payload);
+    await recordOperatorActivity(req.session.user, "report_transfer_divergence", {
+      transferLotId: req.params.transferLotId,
+      reportId: result.report.id,
+      type: result.report.type,
+      code: result.report.code
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, res) => {
   let result = null;
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code });
     const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
-    if (Number(result.lot?.totalPending || 0) === 0) {
+    if (Number(result.lot?.totalPending || 0) === 0 && !Number(result.lot?.divergenceCount || 0)) {
       await markTransferLotSynced(result.lot.userId, result.lot.id);
       result.lot.status = "synced";
     }
@@ -545,6 +585,21 @@ app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, async
       sku: result.item?.sku || "",
       quantidade: result.item?.quantidade || 0,
       reason
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/public/transfer-lots/:transferLotId/divergence-reports", async (req, res) => {
+  try {
+    const result = await reportTransferLotDivergence({
+      transferLotId: req.params.transferLotId,
+      type: req.body.type,
+      code: req.body.code,
+      description: req.body.description,
+      reporterName: req.body.reporterName
     });
     res.json(result);
   } catch (error) {
