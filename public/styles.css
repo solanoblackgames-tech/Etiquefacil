@@ -700,6 +700,117 @@ h3 {
   grid-template-columns: 2fr 1fr 1fr 1fr auto;
 }
 
+.triage-shell {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 1380px;
+  padding: 24px;
+  width: 100%;
+}
+
+.triage-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.triage-form .wide-field {
+  grid-column: 1 / -1;
+}
+
+.triage-form input[name="lookupCode"] {
+  font-size: 20px;
+  font-weight: 700;
+  min-height: 48px;
+}
+
+.triage-lookup-preview {
+  background: #eef8f6;
+  border: 1px solid #b8dcd6;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.triage-lookup-preview small {
+  color: var(--muted);
+}
+
+.triage-layout {
+  padding: 0;
+}
+
+.triage-card small {
+  color: var(--muted);
+}
+
+.triage-detail-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.triage-label-preview {
+  align-items: center;
+  aspect-ratio: 3 / 2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px;
+  text-align: center;
+}
+
+.triage-label-preview img {
+  height: 112px;
+  width: 112px;
+}
+
+.triage-label-preview span {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.triage-label-preview small {
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-fields {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0;
+}
+
+.triage-fields div {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+.triage-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.triage-fields dd {
+  margin: 2px 0 0;
+}
+
+.triage-diagnosis-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
 .tabs {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -2609,12 +2720,25 @@ h3 {
     width: 60mm;
   }
 
-  body.printing-label {
+  body.printing-label,
+  body.printing-triage-label {
     height: auto;
     overflow: visible;
   }
 
-  body > :not(#labelModal) {
+  body:not(.printing-triage-label) > :not(#labelModal) {
+    display: none !important;
+  }
+
+  body.printing-triage-label > :not(#app) {
+    display: none !important;
+  }
+
+  body.printing-triage-label #app > :not(#triageTab),
+  body.printing-triage-label #triageTab > :not(.triage-layout),
+  body.printing-triage-label .triage-layout > :not(#triageDetail),
+  body.printing-triage-label #triageDetail > :not(.triage-detail-grid),
+  body.printing-triage-label .triage-detail-grid > :not(#triageLabelPrintable) {
     display: none !important;
   }
 
@@ -2651,7 +2775,8 @@ h3 {
   }
 
   .label-print,
-  .transfer-qr-label {
+  .transfer-qr-label,
+  #triageLabelPrintable {
     border: 0;
     height: 40mm;
     break-after: page;
@@ -2659,6 +2784,11 @@ h3 {
     page-break-before: avoid;
     page-break-inside: avoid;
     width: 60mm;
+  }
+
+  #triageLabelPrintable {
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .label-print:last-child,

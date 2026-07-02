@@ -28,6 +28,7 @@ import {
   createExternalExcess,
   createDiverseLot,
   createLabel,
+  createTriageItem,
   createTransferLot,
   createLotFromImport,
   createManualExternalExcess,
@@ -51,6 +52,7 @@ import {
   getExternalExcessProduct,
   getPublicTransferLotDetail,
   getStoreHealth,
+  getTriageItem,
   getTransferLotDetail,
   getPublicUserById,
   getUserBlingCredentials,
@@ -64,8 +66,10 @@ import {
   listCatalogRequestsForAdmin,
   listLotsForAdmin,
   listOperatorsForUser,
+  listTriageItems,
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
+  lookupTriageProduct,
   recordOperatorActivity,
   receivePublicTransferLotScan,
   receiveTransferLotScan,
@@ -80,6 +84,9 @@ import {
   undoPublicTransferLotScan,
   updateNoSheetSuggestions,
   updateLotProduct,
+  updateOperatorTriageAccess,
+  updateTriageDiagnosis,
+  updateUserTriageAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
@@ -244,6 +251,14 @@ app.patch("/api/admin/users/:userId/password", requireAdmin, async (req, res) =>
   }
 });
 
+app.patch("/api/admin/users/:userId/triage-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserTriageAccessForAdmin(req.params.userId, Boolean(req.body?.triageAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     res.json(await deleteUser(req.params.userId));
@@ -276,9 +291,75 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
   }
 });
 
+app.patch("/api/operators/:operatorUserId/triage-access", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
+  try {
+    res.json(await updateOperatorTriageAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      triageAccess: Boolean(req.body?.triageAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json(await updateOperatorPasswordForOwner(workspaceUserId(req), req.params.operatorId, req.body.password));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req))) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ product: await lookupTriageProduct(workspaceUserId(req), req.query.code || "") });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    const item = await createTriageItem({
+      userId: workspaceUserId(req),
+      createdByUserId: req.session.user?.id,
+      operatorUserId: operatorUserId(req),
+      payload: req.body || {}
+    });
+    await recordOperatorActivity(req.session.user, "triage_create", { code: item.code });
+    res.json({ item: await withTriageQrData(req, item) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    const item = await updateTriageDiagnosis({
+      userId: workspaceUserId(req),
+      code: req.params.code,
+      operatorUserId: operatorUserId(req) || req.session.user?.id,
+      payload: req.body || {}
+    });
+    await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination });
+    res.json({ item: await withTriageQrData(req, item) });
   } catch (error) {
     sendError(res, error);
   }
@@ -1156,7 +1237,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/perfil", "/operadores/cadastro/*"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/triagem", "/triagem/*", "/perfil", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -1190,12 +1271,37 @@ function requireOwner(req, res, next) {
   next();
 }
 
+async function requireTriageAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.triageAccess) return next();
+    return res.status(403).json({ error: "Modulo de triagem nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
 function workspaceUserId(req) {
   return req.session.user?.workspaceUserId || req.session.user?.id;
 }
 
 function operatorUserId(req) {
   return req.session.user?.role === "operator" ? req.session.user.id : null;
+}
+
+function triageStatusUrl(req, code) {
+  return `${req.protocol}://${req.get("host")}/triagem/${encodeURIComponent(code)}`;
+}
+
+async function withTriageQrData(req, value) {
+  if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item)));
+  const statusUrl = triageStatusUrl(req, value.code);
+  return {
+    ...value,
+    statusUrl,
+    qrDataUrl: await QRCode.toDataURL(statusUrl, { margin: 1, width: 220 })
+  };
 }
 
 function isAdminLogin(email, password) {
@@ -1756,7 +1862,7 @@ ensureStore()
     console.error("Falha ao inicializar o banco:", error);
   });
 
-app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling", "/operadores/cadastro/*"], (req, res) => {
+app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling", "/triagem", "/triagem/*", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 

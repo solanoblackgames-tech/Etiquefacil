@@ -56,6 +56,7 @@
           <button data-tab="lots" type="button">Lotes</button>
           <button data-tab="search" type="button">Busca ML</button>
           <button data-tab="transfers" type="button">Transferencias</button>
+          <button data-tab="triage" class="hidden" type="button">Triagem</button>
           <button data-tab="profile" class="active" type="button">Perfil</button>
         </nav>
         <button id="logoutButton" class="ghost">Sair</button>
@@ -236,6 +237,39 @@
             <div id="transferLots"></div>
           </aside>
           <section id="transferDetail" class="detail empty">Crie ou selecione um lote de transferencia.</section>
+        </section>
+      </section>
+
+      <section id="triageTab" class="triage-shell hidden">
+        <section class="entry-panel triage-create-panel">
+          <div class="panel-heading">
+            <span class="muted">Laboratorio</span>
+            <h3>Entrada de triagem</h3>
+          </div>
+          <form id="triageCreateForm" class="triage-form">
+            <label class="wide-field">Bipagem principal<input name="lookupCode" placeholder="Bipe SKU, EAN, Codigo ML ou Codigo Bling 2" autocomplete="off" /></label>
+            <label>Descricao<input name="descricao" placeholder="Ex: Monitor LG 24" /></label>
+            <label>SKU<input name="sku" placeholder="SKU interno" /></label>
+            <label>EAN<input name="ean" placeholder="Codigo de barras" /></label>
+            <label>ASIN<input name="asin" placeholder="Amazon ASIN" /></label>
+            <label>Codigo Bling 2<input name="codigoBling2" placeholder="Codigo secundario" /></label>
+            <label>Serial<input name="serial" placeholder="Numero de serie" /></label>
+            <input name="productCode" type="hidden" />
+            <button type="submit">Gerar etiqueta QR</button>
+          </form>
+          <div id="triageLookupPreview" class="triage-lookup-preview hidden"></div>
+          <p id="triageMessage" class="message"></p>
+        </section>
+
+        <section class="layout triage-layout">
+          <aside class="lot-list">
+            <div class="aside-heading">
+              <span class="muted">Triagem</span>
+              <h2>Fila</h2>
+            </div>
+            <div id="triageItems"></div>
+          </aside>
+          <section id="triageDetail" class="detail empty">Selecione um produto da triagem.</section>
         </section>
       </section>
 

@@ -47,7 +47,9 @@ const emptyDb = () => ({
   catalogProducts: [],
   catalogRequests: [],
   catalogRejectedRequests: [],
-  noSheetSuggestions: []
+  noSheetSuggestions: [],
+  triageItems: [],
+  triageEvents: []
 });
 
 export function hasPostgres() {
@@ -171,6 +173,7 @@ export async function createUser({ name, email, password, parentUserId = null })
     parentUserId: owner?.id || null,
     role: owner ? "operator" : "owner",
     operatorCode,
+    triageAccess: false,
     name: name.trim(),
     email: normalizedEmail,
     passwordHash: await bcrypt.hash(password, 10),
@@ -180,9 +183,9 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -294,7 +297,7 @@ export async function getPublicUserById(userId) {
 
 export function sanitizeUser(user) {
   if (!user) return null;
-  return {
+  const sanitized = {
     id: user.id,
     tenantId: user.tenantId || user.id,
     tenantName: user.tenantName || user.name,
@@ -305,6 +308,43 @@ export function sanitizeUser(user) {
     name: user.name,
     email: user.email
   };
+  if (user.triageAccess) sanitized.triageAccess = true;
+  return sanitized;
+}
+
+export async function updateUserTriageAccessForAdmin(userId, triageAccess) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("update users set triage_access = $2 where id = $1 returning *", [userId, Boolean(triageAccess)]);
+    if (!result.rows.length) throw notFound("Usuario nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuario nao encontrado.");
+  user.triageAccess = Boolean(triageAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateOperatorTriageAccess({ ownerUserId, operatorUserId, triageAccess }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update users set triage_access = $3 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, Boolean(triageAccess)]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!user) throw notFound("Operador nao encontrado.");
+  user.triageAccess = Boolean(triageAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
 }
 
 async function nextOperatorCode(ownerUserId) {
@@ -431,6 +471,7 @@ export async function listUsersForAdmin() {
           u.parent_user_id,
           u.role,
           u.operator_code,
+          u.triage_access,
           u.name,
           u.email,
           u.created_at,
@@ -450,6 +491,7 @@ export async function listUsersForAdmin() {
       parentUserId: row.parent_user_id || null,
       role: row.role || (row.parent_user_id ? "operator" : "owner"),
       operatorCode: row.operator_code ? Number(row.operator_code) : null,
+      triageAccess: Boolean(row.triage_access),
       name: row.name,
       email: row.email,
       createdAt: iso(row.created_at),
@@ -539,6 +581,150 @@ export async function updateUserPassword(userId, password) {
   user.passwordHash = passwordHash;
   await writeDb(db);
   return { ok: true };
+}
+
+export async function listTriageItems(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select * from triage_items where user_id = $1 order by updated_at desc", [userId]);
+    return result.rows.map(triageItemFromRow);
+  }
+
+  const db = await readDb();
+  return (db.triageItems || [])
+    .filter((item) => item.userId === userId)
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+}
+
+export async function getTriageItem(userId, code) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (hasPostgres()) {
+    const result = await query("select * from triage_items where user_id = $1 and upper(code) = upper($2) limit 1", [userId, normalized]);
+    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+    return triageItemFromRow(result.rows[0]);
+  }
+
+  const db = await readDb();
+  const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalized);
+  if (!item) throw notFound("Item de triagem nao encontrado.");
+  return item;
+}
+
+export async function createTriageItem({ userId, createdByUserId, operatorUserId = null, payload = {} }) {
+  await ensureStore();
+  const now = new Date().toISOString();
+  const item = normalizeTriageInput({
+    ...payload,
+    id: randomUUID(),
+    userId,
+    createdByUserId: createdByUserId || userId,
+    operatorUserId,
+    code: await nextTriageCode(userId),
+    status: "aguardando_teste",
+    destination: "",
+    diagnosis: "",
+    createdAt: now,
+    updatedAt: now,
+    diagnosedAt: null
+  });
+
+  if (hasPostgres()) {
+    await insertTriageItemRows(null, [item]);
+    return item;
+  }
+
+  const db = await readDb();
+  db.triageItems = db.triageItems || [];
+  db.triageItems.push(item);
+  await writeDb(db);
+  return item;
+}
+
+export async function updateTriageDiagnosis({ userId, code, operatorUserId = null, payload = {} }) {
+  await ensureStore();
+  const destination = normalizeTriageDestination(payload.destination);
+  const diagnosis = String(payload.diagnosis || "").trim();
+  if (!diagnosis) throw new Error("Informe o diagnostico do produto.");
+  const now = new Date().toISOString();
+
+  if (hasPostgres()) {
+    const result = await query(
+      `update triage_items
+       set status = 'diagnosticado',
+           destination = $3,
+           diagnosis = $4,
+           operator_user_id = coalesce($5, operator_user_id),
+           updated_at = $6,
+           diagnosed_at = $6
+       where user_id = $1 and upper(code) = upper($2)
+       returning *`,
+      [userId, normalizeCode(code), destination, diagnosis, operatorUserId, now]
+    );
+    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+    return triageItemFromRow(result.rows[0]);
+  }
+
+  const db = await readDb();
+  const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalizeCode(code));
+  if (!item) throw notFound("Item de triagem nao encontrado.");
+  item.status = "diagnosticado";
+  item.destination = destination;
+  item.diagnosis = diagnosis;
+  item.operatorUserId = operatorUserId || item.operatorUserId || null;
+  item.updatedAt = now;
+  item.diagnosedAt = now;
+  await writeDb(db);
+  return item;
+}
+
+export async function lookupTriageProduct(userId, code) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (!normalized) return null;
+
+  if (hasPostgres()) {
+    const productResult = await query(
+      `
+        select
+          p.*,
+          l.id as lot__id,
+          l.nome_arquivo as lot__nome_arquivo,
+          l.created_at as lot__created_at
+        from products p
+        join lots l on l.id = p.lot_id
+        where l.user_id = $1
+          and (
+            upper(trim(p.codigo_ml)) = upper(trim($2))
+            or upper(trim(p.sku)) = upper(trim($2))
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+            or upper(trim(p.ean)) = upper(trim($2))
+          )
+        order by p.created_at desc
+        limit 1
+      `,
+      [userId, normalized]
+    );
+    if (productResult.rows.length) return triageLookupFromProduct(productFromRow(productResult.rows[0]), productResult.rows[0]);
+
+    const catalogResult = await query(
+      `select * from catalog_products
+       where upper(trim(codigo_ml)) = upper(trim($1))
+          or upper(trim(ean)) = upper(trim($1))
+       order by updated_at desc
+       limit 1`,
+      [normalized]
+    );
+    return catalogResult.rows[0] ? triageLookupFromCatalog(catalogProductFromRow(catalogResult.rows[0])) : null;
+  }
+
+  const db = await readDb();
+  const product = findTransferProduct(db, userId, normalized) || findProductByEan(db, userId, normalized);
+  if (product) return triageLookupFromProduct(product, { lot__nome_arquivo: product.sourceLotName || "" });
+  const catalog = (db.catalogProducts || []).find(
+    (candidate) => normalizeCode(candidate.codigoMl) === normalized || normalizeCode(candidate.ean) === normalized
+  );
+  return catalog ? triageLookupFromCatalog(catalog) : null;
 }
 
 export async function updateOperatorPasswordForOwner(ownerUserId, operatorUserId, password) {
@@ -1957,6 +2143,7 @@ async function ensurePgStore() {
       parent_user_id text references users(id) on delete cascade,
       role text not null default 'owner',
       operator_code integer,
+      triage_access boolean not null default false,
       name text not null,
       email text not null unique,
       password_hash text not null,
@@ -2114,6 +2301,27 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists triage_items (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      created_by_user_id text references users(id) on delete set null,
+      operator_user_id text references users(id) on delete set null,
+      code text not null,
+      product_code text not null default '',
+      sku text not null default '',
+      ean text not null default '',
+      asin text not null default '',
+      codigo_bling2 text not null default '',
+      descricao text not null default '',
+      serial text not null default '',
+      status text not null default 'aguardando_teste',
+      destination text not null default '',
+      diagnosis text not null default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      diagnosed_at timestamptz
+    );
+
     create table if not exists catalog_requests (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
@@ -2170,6 +2378,7 @@ async function ensurePgStore() {
     alter table users add column if not exists parent_user_id text references users(id) on delete cascade;
     alter table users add column if not exists role text not null default 'owner';
     alter table users add column if not exists operator_code integer;
+    alter table users add column if not exists triage_access boolean not null default false;
     update users set tenant_id = id where tenant_id is null or tenant_id = '';
     update users set tenant_name = name where tenant_name is null or tenant_name = '';
     update users set role = 'operator' where parent_user_id is not null and (role is null or role = 'owner');
@@ -2237,6 +2446,9 @@ async function ensurePgStore() {
     create index if not exists operator_activities_created_at_idx on operator_activities(created_at);
     create index if not exists operator_invites_owner_user_id_idx on operator_invites(owner_user_id);
     create index if not exists operator_invites_expires_at_idx on operator_invites(expires_at);
+    create unique index if not exists triage_items_user_code_idx on triage_items(user_id, code);
+    create index if not exists triage_items_user_status_idx on triage_items(user_id, status);
+    create index if not exists triage_items_user_destination_idx on triage_items(user_id, destination);
     create index if not exists transfer_lots_user_id_idx on transfer_lots(user_id);
     create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
     create index if not exists transfer_items_sku_idx on transfer_items(sku);
@@ -2362,7 +2574,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, operatorActivities, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, operatorActivities, triageItems, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -2374,6 +2586,7 @@ async function readPgDb() {
     query("select * from transfer_items order by created_at asc"),
     query("select * from transfer_forced_occurrences order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
+    query("select * from triage_items order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
     query("select * from catalog_requests order by created_at asc"),
     query("select * from catalog_rejected_requests order by rejected_at asc")
@@ -2391,6 +2604,7 @@ async function readPgDb() {
     transferItems: transferItems.rows.map(transferItemFromRow),
     transferForcedOccurrences: transferForcedOccurrences.rows.map(transferForcedOccurrenceFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
+    triageItems: triageItems.rows.map(triageItemFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
     catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
     catalogRejectedRequests: catalogRejectedRequests.rows.map(catalogRejectedRequestFromRow)
@@ -2403,6 +2617,7 @@ async function writePgDb(db) {
     await client.query("begin");
     await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
+    await client.query("delete from triage_items");
     await client.query("delete from operator_activities");
     await client.query("delete from transfer_forced_occurrences");
     await client.query("delete from transfer_items");
@@ -2419,7 +2634,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
@@ -2427,6 +2642,7 @@ async function writePgDb(db) {
         user.parentUserId || null,
         user.role || (user.parentUserId ? "operator" : "owner"),
         user.operatorCode || null,
+        Boolean(user.triageAccess),
         user.name,
         user.email,
         user.passwordHash,
@@ -2516,6 +2732,7 @@ async function writePgDb(db) {
     await insertTransferItemRows(client, db.transferItems || []);
     await insertTransferForcedOccurrenceRows(client, db.transferForcedOccurrences || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
+    await insertTriageItemRows(client, db.triageItems || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
     await insertCatalogRejectedRequestRows(client, db.catalogRejectedRequests || []);
@@ -2728,6 +2945,54 @@ async function insertOperatorActivityRows(client, activities = []) {
       activity.action,
       JSON.stringify(activity.metadata || {}),
       activity.createdAt
+    ])
+  );
+}
+
+async function insertTriageItemRows(client, items = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "triage_items",
+    [
+      "id",
+      "user_id",
+      "created_by_user_id",
+      "operator_user_id",
+      "code",
+      "product_code",
+      "sku",
+      "ean",
+      "asin",
+      "codigo_bling2",
+      "descricao",
+      "serial",
+      "status",
+      "destination",
+      "diagnosis",
+      "created_at",
+      "updated_at",
+      "diagnosed_at"
+    ],
+    items.map((item) => [
+      item.id,
+      item.userId,
+      item.createdByUserId || item.userId,
+      item.operatorUserId || null,
+      item.code,
+      item.productCode || "",
+      item.sku || "",
+      item.ean || "",
+      item.asin || "",
+      item.codigoBling2 || "",
+      item.descricao || "",
+      item.serial || "",
+      item.status || "aguardando_teste",
+      item.destination || "",
+      item.diagnosis || "",
+      item.createdAt,
+      item.updatedAt || item.createdAt,
+      item.diagnosedAt || null
     ])
   );
 }
@@ -4166,6 +4431,50 @@ function findTransferProduct(db, userId, code) {
   return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
 }
 
+function findProductByEan(db, userId, code) {
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const normalized = normalizeCode(code);
+  const product = (db.products || [])
+    .filter((candidate) => lotIds.has(candidate.lotId))
+    .filter((candidate) => normalizeCode(candidate.ean) === normalized)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!product) return null;
+  const sourceLot = (db.lots || []).find((lot) => lot.id === product.lotId);
+  return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
+}
+
+function triageLookupFromProduct(product, row = {}) {
+  return {
+    productCode: product.codigoMl || "",
+    sku: product.sku || "",
+    ean: product.ean || "",
+    asin: "",
+    codigoBling2: product.codigoMl || "",
+    descricao: product.descricao || "",
+    categoria: product.categoria || "",
+    subcategoria: product.subcategoria || "",
+    source: "produto",
+    sourceLotId: product.sourceLotId || product.lotId || row.lot__id || "",
+    sourceLotName: product.sourceLotName || row.lot__nome_arquivo || ""
+  };
+}
+
+function triageLookupFromCatalog(product) {
+  return {
+    productCode: product.codigoMl || "",
+    sku: product.codigoMl || "",
+    ean: product.ean || "",
+    asin: "",
+    codigoBling2: product.codigoMl || "",
+    descricao: product.descricao || "",
+    categoria: product.categoria || "",
+    subcategoria: product.subcategoria || "",
+    source: "catalogo",
+    sourceLotId: "",
+    sourceLotName: "Banco historico"
+  };
+}
+
 function buildTransferItem(transferLotId, product) {
   return {
     id: randomUUID(),
@@ -4248,10 +4557,34 @@ function userFromRow(row) {
     parentUserId: row.parent_user_id || null,
     role: row.role || (row.parent_user_id ? "operator" : "owner"),
     operatorCode: row.operator_code ? Number(row.operator_code) : null,
+    triageAccess: Boolean(row.triage_access),
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
     createdAt: iso(row.created_at)
+  };
+}
+
+function triageItemFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    createdByUserId: row.created_by_user_id || row.user_id,
+    operatorUserId: row.operator_user_id || null,
+    code: row.code,
+    productCode: row.product_code || "",
+    sku: row.sku || "",
+    ean: row.ean || "",
+    asin: row.asin || "",
+    codigoBling2: row.codigo_bling2 || "",
+    descricao: row.descricao || "",
+    serial: row.serial || "",
+    status: row.status || "aguardando_teste",
+    destination: row.destination || "",
+    diagnosis: row.diagnosis || "",
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at || row.created_at),
+    diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
   };
 }
 
@@ -4770,6 +5103,10 @@ function normalizeDbTenants(db) {
       user.role = user.parentUserId ? "operator" : "owner";
       changed = true;
     }
+    if (user.triageAccess === undefined) {
+      user.triageAccess = false;
+      changed = true;
+    }
   }
   const operatorsByOwner = new Map();
   for (const user of db.users || []) {
@@ -4792,6 +5129,55 @@ function normalizeDbTenants(db) {
     }
   }
   return changed;
+}
+
+async function nextTriageCode(userId) {
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const prefix = `LAB-${day}-`;
+  let count = 0;
+  if (hasPostgres()) {
+    const result = await query("select count(*)::int as total from triage_items where user_id = $1 and code like $2", [userId, `${prefix}%`]);
+    count = Number(result.rows[0]?.total || 0);
+  } else {
+    const db = await readDb();
+    count = (db.triageItems || []).filter((item) => item.userId === userId && String(item.code || "").startsWith(prefix)).length;
+  }
+  return `${prefix}${String(count + 1).padStart(6, "0")}`;
+}
+
+function normalizeTriageInput(input = {}) {
+  const descricao = String(input.descricao || input.description || "").trim();
+  const sku = normalizeCode(input.sku);
+  const ean = String(input.ean || "").trim();
+  const asin = normalizeCode(input.asin);
+  const productCode = normalizeCode(input.productCode || input.codigoMl || input.codigo || sku || asin || ean);
+  if (!descricao && !sku && !ean && !asin && !productCode) throw new Error("Informe pelo menos uma identificacao do produto.");
+  return {
+    id: input.id,
+    userId: input.userId,
+    createdByUserId: input.createdByUserId || input.userId,
+    operatorUserId: input.operatorUserId || null,
+    code: normalizeCode(input.code),
+    productCode,
+    sku,
+    ean,
+    asin,
+    codigoBling2: normalizeCode(input.codigoBling2),
+    descricao,
+    serial: String(input.serial || "").trim(),
+    status: input.status || "aguardando_teste",
+    destination: input.destination || "",
+    diagnosis: String(input.diagnosis || "").trim(),
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt || input.createdAt,
+    diagnosedAt: input.diagnosedAt || null
+  };
+}
+
+function normalizeTriageDestination(value) {
+  const destination = normalizeCode(value);
+  if (!["LOJA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Internet ou RMA.");
+  return destination;
 }
 
 async function getPrivateUserBlingIntegration(userId) {

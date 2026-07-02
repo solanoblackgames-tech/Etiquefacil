@@ -15,6 +15,8 @@ const state = {
   operatorDateFilter: null,
   transferLots: [],
   selectedTransferLotId: null,
+  triageItems: [],
+  selectedTriageCode: null,
   blingDeposits: [],
   blingDepositsLoaded: false,
   profileSection: "entries",
@@ -181,6 +183,16 @@ function bindEvents() {
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
+  $("#triageCreateForm").addEventListener("submit", createTriageItem);
+  $("#triageCreateForm input[name='lookupCode']").addEventListener("change", lookupTriageCode);
+  $("#triageCreateForm input[name='lookupCode']").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    lookupTriageCode();
+  });
+  $("#triageItems").addEventListener("click", handleTriageItemsClick);
+  $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
+  $("#triageDetail").addEventListener("click", handleTriageDetailClick);
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#operatorForm").addEventListener("submit", createOperator);
@@ -1383,6 +1395,7 @@ async function showApp(user) {
   }
   await loadLots();
   await loadTransferLots();
+  if (user.triageAccess) await loadTriageItems();
   await applyRouteFromLocation({ replace: true });
   schedulePrimaryInputFocus();
 }
@@ -1390,6 +1403,7 @@ async function showApp(user) {
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
+  document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelector(".transfer-create-panel")?.classList.remove("hidden");
   document.body.classList.toggle("operator-view", operator);
 }
@@ -1564,6 +1578,7 @@ function renderOperators() {
           <span>Media/dia</span>
           <span>Melhor dia</span>
           <span>Ultima ativ.</span>
+          <span>Triagem</span>
           <span>Senha</span>
         </div>
         ${operators
@@ -1646,6 +1661,34 @@ function handleOperatorFilterChange(event) {
 }
 
 function handleOperatorFilterClick(event) {
+  const triageButton = event.target.closest("[data-toggle-operator-triage]");
+  if (triageButton) {
+    triageButton.disabled = true;
+    $("#operatorMessage").textContent = "";
+    try {
+      api(`/api/operators/${encodeURIComponent(triageButton.dataset.toggleOperatorTriage)}/triage-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ triageAccess: triageButton.dataset.triageAccess === "true" })
+      })
+        .then(async () => {
+          $("#operatorMessage").style.color = "#0f766e";
+          $("#operatorMessage").textContent = "Permissao de triagem do operador atualizada.";
+          await loadOperators();
+        })
+        .catch((error) => {
+          $("#operatorMessage").style.color = "";
+          $("#operatorMessage").textContent = error.message;
+        })
+        .finally(() => {
+          triageButton.disabled = false;
+        });
+    } catch {
+      triageButton.disabled = false;
+    }
+    return;
+  }
+
   const button = event.target.closest("[data-operator-period]");
   if (!button) return;
   const days = button.dataset.operatorPeriod;
@@ -1687,6 +1730,7 @@ function operatorViewModel(operator) {
     name: operator.name || "Operador",
     email: operator.email || "",
     operatorCode: operator.operatorCode || "",
+    triageAccess: Boolean(operator.triageAccess),
     logins,
     searches,
     scans,
@@ -1737,6 +1781,7 @@ function operatorTableRow(operator, index) {
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <strong>${operator.bestDayTotal}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
+      ${state.user?.triageAccess ? `<button type="button" class="ghost" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Liberado" : "Bloqueado"}</button>` : "<span>Sem acesso</span>"}
       <form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
@@ -1893,7 +1938,17 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
+  if (route.view === "triage" && !state.user?.triageAccess) {
+    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    return;
+  }
+
   setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
+  if (route.view === "triage" && route.triageCode) {
+    await loadTriageItems(route.triageCode);
+    await selectTriageItem(route.triageCode, { push: false });
+  }
   if (replace) updateRoute(routePathForView(route.view), { replace: true });
 }
 
@@ -1903,6 +1958,8 @@ function parseRoute(pathname) {
   if (parts[0] === "busca") return { view: "search" };
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
+  if (parts[0] === "triagem" && parts[1]) return { view: "triage", triageCode: parts[1] };
+  if (parts[0] === "triagem") return { view: "triage" };
   if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
   if (parts[0] === "lotes" && parts[1]) return { view: "lot", lotId: parts[1] };
   if (parts[0] === "lotes") return { view: "lots" };
@@ -1913,6 +1970,7 @@ function routePathForView(view) {
   if (view === "lots") return "/lotes";
   if (view === "search") return "/busca";
   if (view === "transfers") return "/transferencias";
+  if (view === "triage") return "/triagem";
   if (view === "profile") return "/perfil";
   return "/perfil";
 }
@@ -1939,10 +1997,13 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
     state.previewLotId = null;
     state.selectedRz = null;
     state.selectedTransferLotId = null;
+    state.selectedTriageCode = null;
     renderLots();
     renderTransferLots();
+    renderTriageItems();
     clearLotDetail();
     clearTransferDetail();
+    clearTriageDetail();
   }
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === target);
@@ -1951,6 +2012,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   $("#lotsTab").classList.toggle("hidden", target !== "lots");
   $("#searchTab").classList.toggle("hidden", target !== "search");
   $("#transfersTab").classList.toggle("hidden", target !== "transfers");
+  $("#triageTab").classList.toggle("hidden", target !== "triage");
   $("#profileTab").classList.toggle("hidden", target !== "profile");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
@@ -1959,6 +2021,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
     loadBlingDeposits();
     loadTransferLots(state.selectedTransferLotId);
   }
+  if (target === "triage") loadTriageItems(state.selectedTriageCode);
   schedulePrimaryInputFocus();
 }
 
@@ -2457,6 +2520,7 @@ function adminUserRow(user) {
             <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
             <button type="submit">Salvar senha</button>
           </form>
+          <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
       </div>
@@ -2490,6 +2554,7 @@ function adminOperatorRow(operator) {
           <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
           <button type="submit">Salvar senha</button>
         </form>
+        <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
     </div>
@@ -2531,6 +2596,27 @@ async function handleAdminPasswordSubmit(event) {
 }
 
 async function handleAdminUsersClick(event) {
+  const triageButton = event.target.closest("[data-toggle-admin-triage]");
+  if (triageButton) {
+    triageButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(triageButton.dataset.toggleAdminTriage)}/triage-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ triageAccess: triageButton.dataset.triageAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de triagem atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      triageButton.disabled = false;
+    }
+    return;
+  }
+
   const button = event.target.closest("[data-delete-user]");
   if (!button) return;
   const user = findAdminUser(button.dataset.deleteUser);
@@ -4817,6 +4903,233 @@ function palletRow(item) {
       <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button></span>
     </article>
   `;
+}
+
+async function loadTriageItems(selectCode = null) {
+  if (!state.user?.triageAccess) return;
+  try {
+    const response = await api("/api/triage/items");
+    state.triageItems = response.items || [];
+    renderTriageItems();
+    if (selectCode) await selectTriageItem(selectCode, { push: false });
+  } catch (error) {
+    $("#triageMessage").textContent = error.message;
+  }
+}
+
+async function createTriageItem(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  $("#triageMessage").textContent = "";
+  try {
+    if (new FormData(form).get("lookupCode") && !new FormData(form).get("descricao") && !new FormData(form).get("sku") && !new FormData(form).get("ean")) {
+      await lookupTriageCode();
+    }
+    const response = await api("/api/triage/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+    });
+    form.reset();
+    renderTriageLookupPreview(null);
+    state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)];
+    state.selectedTriageCode = response.item.code;
+    renderTriageItems();
+    renderTriageDetail(response.item);
+    updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
+    $("#triageMessage").style.color = "#0f766e";
+    $("#triageMessage").textContent = "Etiqueta QR gerada.";
+  } catch (error) {
+    $("#triageMessage").style.color = "";
+    $("#triageMessage").textContent = error.message;
+  }
+}
+
+async function lookupTriageCode() {
+  const form = $("#triageCreateForm");
+  const code = String(new FormData(form).get("lookupCode") || "").trim();
+  if (!code) return null;
+  $("#triageMessage").textContent = "";
+  try {
+    const response = await api(`/api/triage/lookup?code=${encodeURIComponent(code)}`);
+    if (!response.product) {
+      renderTriageLookupPreview(null, "Produto nao encontrado. Preencha manualmente somente o necessario.");
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='descricao']"]);
+      return null;
+    }
+    fillTriageProduct(response.product);
+    renderTriageLookupPreview(response.product);
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='serial']", "#triageCreateForm button[type='submit']"]);
+    return response.product;
+  } catch (error) {
+    $("#triageMessage").textContent = error.message;
+    return null;
+  }
+}
+
+function fillTriageProduct(product) {
+  const form = $("#triageCreateForm");
+  for (const [name, value] of Object.entries({
+    productCode: product.productCode,
+    descricao: product.descricao,
+    sku: product.sku,
+    ean: product.ean,
+    asin: product.asin,
+    codigoBling2: product.codigoBling2
+  })) {
+    const input = form.elements.namedItem(name);
+    if (input) input.value = value || "";
+  }
+}
+
+function renderTriageLookupPreview(product, message = "") {
+  const wrapper = $("#triageLookupPreview");
+  if (!wrapper) return;
+  if (!product && !message) {
+    wrapper.classList.add("hidden");
+    wrapper.innerHTML = "";
+    return;
+  }
+  wrapper.classList.remove("hidden");
+  wrapper.innerHTML = product
+    ? `
+      <strong>Produto encontrado</strong>
+      <span>${escapeHtml(product.descricao || "-")}</span>
+      <small>SKU ${escapeHtml(product.sku || "-")} · EAN ${escapeHtml(product.ean || "-")} · Origem ${escapeHtml(product.sourceLotName || product.source || "-")}</small>
+    `
+    : `<span>${escapeHtml(message)}</span>`;
+}
+
+function renderTriageItems() {
+  const wrapper = $("#triageItems");
+  if (!wrapper) return;
+  if (!state.triageItems.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum produto em triagem.</p>';
+    return;
+  }
+  wrapper.innerHTML = state.triageItems.map((item) => `
+    <article class="lot-card triage-card ${state.selectedTriageCode === item.code ? "active" : ""}" data-triage-code="${escapeHtml(item.code)}">
+      <strong>${escapeHtml(item.code)}</strong>
+      <span>${escapeHtml(item.descricao || item.sku || item.ean || item.asin || "Produto sem descricao")}</span>
+      <small>${triageStatusLabel(item)}${item.destination ? ` - ${escapeHtml(item.destination)}` : ""}</small>
+    </article>
+  `).join("");
+}
+
+function handleTriageItemsClick(event) {
+  const card = event.target.closest("[data-triage-code]");
+  if (!card) return;
+  selectTriageItem(card.dataset.triageCode);
+}
+
+async function selectTriageItem(code, { push = true } = {}) {
+  try {
+    const response = await api(`/api/triage/items/${encodeURIComponent(code)}`);
+    const item = response.item;
+    state.selectedTriageCode = item.code;
+    state.triageItems = [item, ...state.triageItems.filter((candidate) => candidate.code !== item.code)]
+      .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    renderTriageItems();
+    renderTriageDetail(item);
+    if (push) updateRoute(`/triagem/${encodeURIComponent(item.code)}`);
+    return item;
+  } catch (error) {
+    $("#triageDetail").classList.add("empty");
+    $("#triageDetail").textContent = error.message;
+    return null;
+  }
+}
+
+function clearTriageDetail() {
+  const detail = $("#triageDetail");
+  if (!detail) return;
+  detail.classList.add("empty");
+  detail.textContent = "Selecione um produto da triagem.";
+}
+
+function renderTriageDetail(item) {
+  const detail = $("#triageDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="triage-detail-grid">
+      <div class="triage-label-preview" id="triageLabelPrintable">
+        <strong>ETIQUEFACIL - TRIAGEM</strong>
+        <img src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+        <span>${escapeHtml(item.code)}</span>
+        <small>${escapeHtml(item.descricao || item.sku || item.ean || item.asin || "")}</small>
+      </div>
+      <div class="triage-info">
+        <div class="detail-heading">
+          <span class="muted">Identificacao interna</span>
+          <h2>${escapeHtml(item.code)}</h2>
+        </div>
+        <dl class="triage-fields">
+          <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
+          <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
+          <div><dt>Descricao</dt><dd>${escapeHtml(item.descricao || "-")}</dd></div>
+          <div><dt>SKU</dt><dd>${escapeHtml(item.sku || "-")}</dd></div>
+          <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
+          <div><dt>ASIN</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
+          <div><dt>Codigo Bling 2</dt><dd>${escapeHtml(item.codigoBling2 || "-")}</dd></div>
+          <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+          <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
+        </dl>
+        <div class="settings-actions">
+          <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
+          <button type="button" data-print-triage-label>Imprimir etiqueta</button>
+        </div>
+      </div>
+    </section>
+    <form class="triage-diagnosis-form">
+      <div class="panel-heading">
+        <span class="muted">Diagnostico</span>
+        <h3>Saida do teste</h3>
+      </div>
+      <label>Diagnostico<textarea name="diagnosis" rows="4" required>${escapeHtml(item.diagnosis || "")}</textarea></label>
+      <label>Destino
+        <select name="destination" required>
+          <option value="">Selecione</option>
+          <option value="LOJA" ${item.destination === "LOJA" ? "selected" : ""}>Loja</option>
+          <option value="INTERNET" ${item.destination === "INTERNET" ? "selected" : ""}>Internet</option>
+          <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
+        </select>
+      </label>
+      <button type="submit">Salvar diagnostico</button>
+      <p class="message" id="triageDetailMessage"></p>
+    </form>
+  `;
+}
+
+async function handleTriageDetailSubmit(event) {
+  if (!event.target.matches(".triage-diagnosis-form")) return;
+  event.preventDefault();
+  const message = $("#triageDetailMessage");
+  try {
+    const response = await api(`/api/triage/items/${encodeURIComponent(state.selectedTriageCode)}/diagnosis`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+    });
+    state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)];
+    renderTriageItems();
+    renderTriageDetail(response.item);
+    $("#triageDetailMessage").style.color = "#0f766e";
+    $("#triageDetailMessage").textContent = "Diagnostico salvo.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+function handleTriageDetailClick(event) {
+  if (!event.target.closest("[data-print-triage-label]")) return;
+  document.body.classList.add("printing-triage-label");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-triage-label"), 1000);
+}
+
+function triageStatusLabel(item) {
+  if (item.status === "diagnosticado") return "Diagnosticado";
+  return "Aguardando teste";
 }
 
 async function api(url, options = {}) {
