@@ -759,15 +759,18 @@ h3 {
   aspect-ratio: 3 / 2;
   border: 1px solid var(--line);
   border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 10px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 4px;
+  grid-template-rows: 112px 22px 12px;
+  justify-items: center;
+  padding: 10px 12px;
   text-align: center;
 }
 
 .triage-label-preview img {
   height: 112px;
+  image-rendering: pixelated;
   width: 112px;
 }
 
@@ -778,6 +781,9 @@ h3 {
 
 .triage-label-preview small {
   color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2789,10 +2795,50 @@ h3 {
   #triageLabelPrintable {
     border-radius: 0;
     box-shadow: none;
+    box-sizing: border-box;
+    display: grid;
+    gap: 1mm;
+    grid-template-rows: 25.5mm 5.6mm 2.6mm;
+    justify-items: center;
+    overflow: hidden;
+    padding: 2.2mm 3mm 1.8mm;
+    text-align: center;
+  }
+
+  #triageLabelPrintable img {
+    height: 25.5mm;
+    image-rendering: pixelated;
+    width: 25.5mm;
+  }
+
+  #triageLabelPrintable span {
+    color: #111;
+    font-family: Arial Black, Arial, sans-serif;
+    font-size: 15px;
+    font-weight: 900;
+    line-height: 1;
+    max-width: 54mm;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #triageLabelPrintable small {
+    align-self: end;
+    color: #444;
+    font-family: Arial, sans-serif;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 1;
+    max-width: 54mm;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .label-print:last-child,
-  .transfer-qr-label:last-child {
+  .transfer-qr-label:last-child,
+  #triageLabelPrintable:last-child {
     break-after: auto;
     page-break-after: avoid;
   }

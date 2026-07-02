@@ -5049,14 +5049,14 @@ function clearTriageDetail() {
 
 function renderTriageDetail(item) {
   const detail = $("#triageDetail");
+  const footer = labelFooterText(labelMeta(item.createdAt));
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="triage-detail-grid">
       <div class="triage-label-preview" id="triageLabelPrintable">
-        <strong>ETIQUEFACIL - TRIAGEM</strong>
         <img src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
         <span>${escapeHtml(item.code)}</span>
-        <small>${escapeHtml(item.descricao || item.sku || item.ean || item.asin || "")}</small>
+        <small>${escapeHtml(footer)}</small>
       </div>
       <div class="triage-info">
         <div class="detail-heading">
