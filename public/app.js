@@ -1474,6 +1474,7 @@ function setProfileSection(section = "entries") {
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
+  $("#profileTab").scrollTop = 0;
   if (section === "sync") loadBlingIntegration();
   if (section === "operators") loadOperators();
 }

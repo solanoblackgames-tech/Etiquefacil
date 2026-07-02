@@ -165,6 +165,8 @@ h3 {
 }
 
 #profileOperators .entry-panel {
+  display: grid;
+  gap: 12px;
   padding: 14px 16px 16px;
 }
 
@@ -222,9 +224,9 @@ h3 {
 .operator-page-header {
   align-items: center;
   display: flex;
-  gap: 14px;
+  gap: 18px;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
   min-width: 0;
   width: 100%;
 }
@@ -246,7 +248,7 @@ h3 {
   justify-content: flex-end;
   min-width: 0;
   overflow: hidden;
-  padding: 8px 10px;
+  padding: 12px 14px;
 }
 
 .operator-header-actions > div {
@@ -273,6 +275,8 @@ h3 {
 
 .operator-header-actions button {
   flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 16px;
   white-space: nowrap;
 }
 
@@ -298,6 +302,7 @@ h3 {
   display: grid;
   gap: 14px;
   margin-top: 6px;
+  min-width: 0;
 }
 
 .operator-filter {
@@ -490,7 +495,10 @@ h3 {
 .operator-table {
   border: 1px solid #c9d9ca;
   border-radius: 8px;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
 }
 
 .operator-row {
@@ -577,10 +585,10 @@ h3 {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 14px;
   min-height: 0;
   overflow: auto;
-  padding: 14px 16px 20px;
+  padding: 18px 18px 22px;
 }
 
 .profile-menu {
@@ -590,17 +598,18 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: flex;
-  gap: 6px;
+  gap: 8px;
   overflow-x: auto;
-  padding: 6px;
+  padding: 8px;
 }
 
 .profile-menu button {
   background: transparent;
   color: var(--muted);
   flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0 18px;
+  font-size: 15px;
+  min-height: 46px;
+  padding: 0 26px;
   white-space: nowrap;
 }
 
