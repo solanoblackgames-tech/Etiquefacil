@@ -7,6 +7,7 @@ import {
   buildBlingStockEntryPayload,
   buildBlingStockExitPayload,
   buildBlingStockTransferPayload,
+  blingProductToTriageLookup,
   syncBlingProducts
 } from "../src/bling-api.js";
 
@@ -34,6 +35,32 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   assert.equal(payload.marca, "JQQR53377");
   assert.equal(payload.imagemURL, "https://img.example/produto.jpg");
   assert.equal(payload.linkExterno, "https://example/produto");
+});
+
+test("Bling product maps to triage lookup fields", () => {
+  const product = blingProductToTriageLookup(
+    {
+      codigo: "190626L269",
+      nome: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
+      gtin: "7891234567890",
+      categoria: { descricao: "Eletro" }
+    },
+    "fallback"
+  );
+
+  assert.deepEqual(product, {
+    productCode: "190626L269",
+    sku: "190626L269",
+    ean: "7891234567890",
+    asin: "",
+    codigoBling2: "190626L269",
+    descricao: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
+    categoria: "Eletro",
+    subcategoria: "",
+    source: "bling",
+    sourceLotId: "",
+    sourceLotName: "Bling"
+  });
 });
 
 test("Bling product supplier payload maps supplier cost relationship", () => {

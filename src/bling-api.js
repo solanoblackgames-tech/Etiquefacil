@@ -303,6 +303,32 @@ export async function syncBlingStockTransfers({ integration, items, depositoOrig
   };
 }
 
+export async function lookupBlingProductForTriage({ integration, code, saveIntegration }) {
+  const normalizedCode = normalizeCode(code);
+  if (!normalizedCode) return null;
+  const client = new BlingApiClient(integration, saveIntegration);
+  const product = await client.findProductBySku(normalizedCode, { detail: true });
+  return product ? blingProductToTriageLookup(product, normalizedCode) : null;
+}
+
+export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
+  const code = normalizeCode(product.codigo || fallbackCode);
+  const ean = String(product.gtin || product.gtinEmbalagem || product.ean || "").trim();
+  return {
+    productCode: code,
+    sku: code,
+    ean,
+    asin: "",
+    codigoBling2: code,
+    descricao: product.nome || product.descricaoCurta || product.descricao || code,
+    categoria: product.categoria?.descricao || product.categoria || "",
+    subcategoria: "",
+    source: "bling",
+    sourceLotId: "",
+    sourceLotName: "Bling"
+  };
+}
+
 class BlingApiClient {
   constructor(integration, saveIntegration) {
     if (!integration?.accessToken) throw new Error("Autorize a integracao Bling antes de enviar dados.");
@@ -312,11 +338,14 @@ class BlingApiClient {
     this.supplierContactType = null;
   }
 
-  async findProductBySku(sku) {
+  async findProductBySku(sku, { detail = false } = {}) {
     const payload = await this.request("/produtos", {
       query: { "codigos[]": sku, criterio: 5, limite: 1 }
     });
-    return (payload?.data || []).find((product) => String(product.codigo || "") === String(sku));
+    const product = (payload?.data || []).find((candidate) => normalizeCode(candidate.codigo) === normalizeCode(sku));
+    if (!detail || !product?.id) return product || null;
+    const detailPayload = await this.request(`/produtos/${encodeURIComponent(product.id)}`);
+    return detailPayload?.data || product;
   }
 
   async createProduct(payload) {
@@ -541,6 +570,10 @@ function blingErrorMessage(payload, status) {
 
 function compactObject(input) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+}
+
+function normalizeCode(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function normalizeText(value) {
