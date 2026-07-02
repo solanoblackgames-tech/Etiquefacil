@@ -5227,6 +5227,7 @@ function renderTriageDetail(item) {
           <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
+          ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
         <div class="settings-actions">
           <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
@@ -5292,6 +5293,7 @@ function renderTriageItemView(item) {
         <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
         <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
         ${item.diagnosedAt ? `<div><dt>Diagnostico em</dt><dd>${formatDateTime(item.diagnosedAt)}</dd></div>` : ""}
+        ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         ${item.diagnosis ? `<div class="wide-field"><dt>Diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
     </section>
@@ -5374,6 +5376,12 @@ function handleTriageDetailClick(event) {
 function triageStatusLabel(item) {
   if (item.status === "diagnosticado") return "Diagnosticado";
   return "Aguardando teste";
+}
+
+function triageDiagnosedByLabel(item) {
+  const user = item?.diagnosedByUser;
+  if (user?.name && user?.email) return `${user.name} (${user.email})`;
+  return user?.name || user?.email || "Nao registrado";
 }
 
 async function api(url, options = {}) {

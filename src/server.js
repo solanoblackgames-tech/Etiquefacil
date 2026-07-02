@@ -1366,8 +1366,10 @@ function triageStatusUrl(req, code) {
 async function withTriageQrData(req, value) {
   if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item)));
   const statusUrl = triageStatusUrl(req, value.code);
+  const diagnosedByUser = value.diagnosedAt && value.operatorUserId ? await getPublicUserById(value.operatorUserId) : null;
   return {
     ...value,
+    diagnosedByUser,
     statusUrl,
     qrDataUrl: await QRCode.toDataURL(statusUrl, { margin: 1, width: 220 })
   };
