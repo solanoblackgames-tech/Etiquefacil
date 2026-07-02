@@ -695,10 +695,8 @@ export async function lookupTriageProduct(userId, code) {
         join lots l on l.id = p.lot_id
         where l.user_id = $1
           and (
-            upper(trim(p.codigo_ml)) = upper(trim($2))
-            or upper(trim(p.sku)) = upper(trim($2))
+            upper(trim(p.sku)) = upper(trim($2))
             or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
-            or upper(trim(p.ean)) = upper(trim($2))
           )
         order by p.created_at desc
         limit 1
@@ -706,25 +704,13 @@ export async function lookupTriageProduct(userId, code) {
       [userId, normalized]
     );
     if (productResult.rows.length) return triageLookupFromProduct(productFromRow(productResult.rows[0]), productResult.rows[0]);
-
-    const catalogResult = await query(
-      `select * from catalog_products
-       where upper(trim(codigo_ml)) = upper(trim($1))
-          or upper(trim(ean)) = upper(trim($1))
-       order by updated_at desc
-       limit 1`,
-      [normalized]
-    );
-    return catalogResult.rows[0] ? triageLookupFromCatalog(catalogProductFromRow(catalogResult.rows[0])) : null;
+    return null;
   }
 
   const db = await readDb();
-  const product = findTransferProduct(db, userId, normalized) || findProductByEan(db, userId, normalized);
+  const product = findTransferProduct(db, userId, normalized);
   if (product) return triageLookupFromProduct(product, { lot__nome_arquivo: product.sourceLotName || "" });
-  const catalog = (db.catalogProducts || []).find(
-    (candidate) => normalizeCode(candidate.codigoMl) === normalized || normalizeCode(candidate.ean) === normalized
-  );
-  return catalog ? triageLookupFromCatalog(catalog) : null;
+  return null;
 }
 
 export async function updateOperatorPasswordForOwner(ownerUserId, operatorUserId, password) {
@@ -4431,17 +4417,6 @@ function findTransferProduct(db, userId, code) {
   return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
 }
 
-function findProductByEan(db, userId, code) {
-  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
-  const normalized = normalizeCode(code);
-  const product = (db.products || [])
-    .filter((candidate) => lotIds.has(candidate.lotId))
-    .filter((candidate) => normalizeCode(candidate.ean) === normalized)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (!product) return null;
-  const sourceLot = (db.lots || []).find((lot) => lot.id === product.lotId);
-  return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
-}
 
 function triageLookupFromProduct(product, row = {}) {
   return {
@@ -4459,21 +4434,6 @@ function triageLookupFromProduct(product, row = {}) {
   };
 }
 
-function triageLookupFromCatalog(product) {
-  return {
-    productCode: product.codigoMl || "",
-    sku: product.codigoMl || "",
-    ean: product.ean || "",
-    asin: product.codigoMl || "",
-    codigoBling2: product.codigoMl || "",
-    descricao: product.descricao || "",
-    categoria: product.categoria || "",
-    subcategoria: product.subcategoria || "",
-    source: "catalogo",
-    sourceLotId: "",
-    sourceLotName: "Banco historico"
-  };
-}
 
 function buildTransferItem(transferLotId, product) {
   return {
