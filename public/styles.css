@@ -550,13 +550,20 @@ h3 {
 }
 
 .app {
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .profile-shell {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 12px;
+  min-height: 0;
+  overflow: auto;
   padding: 14px 16px 20px;
 }
 
@@ -648,7 +655,9 @@ h3 {
 
 .upload-band {
   background: linear-gradient(180deg, #f8fafb 0%, #eef4f6 100%);
-  min-height: calc(100vh - 73px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 28px 24px 36px;
 }
 
@@ -708,10 +717,11 @@ h3 {
 
 .triage-shell {
   display: grid;
+  flex: 1 1 auto;
   gap: 16px;
   grid-template-rows: auto minmax(0, 1fr);
-  height: calc(100vh - 73px);
   margin: 0 auto;
+  min-height: 0;
   max-width: 1380px;
   overflow: hidden;
   padding: 24px;
@@ -903,9 +913,11 @@ h3 {
 }
 
 .layout {
+  align-items: stretch;
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: 360px minmax(0, 1fr);
-  height: calc(100vh - 73px);
+  height: auto;
   min-height: 0;
   overflow: hidden;
   padding: 24px;
@@ -915,9 +927,13 @@ h3 {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px 0 0 8px;
+  height: 100%;
   min-height: 0;
+  overscroll-behavior: contain;
   padding: 18px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
 
 .aside-heading {
@@ -996,6 +1012,9 @@ h3 {
 
 .detail,
 .search {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 24px;
 }
 
@@ -1004,8 +1023,10 @@ h3 {
   border: 1px solid var(--line);
   border-left: 0;
   border-radius: 0 8px 8px 0;
+  height: 100%;
   min-height: 0;
   min-width: 0;
+  overscroll-behavior: contain;
   overflow: auto;
 }
 
@@ -1273,7 +1294,7 @@ h3 {
 
 .scan-only .layout {
   grid-template-columns: 1fr;
-  min-height: calc(100vh - 73px);
+  min-height: 0;
 }
 
 .lot-focus .layout {
@@ -1765,9 +1786,10 @@ h3 {
 
 .transfer-shell {
   display: grid;
+  flex: 1 1 auto;
   gap: 18px;
   grid-template-rows: auto minmax(0, 1fr);
-  height: calc(100vh - 73px);
+  min-height: 0;
   overflow: hidden;
   padding: 22px 24px;
 }
@@ -2101,7 +2123,10 @@ h3 {
 
 .admin-shell {
   display: grid;
+  flex: 1 1 auto;
   gap: 18px;
+  min-height: 0;
+  overflow: auto;
   padding: 22px 24px;
 }
 
@@ -2914,6 +2939,9 @@ h3 {
   .lot-list {
     border: 1px solid var(--line);
     border-radius: 8px;
+    height: auto;
+    overflow: visible;
+    scrollbar-gutter: auto;
   }
 
   .layout {
