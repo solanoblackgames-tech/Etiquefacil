@@ -4974,8 +4974,7 @@ function fillTriageProduct(product) {
     descricao: product.descricao,
     sku: product.sku,
     ean: product.ean,
-    asin: product.asin,
-    codigoBling2: product.codigoBling2
+    asin: product.asin
   })) {
     const input = form.elements.namedItem(name);
     if (input) input.value = value || "";
@@ -5069,8 +5068,7 @@ function renderTriageDetail(item) {
           <div><dt>Descricao</dt><dd>${escapeHtml(item.descricao || "-")}</dd></div>
           <div><dt>SKU</dt><dd>${escapeHtml(item.sku || "-")}</dd></div>
           <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
-          <div><dt>ASIN</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
-          <div><dt>Codigo Bling 2</dt><dd>${escapeHtml(item.codigoBling2 || "-")}</dd></div>
+          <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
         </dl>
