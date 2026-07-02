@@ -1305,7 +1305,7 @@ function operatorUserId(req) {
 }
 
 function triageStatusUrl(req, code) {
-  return `${req.protocol}://${req.get("host")}/triagem/${encodeURIComponent(code)}`;
+  return `${req.protocol}://${req.get("host")}/triagem/visualizar/${encodeURIComponent(code)}`;
 }
 
 async function withTriageQrData(req, value) {

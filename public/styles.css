@@ -748,6 +748,32 @@ h3 {
   color: var(--muted);
 }
 
+.triage-view-only {
+  max-width: 980px;
+}
+
+.triage-view-only .triage-create-panel,
+.triage-view-only .lot-list {
+  display: none;
+}
+
+.triage-view-only .triage-layout {
+  display: block;
+}
+
+.triage-readonly-view {
+  display: grid;
+  gap: 12px;
+}
+
+.triage-readonly-view .triage-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.triage-readonly-view .triage-fields .wide-field {
+  grid-column: 1 / -1;
+}
+
 .triage-detail-grid {
   display: grid;
   gap: 18px;

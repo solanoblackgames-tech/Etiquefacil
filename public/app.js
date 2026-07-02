@@ -1944,6 +1944,19 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
+  if (route.view === "triageView" && !state.user?.triageAccess) {
+    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    return;
+  }
+
+  if (route.view === "triageView") {
+    setMainTab("triage", { push: false, triageViewOnly: true });
+    await showTriageItemView(route.triageCode);
+    if (replace) updateRoute(`/triagem/visualizar/${encodeURIComponent(route.triageCode)}`, { replace: true });
+    return;
+  }
+
   setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
   if (route.view === "triage" && route.triageCode) {
     await loadTriageItems(route.triageCode);
@@ -1958,6 +1971,7 @@ function parseRoute(pathname) {
   if (parts[0] === "busca") return { view: "search" };
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
+  if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
   if (parts[0] === "triagem" && parts[1]) return { view: "triage", triageCode: parts[1] };
   if (parts[0] === "triagem") return { view: "triage" };
   if (parts[0] === "lotes" && parts[1] && parts[2] === "rz" && parts[3]) return { view: "lotRz", lotId: parts[1], codigoRz: parts[3] };
@@ -1989,7 +2003,7 @@ function updateRoute(path, { replace = false } = {}) {
   window.history[replace ? "replaceState" : "pushState"]({}, "", next);
 }
 
-function setMainTab(tab, { push = true, resetSelection = false } = {}) {
+function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
   let target = tab || "profile";
   if (state.user?.role === "operator" && target === "profile") target = "lots";
   if (resetSelection) {
@@ -2013,6 +2027,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
   $("#searchTab").classList.toggle("hidden", target !== "search");
   $("#transfersTab").classList.toggle("hidden", target !== "transfers");
   $("#triageTab").classList.toggle("hidden", target !== "triage");
+  $("#triageTab").classList.toggle("triage-view-only", target === "triage" && triageViewOnly);
   $("#profileTab").classList.toggle("hidden", target !== "profile");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
@@ -2021,7 +2036,7 @@ function setMainTab(tab, { push = true, resetSelection = false } = {}) {
     loadBlingDeposits();
     loadTransferLots(state.selectedTransferLotId);
   }
-  if (target === "triage") loadTriageItems(state.selectedTriageCode);
+  if (target === "triage" && !triageViewOnly) loadTriageItems(state.selectedTriageCode);
   schedulePrimaryInputFocus();
 }
 
@@ -5039,6 +5054,23 @@ async function selectTriageItem(code, { push = true } = {}) {
   }
 }
 
+async function showTriageItemView(code) {
+  const detail = $("#triageDetail");
+  try {
+    detail.classList.add("empty");
+    detail.textContent = "Carregando item da triagem...";
+    const response = await api(`/api/triage/items/${encodeURIComponent(code)}`);
+    const item = response.item;
+    state.selectedTriageCode = item.code;
+    renderTriageItemView(item);
+    return item;
+  } catch (error) {
+    detail.classList.add("empty");
+    detail.textContent = error.message;
+    return null;
+  }
+}
+
 function clearTriageDetail() {
   const detail = $("#triageDetail");
   if (!detail) return;
@@ -5095,6 +5127,31 @@ function renderTriageDetail(item) {
       <button type="submit">Salvar diagnostico</button>
       <p class="message" id="triageDetailMessage"></p>
     </form>
+  `;
+}
+
+function renderTriageItemView(item) {
+  const detail = $("#triageDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="triage-readonly-view">
+      <div class="detail-heading">
+        <span class="muted">Visualizacao da etiqueta</span>
+        <h2>${escapeHtml(item.code)}</h2>
+      </div>
+      <dl class="triage-fields">
+        <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
+        <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
+        <div><dt>Descricao</dt><dd>${escapeHtml(item.descricao || "-")}</dd></div>
+        <div><dt>SKU</dt><dd>${escapeHtml(item.sku || "-")}</dd></div>
+        <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
+        <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
+        <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+        <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
+        ${item.diagnosedAt ? `<div><dt>Diagnostico em</dt><dd>${formatDateTime(item.diagnosedAt)}</dd></div>` : ""}
+        ${item.diagnosis ? `<div class="wide-field"><dt>Diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
+      </dl>
+    </section>
   `;
 }
 
