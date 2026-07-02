@@ -314,11 +314,12 @@ export async function lookupBlingProductForTriage({ integration, code, saveInteg
 export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
   const code = normalizeCode(product.codigo || fallbackCode);
   const ean = String(product.gtin || product.gtinEmbalagem || product.ean || "").trim();
+  const asin = normalizeCode(product.marca);
   return {
     productCode: code,
     sku: code,
     ean,
-    asin: "",
+    asin,
     codigoBling2: code,
     descricao: product.nome || product.descricaoCurta || product.descricao || code,
     categoria: product.categoria?.descricao || product.categoria || "",

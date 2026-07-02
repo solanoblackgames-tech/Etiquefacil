@@ -43,6 +43,7 @@ test("Bling product maps to triage lookup fields", () => {
       codigo: "190626L269",
       nome: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
       gtin: "7891234567890",
+      marca: "B0ABC12345",
       categoria: { descricao: "Eletro" }
     },
     "fallback"
@@ -52,7 +53,7 @@ test("Bling product maps to triage lookup fields", () => {
     productCode: "190626L269",
     sku: "190626L269",
     ean: "7891234567890",
-    asin: "",
+    asin: "B0ABC12345",
     codigoBling2: "190626L269",
     descricao: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
     categoria: "Eletro",
