@@ -2754,7 +2754,7 @@ h3 {
 
   body.printing-label,
   body.printing-triage-label {
-    height: auto;
+    min-height: 40mm;
     overflow: visible;
   }
 
@@ -2782,7 +2782,9 @@ h3 {
     display: block !important;
     height: auto;
     left: 0;
+    margin: 0;
     overflow: visible;
+    padding: 0;
     position: static;
     top: 0;
     width: 60mm;
@@ -2811,8 +2813,6 @@ h3 {
   #triageLabelPrintable {
     border: 0;
     height: 40mm;
-    break-after: page;
-    page-break-after: always;
     page-break-before: avoid;
     page-break-inside: avoid;
     width: 60mm;
@@ -2862,11 +2862,10 @@ h3 {
     white-space: nowrap;
   }
 
-  .label-print:last-child,
-  .transfer-qr-label:last-child,
-  #triageLabelPrintable:last-child {
-    break-after: auto;
-    page-break-after: avoid;
+  .label-print:not(:last-of-type),
+  .transfer-qr-label:not(:last-of-type) {
+    break-after: page;
+    page-break-after: always;
   }
 
   .label-controls {
