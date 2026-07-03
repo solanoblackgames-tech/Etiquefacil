@@ -5014,6 +5014,7 @@ function diverseItemsTable(lot) {
         <span>SKU</span>
         <span>Codigo</span>
         <span>Produto</span>
+        <span>Operador</span>
         <span>Qtd</span>
         <span>Venda</span>
         <span>Custo</span>
@@ -5037,6 +5038,7 @@ function diverseItemRow(item, startsRz = false) {
       <strong>${escapeHtml(product.sku || "")}</strong>
       <span>${escapeHtml(product.codigoMl || "")}</span>
       <span>${escapeHtml(product.descricao || "")}</span>
+      <span>${escapeHtml(productOperatorLabel(product))}</span>
       <span>${item.qtdEsperada || 0}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
@@ -5047,6 +5049,15 @@ function diverseItemRow(item, startsRz = false) {
       </span>
     </article>
   `;
+}
+
+function productOperatorLabel(product) {
+  const user = product.operatorUser || product.createdByUser || null;
+  if (!user) return "-";
+  const name = String(user.name || "").trim();
+  const email = String(user.email || "").trim();
+  if (user.operatorCode) return `${name || email || "Operador"} #${user.operatorCode}`;
+  return name || email || "-";
 }
 
 function palletRow(item) {

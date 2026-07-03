@@ -4,7 +4,10 @@ const COMPLETE_EXPORT_ORIGINS = new Set(["planilha", "entrada_diversos", "lote_s
 const EXCESS_EXPORT_ORIGINS = new Set(["excedente_externo", "lote_sem_planilha_manual"]);
 
 export function summarizeLot(db, lot, includeItems = false) {
-  const products = db.products.filter((product) => product.lotId === lot.id);
+  const usersById = new Map((db.users || []).map((user) => [user.id, user]));
+  const products = db.products
+    .filter((product) => product.lotId === lot.id)
+    .map((product) => enrichProductUsers(product, usersById));
   const rawItems = db.rzItems.filter((item) => item.lotId === lot.id);
   const items = consolidateRzItems(rawItems);
   const rzs = [...new Set(items.map((item) => item.codigoRz))]
@@ -40,6 +43,27 @@ export function summarizeLot(db, lot, includeItems = false) {
   }
 
   return result;
+}
+
+function enrichProductUsers(product, usersById) {
+  const createdByUser = product.createdByUserId ? usersById.get(product.createdByUserId) || null : null;
+  const operatorUser = product.operatorUserId ? usersById.get(product.operatorUserId) || null : null;
+  return {
+    ...product,
+    createdByUser: publicProductUser(createdByUser),
+    operatorUser: publicProductUser(operatorUser)
+  };
+}
+
+function publicProductUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    name: user.name || "",
+    email: user.email || "",
+    role: user.role || "",
+    operatorCode: user.operatorCode || null
+  };
 }
 
 export function findProductHistory(db, userId, currentLotId, codigoMl) {

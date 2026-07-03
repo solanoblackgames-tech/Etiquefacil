@@ -1771,7 +1771,7 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 0.65fr 0.9fr 1fr 2fr 0.45fr 0.7fr 0.7fr minmax(160px, 0.95fr);
+  grid-template-columns: 0.65fr 0.9fr 1fr 1.8fr 1fr 0.45fr 0.7fr 0.7fr minmax(160px, 0.95fr);
   padding: 10px;
 }
 

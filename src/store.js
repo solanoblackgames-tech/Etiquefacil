@@ -1828,7 +1828,7 @@ export async function createManualExternalExcess({ userId, createdByUserId = use
   if (existing) throw new Error("Este Codigo ML ja existe no lote atual.");
 
   const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
-  const { product, item } = buildExternalExcessRecords(lot, sourceManual, codigoRz, normalizedMl);
+  const { product, item } = buildExternalExcessRecords(lot, sourceManual, codigoRz, normalizedMl, { createdByUserId, operatorUserId });
   lot.proximoSequencialSku += 1;
   db.products.push(product);
   db.rzItems.push(item);
@@ -1928,7 +1928,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     return { status: "preview", product: { ...source, codigoMl: normalizedMl }, source: history || previousHistory ? "historico" : "catalogo_oculto", lot: summarizeLot(db, lot, true) };
   }
   if (previousHistory) {
-    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride });
+    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
     lot.proximoSequencialSku += 1;
     db.products.push(product);
     db.rzItems.push(item);
@@ -1936,7 +1936,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     return { status: "criado", product, parent: previousHistory, source: "historico", lot: summarizeLot(db, lot, true) };
   }
   if (!history && source) {
-    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride });
+    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
     lot.proximoSequencialSku += 1;
     db.products.push(product);
     db.rzItems.push(item);
@@ -1945,7 +1945,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
-    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual" });
+    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId });
     lot.proximoSequencialSku += 1;
     db.products.push(product);
     db.rzItems.push(item);
@@ -1961,7 +1961,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     throw error;
   }
 
-  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride });
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
   lot.proximoSequencialSku += 1;
   db.products.push(product);
   db.rzItems.push(item);
@@ -2257,6 +2257,8 @@ async function ensurePgStore() {
     create table if not exists products (
       id text primary key,
       lot_id text not null references lots(id) on delete cascade,
+      created_by_user_id text references users(id) on delete set null,
+      operator_user_id text references users(id) on delete set null,
       codigo_ml text not null,
       sku text not null,
       descricao text not null,
@@ -2502,6 +2504,8 @@ async function ensurePgStore() {
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists link text not null default '';
     alter table products add column if not exists foto text not null default '';
+    alter table products add column if not exists created_by_user_id text references users(id) on delete set null;
+    alter table products add column if not exists operator_user_id text references users(id) on delete set null;
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
@@ -2861,13 +2865,18 @@ async function readPgUserLotsDb(userId, { lotId } = {}) {
   if (!lots.length) return { ...emptyDb(), lots };
 
   const lotIds = lots.map((lot) => lot.id);
-  const [products, rzItems] = await Promise.all([
+  const [products, rzItems, users] = await Promise.all([
     query("select * from products where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
-    query("select * from rz_items where lot_id = any($1::text[]) order by created_at asc", [lotIds])
+    query("select * from rz_items where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
+    query(
+      "select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users where id = $1 or parent_user_id = $1",
+      [userId]
+    )
   ]);
 
   return {
     ...emptyDb(),
+    users: users.rows.map(userFromRow),
     lots,
     products: products.rows.map(productFromRow),
     rzItems: rzItems.rows.map(rzItemFromRow)
@@ -2897,10 +2906,12 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
+      product.createdByUserId || null,
+      product.operatorUserId || null,
       product.codigoMl,
       product.sku,
       product.descricao,
@@ -3491,7 +3502,7 @@ async function createManualExternalExcessPg({ userId, createdByUserId = userId, 
     if (existing.rows.length) throw new Error("Este Codigo ML ja existe no lote atual.");
 
     const source = normalizeManualProduct(manualProduct, codigoMl);
-    const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl);
+    const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl, { createdByUserId, operatorUserId });
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
     await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
     await client.query(
@@ -3618,7 +3629,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       }
       if (!history && manualProduct) {
         const source = normalizeManualProduct(manualProduct, codigoMl);
-        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual" });
+        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
@@ -3634,7 +3645,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         throw error;
       }
 
-      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride });
+      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId });
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
       result = { status: "criado", product: records.product, parent: history };
@@ -4068,6 +4079,8 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
   const product = {
     id: randomUUID(),
     lotId: lot.id,
+    createdByUserId: options.createdByUserId || null,
+    operatorUserId: options.operatorUserId || null,
     codigoMl,
     sku,
     descricao: history.descricao,
@@ -4103,6 +4116,8 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
   const product = {
     id: randomUUID(),
     lotId: lot.id,
+    createdByUserId: options.createdByUserId || null,
+    operatorUserId: options.operatorUserId || null,
     codigoMl,
     sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
     descricao: history.descricao,
@@ -4777,6 +4792,8 @@ function productFromRow(row) {
   return {
     id: row.id,
     lotId: row.lot_id,
+    createdByUserId: row.created_by_user_id || null,
+    operatorUserId: row.operator_user_id || null,
     codigoMl: row.codigo_ml,
     sku: row.sku,
     descricao: row.descricao,
