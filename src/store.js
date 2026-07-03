@@ -648,6 +648,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   await ensureStore();
   const destination = normalizeTriageDestination(payload.destination);
   const diagnosis = String(payload.diagnosis || "").trim();
+  const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
   if (!diagnosis) throw new Error("Informe o diagnostico do produto.");
   const now = new Date().toISOString();
 
@@ -657,12 +658,13 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
        set status = 'diagnosticado',
            destination = $3,
            diagnosis = $4,
-           operator_user_id = coalesce($5, operator_user_id),
-           updated_at = $6,
-           diagnosed_at = $6
+           diagnosis_photo = $5,
+           operator_user_id = coalesce($6, operator_user_id),
+           updated_at = $7,
+           diagnosed_at = $7
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
-      [userId, normalizeCode(code), destination, diagnosis, operatorUserId, now]
+      [userId, normalizeCode(code), destination, diagnosis, diagnosisPhoto, operatorUserId, now]
     );
     if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
     return triageItemFromRow(result.rows[0]);
@@ -674,6 +676,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   item.status = "diagnosticado";
   item.destination = destination;
   item.diagnosis = diagnosis;
+  item.diagnosisPhoto = diagnosisPhoto;
   item.operatorUserId = operatorUserId || item.operatorUserId || null;
   item.updatedAt = now;
   item.diagnosedAt = now;
@@ -1690,6 +1693,35 @@ export async function deleteTransferLotItem({ userId, transferLotId, itemId }) {
   return { item: deletedItem, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
+export async function deleteLotRzItem({ userId, lotId, codigoRz, itemId }) {
+  await ensureStore();
+  if (hasPostgres()) return deleteLotRzItemPg({ userId, lotId, codigoRz, itemId });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const item = (db.rzItems || []).find((candidate) => candidate.id === itemId && candidate.lotId === lot.id && candidate.codigoRz === codigoRz);
+  if (!item) throw notFound("Item nao encontrado nesta RZ.");
+  const product = (db.products || []).find((candidate) => candidate.id === item.productId && candidate.lotId === lot.id);
+
+  db.rzItems = (db.rzItems || []).filter(
+    (candidate) => !(candidate.lotId === lot.id && candidate.codigoRz === codigoRz && candidate.productId === item.productId)
+  );
+  const productStillUsed = (db.rzItems || []).some((candidate) => candidate.productId === item.productId);
+  if (!productStillUsed) db.products = (db.products || []).filter((candidate) => candidate.id !== item.productId);
+  db.scans.push({
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz,
+    codigoMl: product?.codigoMl || "",
+    status: "item_excluido",
+    createdAt: new Date().toISOString()
+  });
+  await writeDb(db);
+  return { item: { ...item, product }, lot: summarizeLot(db, lot, true) };
+}
+
 export async function markTransferLotSynced(userId, transferLotId) {
   await ensureStore();
   const syncedAt = new Date().toISOString();
@@ -2419,6 +2451,7 @@ async function ensurePgStore() {
       status text not null default 'aguardando_teste',
       destination text not null default '',
       diagnosis text not null default '',
+      diagnosis_photo text not null default '',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       diagnosed_at timestamptz
@@ -2517,6 +2550,7 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
     alter table catalog_requests add column if not exists created_by_user_id text references users(id) on delete set null;
     alter table catalog_requests add column if not exists operator_user_id text references users(id) on delete set null;
+    alter table triage_items add column if not exists diagnosis_photo text not null default '';
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
     alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
@@ -3105,6 +3139,7 @@ async function insertTriageItemRows(client, items = []) {
       "status",
       "destination",
       "diagnosis",
+      "diagnosis_photo",
       "created_at",
       "updated_at",
       "diagnosed_at"
@@ -3125,6 +3160,7 @@ async function insertTriageItemRows(client, items = []) {
       item.status || "aguardando_teste",
       item.destination || "",
       item.diagnosis || "",
+      item.diagnosisPhoto || "",
       item.createdAt,
       item.updatedAt || item.createdAt,
       item.diagnosedAt || null
@@ -3870,6 +3906,62 @@ async function deleteTransferLotItemPg({ userId, transferLotId, itemId }) {
   }
 
   return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
+}
+
+async function deleteLotRzItemPg({ userId, lotId, codigoRz, itemId }) {
+  const client = await getPgPool().connect();
+  let result = {};
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nao encontrado.");
+
+    const itemResult = await client.query(
+      `select
+         ri.*,
+         p.codigo_ml as product_codigo_ml,
+         p.sku as product_sku,
+         p.descricao as product_descricao
+       from rz_items ri
+       join products p on p.id = ri.product_id
+       where ri.id = $1
+         and ri.lot_id = $2
+         and ri.codigo_rz = $3
+       limit 1
+       for update of ri`,
+      [itemId, lot.id, codigoRz]
+    );
+    const item = itemResult.rows[0];
+    if (!item) throw notFound("Item nao encontrado nesta RZ.");
+
+    await client.query("delete from rz_items where lot_id = $1 and codigo_rz = $2 and product_id = $3", [lot.id, codigoRz, item.product_id]);
+    const remaining = await client.query("select 1 from rz_items where product_id = $1 limit 1", [item.product_id]);
+    if (!remaining.rows.length) await client.query("delete from products where id = $1 and lot_id = $2", [item.product_id, lot.id]);
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [randomUUID(), lot.id, codigoRz, item.product_codigo_ml || "", "item_excluido", null, new Date().toISOString()]
+    );
+    result = {
+      item: {
+        ...rzItemFromRow(item),
+        product: {
+          codigoMl: item.product_codigo_ml || "",
+          sku: item.product_sku || "",
+          descricao: item.product_descricao || ""
+        }
+      }
+    };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getUserLotDetail(userId, lotId) };
 }
 
 async function findPgProductHistory(client, userId, currentLotId, codigoMl, limit) {
@@ -4749,6 +4841,7 @@ function triageItemFromRow(row) {
     status: row.status || "aguardando_teste",
     destination: row.destination || "",
     diagnosis: row.diagnosis || "",
+    diagnosisPhoto: row.diagnosis_photo || "",
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at),
     diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
@@ -5357,6 +5450,7 @@ function normalizeTriageInput(input = {}) {
     status: input.status || "aguardando_teste",
     destination: input.destination || "",
     diagnosis: String(input.diagnosis || "").trim(),
+    diagnosisPhoto: normalizeTriageDiagnosisPhoto(input.diagnosisPhoto ?? input.diagnosis_photo ?? input.photo ?? input.foto ?? ""),
     createdAt: input.createdAt,
     updatedAt: input.updatedAt || input.createdAt,
     diagnosedAt: input.diagnosedAt || null
@@ -5367,6 +5461,15 @@ function normalizeTriageDestination(value) {
   const destination = normalizeCode(value);
   if (!["LOJA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Internet ou RMA.");
   return destination;
+}
+
+function normalizeTriageDiagnosisPhoto(value) {
+  const photo = String(value || "").trim();
+  if (!photo) return "";
+  if (photo.length > 7 * 1024 * 1024) throw new Error("A foto do laudo deve ter ate 5 MB.");
+  if (/^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(photo)) return photo;
+  if (/^https?:\/\/\S+$/i.test(photo)) return photo;
+  throw new Error("Foto do laudo invalida. Envie uma imagem JPG, PNG ou WebP.");
 }
 
 async function getPrivateUserBlingIntegration(userId) {

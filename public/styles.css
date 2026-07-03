@@ -925,6 +925,40 @@ h3 {
   margin-top: 18px;
 }
 
+.triage-photo-preview,
+.triage-diagnosis-photo {
+  align-items: start;
+  background: #f8fafb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.triage-photo-preview.hidden {
+  display: none;
+}
+
+.triage-photo-preview img,
+.triage-diagnosis-photo img {
+  border-radius: 6px;
+  max-height: 320px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.triage-diagnosis-photo {
+  margin: 18px 0 0;
+}
+
+.triage-diagnosis-photo figcaption {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .tabs {
   background: var(--panel);
   border-bottom: 1px solid var(--line);

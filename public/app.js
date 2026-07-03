@@ -192,6 +192,7 @@ function bindEvents() {
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
   $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
+  $("#triageDetail").addEventListener("change", handleTriageDetailChange);
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
@@ -3613,15 +3614,7 @@ async function handleTransferDetailSubmit(event) {
 async function handleTransferDetailClick(event) {
   const deleteButton = event.target.closest("[data-transfer-delete]");
   if (deleteButton && state.selectedTransferLotId) {
-    let reason = "";
-    if (state.user?.role === "operator") {
-      reason = prompt("Informe a justificativa para excluir este item da remessa:")?.trim() || "";
-      if (reason.length < 5) {
-        $("#transferScanMessage").style.color = "";
-        $("#transferScanMessage").textContent = "Informe uma justificativa com pelo menos 5 caracteres.";
-        return;
-      }
-    } else if (!confirm("Excluir este item da remessa?")) {
+    if (!confirm("Excluir este item da remessa?")) {
       return;
     }
     deleteButton.disabled = true;
@@ -3629,7 +3622,7 @@ async function handleTransferDetailClick(event) {
       const response = await api(`/api/transfer-lots/${encodeURIComponent(state.selectedTransferLotId)}/items/${encodeURIComponent(deleteButton.dataset.transferDelete)}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason })
+        body: JSON.stringify({})
       });
       renderTransferDetail(response.lot);
       await loadTransferLots(state.selectedTransferLotId);
@@ -4338,6 +4331,9 @@ function bindScanControls(lotId, codigoRz, items = []) {
   document.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
     button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
   });
+  document.querySelectorAll("[data-delete-rz-item]").forEach((button) => {
+    button.addEventListener("click", () => deleteLotRzItem(lotId, codigoRz, button.dataset.deleteRzItem, button));
+  });
   document.querySelectorAll("[data-split-product]").forEach((button) => {
     button.addEventListener("click", async () => {
       const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
@@ -4572,6 +4568,30 @@ async function deleteExternalExcess(lotId, codigoRz, codigoMlFromButton, button)
     const blingMessage = response.bling?.status === "deleted" ? "Cadastro excluido no Bling" : "Cadastro nao existia mais no Bling";
     $("#scanMessage").style.color = "#0f766e";
     $("#scanMessage").textContent = `${blingMessage}; SKU ${response.product?.sku || ""} liberado.`;
+  } catch (error) {
+    if (button) button.disabled = false;
+    const message = $("#scanMessage");
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    }
+  } finally {
+    schedulePrimaryInputFocus(["#scanInput"]);
+  }
+}
+
+async function deleteLotRzItem(lotId, codigoRz, itemId, button) {
+  if (!itemId) return;
+  if (!confirm("Excluir este produto da lista de bipagem?")) return;
+
+  try {
+    if (button) button.disabled = true;
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/items/${encodeURIComponent(itemId)}`, {
+      method: "DELETE"
+    });
+    renderScanPage(response.lot, codigoRz);
+    $("#scanMessage").style.color = "#0f766e";
+    $("#scanMessage").textContent = "Produto excluido da lista de bipagem.";
   } catch (error) {
     if (button) button.disabled = false;
     const message = $("#scanMessage");
@@ -4969,7 +4989,7 @@ function itemRow(item) {
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
-      : "";
+      : `<button type="button" class="danger ghost icon-button" data-delete-rz-item="${escapeHtml(item.id || "")}" title="Excluir da bipagem" aria-label="Excluir da bipagem">${trashIcon()}</button>`;
   return `
     <article class="item-row">
       <strong>${escapeHtml(product.sku || "")}</strong>
@@ -5272,6 +5292,7 @@ function renderTriageDetail(item) {
         </div>
       </div>
     </section>
+    ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
     <form class="triage-edit-form hidden">
       <div class="panel-heading">
         <span class="muted">Dados da etiqueta</span>
@@ -5305,6 +5326,14 @@ function renderTriageDetail(item) {
           <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
         </select>
       </label>
+      <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
+      <label>Foto do laudo
+        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" />
+      </label>
+      <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
+        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
+        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
+      </div>
       <button type="submit">Salvar diagnostico</button>
       <p class="message" id="triageDetailMessage"></p>
     </form>
@@ -5333,8 +5362,90 @@ function renderTriageItemView(item) {
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         ${item.diagnosis ? `<div class="wide-field"><dt>Diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
+      ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
     </section>
   `;
+}
+
+function triageDiagnosisPhotoMarkup(photo) {
+  if (!photo) return "";
+  return `
+    <figure class="triage-diagnosis-photo">
+      <img src="${escapeHtml(photo)}" alt="Foto do laudo" />
+      <figcaption>Foto do laudo</figcaption>
+    </figure>
+  `;
+}
+
+async function handleTriageDetailChange(event) {
+  const input = event.target.closest('input[name="diagnosisPhotoFile"]');
+  if (!input) return;
+  const form = input.form;
+  const message = $("#triageDetailMessage");
+  try {
+    const photo = await readTriageDiagnosisPhoto(form);
+    updateTriagePhotoPreview(form, photo);
+    if (message) message.textContent = "";
+  } catch (error) {
+    input.value = "";
+    updateTriagePhotoPreview(form, form?.elements?.diagnosisPhoto?.value || "");
+    if (message) message.textContent = error.message;
+  }
+}
+
+async function readTriageDiagnosisPhoto(form) {
+  const fileInput = form?.elements?.diagnosisPhotoFile;
+  const hiddenInput = form?.elements?.diagnosisPhoto;
+  const file = fileInput?.files?.[0];
+  if (!file) return hiddenInput?.value || "";
+  const photo = await imageFileToDataUrl(file);
+  if (hiddenInput) hiddenInput.value = photo;
+  return photo;
+}
+
+async function imageFileToDataUrl(file) {
+  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) throw new Error("Escolha uma imagem JPG, PNG ou WebP.");
+  if (file.size > 12 * 1024 * 1024) throw new Error("A foto deve ter ate 12 MB antes da compactacao.");
+  const source = await readFileAsDataUrl(file);
+  const image = await loadImage(source);
+  const maxSide = 1280;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+  canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+  canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+  if (dataUrl.length > 7 * 1024 * 1024) throw new Error("A foto ficou grande demais. Tente uma imagem menor.");
+  return dataUrl;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("Nao foi possivel ler a foto.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", () => reject(new Error("Nao foi possivel abrir a imagem.")));
+    image.src = src;
+  });
+}
+
+function updateTriagePhotoPreview(form, photo) {
+  const preview = form?.querySelector("[data-triage-photo-preview]");
+  const hiddenInput = form?.elements?.diagnosisPhoto;
+  if (hiddenInput) hiddenInput.value = photo || "";
+  if (!preview) return;
+  preview.classList.toggle("hidden", !photo);
+  preview.innerHTML = photo
+    ? `<img src="${escapeHtml(photo)}" alt="Foto do laudo" /><button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>`
+    : "";
 }
 
 async function handleTriageDetailSubmit(event) {
@@ -5346,10 +5457,14 @@ async function handleTriageDetailSubmit(event) {
   event.preventDefault();
   const message = $("#triageDetailMessage");
   try {
+    const form = event.target;
+    const formData = new FormData(form);
+    formData.delete("diagnosisPhotoFile");
+    formData.set("diagnosisPhoto", await readTriageDiagnosisPhoto(form));
     const response = await api(`/api/triage/items/${encodeURIComponent(state.selectedTriageCode)}/diagnosis`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+      body: JSON.stringify(Object.fromEntries(formData))
     });
     state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)];
     renderTriageItems();
@@ -5386,6 +5501,15 @@ async function handleTriageEditSubmit(event) {
 }
 
 function handleTriageDetailClick(event) {
+  const removePhoto = event.target.closest("[data-remove-triage-photo]");
+  if (removePhoto) {
+    const form = removePhoto.closest("form");
+    const fileInput = form?.elements?.diagnosisPhotoFile;
+    if (fileInput) fileInput.value = "";
+    updateTriagePhotoPreview(form, "");
+    return;
+  }
+
   const toggle = event.target.closest("[data-toggle-triage-edit]");
   if (toggle) {
     const form = event.currentTarget.querySelector(".triage-edit-form");

@@ -41,6 +41,7 @@ import {
   deleteCatalogProductForAdmin,
   deleteUser,
   deleteUserLot,
+  deleteLotRzItem,
   deleteTransferLotItem,
   decrementTransferLotItem,
   decrementLotRzScan,
@@ -117,8 +118,8 @@ const ADMIN_USER = {
 };
 
 app.set("trust proxy", config.trustProxy);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "8mb" }));
+app.use(express.urlencoded({ extended: true, limit: "8mb" }));
 app.use(
   session({
     secret: config.sessionSecret,
@@ -574,9 +575,6 @@ app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAut
 app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, async (req, res) => {
   try {
     const reason = String(req.body?.reason || req.body?.justificativa || "").trim();
-    if (req.session.user?.role === "operator" && reason.length < 5) {
-      throw new Error("Informe uma justificativa para excluir o item da remessa.");
-    }
     const result = await deleteTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId });
     await recordOperatorActivity(req.session.user, "delete_transfer_item", {
       transferLotId: req.params.transferLotId,
@@ -1134,6 +1132,27 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req
     if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML para diminuir.");
     await recordOperatorActivity(req.session.user, "decrement_scan", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json(await decrementLotRzScan({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/lots/:lotId/rz/:codigoRz/items/:itemId", requireAuth, async (req, res) => {
+  try {
+    const result = await deleteLotRzItem({
+      userId: workspaceUserId(req),
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      itemId: req.params.itemId
+    });
+    await recordOperatorActivity(req.session.user, "delete_rz_item", {
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      itemId: req.params.itemId,
+      codigoMl: result.item?.product?.codigoMl || "",
+      sku: result.item?.product?.sku || ""
+    });
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
