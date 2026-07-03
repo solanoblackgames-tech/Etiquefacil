@@ -4592,7 +4592,8 @@ function findTransferProduct(db, userId, code) {
       (candidate) =>
         normalizeCode(candidate.codigoMl) === normalized ||
         normalizeCode(candidate.sku) === normalized ||
-        normalizeCode(code39BarcodeValue(candidate.sku)) === normalized
+        normalizeCode(code39BarcodeValue(candidate.sku)) === normalized ||
+        normalizeCode(candidate.ean) === normalized
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!product) return null;
@@ -4919,7 +4920,12 @@ function findLotProductByScannedCode(products, lotId, code) {
 function productMatchesScannedCode(product, code) {
   if (!product) return false;
   const normalized = normalizeCode(code);
-  return normalizeCode(product.codigoMl) === normalized || normalizeCode(product.sku) === normalized || normalizeCode(code39BarcodeValue(product.sku)) === normalized;
+  return (
+    normalizeCode(product.codigoMl) === normalized ||
+    normalizeCode(product.sku) === normalized ||
+    normalizeCode(code39BarcodeValue(product.sku)) === normalized ||
+    normalizeCode(product.ean) === normalized
+  );
 }
 
 function ensureUnambiguousItemMatches(items) {
