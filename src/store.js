@@ -1663,8 +1663,10 @@ export async function scanTransferLot({ userId, transferLotId, code }) {
   const product = findTransferProduct(db, userId, normalized);
   if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
   const existing = (db.transferItems || []).find((item) => item.transferLotId === lot.id && item.productId === product.id);
+  const now = new Date().toISOString();
   if (existing) {
     existing.quantidade += 1;
+    existing.createdAt = now;
   } else {
     db.transferItems.push(buildTransferItem(lot.id, product));
   }
@@ -1708,6 +1710,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code }) {
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  item.createdAt = new Date().toISOString();
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
@@ -1729,6 +1732,7 @@ export async function receivePublicTransferLotScan({ transferLotId, code }) {
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  item.createdAt = new Date().toISOString();
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
@@ -1761,6 +1765,7 @@ export async function forceReceivePublicTransferLotScan({ transferLotId, code, r
     existingForced.forceReason = normalizedReason;
     existingForced.forceCode = normalized;
     existingForced.forceAt = now;
+    existingForced.createdAt = now;
     occurrence.itemId = existingForced.id;
   } else {
     const item = {
@@ -3115,9 +3120,10 @@ async function readPgUserLotsDb(userId, { lotId } = {}) {
   if (!lots.length) return { ...emptyDb(), lots };
 
   const lotIds = lots.map((lot) => lot.id);
-  const [products, rzItems, users] = await Promise.all([
+  const [products, rzItems, scans, users] = await Promise.all([
     query("select * from products where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
     query("select * from rz_items where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
+    query("select * from scans where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
     query(
       "select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users where id = $1 or parent_user_id = $1",
       [userId]
@@ -3129,7 +3135,8 @@ async function readPgUserLotsDb(userId, { lotId } = {}) {
     users: users.rows.map(userFromRow),
     lots,
     products: products.rows.map(productFromRow),
-    rzItems: rzItems.rows.map(rzItemFromRow)
+    rzItems: rzItems.rows.map(rzItemFromRow),
+    scans: scans.rows.map(scanFromRow)
   };
 }
 
@@ -3980,8 +3987,9 @@ async function scanTransferLotPg({ userId, transferLotId, code }) {
     if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
     const itemResult = await client.query("select * from transfer_items where transfer_lot_id = $1 and product_id = $2 limit 1 for update", [lot.id, product.id]);
     const existing = itemResult.rows[0] && transferItemFromRow(itemResult.rows[0]);
+    const now = new Date().toISOString();
     if (existing) {
-      await client.query("update transfer_items set quantidade = quantidade + 1 where id = $1", [existing.id]);
+      await client.query("update transfer_items set quantidade = quantidade + 1, created_at = $2 where id = $1", [existing.id, now]);
       result = { status: "updated", product };
     } else {
       await insertTransferItemRows(client, [buildTransferItem(lot.id, product)]);
@@ -4028,13 +4036,14 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
     const item = transferItemFromRow(itemResult.rows[0]);
     if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
     const nextReceived = Number(item.quantidadeConferida || 0) + 1;
-    await client.query("update transfer_items set quantidade_conferida = $2 where id = $1", [item.id, nextReceived]);
+    const now = new Date().toISOString();
+    await client.query("update transfer_items set quantidade_conferida = $2, created_at = $3 where id = $1", [item.id, nextReceived, now]);
 
     const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
-    const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived } : transferItemFromRow(row));
+    const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived, createdAt: now } : transferItemFromRow(row));
     updateTransferLotReceivingStatus(lot, items);
     await client.query("update transfer_lots set status = $2 where id = $1", [lot.id, lot.status]);
-    result = { status: nextReceived > Number(item.quantidade || 0) ? "over" : "received", item: { ...item, quantidadeConferida: nextReceived } };
+    result = { status: nextReceived > Number(item.quantidade || 0) ? "over" : "received", item: { ...item, quantidadeConferida: nextReceived, createdAt: now } };
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -4071,7 +4080,7 @@ async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
     if (item) {
       const nextReceived = Number(item.quantidadeConferida || 0) + 1;
       await client.query(
-        "update transfer_items set quantidade_conferida = $2, force_reason = $3, force_code = $4, force_at = $5 where id = $1",
+        "update transfer_items set quantidade_conferida = $2, force_reason = $3, force_code = $4, force_at = $5, created_at = $5 where id = $1",
         [item.id, nextReceived, reason, code, now]
       );
       item = { ...item, quantidadeConferida: nextReceived, forceReason: reason, forceCode: code, forceAt: now };
