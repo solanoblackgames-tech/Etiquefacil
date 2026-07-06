@@ -834,7 +834,7 @@ h3 {
 
 .triage-label-preview {
   align-items: center;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 60 / 40;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-sizing: border-box;
@@ -842,8 +842,10 @@ h3 {
   gap: 4px;
   grid-template-rows: 112px 22px 12px;
   justify-items: center;
+  max-width: 60mm;
   padding: 10px 12px;
   text-align: center;
+  width: 100%;
 }
 
 .triage-label-preview img {
@@ -3050,6 +3052,21 @@ h3 {
   body.printing-triage-label #triageDetail > :not(.triage-detail-grid),
   body.printing-triage-label .triage-detail-grid > :not(#triageLabelPrintable) {
     display: none !important;
+  }
+
+  body.printing-triage-label #app,
+  body.printing-triage-label #triageTab,
+  body.printing-triage-label .triage-layout,
+  body.printing-triage-label #triageDetail,
+  body.printing-triage-label .triage-detail-grid {
+    display: block !important;
+    height: 40mm;
+    margin: 0;
+    max-width: none;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+    width: 60mm;
   }
 
   body.printing-label > :not(#labelPrintRoot) {
