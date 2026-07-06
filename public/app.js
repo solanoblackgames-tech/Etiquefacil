@@ -81,6 +81,7 @@ const addDays = (date, days) => {
 };
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
+const isOwnerUser = () => state.user?.role === "owner";
 
 await bootstrap();
 
@@ -5259,6 +5260,9 @@ function clearTriageDetail() {
 function renderTriageDetail(item) {
   const detail = $("#triageDetail");
   const footer = labelFooterText(labelMeta(item.createdAt));
+  const deleteButton = isOwnerUser()
+    ? `<button type="button" class="danger ghost" data-delete-triage-item>Excluir etiqueta</button>`
+    : "";
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="triage-detail-grid">
@@ -5289,6 +5293,7 @@ function renderTriageDetail(item) {
         <div class="settings-actions">
           <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
           <button type="button" data-print-triage-label>Imprimir etiqueta</button>
+          ${deleteButton}
         </div>
       </div>
     </section>
@@ -5312,31 +5317,7 @@ function renderTriageDetail(item) {
       </div>
       <p class="message" id="triageEditMessage"></p>
     </form>
-    <form class="triage-diagnosis-form">
-      <div class="panel-heading">
-        <span class="muted">Diagnostico</span>
-        <h3>Saida do teste</h3>
-      </div>
-      <label>Diagnostico<textarea name="diagnosis" rows="4" required>${escapeHtml(item.diagnosis || "")}</textarea></label>
-      <label>Destino
-        <select name="destination" required>
-          <option value="">Selecione</option>
-          <option value="LOJA" ${item.destination === "LOJA" ? "selected" : ""}>Loja</option>
-          <option value="INTERNET" ${item.destination === "INTERNET" ? "selected" : ""}>Internet</option>
-          <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
-        </select>
-      </label>
-      <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
-      <label>Foto do laudo
-        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" />
-      </label>
-      <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
-        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
-        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
-      </div>
-      <button type="submit">Salvar diagnostico</button>
-      <p class="message" id="triageDetailMessage"></p>
-    </form>
+    ${triageDiagnosisFormMarkup(item)}
   `;
 }
 
@@ -5363,7 +5344,38 @@ function renderTriageItemView(item) {
         ${item.diagnosis ? `<div class="wide-field"><dt>Diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
+      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
     </section>
+  `;
+}
+
+function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
+  return `
+    <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}">
+      <div class="panel-heading">
+        <span class="muted">${qrMode ? "QR Code" : "Diagnostico"}</span>
+        <h3>${qrMode ? "Atualizar laudo" : "Saida do teste"}</h3>
+      </div>
+      <label>Diagnostico<textarea name="diagnosis" rows="4" required>${escapeHtml(item.diagnosis || "")}</textarea></label>
+      <label>Destino
+        <select name="destination" required>
+          <option value="">Selecione</option>
+          <option value="LOJA" ${item.destination === "LOJA" ? "selected" : ""}>Loja</option>
+          <option value="INTERNET" ${item.destination === "INTERNET" ? "selected" : ""}>Internet</option>
+          <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
+        </select>
+      </label>
+      <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
+      <label>Foto do laudo
+        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" />
+      </label>
+      <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
+        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
+        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
+      </div>
+      <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
+      <p class="message" id="triageDetailMessage"></p>
+    </form>
   `;
 }
 
@@ -5468,7 +5480,11 @@ async function handleTriageDetailSubmit(event) {
     });
     state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)];
     renderTriageItems();
-    renderTriageDetail(response.item);
+    if ($("#triageTab")?.classList.contains("triage-view-only")) {
+      renderTriageItemView(response.item);
+    } else {
+      renderTriageDetail(response.item);
+    }
     $("#triageDetailMessage").style.color = "#0f766e";
     $("#triageDetailMessage").textContent = "Diagnostico salvo.";
   } catch (error) {
@@ -5500,6 +5516,30 @@ async function handleTriageEditSubmit(event) {
   }
 }
 
+async function deleteSelectedTriageItem() {
+  const code = state.selectedTriageCode;
+  if (!code) return;
+  if (!confirm(`Excluir a etiqueta de identificacao ${code}?`)) return;
+
+  const button = $("#triageDetail [data-delete-triage-item]");
+  if (button) button.disabled = true;
+  try {
+    await api(`/api/triage/items/${encodeURIComponent(code)}`, { method: "DELETE" });
+    state.triageItems = state.triageItems.filter((item) => item.code !== code);
+    state.selectedTriageCode = null;
+    renderTriageItems();
+    clearTriageDetail();
+    updateRoute("/triagem");
+    $("#triageMessage").style.color = "#0f766e";
+    $("#triageMessage").textContent = "Etiqueta excluida.";
+  } catch (error) {
+    $("#triageDetailMessage").style.color = "";
+    $("#triageDetailMessage").textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function handleTriageDetailClick(event) {
   const removePhoto = event.target.closest("[data-remove-triage-photo]");
   if (removePhoto) {
@@ -5525,6 +5565,11 @@ function handleTriageDetailClick(event) {
     const toggleButton = event.currentTarget.querySelector("[data-toggle-triage-edit]");
     form?.classList.add("hidden");
     if (toggleButton) toggleButton.textContent = "Editar dados";
+    return;
+  }
+
+  if (event.target.closest("[data-delete-triage-item]")) {
+    deleteSelectedTriageItem();
     return;
   }
 

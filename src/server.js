@@ -37,6 +37,7 @@ import {
   createOperatorInvite,
   createUser,
   deleteExternalExcess,
+  deleteTriageItem,
   deleteUserBlingIntegration,
   deleteCatalogProductForAdmin,
   deleteUser,
@@ -391,6 +392,18 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
     });
     await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination });
     res.json({ item: await withTriageQrData(req, item) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/triage/items/:code", requireAuth, requireTriageAccess, requireOwner, async (req, res) => {
+  try {
+    const item = await deleteTriageItem({
+      userId: workspaceUserId(req),
+      code: req.params.code
+    });
+    res.json({ ok: true, item });
   } catch (error) {
     sendError(res, error);
   }

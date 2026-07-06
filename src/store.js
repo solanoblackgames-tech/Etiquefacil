@@ -758,6 +758,26 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   return item;
 }
 
+export async function deleteTriageItem({ userId, code }) {
+  await ensureStore();
+  const normalized = normalizeCode(code);
+  if (hasPostgres()) {
+    const result = await query(
+      "delete from triage_items where user_id = $1 and upper(code) = upper($2) returning *",
+      [userId, normalized]
+    );
+    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+    return triageItemFromRow(result.rows[0]);
+  }
+
+  const db = await readDb();
+  const index = (db.triageItems || []).findIndex((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalized);
+  if (index < 0) throw notFound("Item de triagem nao encontrado.");
+  const [item] = db.triageItems.splice(index, 1);
+  await writeDb(db);
+  return item;
+}
+
 export async function lookupTriageProduct(userId, code) {
   await ensureStore();
   const normalized = normalizeCode(code);
