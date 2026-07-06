@@ -653,21 +653,45 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const now = new Date().toISOString();
 
   if (hasPostgres()) {
-    const result = await query(
-      `update triage_items
-       set status = 'diagnosticado',
-           destination = $3,
-           diagnosis = $4,
-           diagnosis_photo = $5,
-           operator_user_id = coalesce($6, operator_user_id),
-           updated_at = $7,
-           diagnosed_at = $7
-       where user_id = $1 and upper(code) = upper($2)
-       returning *`,
-      [userId, normalizeCode(code), destination, diagnosis, diagnosisPhoto, operatorUserId, now]
-    );
-    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
-    return triageItemFromRow(result.rows[0]);
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      const result = await client.query(
+        `update triage_items
+         set status = 'diagnosticado',
+             destination = $3,
+             diagnosis = $4,
+             diagnosis_photo = $5,
+             operator_user_id = coalesce($6, operator_user_id),
+             updated_at = $7,
+             diagnosed_at = $7
+         where user_id = $1 and upper(code) = upper($2)
+         returning *`,
+        [userId, normalizeCode(code), destination, diagnosis, diagnosisPhoto, operatorUserId, now]
+      );
+      if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+      const item = triageItemFromRow(result.rows[0]);
+      await insertTriageEventRows(client, [
+        {
+          id: randomUUID(),
+          userId,
+          triageItemId: item.id,
+          code: item.code,
+          operatorUserId,
+          destination,
+          diagnosis,
+          diagnosisPhoto,
+          createdAt: now
+        }
+      ]);
+      await client.query("commit");
+      return item;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   const db = await readDb();
@@ -680,8 +704,56 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   item.operatorUserId = operatorUserId || item.operatorUserId || null;
   item.updatedAt = now;
   item.diagnosedAt = now;
+  db.triageEvents = db.triageEvents || [];
+  db.triageEvents.push({
+    id: randomUUID(),
+    userId,
+    triageItemId: item.id,
+    code: item.code,
+    operatorUserId,
+    destination,
+    diagnosis,
+    diagnosisPhoto,
+    createdAt: now
+  });
   await writeDb(db);
   return item;
+}
+
+export async function listTriageDiagnosisHistory({ userId, code }) {
+  await ensureStore();
+  const item = await getTriageItem(userId, code);
+
+  let history;
+  if (hasPostgres()) {
+    const result = await query(
+      "select * from triage_events where user_id = $1 and triage_item_id = $2 order by created_at desc",
+      [userId, item.id]
+    );
+    history = result.rows.map(triageEventFromRow);
+  } else {
+    const db = await readDb();
+    history = (db.triageEvents || [])
+      .filter((event) => event.userId === userId && event.triageItemId === item.id)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  if (!history.length && item.diagnosis) {
+    return [
+      {
+        id: `current-${item.id}`,
+        userId: item.userId,
+        triageItemId: item.id,
+        code: item.code,
+        operatorUserId: item.operatorUserId,
+        destination: item.destination,
+        diagnosis: item.diagnosis,
+        diagnosisPhoto: item.diagnosisPhoto,
+        createdAt: item.diagnosedAt || item.updatedAt || item.createdAt
+      }
+    ];
+  }
+  return history;
 }
 
 export async function updateTriageItemDetails({ userId, code, payload = {} }) {
@@ -697,7 +769,10 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     asin: normalizeCode(payload.asin),
     codigoBling2: normalizeCode(payload.codigoBling2),
     descricao: String(payload.descricao || payload.description || "").trim(),
-    serial: String(payload.serial || "").trim()
+    serial: String(payload.serial || "").trim(),
+    alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
+    larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
+    comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? payload.comprimento_caixa ?? payload.comprimento ?? payload.profundidade)
   };
   if (!details.descricao && !details.sku && !details.ean && !details.asin && !details.productCode) {
     throw new Error("Informe pelo menos uma identificacao do produto.");
@@ -723,7 +798,10 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            codigo_bling2 = $8,
            descricao = $9,
            serial = $10,
-           updated_at = $11
+           altura_caixa = $11,
+           largura_caixa = $12,
+           comprimento_caixa = $13,
+           updated_at = $14
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
       [
@@ -737,6 +815,9 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
         details.codigoBling2,
         details.descricao,
         details.serial,
+        details.alturaCaixa || null,
+        details.larguraCaixa || null,
+        details.comprimentoCaixa || null,
         now
       ]
     );
@@ -1241,7 +1322,10 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             preco_custo = $6,
             ean = $7,
             link = $8,
-            foto = $9
+            foto = $9,
+            altura_caixa = $10,
+            largura_caixa = $11,
+            comprimento_caixa = $12
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1256,7 +1340,10 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.precoCusto,
         normalized.ean,
         normalized.link,
-        normalized.foto
+        normalized.foto,
+        normalized.alturaCaixa || null,
+        normalized.larguraCaixa || null,
+        normalized.comprimentoCaixa || null
       ]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
@@ -2322,6 +2409,9 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      altura_caixa numeric,
+      largura_caixa numeric,
+      comprimento_caixa numeric,
       origem text not null default 'planilha',
       created_at timestamptz not null default now()
     );
@@ -2337,6 +2427,9 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      altura_caixa numeric,
+      largura_caixa numeric,
+      comprimento_caixa numeric,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -2468,6 +2561,9 @@ async function ensurePgStore() {
       codigo_bling2 text not null default '',
       descricao text not null default '',
       serial text not null default '',
+      altura_caixa numeric,
+      largura_caixa numeric,
+      comprimento_caixa numeric,
       status text not null default 'aguardando_teste',
       destination text not null default '',
       diagnosis text not null default '',
@@ -2475,6 +2571,18 @@ async function ensurePgStore() {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       diagnosed_at timestamptz
+    );
+
+    create table if not exists triage_events (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      triage_item_id text not null references triage_items(id) on delete cascade,
+      code text not null,
+      operator_user_id text references users(id) on delete set null,
+      destination text not null default '',
+      diagnosis text not null default '',
+      diagnosis_photo text not null default '',
+      created_at timestamptz not null default now()
     );
 
     create table if not exists catalog_requests (
@@ -2495,6 +2603,9 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      altura_caixa numeric,
+      largura_caixa numeric,
+      comprimento_caixa numeric,
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2521,6 +2632,9 @@ async function ensurePgStore() {
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
+      altura_caixa numeric,
+      largura_caixa numeric,
+      comprimento_caixa numeric,
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2559,6 +2673,9 @@ async function ensurePgStore() {
     alter table products add column if not exists foto text not null default '';
     alter table products add column if not exists created_by_user_id text references users(id) on delete set null;
     alter table products add column if not exists operator_user_id text references users(id) on delete set null;
+    alter table products add column if not exists altura_caixa numeric;
+    alter table products add column if not exists largura_caixa numeric;
+    alter table products add column if not exists comprimento_caixa numeric;
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
@@ -2570,11 +2687,24 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists double_checks jsonb not null default '[]'::jsonb;
     alter table catalog_requests add column if not exists created_by_user_id text references users(id) on delete set null;
     alter table catalog_requests add column if not exists operator_user_id text references users(id) on delete set null;
+    alter table catalog_products add column if not exists altura_caixa numeric;
+    alter table catalog_products add column if not exists largura_caixa numeric;
+    alter table catalog_products add column if not exists comprimento_caixa numeric;
+    alter table catalog_requests add column if not exists altura_caixa numeric;
+    alter table catalog_requests add column if not exists largura_caixa numeric;
+    alter table catalog_requests add column if not exists comprimento_caixa numeric;
     alter table triage_items add column if not exists diagnosis_photo text not null default '';
+    alter table triage_items add column if not exists altura_caixa numeric;
+    alter table triage_items add column if not exists largura_caixa numeric;
+    alter table triage_items add column if not exists comprimento_caixa numeric;
+    create index if not exists triage_events_item_created_idx on triage_events(triage_item_id, created_at desc);
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
     alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
     alter table catalog_rejected_requests add column if not exists alert_message text not null default '';
+    alter table catalog_rejected_requests add column if not exists altura_caixa numeric;
+    alter table catalog_rejected_requests add column if not exists largura_caixa numeric;
+    alter table catalog_rejected_requests add column if not exists comprimento_caixa numeric;
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_items add column if not exists force_reason text not null default '';
     alter table transfer_items add column if not exists force_code text not null default '';
@@ -2733,7 +2863,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -2747,6 +2877,7 @@ async function readPgDb() {
     query("select * from transfer_divergence_reports order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
     query("select * from triage_items order by created_at asc"),
+    query("select * from triage_events order by created_at asc"),
     query("select * from catalog_products order by codigo_ml asc"),
     query("select * from catalog_requests order by created_at asc"),
     query("select * from catalog_rejected_requests order by rejected_at asc")
@@ -2766,6 +2897,7 @@ async function readPgDb() {
     transferDivergenceReports: transferDivergenceReports.rows.map(transferDivergenceReportFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     triageItems: triageItems.rows.map(triageItemFromRow),
+    triageEvents: triageEvents.rows.map(triageEventFromRow),
     catalogProducts: catalogProducts.rows.map(catalogProductFromRow),
     catalogRequests: catalogRequests.rows.map(catalogRequestFromRow),
     catalogRejectedRequests: catalogRejectedRequests.rows.map(catalogRejectedRequestFromRow)
@@ -2778,6 +2910,7 @@ async function writePgDb(db) {
     await client.query("begin");
     await client.query("delete from catalog_rejected_requests");
     await client.query("delete from catalog_requests");
+    await client.query("delete from triage_events");
     await client.query("delete from triage_items");
     await client.query("delete from operator_activities");
     await client.query("delete from transfer_divergence_reports");
@@ -2832,7 +2965,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -2847,6 +2980,9 @@ async function writePgDb(db) {
         product.ean || "",
         product.link || "",
         product.foto || "",
+        product.alturaCaixa || null,
+        product.larguraCaixa || null,
+        product.comprimentoCaixa || null,
         product.origem || "planilha",
         product.createdAt
       ])
@@ -2896,6 +3032,7 @@ async function writePgDb(db) {
     await insertTransferDivergenceReportRows(client, db.transferDivergenceReports || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertTriageItemRows(client, db.triageItems || []);
+    await insertTriageEventRows(client, db.triageEvents || []);
     await insertCatalogProductRows(client, db.catalogProducts || []);
     await insertCatalogRequestRows(client, db.catalogRequests || []);
     await insertCatalogRejectedRequestRows(client, db.catalogRejectedRequests || []);
@@ -2960,7 +3097,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -2977,6 +3114,9 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.ean || "",
       product.link || "",
       product.foto || "",
+      product.alturaCaixa || null,
+      product.larguraCaixa || null,
+      product.comprimentoCaixa || null,
       product.origem || "planilha",
       product.createdAt
     ])
@@ -3005,7 +3145,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -3017,6 +3157,9 @@ async function insertCatalogProductRows(client, products = []) {
       product.ean || "",
       product.link || "",
       product.foto || "",
+      product.alturaCaixa || null,
+      product.larguraCaixa || null,
+      product.comprimentoCaixa || null,
       product.createdAt,
       product.updatedAt || product.createdAt
     ])
@@ -3156,6 +3299,9 @@ async function insertTriageItemRows(client, items = []) {
       "codigo_bling2",
       "descricao",
       "serial",
+      "altura_caixa",
+      "largura_caixa",
+      "comprimento_caixa",
       "status",
       "destination",
       "diagnosis",
@@ -3177,6 +3323,9 @@ async function insertTriageItemRows(client, items = []) {
       item.codigoBling2 || "",
       item.descricao || "",
       item.serial || "",
+      item.alturaCaixa || null,
+      item.larguraCaixa || null,
+      item.comprimentoCaixa || null,
       item.status || "aguardando_teste",
       item.destination || "",
       item.diagnosis || "",
@@ -3184,6 +3333,26 @@ async function insertTriageItemRows(client, items = []) {
       item.createdAt,
       item.updatedAt || item.createdAt,
       item.diagnosedAt || null
+    ])
+  );
+}
+
+async function insertTriageEventRows(client, events = []) {
+  const target = client || { query };
+  await insertRows(
+    target,
+    "triage_events",
+    ["id", "user_id", "triage_item_id", "code", "operator_user_id", "destination", "diagnosis", "diagnosis_photo", "created_at"],
+    events.map((event) => [
+      event.id,
+      event.userId,
+      event.triageItemId,
+      event.code || "",
+      event.operatorUserId || null,
+      event.destination || "",
+      event.diagnosis || "",
+      event.diagnosisPhoto || "",
+      event.createdAt
     ])
   );
 }
@@ -3210,6 +3379,9 @@ async function insertCatalogRequestRows(client, requests = []) {
       "ean",
       "link",
       "foto",
+      "altura_caixa",
+      "largura_caixa",
+      "comprimento_caixa",
       "scope",
       "alert_message",
       "double_checks",
@@ -3234,6 +3406,9 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.ean || "",
       request.link || "",
       request.foto || "",
+      request.alturaCaixa || null,
+      request.larguraCaixa || null,
+      request.comprimentoCaixa || null,
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -3266,6 +3441,9 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "ean",
       "link",
       "foto",
+      "altura_caixa",
+      "largura_caixa",
+      "comprimento_caixa",
       "scope",
       "alert_message",
       "double_checks",
@@ -3291,6 +3469,9 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.ean || "",
       request.link || "",
       request.foto || "",
+      request.alturaCaixa || null,
+      request.larguraCaixa || null,
+      request.comprimentoCaixa || null,
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -4152,8 +4333,8 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
@@ -4163,9 +4344,12 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             ean = excluded.ean,
             link = excluded.link,
             foto = excluded.foto,
+            altura_caixa = excluded.altura_caixa,
+            largura_caixa = excluded.largura_caixa,
+            comprimento_caixa = excluded.comprimento_caixa,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || ""]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null]
       );
       await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -4310,7 +4494,10 @@ function productSuggestionFromProduct(product) {
     subcategoria: product.subcategoria || "",
     ean: product.ean || "",
     link: product.link || "",
-    foto: product.foto || ""
+    foto: product.foto || "",
+    alturaCaixa: product.alturaCaixa || "",
+    larguraCaixa: product.larguraCaixa || "",
+    comprimentoCaixa: product.comprimentoCaixa || ""
   };
 }
 
@@ -4328,7 +4515,10 @@ function normalizeManualProduct(input = {}, codigoMl) {
     subcategoria: String(input.subcategoria || "").trim(),
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
-    foto: String(foto || "").trim()
+    foto: String(foto || "").trim(),
+    alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
+    larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
+    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade)
   };
 }
 
@@ -4346,7 +4536,10 @@ function normalizeEditableProduct(input = {}) {
     precoCusto,
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
-    foto: String(foto || "").trim()
+    foto: String(foto || "").trim(),
+    alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
+    larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
+    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade)
   };
 }
 
@@ -4370,6 +4563,9 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     ean: payload.ean || product.ean || "",
     link: payload.link || product.link || "",
     foto: payload.foto || product.foto || "",
+    alturaCaixa: optionalNum(payload.alturaCaixa ?? product.alturaCaixa),
+    larguraCaixa: optionalNum(payload.larguraCaixa ?? product.larguraCaixa),
+    comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? product.comprimentoCaixa),
     scope: payload.scope || "individual",
     alertMessage: payload.alertMessage || "",
     createdAt: new Date().toISOString(),
@@ -4518,6 +4714,9 @@ function buildCatalogDoubleCheck(request) {
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
+    alturaCaixa: request.alturaCaixa || "",
+    larguraCaixa: request.larguraCaixa || "",
+    comprimentoCaixa: request.comprimentoCaixa || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     createdAt: request.createdAt || new Date().toISOString()
@@ -4553,6 +4752,9 @@ export function buildRejectedCatalogRequest(request, rejectedAt) {
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
+    alturaCaixa: request.alturaCaixa || "",
+    larguraCaixa: request.larguraCaixa || "",
+    comprimentoCaixa: request.comprimentoCaixa || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     doubleChecks: normalizeDoubleChecks(request.doubleChecks),
@@ -4626,6 +4828,9 @@ function upsertCatalogProduct(db, request) {
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
+    alturaCaixa: request.alturaCaixa || "",
+    larguraCaixa: request.larguraCaixa || "",
+    comprimentoCaixa: request.comprimentoCaixa || "",
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
@@ -4723,6 +4928,9 @@ function triageLookupFromProduct(product, row = {}) {
     descricao: product.descricao || "",
     categoria: product.categoria || "",
     subcategoria: product.subcategoria || "",
+    alturaCaixa: product.alturaCaixa || "",
+    larguraCaixa: product.larguraCaixa || "",
+    comprimentoCaixa: product.comprimentoCaixa || "",
     source: "produto",
     sourceLotId: product.sourceLotId || product.lotId || row.lot__id || "",
     sourceLotName: product.sourceLotName || row.lot__nome_arquivo || ""
@@ -4858,6 +5066,9 @@ function triageItemFromRow(row) {
     codigoBling2: row.codigo_bling2 || "",
     descricao: row.descricao || "",
     serial: row.serial || "",
+    alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
+    larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
+    comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     status: row.status || "aguardando_teste",
     destination: row.destination || "",
     diagnosis: row.diagnosis || "",
@@ -4865,6 +5076,20 @@ function triageItemFromRow(row) {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at),
     diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
+  };
+}
+
+function triageEventFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    triageItemId: row.triage_item_id,
+    code: row.code || "",
+    operatorUserId: row.operator_user_id || null,
+    destination: row.destination || "",
+    diagnosis: row.diagnosis || "",
+    diagnosisPhoto: row.diagnosis_photo || "",
+    createdAt: iso(row.created_at)
   };
 }
 
@@ -4919,6 +5144,9 @@ function productFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
+    larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
+    comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };
@@ -4936,6 +5164,9 @@ function catalogProductFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
+    larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
+    comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at)
   };
@@ -4960,6 +5191,9 @@ function catalogRequestFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
+    larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
+    comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -4989,6 +5223,9 @@ function catalogRejectedRequestFromRow(row) {
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
+    alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
+    larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
+    comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -5329,6 +5566,14 @@ function num(value) {
   return Number(value || 0);
 }
 
+function optionalNum(value) {
+  if (value === undefined || value === null || value === "") return "";
+  const normalized = typeof value === "string" ? value.replace(",", ".") : value;
+  const number = Number(normalized);
+  if (!Number.isFinite(number) || number < 0) throw new Error("Informe dimensoes da caixa validas.");
+  return roundMoney(number);
+}
+
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -5467,6 +5712,9 @@ function normalizeTriageInput(input = {}) {
     codigoBling2: normalizeCode(input.codigoBling2),
     descricao,
     serial: String(input.serial || "").trim(),
+    alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
+    larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
+    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
     status: input.status || "aguardando_teste",
     destination: input.destination || "",
     diagnosis: String(input.diagnosis || "").trim(),

@@ -20,7 +20,8 @@ import {
   syncBlingStockBalances,
   syncBlingStockEntries,
   syncBlingStockMovement,
-  syncBlingStockTransfers
+  syncBlingStockTransfers,
+  updateBlingProductFromTriage
 } from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
@@ -69,6 +70,7 @@ import {
   listCatalogRequestsForAdmin,
   listLotsForAdmin,
   listOperatorsForUser,
+  listTriageDiagnosisHistory,
   listTriageItems,
   listRejectedCatalogRequestsForAdmin,
   listUsersForAdmin,
@@ -347,14 +349,16 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
 
 app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const item = await createTriageItem({
-      userId: workspaceUserId(req),
+      userId,
       createdByUserId: req.session.user?.id,
       operatorUserId: operatorUserId(req),
       payload: req.body || {}
     });
+    const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_create", { code: item.code });
-    res.json({ item: await withTriageQrData(req, item) });
+    res.json({ item: await withTriageQrData(req, item), bling });
   } catch (error) {
     sendError(res, error);
   }
@@ -362,7 +366,7 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
 
 app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req, res) => {
   try {
-    res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code)) });
+    res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code), { includeHistory: isOwnerSession(req) }) });
   } catch (error) {
     sendError(res, error);
   }
@@ -370,13 +374,15 @@ app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req,
 
 app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const item = await updateTriageItemDetails({
-      userId: workspaceUserId(req),
+      userId,
       code: req.params.code,
       payload: req.body || {}
     });
+    const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_details_update", { code: item.code });
-    res.json({ item: await withTriageQrData(req, item) });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }), bling });
   } catch (error) {
     sendError(res, error);
   }
@@ -391,7 +397,7 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
       payload: req.body || {}
     });
     await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination });
-    res.json({ item: await withTriageQrData(req, item) });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }) });
   } catch (error) {
     sendError(res, error);
   }
@@ -1391,20 +1397,51 @@ function operatorUserId(req) {
   return req.session.user?.role === "operator" ? req.session.user.id : null;
 }
 
+function isOwnerSession(req) {
+  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  return role === "owner";
+}
+
 function triageStatusUrl(req, code) {
   return `${req.protocol}://${req.get("host")}/triagem/visualizar/${encodeURIComponent(code)}`;
 }
 
-async function withTriageQrData(req, value) {
-  if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item)));
+async function withTriageQrData(req, value, { includeHistory = false } = {}) {
+  if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item, { includeHistory })));
   const statusUrl = triageStatusUrl(req, value.code);
   const diagnosedByUser = value.diagnosedAt && value.operatorUserId ? await getPublicUserById(value.operatorUserId) : null;
+  const diagnosisHistory = includeHistory
+    ? await Promise.all(
+        (await listTriageDiagnosisHistory({ userId: workspaceUserId(req), code: value.code })).map(async (event) => ({
+          ...event,
+          operatorUser: event.operatorUserId ? await getPublicUserById(event.operatorUserId) : null
+        }))
+      )
+    : undefined;
   return {
     ...value,
     diagnosedByUser,
+    ...(includeHistory ? { diagnosisHistory } : {}),
     statusUrl,
     qrDataUrl: await QRCode.toDataURL(statusUrl, { margin: 1, width: 220 })
   };
+}
+
+async function syncTriageItemToBling(userId, item) {
+  if (!item?.sku && !item?.productCode && !item?.codigoBling2) return { ok: false, skipped: true, error: "Produto sem SKU/codigo para atualizar no Bling." };
+  if (!item?.ean && !item?.asin && !item?.alturaCaixa && !item?.larguraCaixa && !item?.comprimentoCaixa) return { ok: true, skipped: true };
+  try {
+    const integration = await getUserBlingCredentials(userId);
+    if (!integration?.accessToken || !integration?.refreshToken) return { ok: false, skipped: true, error: "Bling nao autorizado para este usuario." };
+    const blingApp = await getBlingAppCredentials(userId);
+    return await updateBlingProductFromTriage({
+      integration: { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret },
+      item,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
 }
 
 function isAdminLogin(email, password) {

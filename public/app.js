@@ -622,6 +622,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const description = $("#manualProductDescription");
     const price = $("#manualProductPrice");
     const ean = $("#manualProductEan");
+    const alturaCaixa = $("#manualProductAlturaCaixa");
+    const larguraCaixa = $("#manualProductLarguraCaixa");
+    const comprimentoCaixa = $("#manualProductComprimentoCaixa");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
     const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
@@ -647,6 +650,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     description.value = initialValues.descricao || "";
     price.value = initialValues.valorUnit ? String(initialValues.valorUnit).replace(".", ",") : "";
     ean.value = initialValues.ean || "";
+    alturaCaixa.value = initialValues.alturaCaixa || "";
+    larguraCaixa.value = initialValues.larguraCaixa || "";
+    comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
     link.value = initialValues.link || "";
     photo.value = initialValues.foto || "";
     error.textContent = "";
@@ -677,6 +683,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (suggestion.source !== "lista_lote") {
         if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
         if (suggestion.ean) ean.value = suggestion.ean;
+        if (suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
+        if (suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
+        if (suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
         if (suggestion.link) link.value = suggestion.link;
         if (suggestion.foto) photo.value = suggestion.foto;
       }
@@ -702,6 +711,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         descricao,
         valorUnit,
         ean: ean.value.trim(),
+        alturaCaixa: alturaCaixa.value.trim(),
+        larguraCaixa: larguraCaixa.value.trim(),
+        comprimentoCaixa: comprimentoCaixa.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -1155,6 +1167,9 @@ function openProductEditModal(product) {
     const price = $("#productEditPrice");
     const cost = $("#productEditCost");
     const ean = $("#productEditEan");
+    const alturaCaixa = $("#productEditAlturaCaixa");
+    const larguraCaixa = $("#productEditLarguraCaixa");
+    const comprimentoCaixa = $("#productEditComprimentoCaixa");
     const link = $("#productEditLink");
     const photo = $("#productEditPhoto");
     const error = $("#productEditError");
@@ -1176,6 +1191,9 @@ function openProductEditModal(product) {
     price.value = String(product.valorUnit || "").replace(".", ",");
     cost.value = String(product.precoCusto || "").replace(".", ",");
     ean.value = product.ean || "";
+    alturaCaixa.value = product.alturaCaixa || "";
+    larguraCaixa.value = product.larguraCaixa || "";
+    comprimentoCaixa.value = product.comprimentoCaixa || "";
     link.value = product.link || "";
     photo.value = product.foto || "";
     error.textContent = "";
@@ -1205,6 +1223,9 @@ function openProductEditModal(product) {
         valorUnit,
         precoCusto,
         ean: ean.value.trim(),
+        alturaCaixa: alturaCaixa.value.trim(),
+        larguraCaixa: larguraCaixa.value.trim(),
+        comprimentoCaixa: comprimentoCaixa.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -2469,7 +2490,7 @@ function adminCatalogRequestRow(request) {
 
 function catalogApprovalOptions(request) {
   return [
-    { id: "base", label: "Cadastro inicial", user: request.user, createdByUser: request.createdByUser, operatorUser: request.operatorUser, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto },
+    { id: "base", label: "Cadastro inicial", user: request.user, createdByUser: request.createdByUser, operatorUser: request.operatorUser, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto, alturaCaixa: request.alturaCaixa, larguraCaixa: request.larguraCaixa, comprimentoCaixa: request.comprimentoCaixa },
     ...(Array.isArray(request.doubleChecks) ? request.doubleChecks : []).map((check, index) => ({ ...check, label: `Double check ${index + 1}` }))
   ];
 }
@@ -2480,6 +2501,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
   const link = String(option.link || "").trim();
   const photo = String(option.foto || "").trim();
   const ean = String(option.ean || "").trim();
+  const dimensions = boxDimensionsLabel(option);
   return `
     <label class="double-check-item">
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
@@ -2488,6 +2510,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
         <strong>${escapeHtml(option.label || "Cadastro")}</strong>
         <span>${escapeHtml(actor)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
+        <span>Caixa: ${escapeHtml(dimensions)}</span>
         <span>EAN: ${escapeHtml(ean || "-")}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
@@ -5144,7 +5167,7 @@ async function createTriageItem(event) {
     renderTriageDetail(response.item);
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageMessage").style.color = "#0f766e";
-    $("#triageMessage").textContent = "Etiqueta QR gerada.";
+    $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
   } catch (error) {
     $("#triageMessage").style.color = "";
     $("#triageMessage").textContent = error.message;
@@ -5180,7 +5203,10 @@ function fillTriageProduct(product) {
     descricao: product.descricao,
     sku: product.sku,
     ean: product.ean,
-    asin: product.asin
+    asin: product.asin,
+    alturaCaixa: product.alturaCaixa,
+    larguraCaixa: product.larguraCaixa,
+    comprimentoCaixa: product.comprimentoCaixa
   })) {
     const input = form.elements.namedItem(name);
     if (input) input.value = value || "";
@@ -5299,6 +5325,7 @@ function renderTriageDetail(item) {
           <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
           <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+          <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
           ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
@@ -5310,6 +5337,7 @@ function renderTriageDetail(item) {
       </div>
     </section>
     ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
+    ${triageDiagnosisHistoryMarkup(item.diagnosisHistory)}
     <form class="triage-edit-form hidden">
       <div class="panel-heading">
         <span class="muted">Dados da etiqueta</span>
@@ -5323,6 +5351,9 @@ function renderTriageDetail(item) {
       <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
       <label>Codigo Bling 2<input name="codigoBling2" value="${escapeHtml(item.codigoBling2 || "")}" /></label>
       <label>Serial<input name="serial" value="${escapeHtml(item.serial || "")}" /></label>
+      <label>Altura caixa (cm)<input name="alturaCaixa" inputmode="decimal" value="${escapeHtml(item.alturaCaixa || "")}" /></label>
+      <label>Largura caixa (cm)<input name="larguraCaixa" inputmode="decimal" value="${escapeHtml(item.larguraCaixa || "")}" /></label>
+      <label>Comprimento caixa (cm)<input name="comprimentoCaixa" inputmode="decimal" value="${escapeHtml(item.comprimentoCaixa || "")}" /></label>
       <div class="settings-actions">
         <button type="submit">Salvar dados</button>
         <button type="button" class="ghost" data-cancel-triage-edit>Cancelar</button>
@@ -5350,6 +5381,7 @@ function renderTriageItemView(item) {
         <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
         <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
         <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+        <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
         <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
         ${item.diagnosedAt ? `<div><dt>Diagnostico em</dt><dd>${formatDateTime(item.diagnosedAt)}</dd></div>` : ""}
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
@@ -5391,6 +5423,13 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
   `;
 }
 
+function boxDimensionsLabel(item = {}) {
+  const altura = String(item.alturaCaixa || "").trim();
+  const largura = String(item.larguraCaixa || "").trim();
+  const comprimento = String(item.comprimentoCaixa || "").trim();
+  return altura || largura || comprimento ? `${altura || "-"} x ${largura || "-"} x ${comprimento || "-"} cm` : "-";
+}
+
 function triageDiagnosisPhotoMarkup(photo) {
   if (!photo) return "";
   return `
@@ -5399,6 +5438,35 @@ function triageDiagnosisPhotoMarkup(photo) {
       <figcaption>Foto do laudo</figcaption>
     </figure>
   `;
+}
+
+function triageDiagnosisHistoryMarkup(history = []) {
+  if (!Array.isArray(history) || !history.length) return "";
+  return `
+    <section class="triage-history">
+      <div class="panel-heading">
+        <span class="muted">Historico</span>
+        <h3>Laudos do produto</h3>
+      </div>
+      ${history.map((event) => `
+        <article class="triage-history-item">
+          <div class="triage-history-meta">
+            <strong>${formatDateTime(event.createdAt)}</strong>
+            <span>${escapeHtml(triageHistoryOperatorLabel(event))}</span>
+            ${event.destination ? `<small>${escapeHtml(event.destination)}</small>` : ""}
+          </div>
+          <p>${escapeHtml(event.diagnosis || "-")}</p>
+          ${event.diagnosisPhoto ? `<img src="${escapeHtml(event.diagnosisPhoto)}" alt="Foto do laudo em ${escapeHtml(formatDateTime(event.createdAt))}" />` : ""}
+        </article>
+      `).join("")}
+    </section>
+  `;
+}
+
+function triageHistoryOperatorLabel(event) {
+  const user = event?.operatorUser;
+  if (user?.name && user?.email) return `${user.name} (${user.email})`;
+  return user?.name || user?.email || "Usuario principal";
 }
 
 async function handleTriageDetailChange(event) {
@@ -5522,7 +5590,7 @@ async function handleTriageEditSubmit(event) {
     renderTriageDetail(response.item);
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageDetailMessage").style.color = "#0f766e";
-    $("#triageDetailMessage").textContent = "Dados atualizados.";
+    $("#triageDetailMessage").textContent = triageBlingMessage(response.bling, "Dados atualizados.");
   } catch (error) {
     if (message) message.textContent = error.message;
   }
@@ -5594,6 +5662,13 @@ function handleTriageDetailClick(event) {
 function triageStatusLabel(item) {
   if (item.status === "diagnosticado") return "Diagnosticado";
   return "Aguardando teste";
+}
+
+function triageBlingMessage(bling, baseMessage) {
+  if (!bling) return baseMessage;
+  if (bling.ok && !bling.skipped) return `${baseMessage} Bling atualizado.`;
+  if (bling.ok && bling.skipped) return baseMessage;
+  return `${baseMessage} Bling nao atualizado: ${bling.error || "verifique a integracao."}`;
 }
 
 function triageDiagnosedByLabel(item) {

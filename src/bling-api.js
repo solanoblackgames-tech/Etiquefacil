@@ -25,7 +25,8 @@ export function buildBlingProductPayload(product) {
     pesoLiquido: 0,
     pesoBruto: 0,
     volumes: 0,
-    itensPorCaixa: 0
+    itensPorCaixa: 0,
+    dimensoes: buildBlingDimensionsPayload(product)
   });
 }
 
@@ -303,6 +304,26 @@ export async function syncBlingStockTransfers({ integration, items, depositoOrig
   };
 }
 
+export async function updateBlingProductFromTriage({ integration, item, saveIntegration }) {
+  const sku = normalizeCode(item?.sku || item?.productCode || item?.codigoBling2);
+  if (!sku) return { ok: false, skipped: true, error: "SKU/codigo do produto nao informado para atualizar no Bling." };
+  const client = new BlingApiClient(integration, saveIntegration);
+  const product = await client.findProductBySku(sku, { detail: true });
+  if (!product?.id) return { ok: false, skipped: true, error: `Produto nao encontrado no Bling: ${sku}` };
+
+  const payload = compactObject({
+    ...product,
+    nome: product.nome || item.descricao || sku,
+    codigo: product.codigo || sku,
+    gtin: item.ean || product.gtin || "",
+    gtinEmbalagem: item.ean || product.gtinEmbalagem || product.gtin || "",
+    marca: item.asin || product.marca || "",
+    dimensoes: buildBlingDimensionsPayload(item) || product.dimensoes
+  });
+  const response = await client.updateProduct(product.id, payload);
+  return { ok: true, status: "updated", sku, blingProductId: product.id, response };
+}
+
 export async function lookupBlingProductForTriage({ integration, code, saveIntegration }) {
   const normalizedCode = normalizeCode(code);
   if (!normalizedCode) return null;
@@ -315,6 +336,12 @@ export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
   const code = normalizeCode(product.codigo || fallbackCode);
   const ean = String(product.gtin || product.gtinEmbalagem || product.ean || "").trim();
   const asin = normalizeCode(product.marca);
+  const dimensoes = product.dimensoes || {};
+  const triageDimensions = compactObject({
+    alturaCaixa: dimensoes.altura || product.alturaCaixa || "",
+    larguraCaixa: dimensoes.largura || product.larguraCaixa || "",
+    comprimentoCaixa: dimensoes.profundidade || dimensoes.comprimento || product.comprimentoCaixa || ""
+  });
   return {
     productCode: code,
     sku: code,
@@ -324,6 +351,7 @@ export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
     descricao: product.nome || product.descricaoCurta || product.descricao || code,
     categoria: product.categoria?.descricao || product.categoria || "",
     subcategoria: "",
+    ...triageDimensions,
     source: "bling",
     sourceLotId: "",
     sourceLotName: "Bling"
@@ -573,6 +601,19 @@ function compactObject(input) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== null && value !== undefined));
 }
 
+function buildBlingDimensionsPayload(product = {}) {
+  const altura = numberOrEmpty(product.alturaCaixa ?? product.altura);
+  const largura = numberOrEmpty(product.larguraCaixa ?? product.largura);
+  const profundidade = numberOrEmpty(product.comprimentoCaixa ?? product.comprimento ?? product.profundidade);
+  if (altura === "" && largura === "" && profundidade === "") return undefined;
+  return compactObject({
+    largura,
+    altura,
+    profundidade,
+    unidadeMedida: 1
+  });
+}
+
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -588,6 +629,12 @@ function normalizeText(value) {
 function numberOrZero(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function numberOrEmpty(value) {
+  if (value === undefined || value === null || value === "") return "";
+  const number = Number(String(value).replace(",", "."));
+  return Number.isFinite(number) ? number : "";
 }
 
 function mergeContactTypes(types = [], supplierType) {
