@@ -842,6 +842,49 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   return item;
 }
 
+export async function updateProductRegistrationFromTriage({ userId, item }) {
+  await ensureStore();
+  const sku = normalizeCode(item?.sku);
+  const productCode = normalizeCode(item?.productCode || item?.codigoBling2);
+  const asin = normalizeCode(item?.asin);
+  const ean = String(item?.ean || "").trim();
+  if (!sku && !productCode && !asin) return null;
+  if (!ean && !asin) return null;
+
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        update products p
+        set ean = case when $4 <> '' then $4 else p.ean end,
+            codigo_ml = case when $5 <> '' then $5 else p.codigo_ml end
+        where exists (select 1 from lots l where l.id = p.lot_id and l.user_id = $1)
+          and (
+            ($2 <> '' and upper(trim(p.sku)) = upper(trim($2)))
+            or ($3 <> '' and upper(trim(p.codigo_ml)) = upper(trim($3)))
+            or ($5 <> '' and upper(trim(p.codigo_ml)) = upper(trim($5)))
+          )
+        returning *
+      `,
+      [userId, sku, productCode, ean, asin]
+    );
+    return result.rows[0] ? productFromRow(result.rows[0]) : null;
+  }
+
+  const db = await readDb();
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const product = (db.products || []).find((candidate) => {
+    if (!lotIds.has(candidate.lotId)) return false;
+    return (sku && normalizeCode(candidate.sku) === sku) ||
+      (productCode && normalizeCode(candidate.codigoMl) === productCode) ||
+      (asin && normalizeCode(candidate.codigoMl) === asin);
+  });
+  if (!product) return null;
+  if (ean) product.ean = ean;
+  if (asin) product.codigoMl = asin;
+  await writeDb(db);
+  return product;
+}
+
 export async function deleteTriageItem({ userId, code }) {
   await ensureStore();
   const normalized = normalizeCode(code);

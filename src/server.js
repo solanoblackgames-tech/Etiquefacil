@@ -93,6 +93,7 @@ import {
   updateOperatorTriageAccess,
   updateTriageDiagnosis,
   updateTriageItemDetails,
+  updateProductRegistrationFromTriage,
   updateUserTriageAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
@@ -356,6 +357,7 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
       operatorUserId: operatorUserId(req),
       payload: req.body || {}
     });
+    await updateProductRegistrationFromTriage({ userId, item });
     const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_create", { code: item.code });
     res.json({ item: await withTriageQrData(req, item), bling });
@@ -380,6 +382,7 @@ app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, a
       code: req.params.code,
       payload: req.body || {}
     });
+    await updateProductRegistrationFromTriage({ userId, item });
     const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_details_update", { code: item.code });
     res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }), bling });
