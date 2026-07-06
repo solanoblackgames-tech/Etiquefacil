@@ -770,6 +770,10 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.triage-form .triage-hidden-field {
+  display: none;
+}
+
 .triage-form input[name="lookupCode"] {
   font-size: 20px;
   font-weight: 700;

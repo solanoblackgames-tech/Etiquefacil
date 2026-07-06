@@ -189,7 +189,7 @@ function bindEvents() {
   $("#triageCreateForm input[name='lookupCode']").addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    lookupTriageCode();
+    event.currentTarget.form.requestSubmit();
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
   $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
@@ -5194,13 +5194,13 @@ async function lookupTriageCode() {
   try {
     const response = await api(`/api/triage/lookup?code=${encodeURIComponent(code)}`);
     if (!response.product) {
-      renderTriageLookupPreview(null, "Produto nao encontrado. Preencha manualmente somente o necessario.");
-      schedulePrimaryInputFocus(["#triageCreateForm input[name='descricao']"]);
+      renderTriageLookupPreview(null, "Produto nao encontrado para esta bipagem.");
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
       return null;
     }
     fillTriageProduct(response.product);
     renderTriageLookupPreview(response.product);
-    schedulePrimaryInputFocus(["#triageCreateForm input[name='serial']", "#triageCreateForm button[type='submit']"]);
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
     return response.product;
   } catch (error) {
     $("#triageMessage").textContent = error.message;
