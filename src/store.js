@@ -772,7 +772,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     serial: String(payload.serial || "").trim(),
     alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
-    comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? payload.comprimento_caixa ?? payload.comprimento ?? payload.profundidade)
+    comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? payload.comprimento_caixa ?? payload.comprimento ?? payload.profundidade),
+    pesoCaixa: optionalNum(payload.pesoCaixa ?? payload.peso_caixa ?? payload.peso)
   };
   if (!details.descricao && !details.sku && !details.ean && !details.asin && !details.productCode) {
     throw new Error("Informe pelo menos uma identificacao do produto.");
@@ -801,7 +802,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            altura_caixa = $11,
            largura_caixa = $12,
            comprimento_caixa = $13,
-           updated_at = $14
+           peso_caixa = $14,
+           updated_at = $15
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
       [
@@ -818,6 +820,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
         details.alturaCaixa || null,
         details.larguraCaixa || null,
         details.comprimentoCaixa || null,
+        details.pesoCaixa || null,
         now
       ]
     );
@@ -1325,7 +1328,8 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             foto = $9,
             altura_caixa = $10,
             largura_caixa = $11,
-            comprimento_caixa = $12
+            comprimento_caixa = $12,
+            peso_caixa = $13
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1343,7 +1347,8 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.foto,
         normalized.alturaCaixa || null,
         normalized.larguraCaixa || null,
-        normalized.comprimentoCaixa || null
+        normalized.comprimentoCaixa || null,
+        normalized.pesoCaixa || null
       ]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
@@ -2412,6 +2417,7 @@ async function ensurePgStore() {
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
+      peso_caixa numeric,
       origem text not null default 'planilha',
       created_at timestamptz not null default now()
     );
@@ -2430,6 +2436,7 @@ async function ensurePgStore() {
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
+      peso_caixa numeric,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -2564,6 +2571,7 @@ async function ensurePgStore() {
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
+      peso_caixa numeric,
       status text not null default 'aguardando_teste',
       destination text not null default '',
       diagnosis text not null default '',
@@ -2606,6 +2614,7 @@ async function ensurePgStore() {
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
+      peso_caixa numeric,
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2635,6 +2644,7 @@ async function ensurePgStore() {
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
+      peso_caixa numeric,
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2676,6 +2686,7 @@ async function ensurePgStore() {
     alter table products add column if not exists altura_caixa numeric;
     alter table products add column if not exists largura_caixa numeric;
     alter table products add column if not exists comprimento_caixa numeric;
+    alter table products add column if not exists peso_caixa numeric;
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
@@ -2690,13 +2701,16 @@ async function ensurePgStore() {
     alter table catalog_products add column if not exists altura_caixa numeric;
     alter table catalog_products add column if not exists largura_caixa numeric;
     alter table catalog_products add column if not exists comprimento_caixa numeric;
+    alter table catalog_products add column if not exists peso_caixa numeric;
     alter table catalog_requests add column if not exists altura_caixa numeric;
     alter table catalog_requests add column if not exists largura_caixa numeric;
     alter table catalog_requests add column if not exists comprimento_caixa numeric;
+    alter table catalog_requests add column if not exists peso_caixa numeric;
     alter table triage_items add column if not exists diagnosis_photo text not null default '';
     alter table triage_items add column if not exists altura_caixa numeric;
     alter table triage_items add column if not exists largura_caixa numeric;
     alter table triage_items add column if not exists comprimento_caixa numeric;
+    alter table triage_items add column if not exists peso_caixa numeric;
     create index if not exists triage_events_item_created_idx on triage_events(triage_item_id, created_at desc);
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
@@ -2705,6 +2719,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists altura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists largura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists comprimento_caixa numeric;
+    alter table catalog_rejected_requests add column if not exists peso_caixa numeric;
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_items add column if not exists force_reason text not null default '';
     alter table transfer_items add column if not exists force_code text not null default '';
@@ -2965,7 +2980,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -2983,6 +2998,7 @@ async function writePgDb(db) {
         product.alturaCaixa || null,
         product.larguraCaixa || null,
         product.comprimentoCaixa || null,
+        product.pesoCaixa || null,
         product.origem || "planilha",
         product.createdAt
       ])
@@ -3097,7 +3113,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -3117,6 +3133,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.alturaCaixa || null,
       product.larguraCaixa || null,
       product.comprimentoCaixa || null,
+      product.pesoCaixa || null,
       product.origem || "planilha",
       product.createdAt
     ])
@@ -3145,7 +3162,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -3160,6 +3177,7 @@ async function insertCatalogProductRows(client, products = []) {
       product.alturaCaixa || null,
       product.larguraCaixa || null,
       product.comprimentoCaixa || null,
+      product.pesoCaixa || null,
       product.createdAt,
       product.updatedAt || product.createdAt
     ])
@@ -3302,6 +3320,7 @@ async function insertTriageItemRows(client, items = []) {
       "altura_caixa",
       "largura_caixa",
       "comprimento_caixa",
+      "peso_caixa",
       "status",
       "destination",
       "diagnosis",
@@ -3326,6 +3345,7 @@ async function insertTriageItemRows(client, items = []) {
       item.alturaCaixa || null,
       item.larguraCaixa || null,
       item.comprimentoCaixa || null,
+      item.pesoCaixa || null,
       item.status || "aguardando_teste",
       item.destination || "",
       item.diagnosis || "",
@@ -3382,6 +3402,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "altura_caixa",
       "largura_caixa",
       "comprimento_caixa",
+      "peso_caixa",
       "scope",
       "alert_message",
       "double_checks",
@@ -3409,6 +3430,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.alturaCaixa || null,
       request.larguraCaixa || null,
       request.comprimentoCaixa || null,
+      request.pesoCaixa || null,
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -3444,6 +3466,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "altura_caixa",
       "largura_caixa",
       "comprimento_caixa",
+      "peso_caixa",
       "scope",
       "alert_message",
       "double_checks",
@@ -3472,6 +3495,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.alturaCaixa || null,
       request.larguraCaixa || null,
       request.comprimentoCaixa || null,
+      request.pesoCaixa || null,
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -4333,8 +4357,8 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
@@ -4347,9 +4371,10 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             altura_caixa = excluded.altura_caixa,
             largura_caixa = excluded.largura_caixa,
             comprimento_caixa = excluded.comprimento_caixa,
+            peso_caixa = excluded.peso_caixa,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null]
       );
       await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -4497,7 +4522,8 @@ function productSuggestionFromProduct(product) {
     foto: product.foto || "",
     alturaCaixa: product.alturaCaixa || "",
     larguraCaixa: product.larguraCaixa || "",
-    comprimentoCaixa: product.comprimentoCaixa || ""
+    comprimentoCaixa: product.comprimentoCaixa || "",
+    pesoCaixa: product.pesoCaixa || ""
   };
 }
 
@@ -4518,7 +4544,8 @@ function normalizeManualProduct(input = {}, codigoMl) {
     foto: String(foto || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
-    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade)
+    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
+    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso)
   };
 }
 
@@ -4539,7 +4566,8 @@ function normalizeEditableProduct(input = {}) {
     foto: String(foto || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
-    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade)
+    comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
+    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso)
   };
 }
 
@@ -4566,6 +4594,7 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     alturaCaixa: optionalNum(payload.alturaCaixa ?? product.alturaCaixa),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? product.larguraCaixa),
     comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? product.comprimentoCaixa),
+    pesoCaixa: optionalNum(payload.pesoCaixa ?? product.pesoCaixa),
     scope: payload.scope || "individual",
     alertMessage: payload.alertMessage || "",
     createdAt: new Date().toISOString(),
@@ -4717,6 +4746,7 @@ function buildCatalogDoubleCheck(request) {
     alturaCaixa: request.alturaCaixa || "",
     larguraCaixa: request.larguraCaixa || "",
     comprimentoCaixa: request.comprimentoCaixa || "",
+    pesoCaixa: request.pesoCaixa || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     createdAt: request.createdAt || new Date().toISOString()
@@ -4755,6 +4785,7 @@ export function buildRejectedCatalogRequest(request, rejectedAt) {
     alturaCaixa: request.alturaCaixa || "",
     larguraCaixa: request.larguraCaixa || "",
     comprimentoCaixa: request.comprimentoCaixa || "",
+    pesoCaixa: request.pesoCaixa || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     doubleChecks: normalizeDoubleChecks(request.doubleChecks),
@@ -4831,6 +4862,7 @@ function upsertCatalogProduct(db, request) {
     alturaCaixa: request.alturaCaixa || "",
     larguraCaixa: request.larguraCaixa || "",
     comprimentoCaixa: request.comprimentoCaixa || "",
+    pesoCaixa: request.pesoCaixa || "",
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
@@ -4931,6 +4963,7 @@ function triageLookupFromProduct(product, row = {}) {
     alturaCaixa: product.alturaCaixa || "",
     larguraCaixa: product.larguraCaixa || "",
     comprimentoCaixa: product.comprimentoCaixa || "",
+    pesoCaixa: product.pesoCaixa || "",
     source: "produto",
     sourceLotId: product.sourceLotId || product.lotId || row.lot__id || "",
     sourceLotName: product.sourceLotName || row.lot__nome_arquivo || ""
@@ -5069,6 +5102,7 @@ function triageItemFromRow(row) {
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
+    pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     status: row.status || "aguardando_teste",
     destination: row.destination || "",
     diagnosis: row.diagnosis || "",
@@ -5147,6 +5181,7 @@ function productFromRow(row) {
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
+    pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };
@@ -5167,6 +5202,7 @@ function catalogProductFromRow(row) {
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
+    pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at)
   };
@@ -5194,6 +5230,7 @@ function catalogRequestFromRow(row) {
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
+    pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -5226,6 +5263,7 @@ function catalogRejectedRequestFromRow(row) {
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
+    pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -5715,6 +5753,7 @@ function normalizeTriageInput(input = {}) {
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
     comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
+    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso),
     status: input.status || "aguardando_teste",
     destination: input.destination || "",
     diagnosis: String(input.diagnosis || "").trim(),

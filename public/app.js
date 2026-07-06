@@ -625,6 +625,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const alturaCaixa = $("#manualProductAlturaCaixa");
     const larguraCaixa = $("#manualProductLarguraCaixa");
     const comprimentoCaixa = $("#manualProductComprimentoCaixa");
+    const pesoCaixa = $("#manualProductPesoCaixa");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
     const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
@@ -653,6 +654,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     alturaCaixa.value = initialValues.alturaCaixa || "";
     larguraCaixa.value = initialValues.larguraCaixa || "";
     comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
+    pesoCaixa.value = initialValues.pesoCaixa || "";
     link.value = initialValues.link || "";
     photo.value = initialValues.foto || "";
     error.textContent = "";
@@ -686,6 +688,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         if (suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
         if (suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
         if (suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
+        if (suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
         if (suggestion.link) link.value = suggestion.link;
         if (suggestion.foto) photo.value = suggestion.foto;
       }
@@ -714,6 +717,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         alturaCaixa: alturaCaixa.value.trim(),
         larguraCaixa: larguraCaixa.value.trim(),
         comprimentoCaixa: comprimentoCaixa.value.trim(),
+        pesoCaixa: pesoCaixa.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -1170,6 +1174,7 @@ function openProductEditModal(product) {
     const alturaCaixa = $("#productEditAlturaCaixa");
     const larguraCaixa = $("#productEditLarguraCaixa");
     const comprimentoCaixa = $("#productEditComprimentoCaixa");
+    const pesoCaixa = $("#productEditPesoCaixa");
     const link = $("#productEditLink");
     const photo = $("#productEditPhoto");
     const error = $("#productEditError");
@@ -1194,6 +1199,7 @@ function openProductEditModal(product) {
     alturaCaixa.value = product.alturaCaixa || "";
     larguraCaixa.value = product.larguraCaixa || "";
     comprimentoCaixa.value = product.comprimentoCaixa || "";
+    pesoCaixa.value = product.pesoCaixa || "";
     link.value = product.link || "";
     photo.value = product.foto || "";
     error.textContent = "";
@@ -1226,6 +1232,7 @@ function openProductEditModal(product) {
         alturaCaixa: alturaCaixa.value.trim(),
         larguraCaixa: larguraCaixa.value.trim(),
         comprimentoCaixa: comprimentoCaixa.value.trim(),
+        pesoCaixa: pesoCaixa.value.trim(),
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -2490,7 +2497,7 @@ function adminCatalogRequestRow(request) {
 
 function catalogApprovalOptions(request) {
   return [
-    { id: "base", label: "Cadastro inicial", user: request.user, createdByUser: request.createdByUser, operatorUser: request.operatorUser, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto, alturaCaixa: request.alturaCaixa, larguraCaixa: request.larguraCaixa, comprimentoCaixa: request.comprimentoCaixa },
+    { id: "base", label: "Cadastro inicial", user: request.user, createdByUser: request.createdByUser, operatorUser: request.operatorUser, createdAt: request.createdAt, descricao: request.descricao, valorUnit: request.valorUnit, ean: request.ean, link: request.link, foto: request.foto, alturaCaixa: request.alturaCaixa, larguraCaixa: request.larguraCaixa, comprimentoCaixa: request.comprimentoCaixa, pesoCaixa: request.pesoCaixa },
     ...(Array.isArray(request.doubleChecks) ? request.doubleChecks : []).map((check, index) => ({ ...check, label: `Double check ${index + 1}` }))
   ];
 }
@@ -2502,6 +2509,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
   const photo = String(option.foto || "").trim();
   const ean = String(option.ean || "").trim();
   const dimensions = boxDimensionsLabel(option);
+  const weight = boxWeightLabel(option);
   return `
     <label class="double-check-item">
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
@@ -2511,6 +2519,7 @@ function catalogApprovalOptionRow(requestId, option, index) {
         <span>${escapeHtml(actor)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
         <span>${escapeHtml(option.descricao || "")}</span>
         <span>Caixa: ${escapeHtml(dimensions)}</span>
+        <span>Peso: ${escapeHtml(weight)}</span>
         <span>EAN: ${escapeHtml(ean || "-")}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
@@ -5206,7 +5215,8 @@ function fillTriageProduct(product) {
     asin: product.asin,
     alturaCaixa: product.alturaCaixa,
     larguraCaixa: product.larguraCaixa,
-    comprimentoCaixa: product.comprimentoCaixa
+    comprimentoCaixa: product.comprimentoCaixa,
+    pesoCaixa: product.pesoCaixa
   })) {
     const input = form.elements.namedItem(name);
     if (input) input.value = value || "";
@@ -5326,6 +5336,7 @@ function renderTriageDetail(item) {
           <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
           <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
+          <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
           ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
@@ -5354,6 +5365,7 @@ function renderTriageDetail(item) {
       <label>Altura caixa (cm)<input name="alturaCaixa" inputmode="decimal" value="${escapeHtml(item.alturaCaixa || "")}" /></label>
       <label>Largura caixa (cm)<input name="larguraCaixa" inputmode="decimal" value="${escapeHtml(item.larguraCaixa || "")}" /></label>
       <label>Comprimento caixa (cm)<input name="comprimentoCaixa" inputmode="decimal" value="${escapeHtml(item.comprimentoCaixa || "")}" /></label>
+      <label>Peso caixa (kg)<input name="pesoCaixa" inputmode="decimal" value="${escapeHtml(item.pesoCaixa || "")}" /></label>
       <div class="settings-actions">
         <button type="submit">Salvar dados</button>
         <button type="button" class="ghost" data-cancel-triage-edit>Cancelar</button>
@@ -5382,6 +5394,7 @@ function renderTriageItemView(item) {
         <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
         <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
         <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
+        <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
         <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
         ${item.diagnosedAt ? `<div><dt>Diagnostico em</dt><dd>${formatDateTime(item.diagnosedAt)}</dd></div>` : ""}
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
@@ -5428,6 +5441,11 @@ function boxDimensionsLabel(item = {}) {
   const largura = String(item.larguraCaixa || "").trim();
   const comprimento = String(item.comprimentoCaixa || "").trim();
   return altura || largura || comprimento ? `${altura || "-"} x ${largura || "-"} x ${comprimento || "-"} cm` : "-";
+}
+
+function boxWeightLabel(item = {}) {
+  const peso = String(item.pesoCaixa || "").trim();
+  return peso ? `${peso} kg` : "-";
 }
 
 function triageDiagnosisPhotoMarkup(photo) {

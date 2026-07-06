@@ -22,8 +22,8 @@ export function buildBlingProductPayload(product) {
     tipoProducao: "T",
     condicao: 0,
     freteGratis: false,
-    pesoLiquido: 0,
-    pesoBruto: 0,
+    pesoLiquido: numberOrZero(product.pesoCaixa ?? product.pesoLiquido ?? product.peso),
+    pesoBruto: numberOrZero(product.pesoCaixa ?? product.pesoBruto ?? product.peso),
     volumes: 0,
     itensPorCaixa: 0,
     dimensoes: buildBlingDimensionsPayload(product)
@@ -318,6 +318,8 @@ export async function updateBlingProductFromTriage({ integration, item, saveInte
     gtin: item.ean || product.gtin || "",
     gtinEmbalagem: item.ean || product.gtinEmbalagem || product.gtin || "",
     marca: item.asin || product.marca || "",
+    pesoLiquido: item.pesoCaixa || product.pesoLiquido || product.pesoBruto || "",
+    pesoBruto: item.pesoCaixa || product.pesoBruto || product.pesoLiquido || "",
     dimensoes: buildBlingDimensionsPayload(item) || product.dimensoes
   });
   const response = await client.updateProduct(product.id, payload);
@@ -340,7 +342,8 @@ export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
   const triageDimensions = compactObject({
     alturaCaixa: dimensoes.altura || product.alturaCaixa || "",
     larguraCaixa: dimensoes.largura || product.larguraCaixa || "",
-    comprimentoCaixa: dimensoes.profundidade || dimensoes.comprimento || product.comprimentoCaixa || ""
+    comprimentoCaixa: dimensoes.profundidade || dimensoes.comprimento || product.comprimentoCaixa || "",
+    pesoCaixa: product.pesoBruto || product.pesoLiquido || product.pesoCaixa || ""
   });
   return {
     productCode: code,

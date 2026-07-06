@@ -1429,7 +1429,7 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
 
 async function syncTriageItemToBling(userId, item) {
   if (!item?.sku && !item?.productCode && !item?.codigoBling2) return { ok: false, skipped: true, error: "Produto sem SKU/codigo para atualizar no Bling." };
-  if (!item?.ean && !item?.asin && !item?.alturaCaixa && !item?.larguraCaixa && !item?.comprimentoCaixa) return { ok: true, skipped: true };
+  if (!item?.ean && !item?.asin && !item?.alturaCaixa && !item?.larguraCaixa && !item?.comprimentoCaixa && !item?.pesoCaixa) return { ok: true, skipped: true };
   try {
     const integration = await getUserBlingCredentials(userId);
     if (!integration?.accessToken || !integration?.refreshToken) return { ok: false, skipped: true, error: "Bling nao autorizado para este usuario." };
