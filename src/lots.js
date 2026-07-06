@@ -36,13 +36,33 @@ export function summarizeLot(db, lot, includeItems = false) {
 
   if (includeItems) {
     result.products = products;
-    result.items = items.map((item) => ({
-      ...item,
-      product: products.find((product) => product.id === item.productId)
-    }));
+    result.items = items.map((item) => enrichRzItemWithProductAndScans(db, item, products));
   }
 
   return result;
+}
+
+function enrichRzItemWithProductAndScans(db, item, products) {
+  const product = products.find((candidate) => candidate.id === item.productId);
+  return {
+    ...item,
+    lastScanAt: lastRzItemScanAt(db, item, product),
+    product
+  };
+}
+
+function lastRzItemScanAt(db, item, product) {
+  if (!product) return "";
+  const matchingCodes = productScanCodes(product);
+  return (db.scans || [])
+    .filter((scan) => scan.lotId === item.lotId && scan.codigoRz === item.codigoRz)
+    .filter((scan) => matchingCodes.has(normalizeCode(scan.codigoMl)))
+    .map((scan) => scan.createdAt || "")
+    .sort((a, b) => String(b).localeCompare(String(a)))[0] || "";
+}
+
+function productScanCodes(product) {
+  return new Set([product.codigoMl, product.sku, code39BarcodeValue(product.sku), product.ean].map(normalizeCode).filter(Boolean));
 }
 
 function enrichProductUsers(product, usersById) {
@@ -180,4 +200,8 @@ function percent(value, total) {
 
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function code39BarcodeValue(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "-");
 }

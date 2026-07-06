@@ -3500,8 +3500,13 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
 
 function prioritizeTransferItems(items, code) {
   const normalized = normalizeCode(code);
-  if (!normalized) return items;
-  return [...items].sort((a, b) => Number(transferItemMatchesCode(b, normalized)) - Number(transferItemMatchesCode(a, normalized)));
+  return [...items].sort((a, b) => {
+    if (normalized) {
+      const matchOrder = Number(transferItemMatchesCode(b, normalized)) - Number(transferItemMatchesCode(a, normalized));
+      if (matchOrder) return matchOrder;
+    }
+    return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+  });
 }
 
 function transferItemMatchesCode(item, normalizedCode) {
@@ -4313,8 +4318,15 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
 
 function prioritizeScannedItems(items, codigoMl) {
   const normalized = normalizeCode(codigoMl);
-  if (!normalized) return items;
-  return [...items].sort((a, b) => Number(itemMatchesScanCode(b, normalized)) - Number(itemMatchesScanCode(a, normalized)));
+  return [...items].sort((a, b) => {
+    if (normalized) {
+      const matchOrder = Number(itemMatchesScanCode(b, normalized)) - Number(itemMatchesScanCode(a, normalized));
+      if (matchOrder) return matchOrder;
+    }
+    const scanOrder = String(b.lastScanAt || "").localeCompare(String(a.lastScanAt || ""));
+    if (scanOrder) return scanOrder;
+    return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+  });
 }
 
 function itemMatchesScanCode(item, normalizedCode) {

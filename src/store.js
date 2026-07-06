@@ -4655,7 +4655,7 @@ function summarizeTransferLot(lot, items, reports = []) {
     totalPending: Math.max(0, totalQty - totalReceived),
     divergenceCount: lotReports.length,
     divergenceReports: lotReports.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    items: lotItems.sort((a, b) => a.sku.localeCompare(b.sku)).map((item) => ({
+    items: lotItems.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || a.sku.localeCompare(b.sku)).map((item) => ({
       ...item,
       quantidadeConferida: Number(item.quantidadeConferida || 0),
       falta: Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0)),

@@ -107,6 +107,44 @@ test("summarizeLot consolidates repeated product rows in the same RZ", () => {
   assert.equal(summary.rzs[0].excess, 1);
 });
 
+test("summarizeLot includes the latest scan timestamp for each RZ item", () => {
+  const db = {
+    lots: [{ id: "lot-1", userId: "user-1" }],
+    products: [
+      {
+        id: "product-1",
+        lotId: "lot-1",
+        codigoMl: "ML1",
+        sku: "TST0001",
+        ean: "789",
+        descricao: "Produto 1",
+        valorUnit: 10,
+        origem: "planilha"
+      }
+    ],
+    rzItems: [
+      {
+        id: "item-1",
+        lotId: "lot-1",
+        productId: "product-1",
+        codigoRz: "RZ-1",
+        qtdEsperada: 1,
+        qtdConferida: 1,
+        tipoItem: "esperado",
+        valorTotal: 10
+      }
+    ],
+    scans: [
+      { id: "scan-1", lotId: "lot-1", codigoRz: "RZ-1", codigoMl: "ML1", status: "ok", createdAt: "2026-07-03T10:00:00.000Z" },
+      { id: "scan-2", lotId: "lot-1", codigoRz: "RZ-1", codigoMl: "TST0001", status: "ok", createdAt: "2026-07-03T10:05:00.000Z" }
+    ]
+  };
+
+  const summary = summarizeLot(db, db.lots[0], true);
+
+  assert.equal(summary.items[0].lastScanAt, "2026-07-03T10:05:00.000Z");
+});
+
 test("getBlingProducts includes diverse entry items in complete export", () => {
   const lot = { id: "lot-1" };
   const db = {
