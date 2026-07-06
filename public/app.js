@@ -5173,9 +5173,12 @@ async function createTriageItem(event) {
     state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)];
     state.selectedTriageCode = response.item.code;
     renderTriageItems();
-    renderTriageDetail(response.item);
+    renderTriageDetail(response.item, {
+      openEdit: shouldOpenTriageEditForBling(response.bling),
+      focusSelector: triageBlingCorrectionSelector(response.bling)
+    });
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
-    $("#triageMessage").style.color = "#0f766e";
+    $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
     $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
   } catch (error) {
     $("#triageMessage").style.color = "";
@@ -5305,7 +5308,7 @@ function clearTriageDetail() {
   detail.textContent = "Selecione um produto da triagem.";
 }
 
-function renderTriageDetail(item) {
+function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
   const detail = $("#triageDetail");
   const footer = labelFooterText(labelMeta(item.createdAt));
   const deleteButton = isOwnerUser()
@@ -5325,7 +5328,7 @@ function renderTriageDetail(item) {
             <span class="muted">Identificacao interna</span>
             <h2>${escapeHtml(item.code)}</h2>
           </div>
-          <button type="button" class="ghost" data-toggle-triage-edit>Editar dados</button>
+          <button type="button" class="ghost" data-toggle-triage-edit>${openEdit ? "Fechar edicao" : "Editar dados"}</button>
         </div>
         <dl class="triage-fields">
           <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
@@ -5349,7 +5352,7 @@ function renderTriageDetail(item) {
     </section>
     ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
     ${triageDiagnosisHistoryMarkup(item.diagnosisHistory)}
-    <form class="triage-edit-form hidden">
+    <form class="triage-edit-form ${openEdit ? "" : "hidden"}">
       <div class="panel-heading">
         <span class="muted">Dados da etiqueta</span>
         <h3>Editar identificacao e informacoes</h3>
@@ -5374,6 +5377,12 @@ function renderTriageDetail(item) {
     </form>
     ${triageDiagnosisFormMarkup(item)}
   `;
+  if (openEdit) {
+    setTimeout(() => {
+      const selector = focusSelector || 'input[name="ean"]';
+      detail.querySelector(`.triage-edit-form ${selector}`)?.focus();
+    }, 0);
+  }
 }
 
 function renderTriageItemView(item) {
@@ -5605,9 +5614,12 @@ async function handleTriageEditSubmit(event) {
     state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== previousCode && item.code !== response.item.code)]
       .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
     renderTriageItems();
-    renderTriageDetail(response.item);
+    renderTriageDetail(response.item, {
+      openEdit: shouldOpenTriageEditForBling(response.bling),
+      focusSelector: triageBlingCorrectionSelector(response.bling)
+    });
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
-    $("#triageDetailMessage").style.color = "#0f766e";
+    $("#triageDetailMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
     $("#triageDetailMessage").textContent = triageBlingMessage(response.bling, "Dados atualizados.");
   } catch (error) {
     if (message) message.textContent = error.message;
@@ -5654,7 +5666,7 @@ function handleTriageDetailClick(event) {
     if (!form) return;
     form.classList.toggle("hidden");
     toggle.textContent = form.classList.contains("hidden") ? "Editar dados" : "Fechar edicao";
-    if (!form.classList.contains("hidden")) form.querySelector('input[name="code"]')?.focus();
+    if (!form.classList.contains("hidden")) form.querySelector('input[name="ean"]')?.focus();
     return;
   }
 
@@ -5687,6 +5699,17 @@ function triageBlingMessage(bling, baseMessage) {
   if (bling.ok && !bling.skipped) return `${baseMessage} Bling atualizado.`;
   if (bling.ok && bling.skipped) return baseMessage;
   return `${baseMessage} Bling nao atualizado: ${bling.error || "verifique a integracao."}`;
+}
+
+function shouldOpenTriageEditForBling(bling) {
+  return Boolean(bling && bling.ok === false);
+}
+
+function triageBlingCorrectionSelector(bling) {
+  const error = String(bling?.error || "").toLowerCase();
+  if (error.includes("asin") || error.includes("marca")) return 'input[name="asin"]';
+  if (error.includes("ean") || error.includes("gtin")) return 'input[name="ean"]';
+  return 'input[name="ean"]';
 }
 
 function triageDiagnosedByLabel(item) {
