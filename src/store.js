@@ -1756,20 +1756,21 @@ export async function createTransferLot({ userId, descricao = "", depositoOrigem
   return summarizeTransferLot(lot, []);
 }
 
-export async function scanTransferLot({ userId, transferLotId, code }) {
+export async function scanTransferLot({ userId, transferLotId, code, externalProduct = null }) {
   await ensureStore();
   const normalized = normalizeCode(code);
   if (!normalized) throw new Error("Informe o Codigo ML ou SKU.");
-  if (hasPostgres()) return scanTransferLotPg({ userId, transferLotId, code: normalized });
+  const normalizedExternalProduct = normalizeExternalTransferProduct(externalProduct, normalized);
+  if (hasPostgres()) return scanTransferLotPg({ userId, transferLotId, code: normalized, externalProduct: normalizedExternalProduct });
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
   if (!lot) throw notFound("Lote de transferencia nao encontrado.");
   if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
 
-  const product = findTransferProduct(db, userId, normalized);
+  const product = findTransferProduct(db, userId, normalized) || normalizedExternalProduct;
   if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
-  const existing = (db.transferItems || []).find((item) => item.transferLotId === lot.id && item.productId === product.id);
+  const existing = findExistingTransferItem(db.transferItems || [], lot.id, product);
   const now = new Date().toISOString();
   if (existing) {
     existing.quantidade += 1;
@@ -4080,7 +4081,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
   return { ...result, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function scanTransferLotPg({ userId, transferLotId, code }) {
+async function scanTransferLotPg({ userId, transferLotId, code, externalProduct = null }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -4090,9 +4091,23 @@ async function scanTransferLotPg({ userId, transferLotId, code }) {
     if (!lot) throw notFound("Lote de transferencia nao encontrado.");
     if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
 
-    const product = await findPgTransferProduct(client, userId, code);
+    const product = await findPgTransferProduct(client, userId, code) || externalProduct;
     if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
-    const itemResult = await client.query("select * from transfer_items where transfer_lot_id = $1 and product_id = $2 limit 1 for update", [lot.id, product.id]);
+    const itemResult = product.id
+      ? await client.query("select * from transfer_items where transfer_lot_id = $1 and product_id = $2 limit 1 for update", [lot.id, product.id])
+      : await client.query(
+        `select * from transfer_items
+         where transfer_lot_id = $1
+           and product_id is null
+           and (
+             upper(trim(codigo_ml)) = upper(trim($2))
+             or upper(trim(sku)) = upper(trim($2))
+             or regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+             or upper(trim(ean)) = upper(trim($2))
+           )
+         limit 1 for update`,
+        [lot.id, code]
+      );
     const existing = itemResult.rows[0] && transferItemFromRow(itemResult.rows[0]);
     const now = new Date().toISOString();
     if (existing) {
@@ -5107,6 +5122,43 @@ function findTransferProduct(db, userId, code) {
   if (!product) return null;
   const sourceLot = (db.lots || []).find((lot) => lot.id === product.lotId);
   return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
+}
+
+function findExistingTransferItem(items, transferLotId, product) {
+  return (items || []).find((item) => {
+    if (item.transferLotId !== transferLotId) return false;
+    if (product.id) return item.productId === product.id;
+    if (item.productId) return false;
+    const codigoMl = normalizeCode(product.codigoMl);
+    const sku = normalizeCode(product.sku);
+    const ean = normalizeCode(product.ean);
+    return (
+      (codigoMl && normalizeCode(item.codigoMl) === codigoMl) ||
+      (sku && normalizeCode(item.sku) === sku) ||
+      (sku && normalizeCode(code39BarcodeValue(item.sku)) === sku) ||
+      (ean && normalizeCode(item.ean) === ean)
+    );
+  });
+}
+
+function normalizeExternalTransferProduct(input, fallbackCode) {
+  if (!input) return null;
+  const sku = normalizeCode(input.sku || input.codigo || input.productCode || input.codigoBling2 || fallbackCode);
+  const codigoMl = normalizeCode(input.codigoMl || input.productCode || input.codigoBling2 || sku || fallbackCode);
+  const descricao = String(input.descricao || input.nome || sku || fallbackCode || "").trim();
+  if (!sku && !codigoMl) return null;
+  return {
+    id: null,
+    lotId: null,
+    sourceLotId: null,
+    sourceLotName: "Bling",
+    codigoMl: codigoMl || sku,
+    sku: sku || codigoMl,
+    descricao: descricao || sku || codigoMl,
+    ean: String(input.ean || input.gtin || input.gtinEmbalagem || "").trim(),
+    origem: "bling",
+    createdAt: input.createdAt || new Date().toISOString()
+  };
 }
 
 function triageLookupFromProduct(product, row = {}) {

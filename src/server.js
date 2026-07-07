@@ -517,7 +517,11 @@ app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res)
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "scan_transfer", { transferLotId: req.params.transferLotId, code });
-    res.json(await scanTransferLot({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code }));
+    res.json(await scanTransferLotWithBlingFallback({
+      userId: workspaceUserId(req),
+      transferLotId: req.params.transferLotId,
+      code
+    }));
   } catch (error) {
     sendError(res, error);
   }
@@ -1464,6 +1468,35 @@ async function syncTriageItemToBling(userId, item) {
   } catch (error) {
     return { ok: false, error: error.message };
   }
+}
+
+async function scanTransferLotWithBlingFallback({ userId, transferLotId, code }) {
+  try {
+    return await scanTransferLot({ userId, transferLotId, code });
+  } catch (error) {
+    if (error.status !== 404 || !String(error.message || "").includes("Produto nao encontrado")) throw error;
+  }
+
+  const integration = await getUserBlingCredentials(userId);
+  if (!integration?.accessToken || !integration?.refreshToken) {
+    const error = new Error("Produto nao encontrado nos lotes deste usuario e o Bling nao esta autorizado.");
+    error.status = 404;
+    throw error;
+  }
+
+  const blingApp = await getBlingAppCredentials(userId);
+  const product = await lookupBlingProductForTriage({
+    integration: { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret },
+    code,
+    saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+  });
+  if (!product) {
+    const error = new Error("Produto nao encontrado nos lotes deste usuario nem no Bling.");
+    error.status = 404;
+    throw error;
+  }
+
+  return scanTransferLot({ userId, transferLotId, code, externalProduct: product });
 }
 
 function isAdminLogin(email, password) {

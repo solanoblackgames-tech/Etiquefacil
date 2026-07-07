@@ -272,3 +272,75 @@ test("scanTransferLot moves an existing item to the top after a new scan", async
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("scanTransferLot accepts a product that exists only in Bling", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-transfer-bling-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-bling`;
+    const { scanTransferLot, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [
+        {
+          id: "transfer-1",
+          userId: "user-1",
+          name: "TRF-1",
+          descricao: "",
+          depositoOrigem: "CD",
+          depositoDestino: "Loja",
+          status: "open",
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const externalProduct = {
+      sku: "BLING123",
+      productCode: "BLING123",
+      descricao: "Produto existente no Bling",
+      ean: "7890000000001"
+    };
+    const first = await scanTransferLot({ userId: "user-1", transferLotId: "transfer-1", code: "BLING123", externalProduct });
+    const second = await scanTransferLot({ userId: "user-1", transferLotId: "transfer-1", code: "BLING123", externalProduct });
+    const db = await readDb();
+
+    assert.equal(first.status, "added");
+    assert.equal(second.status, "updated");
+    assert.equal(db.transferItems.length, 1);
+    assert.equal(db.transferItems[0].productId, null);
+    assert.equal(db.transferItems[0].sourceLotId, null);
+    assert.equal(db.transferItems[0].sku, "BLING123");
+    assert.equal(db.transferItems[0].quantidade, 2);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
