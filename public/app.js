@@ -5311,7 +5311,7 @@ function clearTriageDetail() {
 function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
   const detail = $("#triageDetail");
   const footer = labelFooterText(labelMeta(item.createdAt));
-  const deleteButton = isOwnerUser()
+  const deleteButton = item.canDelete
     ? `<button type="button" class="danger ghost" data-delete-triage-item>Excluir etiqueta</button>`
     : "";
   detail.classList.remove("empty");

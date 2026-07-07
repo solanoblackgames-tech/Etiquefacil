@@ -885,9 +885,42 @@ export async function updateProductRegistrationFromTriage({ userId, item }) {
   return product;
 }
 
-export async function deleteTriageItem({ userId, code }) {
+export async function canDeleteTriageItem({ userId, code, requesterUserId = null, isOwner = false }) {
+  await ensureStore();
+  if (isOwner) return true;
+  const requesterId = String(requesterUserId || "").trim();
+  const normalized = normalizeCode(code);
+  if (!requesterId || !normalized) return false;
+
+  if (hasPostgres()) {
+    const result = await query(
+      `select code
+       from triage_items
+       where user_id = $1 and created_by_user_id = $2
+       order by created_at desc
+       limit 5`,
+      [userId, requesterId]
+    );
+    return result.rows.some((row) => normalizeCode(row.code) === normalized);
+  }
+
+  const db = await readDb();
+  return (db.triageItems || [])
+    .filter((item) => item.userId === userId && item.createdByUserId === requesterId)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 5)
+    .some((item) => normalizeCode(item.code) === normalized);
+}
+
+export async function deleteTriageItem({ userId, code, requesterUserId = null, isOwner = true }) {
   await ensureStore();
   const normalized = normalizeCode(code);
+  if (!(await canDeleteTriageItem({ userId, code: normalized, requesterUserId, isOwner }))) {
+    const error = new Error("Operador pode excluir apenas as 5 ultimas etiquetas que ele gerou.");
+    error.status = 403;
+    throw error;
+  }
+
   if (hasPostgres()) {
     const result = await query(
       "delete from triage_items where user_id = $1 and upper(code) = upper($2) returning *",
@@ -5771,15 +5804,22 @@ function normalizeDbTenants(db) {
 async function nextTriageCode(userId) {
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const prefix = `LAB-${day}-`;
-  let count = 0;
+  let codes = [];
   if (hasPostgres()) {
-    const result = await query("select count(*)::int as total from triage_items where user_id = $1 and code like $2", [userId, `${prefix}%`]);
-    count = Number(result.rows[0]?.total || 0);
+    const result = await query("select code from triage_items where user_id = $1 and code like $2", [userId, `${prefix}%`]);
+    codes = result.rows.map((row) => row.code);
   } else {
     const db = await readDb();
-    count = (db.triageItems || []).filter((item) => item.userId === userId && String(item.code || "").startsWith(prefix)).length;
+    codes = (db.triageItems || [])
+      .filter((item) => item.userId === userId && String(item.code || "").startsWith(prefix))
+      .map((item) => item.code);
   }
-  return `${prefix}${String(count + 1).padStart(6, "0")}`;
+
+  const nextNumber = codes.reduce((highest, code) => {
+    const suffix = String(code || "").slice(prefix.length);
+    return /^\d+$/.test(suffix) ? Math.max(highest, Number(suffix)) : highest;
+  }, 0) + 1;
+  return `${prefix}${String(nextNumber).padStart(6, "0")}`;
 }
 
 function normalizeTriageInput(input = {}) {

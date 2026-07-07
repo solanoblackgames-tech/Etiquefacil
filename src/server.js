@@ -27,6 +27,7 @@ import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, imp
 import { buildRuntimeConfig } from "./config.js";
 import {
   addDiverseLotItem,
+  canDeleteTriageItem,
   createExternalExcess,
   createDiverseLot,
   createLabel,
@@ -406,11 +407,13 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
   }
 });
 
-app.delete("/api/triage/items/:code", requireAuth, requireTriageAccess, requireOwner, async (req, res) => {
+app.delete("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     const item = await deleteTriageItem({
       userId: workspaceUserId(req),
-      code: req.params.code
+      code: req.params.code,
+      requesterUserId: req.session.user?.id,
+      isOwner: isOwnerSession(req)
     });
     res.json({ ok: true, item });
   } catch (error) {
@@ -1413,6 +1416,12 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
   if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item, { includeHistory })));
   const statusUrl = triageStatusUrl(req, value.code);
   const diagnosedByUser = value.diagnosedAt && value.operatorUserId ? await getPublicUserById(value.operatorUserId) : null;
+  const canDelete = await canDeleteTriageItem({
+    userId: workspaceUserId(req),
+    code: value.code,
+    requesterUserId: req.session.user?.id,
+    isOwner: isOwnerSession(req)
+  });
   const diagnosisHistory = includeHistory
     ? await Promise.all(
         (await listTriageDiagnosisHistory({ userId: workspaceUserId(req), code: value.code })).map(async (event) => ({
@@ -1424,6 +1433,7 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
   return {
     ...value,
     diagnosedByUser,
+    canDelete,
     ...(includeHistory ? { diagnosisHistory } : {}),
     statusUrl,
     qrDataUrl: await QRCode.toDataURL(statusUrl, { margin: 1, width: 220 })
