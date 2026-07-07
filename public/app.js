@@ -18,6 +18,7 @@ const state = {
   triageItems: [],
   selectedTriageCode: null,
   triageStats: null,
+  operationalStats: null,
   triageStatsVisible: false,
   blingDeposits: [],
   blingDepositsLoaded: false,
@@ -1437,6 +1438,7 @@ function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
+  document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
   document.querySelector("#triageStatsButton")?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
     state.triageStatsVisible = false;
@@ -1513,13 +1515,161 @@ function setProfileSection(section = "entries") {
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.classList.toggle("active", button.dataset.profileSection === section);
   });
+  $("#profileDashboard").classList.toggle("hidden", section !== "dashboard");
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
   $("#profileTab").scrollTop = 0;
   if (section === "sync") loadBlingIntegration();
+  if (section === "dashboard") loadOperationalDashboard();
   if (section === "operators") loadOperators();
 }
+
+async function loadOperationalDashboard() {
+  const panel = $("#profileOperationalDashboardPanel");
+  if (!panel) return;
+  panel.innerHTML = '<p class="muted">Carregando dashboard...</p>';
+  try {
+    const response = await api("/api/dashboard/operations");
+    state.operationalStats = response.stats || null;
+    renderOperationalDashboard();
+  } catch (error) {
+    panel.innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderOperationalDashboard() {
+  const panel = $("#profileOperationalDashboardPanel");
+  const stats = state.operationalStats;
+  if (!panel || !stats) return;
+  const lots = stats.lots || {};
+  const transfers = stats.transfers || {};
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <span class="muted">Perfil</span>
+      <h3>Dashboard operacional</h3>
+    </div>
+    <div class="operational-dashboard-summary">
+      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs - ${lots.remessas || 0} RZs/remessas</small></div>
+      <div class="metric"><span>Valor dos lotes</span><strong>${money(lots.value || 0)}</strong><small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small></div>
+      <div class="metric"><span>Remessas loja</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small></div>
+      <div class="metric"><span>Valor das remessas</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
+      <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
+    </div>
+    <div class="operational-dashboard-grid">
+      <section class="operational-dashboard-block">
+        <div>
+          <strong>Valor agregado por operador</strong>
+          <span class="muted">Entradas de lotes e remessas criadas.</span>
+        </div>
+        ${operationalOperatorsMarkup(stats.operators || [])}
+      </section>
+      <section class="operational-dashboard-block">
+        <div>
+          <strong>Remessas recentes</strong>
+          <span class="muted">Quantidade, conferencia e valor planejado.</span>
+        </div>
+        ${operationalTransfersMarkup(stats.recentTransfers || [])}
+      </section>
+      <section class="operational-dashboard-block operational-dashboard-wide">
+        <div>
+          <strong>Lotes recentes</strong>
+          <span class="muted">SKUs, quantidades e valor agregado por lote.</span>
+        </div>
+        ${operationalLotsMarkup(stats.recentLots || [])}
+      </section>
+    </div>
+    <p class="muted">Atualizado em ${formatDateTime(stats.generatedAt)}</p>
+  `;
+}
+
+function operationalTransferStatusSummary(statusCounts = {}) {
+  const labels = Object.entries(statusCounts)
+    .filter(([, total]) => Number(total || 0) > 0)
+    .map(([status, total]) => `${transferStatusLabel(status)}: ${total}`);
+  return labels.length ? labels.join(" - ") : "Sem remessas";
+}
+
+function operationalOperatorsMarkup(operators = []) {
+  if (!operators.length) return '<p class="muted">Nenhum operador com movimentacao.</p>';
+  return `
+    <div class="operational-dashboard-table operational-operator-table">
+      <div class="operational-dashboard-row operational-dashboard-head">
+        <span>Operador</span>
+        <span>Lotes</span>
+        <span>Qtd lote</span>
+        <span>Valor lote</span>
+        <span>Remessas</span>
+        <span>Qtd remessa</span>
+        <span>Valor remessa</span>
+        <span>Total</span>
+      </div>
+      ${operators.map((operator) => `
+        <div class="operational-dashboard-row">
+          <strong>${escapeHtml(operatorLabel(operator))}</strong>
+          <span>${operator.lotCount || 0}</span>
+          <span>${operator.lotQty || 0}</span>
+          <span>${money(operator.lotValue || 0)}</span>
+          <span>${operator.transferCount || 0}</span>
+          <span>${operator.transferQty || 0}</span>
+          <span>${money(operator.transferValue || 0)}</span>
+          <span>${money(operator.totalValue || 0)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function operationalTransfersMarkup(transfers = []) {
+  if (!transfers.length) return '<p class="muted">Nenhuma remessa criada.</p>';
+  return `
+    <div class="operational-dashboard-table operational-transfer-table">
+      <div class="operational-dashboard-row operational-dashboard-head">
+        <span>Remessa</span>
+        <span>Status</span>
+        <span>Qtd</span>
+        <span>Valor</span>
+        <span>Operador</span>
+      </div>
+      ${transfers.map((transfer) => `
+        <div class="operational-dashboard-row">
+          <strong>${escapeHtml(transfer.name || "")}<small>${escapeHtml(transfer.depositoOrigem || "")} -> ${escapeHtml(transfer.depositoDestino || "")}</small></strong>
+          <span>${escapeHtml(transferStatusLabel(transfer.status))}<small>${formatDate(transfer.createdAt)}</small></span>
+          <span>${transfer.received || 0}/${transfer.planned || 0}<small>${transfer.pending || 0} faltando</small></span>
+          <span>${money(transfer.value || 0)}</span>
+          <span>${escapeHtml(operatorLabel(transfer.operator || {}))}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function operationalLotsMarkup(lots = []) {
+  if (!lots.length) return '<p class="muted">Nenhum lote criado.</p>';
+  return `
+    <div class="operational-dashboard-table operational-lot-table">
+      <div class="operational-dashboard-row operational-dashboard-head">
+        <span>Lote</span>
+        <span>Fornecedor</span>
+        <span>SKUs</span>
+        <span>Qtd</span>
+        <span>Valor</span>
+        <span>Criado</span>
+      </div>
+      ${lots.map((lot) => `
+        <div class="operational-dashboard-row">
+          <strong>${escapeHtml(lot.name || "")}</strong>
+          <span>${escapeHtml(lot.fornecedor || "")}</span>
+          <span>${lot.skus || 0}</span>
+          <span>${lot.expected || 0}</span>
+          <span>${money(lot.value || 0)}</span>
+          <span>${formatDate(lot.createdAt)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 
 async function loadOperators() {
   try {

@@ -1,4 +1,4 @@
-﻿import fs from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -672,6 +672,32 @@ export async function getTriageStats(userId) {
     });
   return buildTriageStatsFromRows(rows);
 }
+
+export async function getOperationalDashboardStats(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const lotsDb = await readPgUserLotsDb(userId);
+    const transferLotsResult = await query("select * from transfer_lots where user_id = $1 order by created_at desc", [userId]);
+    const transferLotIds = transferLotsResult.rows.map((row) => row.id);
+    const [transferItemsResult, reportsResult] = transferLotIds.length
+      ? await Promise.all([
+        query("select * from transfer_items where transfer_lot_id = any($1::text[]) order by created_at asc", [transferLotIds]),
+        query("select * from transfer_divergence_reports where transfer_lot_id = any($1::text[]) order by created_at desc", [transferLotIds])
+      ])
+      : [{ rows: [] }, { rows: [] }];
+    const db = {
+      ...lotsDb,
+      transferLots: transferLotsResult.rows.map(transferLotFromRow),
+      transferItems: transferItemsResult.rows.map(transferItemFromRow),
+      transferDivergenceReports: reportsResult.rows.map(transferDivergenceReportFromRow)
+    };
+    return buildOperationalDashboardStats(db, userId);
+  }
+
+  const db = await readDb();
+  return buildOperationalDashboardStats(db, userId);
+}
+
 
 export async function getTriageItem(userId, code) {
   await ensureStore();
@@ -5415,6 +5441,204 @@ function productFromRow(row) {
     createdAt: iso(row.created_at)
   };
 }
+
+function buildOperationalDashboardStats(db, userId) {
+  const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
+  const owner = userMap.get(userId) || { id: userId, name: "Conta principal", email: "", role: "owner" };
+  userMap.set(userId, owner);
+
+  const lots = (db.lots || []).filter((lot) => lot.userId === userId);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const products = (db.products || []).filter((product) => lotIds.has(product.lotId));
+  const rzItems = (db.rzItems || []).filter((item) => lotIds.has(item.lotId));
+  const transfers = (db.transferLots || []).filter((lot) => lot.userId === userId);
+  const transferIds = new Set(transfers.map((lot) => lot.id));
+  const transferItems = (db.transferItems || []).filter((item) => transferIds.has(item.transferLotId));
+  const reports = (db.transferDivergenceReports || []).filter((report) => transferIds.has(report.transferLotId));
+
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsBySku = new Map();
+  const productsByCode = new Map();
+  for (const product of products) {
+    const sku = normalizeCode(product.sku);
+    const code = normalizeCode(product.codigoMl);
+    if (sku && !productsBySku.has(sku)) productsBySku.set(sku, product);
+    if (code && !productsByCode.has(code)) productsByCode.set(code, product);
+  }
+
+  const operatorRows = new Map();
+  const operatorFor = (operatorId) => {
+    const id = operatorId || userId;
+    const user = userMap.get(id) || null;
+    const current = operatorRows.get(id) || {
+      operatorId: id,
+      name: user?.name || (id === userId ? "Conta principal" : "Sem operador"),
+      email: user?.email || "",
+      operatorCode: user?.operatorCode || null,
+      lotCount: 0,
+      lotSkus: 0,
+      lotQty: 0,
+      lotValue: 0,
+      transferCount: 0,
+      transferQty: 0,
+      transferReceived: 0,
+      transferValue: 0,
+      totalValue: 0,
+      _lotIds: new Set(),
+      _transferIds: new Set()
+    };
+    operatorRows.set(id, current);
+    return current;
+  };
+
+  const qtyByProduct = new Map();
+  const checkedByProduct = new Map();
+  const rzKeys = new Set();
+  for (const item of rzItems) {
+    qtyByProduct.set(item.productId, Number(qtyByProduct.get(item.productId) || 0) + Number(item.qtdEsperada || 0));
+    checkedByProduct.set(item.productId, Number(checkedByProduct.get(item.productId) || 0) + Number(item.qtdConferida || 0));
+    rzKeys.add(`${item.lotId}\u0000${item.codigoRz}`);
+  }
+
+  let lotQty = 0;
+  let lotCheckedQty = 0;
+  let lotValue = 0;
+  let lotCheckedValue = 0;
+  for (const product of products) {
+    const qty = Number(qtyByProduct.get(product.id) || product.qtdTotal || 0);
+    const checked = Number(checkedByProduct.get(product.id) || 0);
+    const value = roundMoney(qty * Number(product.valorUnit || 0));
+    const checkedValue = roundMoney(Math.min(qty, checked) * Number(product.valorUnit || 0));
+    lotQty += qty;
+    lotCheckedQty += checked;
+    lotValue += value;
+    lotCheckedValue += checkedValue;
+
+    const row = operatorFor(product.operatorUserId || product.createdByUserId || userId);
+    row._lotIds.add(product.lotId);
+    row.lotSkus += 1;
+    row.lotQty += qty;
+    row.lotValue = roundMoney(row.lotValue + value);
+  }
+
+  const statusCounts = {};
+  for (const transfer of transfers) {
+    statusCounts[transfer.status || "open"] = Number(statusCounts[transfer.status || "open"] || 0) + 1;
+    const row = operatorFor(transfer.createdByUserId || userId);
+    row._transferIds.add(transfer.id);
+  }
+
+  let transferQty = 0;
+  let transferReceived = 0;
+  let transferValue = 0;
+  const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
+  for (const item of transferItems) {
+    const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+    const unitValue = Number(product?.valorUnit || 0);
+    const qty = Number(item.quantidade || 0);
+    const received = Number(item.quantidadeConferida || 0);
+    const value = roundMoney(qty * unitValue);
+    transferQty += qty;
+    transferReceived += received;
+    transferValue += value;
+
+    const transfer = transfersById.get(item.transferLotId);
+    const row = operatorFor(transfer?.createdByUserId || userId);
+    row.transferQty += qty;
+    row.transferReceived += received;
+    row.transferValue = roundMoney(row.transferValue + value);
+  }
+
+  const operatorStats = [...operatorRows.values()].map((row) => {
+    row.lotCount = row._lotIds.size;
+    row.transferCount = row._transferIds.size;
+    row.totalValue = roundMoney(Number(row.lotValue || 0) + Number(row.transferValue || 0));
+    delete row._lotIds;
+    delete row._transferIds;
+    return row;
+  }).sort((a, b) => b.totalValue - a.totalValue || b.transferValue - a.transferValue || a.name.localeCompare(b.name));
+
+  const recentTransfers = transfers
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 8)
+    .map((transfer) => {
+      const items = transferItems.filter((item) => item.transferLotId === transfer.id);
+      const planned = items.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+      const received = items.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
+      const value = items.reduce((sum, item) => {
+        const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+        return sum + Number(item.quantidade || 0) * Number(product?.valorUnit || 0);
+      }, 0);
+      const user = userMap.get(transfer.createdByUserId || userId);
+      return {
+        id: transfer.id,
+        name: transfer.name,
+        status: transfer.status,
+        depositoOrigem: transfer.depositoOrigem,
+        depositoDestino: transfer.depositoDestino,
+        planned,
+        received,
+        pending: Math.max(0, planned - received),
+        value: roundMoney(value),
+        createdAt: transfer.createdAt,
+        operator: user ? publicDashboardUser(user) : null
+      };
+    });
+
+  const recentLots = lots
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 8)
+    .map((lot) => {
+      const lotProducts = products.filter((product) => product.lotId === lot.id);
+      const expected = lotProducts.reduce((sum, product) => sum + Number(qtyByProduct.get(product.id) || product.qtdTotal || 0), 0);
+      const value = lotProducts.reduce((sum, product) => sum + Number(qtyByProduct.get(product.id) || product.qtdTotal || 0) * Number(product.valorUnit || 0), 0);
+      return {
+        id: lot.id,
+        name: lot.nomeArquivo,
+        fornecedor: lot.fornecedor,
+        skus: lotProducts.length,
+        expected,
+        value: roundMoney(value),
+        createdAt: lot.createdAt
+      };
+    });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    lots: {
+      total: lots.length,
+      skus: products.length,
+      remessas: rzKeys.size,
+      quantity: lotQty,
+      checkedQuantity: lotCheckedQty,
+      value: roundMoney(lotValue),
+      checkedValue: roundMoney(lotCheckedValue)
+    },
+    transfers: {
+      total: transfers.length,
+      items: transferItems.length,
+      quantity: transferQty,
+      received: transferReceived,
+      pending: Math.max(0, transferQty - transferReceived),
+      value: roundMoney(transferValue),
+      divergenceReports: reports.length,
+      statusCounts
+    },
+    operators: operatorStats,
+    recentLots,
+    recentTransfers
+  };
+}
+
+function publicDashboardUser(user) {
+  return {
+    id: user.id,
+    name: user.name || "",
+    email: user.email || "",
+    operatorCode: user.operatorCode || null
+  };
+}
+
 
 function buildTriageStatsFromRows(rows = []) {
   const byOperator = new Map();

@@ -64,10 +64,17 @@
 
       <section id="profileTab" class="profile-shell hidden">
         <aside class="profile-menu">
+          <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
           <button data-profile-section="sync" type="button">Sincronizacao</button>
           <button data-profile-section="operators" type="button">Operadores</button>
         </aside>
+
+        <section id="profileDashboard" class="settings-shell profile-section hidden">
+          <section class="entry-panel operational-dashboard-panel" id="profileOperationalDashboardPanel">
+            <p class="muted">Carregando dashboard...</p>
+          </section>
+        </section>
 
         <section id="profileEntries" class="upload-band profile-section">
           <div class="view-heading">

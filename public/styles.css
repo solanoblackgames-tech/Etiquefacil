@@ -855,6 +855,109 @@ h3 {
   grid-column: 1 / -1;
 }
 
+
+.operational-dashboard-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.operational-dashboard-panel.hidden {
+  display: none;
+}
+
+.operational-dashboard-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.operational-dashboard-summary .metric {
+  padding: 12px;
+}
+
+.operational-dashboard-summary .metric strong {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.operational-dashboard-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(520px, 1.4fr) minmax(420px, 1fr);
+}
+
+.operational-dashboard-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.operational-dashboard-wide {
+  grid-column: 1 / -1;
+}
+
+.operational-dashboard-block > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.operational-dashboard-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  overflow-x: auto;
+}
+
+.operational-dashboard-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  min-width: 780px;
+  padding: 10px 12px;
+}
+
+.operational-operator-table .operational-dashboard-row {
+  grid-template-columns: minmax(160px, 1.4fr) repeat(7, minmax(90px, 0.7fr));
+  min-width: 960px;
+}
+
+.operational-transfer-table .operational-dashboard-row {
+  grid-template-columns: minmax(190px, 1.3fr) minmax(120px, 0.8fr) minmax(90px, 0.7fr) minmax(110px, 0.8fr) minmax(150px, 1fr);
+}
+
+.operational-lot-table .operational-dashboard-row {
+  grid-template-columns: minmax(220px, 1.5fr) minmax(130px, 0.9fr) repeat(4, minmax(90px, 0.7fr));
+}
+
+.operational-dashboard-row + .operational-dashboard-row {
+  border-top: 1px solid var(--line);
+}
+
+.operational-dashboard-head {
+  background: #f8fafb;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.operational-dashboard-row strong,
+.operational-dashboard-row span {
+  overflow-wrap: anywhere;
+}
+
+.operational-dashboard-row small {
+  color: var(--muted);
+  display: block;
+  font-weight: 500;
+  margin-top: 3px;
+}
 .triage-view-only {
   max-width: 980px;
 }
@@ -2991,6 +3094,8 @@ h3 {
   .operator-metrics,
   .operator-podium,
   .triage-stats-summary,
+  .operational-dashboard-summary,
+  .operational-dashboard-grid,
   .operator-row,
   .rz-search,
   .scan-box,
