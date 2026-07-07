@@ -284,6 +284,11 @@
               <span class="muted">Triagem</span>
               <h2>Fila</h2>
             </div>
+            <form id="triageFilterForm" class="triage-filter-form">
+              <label>Operador<select name="operator"><option value="">Todos</option></select></label>
+              <label>Data<input name="date" type="date" /></label>
+              <button type="button" class="ghost" data-clear-triage-filters>Limpar</button>
+            </form>
             <div id="triageItems"></div>
           </aside>
           <section id="triageDetail" class="detail empty">Selecione um produto da triagem.</section>

@@ -16,6 +16,10 @@ const state = {
   transferLots: [],
   selectedTransferLotId: null,
   triageItems: [],
+  triageFilters: {
+    operator: "",
+    date: ""
+  },
   selectedTriageCode: null,
   triageStats: null,
   triageStatsFilter: null,
@@ -195,6 +199,8 @@ function bindEvents() {
     event.currentTarget.form.requestSubmit();
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
+  $("#triageFilterForm").addEventListener("change", handleTriageFilterChange);
+  $("#triageFilterForm").addEventListener("click", handleTriageFilterClick);
   $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
   $("#triageDetail").addEventListener("change", handleTriageDetailChange);
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
@@ -5638,17 +5644,92 @@ function renderTriageLookupPreview(product, message = "") {
 function renderTriageItems() {
   const wrapper = $("#triageItems");
   if (!wrapper) return;
+  renderTriageFilterOptions();
   if (!state.triageItems.length) {
     wrapper.innerHTML = '<p class="muted">Nenhum produto em triagem.</p>';
     return;
   }
-  wrapper.innerHTML = state.triageItems.map((item) => `
+  const items = filteredTriageItems();
+  if (!items.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum produto encontrado para os filtros.</p>';
+    return;
+  }
+  wrapper.innerHTML = items.map((item) => `
     <article class="lot-card triage-card ${state.selectedTriageCode === item.code ? "active" : ""}" data-triage-code="${escapeHtml(item.code)}">
       <strong>${escapeHtml(item.code)}</strong>
       <span>${escapeHtml(item.descricao || item.sku || item.ean || item.asin || "Produto sem descricao")}</span>
+      <small>Operador: ${escapeHtml(triageOperatorLabel(item))}</small>
+      <small>Entrada: ${escapeHtml(formatDate(item.createdAt))}</small>
       <small>${triageStatusLabel(item)}${item.destination ? ` - ${escapeHtml(item.destination)}` : ""}</small>
     </article>
   `).join("");
+}
+
+function triageResponsibleUser(item = {}) {
+  return item.operatorUser || item.createdByUser || null;
+}
+
+function triageOperatorId(item = {}) {
+  const user = triageResponsibleUser(item);
+  return user?.id || item.operatorUserId || item.createdByUserId || "";
+}
+
+function triageOperatorLabel(item = {}) {
+  const user = triageResponsibleUser(item);
+  if (!user) return item.operatorUserId || item.createdByUserId ? "Operador removido" : "Usuario principal";
+  return operatorLabel(user);
+}
+
+function triageItemDateKey(item = {}) {
+  const date = new Date(item.createdAt || item.updatedAt || "");
+  return Number.isNaN(date.getTime()) ? "" : formatInputDate(date);
+}
+
+function filteredTriageItems() {
+  const operator = state.triageFilters.operator;
+  const date = state.triageFilters.date;
+  return state.triageItems.filter((item) => {
+    if (operator && triageOperatorId(item) !== operator) return false;
+    if (date && triageItemDateKey(item) !== date) return false;
+    return true;
+  });
+}
+
+function renderTriageFilterOptions() {
+  const form = $("#triageFilterForm");
+  const select = form?.elements.namedItem("operator");
+  const dateInput = form?.elements.namedItem("date");
+  if (!select || !dateInput) return;
+  const current = state.triageFilters.operator;
+  const operators = new Map();
+  state.triageItems.forEach((item) => {
+    const id = triageOperatorId(item);
+    if (!id || operators.has(id)) return;
+    operators.set(id, triageOperatorLabel(item));
+  });
+  select.innerHTML = `<option value="">Todos</option>${[...operators.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1], "pt-BR"))
+    .map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`)
+    .join("")}`;
+  select.value = operators.has(current) ? current : "";
+  if (select.value !== state.triageFilters.operator) state.triageFilters.operator = select.value;
+  dateInput.value = state.triageFilters.date;
+}
+
+function handleTriageFilterChange(event) {
+  if (!event.target.matches("#triageFilterForm select, #triageFilterForm input")) return;
+  const form = event.currentTarget;
+  state.triageFilters = {
+    operator: String(form.elements.namedItem("operator")?.value || ""),
+    date: String(form.elements.namedItem("date")?.value || "")
+  };
+  renderTriageItems();
+}
+
+function handleTriageFilterClick(event) {
+  if (!event.target.matches("[data-clear-triage-filters]")) return;
+  state.triageFilters = { operator: "", date: "" };
+  renderTriageItems();
 }
 
 function handleTriageItemsClick(event) {

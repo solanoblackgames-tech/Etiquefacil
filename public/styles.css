@@ -813,6 +813,30 @@ h3 {
   color: var(--muted);
 }
 
+.triage-filter-form {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin: -4px 0 14px;
+  padding-bottom: 14px;
+}
+
+.triage-filter-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 5px;
+}
+
+.triage-filter-form select,
+.triage-filter-form input {
+  min-height: 36px;
+}
+
+.triage-filter-form button {
+  justify-self: start;
+}
+
 .triage-stats-panel {
   background: #ffffff;
   border: 1px solid #dce5ea;

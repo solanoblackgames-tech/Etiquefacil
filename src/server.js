@@ -1439,10 +1439,24 @@ function triageStatusUrl(req, code) {
   return `${req.protocol}://${req.get("host")}/triagem/visualizar/${encodeURIComponent(code)}`;
 }
 
+async function publicUserForId(userId) {
+  if (!userId) return null;
+  try {
+    return await getPublicUserById(userId);
+  } catch (error) {
+    if (error.status && error.status !== 404) throw error;
+    return null;
+  }
+}
+
 async function withTriageQrData(req, value, { includeHistory = false } = {}) {
   if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item, { includeHistory })));
   const statusUrl = triageStatusUrl(req, value.code);
-  const diagnosedByUser = value.diagnosedAt && value.operatorUserId ? await getPublicUserById(value.operatorUserId) : null;
+  const [operatorUser, createdByUser, diagnosedByUser] = await Promise.all([
+    publicUserForId(value.operatorUserId),
+    publicUserForId(value.createdByUserId),
+    value.diagnosedAt ? publicUserForId(value.operatorUserId) : null
+  ]);
   const canDelete = await canDeleteTriageItem({
     userId: workspaceUserId(req),
     code: value.code,
@@ -1453,12 +1467,14 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
     ? await Promise.all(
         (await listTriageDiagnosisHistory({ userId: workspaceUserId(req), code: value.code })).map(async (event) => ({
           ...event,
-          operatorUser: event.operatorUserId ? await getPublicUserById(event.operatorUserId) : null
+          operatorUser: await publicUserForId(event.operatorUserId)
         }))
       )
     : undefined;
   return {
     ...value,
+    operatorUser,
+    createdByUser,
     diagnosedByUser,
     canDelete,
     ...(includeHistory ? { diagnosisHistory } : {}),
