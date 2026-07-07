@@ -4150,6 +4150,7 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
            or regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
            or upper(trim(ean)) = upper(trim($2))
          )
+       order by case when quantidade_conferida < quantidade then 0 else 1 end, created_at asc
        limit 1 for update`,
       [lot.id, code]
     );
@@ -5086,13 +5087,14 @@ function transferItemReceiveStatus(item) {
 
 function findTransferItemForReceive(items, transferLotId, code) {
   const normalized = normalizeCode(code);
-  return (items || []).find((item) => {
+  const matches = (items || []).filter((item) => {
     return item.transferLotId === transferLotId &&
       (normalizeCode(item.codigoMl) === normalized ||
         normalizeCode(item.sku) === normalized ||
         normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
         normalizeCode(item.ean) === normalized);
   });
+  return matches.find((item) => Number(item.quantidadeConferida || 0) < Number(item.quantidade || 0)) || matches[0] || null;
 }
 
 function updateTransferLotReceivingStatus(lot, items) {

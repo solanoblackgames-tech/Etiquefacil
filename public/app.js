@@ -3127,14 +3127,15 @@ function receiveStatusLabel(status) {
 
 function findTransferReceiveItem(lot, code) {
   const normalized = normalizeCode(code);
-  return (lot.items || []).find((item) => {
+  const matches = (lot.items || []).filter((item) => {
     return (
       normalizeCode(item.codigoMl) === normalized ||
       normalizeCode(item.sku) === normalized ||
       normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
       normalizeCode(item.ean) === normalized
     );
-  }) || null;
+  });
+  return matches.find((item) => Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) > 0) || matches[0] || null;
 }
 
 function prepareTransferReceiveConfirmation(lot) {
