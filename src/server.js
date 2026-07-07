@@ -332,7 +332,12 @@ app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) 
 
 app.get("/api/triage/stats", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
   try {
-    res.json({ stats: await getTriageStats(workspaceUserId(req)) });
+    res.json({
+      stats: await getTriageStats(workspaceUserId(req), {
+        startDate: req.query.startDate,
+        endDate: req.query.endDate
+      })
+    });
   } catch (error) {
     sendError(res, error);
   }

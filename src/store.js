@@ -599,8 +599,9 @@ export async function listTriageItems(userId) {
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
 }
 
-export async function getTriageStats(userId) {
+export async function getTriageStats(userId, period = {}) {
   await ensureStore();
+  const range = normalizeOperatorActivityRange(period);
   if (hasPostgres()) {
     const result = await query(
       `
@@ -639,9 +640,11 @@ export async function getTriageStats(userId) {
         ) p on true
         left join users u on u.id = coalesce(t.operator_user_id, t.created_by_user_id, t.user_id)
         where t.user_id = $1
+          and ($2::timestamptz is null or t.created_at >= $2::timestamptz)
+          and ($3::timestamptz is null or t.created_at <= $3::timestamptz)
         order by t.updated_at desc
       `,
-      [userId]
+      [userId, range.startAt, range.endAt]
     );
     return buildTriageStatsFromRows(result.rows.map((row) => ({
       item: {
@@ -661,6 +664,7 @@ export async function getTriageStats(userId) {
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
   const rows = (db.triageItems || [])
     .filter((item) => item.userId === userId)
+    .filter((item) => isWithinDateRange(item.createdAt, range))
     .map((item) => {
       const product = findTriageStatsProduct(db.products || [], lotIds, item);
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
@@ -6107,6 +6111,13 @@ function isOperatorActivityInRange(activity, range) {
   const createdAt = activity.createdAt || "";
   if (range.startAt && createdAt < range.startAt) return false;
   if (range.endAt && createdAt > range.endAt) return false;
+  return true;
+}
+
+function isWithinDateRange(createdAt, range) {
+  const value = createdAt || "";
+  if (range.startAt && value < range.startAt) return false;
+  if (range.endAt && value > range.endAt) return false;
   return true;
 }
 

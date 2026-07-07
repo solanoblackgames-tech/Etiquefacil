@@ -377,6 +377,15 @@ h3 {
   .operator-filter-fields {
     grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
   }
+
+  .triage-stats-filter {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .triage-stats-filter-fields {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
 }
 
 .operator-metrics {
@@ -875,6 +884,45 @@ h3 {
   color: #ffffff;
   font-size: 26px;
   overflow-wrap: anywhere;
+}
+
+.triage-stats-filter {
+  align-items: center;
+  background: #f8fafb;
+  border: 1px solid #dce5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(160px, 0.4fr) minmax(0, 1fr);
+  margin: 0 18px;
+  padding: 12px;
+}
+
+.triage-stats-filter-title {
+  display: grid;
+  gap: 2px;
+}
+
+.triage-stats-filter-fields {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(78px, auto)) repeat(2, minmax(140px, 1fr)) minmax(86px, auto);
+}
+
+.triage-stats-filter-fields label {
+  color: #34515c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.triage-stats-filter-fields input,
+.triage-stats-filter-fields button {
+  min-height: 38px;
+}
+
+.triage-stats-filter-fields button {
+  white-space: nowrap;
 }
 
 .triage-stats-summary {

@@ -18,6 +18,7 @@ const state = {
   triageItems: [],
   selectedTriageCode: null,
   triageStats: null,
+  triageStatsFilter: null,
   operationalStats: null,
   blingDeposits: [],
   blingDepositsLoaded: false,
@@ -207,6 +208,9 @@ function bindEvents() {
   $("#operatorList").addEventListener("submit", handleOperatorPasswordSubmit);
   $("#operatorList").addEventListener("change", handleOperatorFilterChange);
   $("#operatorList").addEventListener("click", handleOperatorFilterClick);
+  $("#profileTriageStatsPanel").addEventListener("submit", handleTriageStatsFilterSubmit);
+  $("#profileTriageStatsPanel").addEventListener("change", handleTriageStatsFilterChange);
+  $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
   });
@@ -5324,7 +5328,12 @@ async function loadTriageStats() {
   if (!panel) return;
   panel.innerHTML = '<p class="muted">Carregando estatisticas...</p>';
   try {
-    const response = await api("/api/triage/stats");
+    if (!state.triageStatsFilter) state.triageStatsFilter = defaultTriageStatsFilter();
+    const filter = normalizeTriageStatsFilter(state.triageStatsFilter);
+    const params = new URLSearchParams();
+    if (filter.startDate) params.set("startDate", filter.startDate);
+    if (filter.endDate) params.set("endDate", filter.endDate);
+    const response = await api(`/api/triage/stats?${params.toString()}`);
     state.triageStats = response.stats || null;
     renderTriageStats();
   } catch (error) {
@@ -5343,6 +5352,7 @@ function renderTriageStats() {
   const mainDestination = stats.mainDestination
     ? `${escapeHtml(destinationLabel(stats.mainDestination.destination))} (${stats.mainDestination.total})`
     : "Sem destino";
+  const filter = normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter());
   const averageValue = stats.total ? Number(stats.totalValue || 0) / stats.total : 0;
   const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
   panel.innerHTML = `
@@ -5358,6 +5368,7 @@ function renderTriageStats() {
         <small>Preco de venda Bling</small>
       </div>
     </div>
+    ${triageStatsFilterMarkup(filter)}
     <div class="triage-stats-summary">
       <div class="metric"><span>Itens triados</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticados</small></div>
       <div class="metric"><span>Conclusao</span><strong>${diagnosedPercent}%</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
@@ -5387,6 +5398,79 @@ function renderTriageStats() {
       </section>
     </div>
   `;
+}
+
+function defaultTriageStatsFilter() {
+  const today = new Date();
+  return {
+    startDate: formatInputDate(addDays(today, -6)),
+    endDate: formatInputDate(today)
+  };
+}
+
+function normalizeTriageStatsFilter(filter = {}) {
+  let startDate = filter.startDate || "";
+  let endDate = filter.endDate || "";
+  if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
+  state.triageStatsFilter = { startDate, endDate };
+  return state.triageStatsFilter;
+}
+
+function triageStatsFilterMarkup(filter) {
+  return `
+    <form class="triage-stats-filter" id="triageStatsFilter">
+      <div class="triage-stats-filter-title">
+        <strong>Periodo</strong>
+        <span class="muted">${escapeHtml(triageStatsPeriodLabel(filter))}</span>
+      </div>
+      <div class="triage-stats-filter-fields">
+        <button type="button" class="ghost" data-triage-stats-period="today">Hoje</button>
+        <button type="button" class="ghost" data-triage-stats-period="7">7 dias</button>
+        <button type="button" class="ghost" data-triage-stats-period="30">30 dias</button>
+        <label>Inicio<input type="date" name="startDate" value="${escapeHtml(filter.startDate)}" /></label>
+        <label>Fim<input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" /></label>
+        <button type="submit">Aplicar</button>
+      </div>
+    </form>
+  `;
+}
+
+function triageStatsPeriodLabel(filter) {
+  if (!filter.startDate && !filter.endDate) return "Todo o historico";
+  if (filter.startDate === filter.endDate) return formatShortDate(filter.startDate);
+  return `${formatShortDate(filter.startDate)} ate ${formatShortDate(filter.endDate)}`;
+}
+
+function handleTriageStatsFilterSubmit(event) {
+  if (!event.target.matches("#triageStatsFilter")) return;
+  event.preventDefault();
+  applyTriageStatsFilterFromForm(event.target);
+}
+
+function handleTriageStatsFilterChange(event) {
+  if (!event.target.closest("#triageStatsFilter") || !event.target.matches('input[type="date"]')) return;
+  applyTriageStatsFilterFromForm(event.target.form);
+}
+
+function handleTriageStatsFilterClick(event) {
+  const button = event.target.closest("[data-triage-stats-period]");
+  if (!button) return;
+  const days = button.dataset.triageStatsPeriod;
+  const today = new Date();
+  state.triageStatsFilter = {
+    startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
+    endDate: formatInputDate(today)
+  };
+  loadTriageStats();
+}
+
+function applyTriageStatsFilterFromForm(form) {
+  const data = new FormData(form);
+  state.triageStatsFilter = normalizeTriageStatsFilter({
+    startDate: data.get("startDate") || "",
+    endDate: data.get("endDate") || ""
+  });
+  loadTriageStats();
 }
 
 function triageStatsOperatorsMarkup(operators = []) {
