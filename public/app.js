@@ -17,6 +17,8 @@ const state = {
   selectedTransferLotId: null,
   triageItems: [],
   selectedTriageCode: null,
+  triageStats: null,
+  triageStatsVisible: false,
   blingDeposits: [],
   blingDepositsLoaded: false,
   profileSection: "entries",
@@ -192,6 +194,7 @@ function bindEvents() {
     event.currentTarget.form.requestSubmit();
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
+  $("#triageStatsButton").addEventListener("click", toggleTriageStats);
   $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
   $("#triageDetail").addEventListener("change", handleTriageDetailChange);
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
@@ -5149,10 +5152,102 @@ async function loadTriageItems(selectCode = null) {
     const response = await api("/api/triage/items");
     state.triageItems = response.items || [];
     renderTriageItems();
+    if (state.triageStatsVisible) loadTriageStats();
     if (selectCode) await selectTriageItem(selectCode, { push: false });
   } catch (error) {
     $("#triageMessage").textContent = error.message;
   }
+}
+
+async function loadTriageStats() {
+  const panel = $("#triageStatsPanel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  panel.innerHTML = '<p class="muted">Carregando estatisticas...</p>';
+  try {
+    const response = await api("/api/triage/stats");
+    state.triageStats = response.stats || null;
+    renderTriageStats();
+  } catch (error) {
+    panel.innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function toggleTriageStats() {
+  state.triageStatsVisible = !state.triageStatsVisible;
+  const button = $("#triageStatsButton");
+  const panel = $("#triageStatsPanel");
+  if (button) button.textContent = state.triageStatsVisible ? "Ocultar estatisticas" : "Visualizar estatisticas";
+  if (!state.triageStatsVisible) {
+    panel?.classList.add("hidden");
+    return;
+  }
+  await loadTriageStats();
+}
+
+function refreshTriageStatsIfVisible() {
+  if (state.triageStatsVisible) loadTriageStats();
+}
+
+function renderTriageStats() {
+  const panel = $("#triageStatsPanel");
+  const stats = state.triageStats;
+  if (!panel || !stats) return;
+  const mainDestination = stats.mainDestination
+    ? `${escapeHtml(destinationLabel(stats.mainDestination.destination))} (${stats.mainDestination.total})`
+    : "Sem destino";
+  panel.innerHTML = `
+    <div class="triage-stats-summary">
+      <div class="metric"><span>Total</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticadas</small></div>
+      <div class="metric"><span>Valor agregado</span><strong>${money(stats.totalValue || 0)}</strong><small>Preco de venda Bling</small></div>
+      <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
+    </div>
+    <div class="triage-stats-block">
+      <strong>Triagens por operador</strong>
+      ${triageStatsOperatorsMarkup(stats.operators || [])}
+    </div>
+    <div class="triage-stats-block">
+      <strong>Destinos</strong>
+      ${triageStatsDestinationsMarkup(stats.destinations || [])}
+    </div>
+  `;
+}
+
+function triageStatsOperatorsMarkup(operators = []) {
+  if (!operators.length) return '<p class="muted">Nenhuma triagem registrada.</p>';
+  return operators.map((operator) => `
+    <div class="triage-stats-row">
+      <span>${escapeHtml(operatorLabel(operator))}</span>
+      <strong>${operator.total || 0}</strong>
+      <small>${operator.diagnosed || 0} diag. - ${money(operator.totalValue || 0)}</small>
+    </div>
+  `).join("");
+}
+
+function triageStatsDestinationsMarkup(destinations = []) {
+  if (!destinations.length) return '<p class="muted">Nenhum destino definido.</p>';
+  return destinations.map((item) => `
+    <div class="triage-stats-row">
+      <span>${escapeHtml(destinationLabel(item.destination))}</span>
+      <strong>${item.total || 0}</strong>
+    </div>
+  `).join("");
+}
+
+function operatorLabel(operator = {}) {
+  const name = String(operator.name || "").trim();
+  const email = String(operator.email || "").trim();
+  const code = operator.operatorCode ? ` #${operator.operatorCode}` : "";
+  return `${name || email || "Sem operador"}${code}`;
+}
+
+function destinationLabel(destination) {
+  const value = String(destination || "").trim().toUpperCase();
+  if (value === "LOJA") return "Loja";
+  if (value === "VENDA_DIRETA") return "Venda direta";
+  if (value === "INTERNET") return "Internet";
+  if (value === "RMA") return "RMA";
+  return value || "Sem destino";
 }
 
 async function createTriageItem(event) {
@@ -5177,6 +5272,7 @@ async function createTriageItem(event) {
       openEdit: shouldOpenTriageEditForBling(response.bling),
       focusSelector: triageBlingCorrectionSelector(response.bling)
     });
+    refreshTriageStatsIfVisible();
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
     $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
@@ -5427,6 +5523,7 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         <select name="destination" required>
           <option value="">Selecione</option>
           <option value="LOJA" ${item.destination === "LOJA" ? "selected" : ""}>Loja</option>
+          <option value="VENDA_DIRETA" ${item.destination === "VENDA_DIRETA" ? "selected" : ""}>Venda direta</option>
           <option value="INTERNET" ${item.destination === "INTERNET" ? "selected" : ""}>Internet</option>
           <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
         </select>
@@ -5592,6 +5689,7 @@ async function handleTriageDetailSubmit(event) {
     } else {
       renderTriageDetail(response.item);
     }
+    refreshTriageStatsIfVisible();
     $("#triageDetailMessage").style.color = "#0f766e";
     $("#triageDetailMessage").textContent = "Diagnostico salvo.";
   } catch (error) {
@@ -5618,6 +5716,7 @@ async function handleTriageEditSubmit(event) {
       openEdit: shouldOpenTriageEditForBling(response.bling),
       focusSelector: triageBlingCorrectionSelector(response.bling)
     });
+    refreshTriageStatsIfVisible();
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageDetailMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
     $("#triageDetailMessage").textContent = triageBlingMessage(response.bling, "Dados atualizados.");
@@ -5639,6 +5738,7 @@ async function deleteSelectedTriageItem() {
     state.selectedTriageCode = null;
     renderTriageItems();
     clearTriageDetail();
+    refreshTriageStatsIfVisible();
     updateRoute("/triagem");
     $("#triageMessage").style.color = "#0f766e";
     $("#triageMessage").textContent = "Etiqueta excluida.";

@@ -58,6 +58,7 @@ import {
   getPublicTransferLotDetail,
   getStoreHealth,
   getTriageItem,
+  getTriageStats,
   getTransferLotDetail,
   getPublicUserById,
   getUserBlingCredentials,
@@ -323,6 +324,14 @@ app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, asyn
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({ items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req))) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/stats", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ stats: await getTriageStats(workspaceUserId(req)) });
   } catch (error) {
     sendError(res, error);
   }

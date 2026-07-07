@@ -599,6 +599,80 @@ export async function listTriageItems(userId) {
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
 }
 
+export async function getTriageStats(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select
+          t.id,
+          t.created_by_user_id,
+          t.operator_user_id,
+          t.status,
+          t.destination,
+          coalesce(p.valor_unit, 0) as valor_unit,
+          u.id as user__id,
+          u.tenant_id as user__tenant_id,
+          u.tenant_name as user__tenant_name,
+          u.parent_user_id as user__parent_user_id,
+          u.role as user__role,
+          u.operator_code as user__operator_code,
+          u.triage_access as user__triage_access,
+          u.name as user__name,
+          u.email as user__email,
+          u.password_hash as user__password_hash,
+          u.created_at as user__created_at
+        from triage_items t
+        left join lateral (
+          select pr.valor_unit
+          from products pr
+          join lots l on l.id = pr.lot_id
+          where l.user_id = t.user_id
+            and (
+              (t.sku <> '' and upper(trim(pr.sku)) = upper(trim(t.sku)))
+              or (t.product_code <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.product_code)))
+              or (t.codigo_bling2 <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.codigo_bling2)))
+              or (t.asin <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.asin)))
+            )
+          order by pr.created_at desc
+          limit 1
+        ) p on true
+        left join users u on u.id = coalesce(t.operator_user_id, t.created_by_user_id, t.user_id)
+        where t.user_id = $1
+        order by t.updated_at desc
+      `,
+      [userId]
+    );
+    return buildTriageStatsFromRows(result.rows.map((row) => ({
+      item: {
+        id: row.id,
+        createdByUserId: row.created_by_user_id || userId,
+        operatorUserId: row.operator_user_id || null,
+        status: row.status || "aguardando_teste",
+        destination: row.destination || ""
+      },
+      salePrice: num(row.valor_unit),
+      user: row.user__id ? sanitizeUser(userFromPrefixedRow(row, "user__")) : null
+    })));
+  }
+
+  const db = await readDb();
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
+  const rows = (db.triageItems || [])
+    .filter((item) => item.userId === userId)
+    .map((item) => {
+      const product = findTriageStatsProduct(db.products || [], lotIds, item);
+      const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
+      return {
+        item,
+        salePrice: Number(product?.valorUnit || 0),
+        user: userMap.get(responsibleUserId) || null
+      };
+    });
+  return buildTriageStatsFromRows(rows);
+}
+
 export async function getTriageItem(userId, code) {
   await ensureStore();
   const normalized = normalizeCode(code);
@@ -5212,6 +5286,22 @@ function triageEventFromRow(row) {
   };
 }
 
+function userFromPrefixedRow(row, prefix) {
+  return {
+    id: row[`${prefix}id`],
+    tenantId: row[`${prefix}tenant_id`] || row[`${prefix}id`],
+    tenantName: row[`${prefix}tenant_name`] || row[`${prefix}name`],
+    parentUserId: row[`${prefix}parent_user_id`] || null,
+    role: row[`${prefix}role`] || (row[`${prefix}parent_user_id`] ? "operator" : "owner"),
+    operatorCode: row[`${prefix}operator_code`] ? Number(row[`${prefix}operator_code`]) : null,
+    triageAccess: Boolean(row[`${prefix}triage_access`]),
+    name: row[`${prefix}name`],
+    email: row[`${prefix}email`],
+    passwordHash: row[`${prefix}password_hash`],
+    createdAt: iso(row[`${prefix}created_at`])
+  };
+}
+
 function lotFromRow(row) {
   return {
     id: row.id,
@@ -5270,6 +5360,68 @@ function productFromRow(row) {
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };
+}
+
+function buildTriageStatsFromRows(rows = []) {
+  const byOperator = new Map();
+  const destinations = new Map();
+  let totalValue = 0;
+  let diagnosedTotal = 0;
+
+  for (const row of rows) {
+    const item = row.item || {};
+    const salePrice = Number(row.salePrice || 0);
+    totalValue += salePrice;
+    if (item.status === "diagnosticado") diagnosedTotal += 1;
+    if (item.destination) {
+      const destination = String(item.destination).trim().toUpperCase();
+      destinations.set(destination, (destinations.get(destination) || 0) + 1);
+    }
+
+    const user = row.user || null;
+    const operatorId = user?.id || item.operatorUserId || item.createdByUserId || "sem-operador";
+    const current = byOperator.get(operatorId) || {
+      operatorId,
+      name: user?.name || "Sem operador",
+      email: user?.email || "",
+      operatorCode: user?.operatorCode || null,
+      total: 0,
+      diagnosed: 0,
+      pending: 0,
+      totalValue: 0
+    };
+    current.total += 1;
+    current.totalValue = roundMoney(current.totalValue + salePrice);
+    if (item.status === "diagnosticado") current.diagnosed += 1;
+    else current.pending += 1;
+    byOperator.set(operatorId, current);
+  }
+
+  const destinationRows = [...destinations.entries()]
+    .map(([destination, total]) => ({ destination, total }))
+    .sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination));
+
+  return {
+    total: rows.length,
+    diagnosedTotal,
+    pendingTotal: rows.length - diagnosedTotal,
+    totalValue: roundMoney(totalValue),
+    mainDestination: destinationRows[0] || null,
+    destinations: destinationRows,
+    operators: [...byOperator.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+  };
+}
+
+function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
+  const sku = normalizeCode(item.sku);
+  const codes = [item.productCode, item.codigoBling2, item.asin].map(normalizeCode).filter(Boolean);
+  return products
+    .filter((product) => lotIds.has(product.lotId))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .find((product) => {
+      if (sku && normalizeCode(product.sku) === sku) return true;
+      return codes.some((code) => normalizeCode(product.codigoMl) === code);
+    }) || null;
 }
 
 function catalogProductFromRow(row) {
@@ -5858,7 +6010,7 @@ function normalizeTriageInput(input = {}) {
 
 function normalizeTriageDestination(value) {
   const destination = normalizeCode(value);
-  if (!["LOJA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Internet ou RMA.");
+  if (!["LOJA", "VENDA_DIRETA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Venda direta, Internet ou RMA.");
   return destination;
 }
 
