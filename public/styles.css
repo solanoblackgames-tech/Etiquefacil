@@ -805,11 +805,14 @@ h3 {
 }
 
 .triage-stats-panel {
-  border: 1px solid var(--line);
+  background: #ffffff;
+  border: 1px solid #dce5ea;
   border-radius: 8px;
+  box-shadow: var(--shadow);
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 18px;
+  overflow: hidden;
+  padding: 0;
 }
 
 .operational-dashboard-panel {
@@ -828,10 +831,57 @@ h3 {
   display: none;
 }
 
+.triage-stats-hero {
+  align-items: stretch;
+  background: linear-gradient(135deg, #102938 0%, #1b4a4c 58%, #2d6658 100%);
+  color: #ffffff;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.36fr);
+  padding: 22px;
+}
+
+.triage-stats-hero h3 {
+  color: #ffffff;
+  font-size: 24px;
+  margin-top: 4px;
+}
+
+.triage-stats-hero p {
+  color: rgba(255, 255, 255, 0.76);
+  margin: 6px 0 0;
+}
+
+.triage-stats-hero .muted {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.triage-stats-hero-value {
+  align-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+}
+
+.triage-stats-hero-value span,
+.triage-stats-hero-value small {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.triage-stats-hero-value strong {
+  color: #ffffff;
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+
 .triage-stats-summary {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0 18px;
 }
 
 .operational-dashboard-summary {
@@ -841,7 +891,9 @@ h3 {
 }
 
 .triage-stats-summary .metric {
-  padding: 12px;
+  background: #f8fafb;
+  border-color: #dce5ea;
+  padding: 14px;
 }
 
 .operational-dashboard-summary .metric {
@@ -849,7 +901,8 @@ h3 {
 }
 
 .triage-stats-summary .metric strong {
-  font-size: 20px;
+  color: #102938;
+  font-size: 22px;
   overflow-wrap: anywhere;
 }
 
@@ -860,8 +913,9 @@ h3 {
 
 .triage-stats-dashboard {
   display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(340px, 0.9fr) minmax(460px, 1.4fr);
+  gap: 16px;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(520px, 1.45fr);
+  padding: 0 18px 18px;
 }
 
 .operational-dashboard-grid {
@@ -871,12 +925,13 @@ h3 {
 }
 
 .triage-stats-block {
-  border: 1px solid var(--line);
+  background: #ffffff;
+  border: 1px solid #dce5ea;
   border-radius: 8px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
-  padding: 14px;
+  padding: 16px;
 }
 
 .operational-dashboard-block {
@@ -897,16 +952,27 @@ h3 {
   gap: 3px;
 }
 
+.triage-stats-block-heading {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.triage-stats-block-heading > span {
+  font-size: 12px;
+  text-align: right;
+}
+
 .operational-dashboard-block > div:first-child {
   display: grid;
   gap: 3px;
 }
 
-.triage-stats-table {
-  border: 1px solid var(--line);
-  border-radius: 8px;
+.triage-destination-list,
+.triage-operator-ranking {
   display: grid;
-  overflow-x: auto;
+  gap: 10px;
 }
 
 .operational-dashboard-table {
@@ -916,13 +982,14 @@ h3 {
   overflow-x: auto;
 }
 
-.triage-stats-table-row {
-  align-items: center;
+.triage-destination-card,
+.triage-operator-card {
+  background: #f8fafb;
+  border: 1px solid #dce5ea;
+  border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(150px, 1.3fr) repeat(5, minmax(86px, 0.7fr));
-  min-width: 760px;
-  padding: 10px 12px;
+  padding: 12px;
 }
 
 .operational-dashboard-row {
@@ -946,20 +1013,49 @@ h3 {
   grid-template-columns: minmax(220px, 1.5fr) minmax(130px, 0.9fr) repeat(4, minmax(90px, 0.7fr));
 }
 
-.triage-stats-table-row + .triage-stats-table-row {
-  border-top: 1px solid var(--line);
-}
-
 .operational-dashboard-row + .operational-dashboard-row {
   border-top: 1px solid var(--line);
 }
 
-.triage-stats-table-head {
-  background: #f8fafb;
-  color: var(--muted);
-  font-size: 12px;
+.triage-destination-top,
+.triage-operator-main {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.triage-destination-top span,
+.triage-operator-main span {
+  color: #102938;
   font-weight: 800;
-  text-transform: uppercase;
+  text-align: right;
+}
+
+.triage-destination-bar,
+.triage-operator-progress {
+  background: #e6edf0;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.triage-destination-bar span,
+.triage-operator-progress span {
+  background: linear-gradient(90deg, #14847a, #52b788);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.triage-destination-meta,
+.triage-operator-metrics {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
 }
 
 .operational-dashboard-head {
@@ -970,9 +1066,26 @@ h3 {
   text-transform: uppercase;
 }
 
-.triage-stats-table-row strong,
-.triage-stats-table-row span {
-  overflow-wrap: anywhere;
+.triage-operator-metrics span {
+  background: #ffffff;
+  border: 1px solid #dce5ea;
+  border-radius: 8px;
+  display: grid;
+  flex: 1 1 86px;
+  gap: 2px;
+  padding: 8px;
+}
+
+.triage-operator-metrics strong {
+  color: #102938;
+  font-size: 15px;
+}
+
+.triage-operator-metrics small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .operational-dashboard-row strong,
@@ -985,11 +1098,6 @@ h3 {
   display: block;
   font-weight: 500;
   margin-top: 3px;
-}
-
-.triage-stats-destination-row {
-  grid-template-columns: minmax(150px, 1.3fr) repeat(3, minmax(92px, 0.7fr));
-  min-width: 520px;
 }
 
 .triage-view-only {
@@ -3127,6 +3235,7 @@ h3 {
   .operator-filter-fields,
   .operator-metrics,
   .operator-podium,
+  .triage-stats-hero,
   .triage-stats-summary,
   .triage-stats-dashboard,
   .operational-dashboard-summary,

@@ -5344,28 +5344,43 @@ function renderTriageStats() {
     ? `${escapeHtml(destinationLabel(stats.mainDestination.destination))} (${stats.mainDestination.total})`
     : "Sem destino";
   const averageValue = stats.total ? Number(stats.totalValue || 0) / stats.total : 0;
+  const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
   panel.innerHTML = `
-    <div class="panel-heading">
-      <span class="muted">Perfil</span>
-      <h3>Estatisticas de triagem</h3>
+    <div class="triage-stats-hero">
+      <div>
+        <span class="muted">Perfil</span>
+        <h3>Estatisticas de triagem</h3>
+        <p>Resumo financeiro e produtividade do laboratorio.</p>
+      </div>
+      <div class="triage-stats-hero-value">
+        <span>Valor agregado</span>
+        <strong>${money(stats.totalValue || 0)}</strong>
+        <small>Preco de venda Bling</small>
+      </div>
     </div>
     <div class="triage-stats-summary">
       <div class="metric"><span>Itens triados</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticados</small></div>
-      <div class="metric"><span>Valor agregado</span><strong>${money(stats.totalValue || 0)}</strong><small>Preco de venda Bling</small></div>
+      <div class="metric"><span>Conclusao</span><strong>${diagnosedPercent}%</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
-      <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
+      <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
       <section class="triage-stats-block">
-        <div>
-          <strong>Valor por destino</strong>
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Valor por destino</strong>
+            <span class="muted">Onde esta indo o valor da bancada.</span>
+          </div>
           <span class="muted">Quantidade, valor agregado e media por destino.</span>
         </div>
         ${triageStatsDestinationsMarkup(stats.destinations || [])}
       </section>
       <section class="triage-stats-block">
-        <div>
-          <strong>Itens por operador</strong>
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Itens por operador</strong>
+            <span class="muted">Ranking de produtividade e valor.</span>
+          </div>
           <span class="muted">Produtividade e valor agregado por pessoa.</span>
         </div>
         ${triageStatsOperatorsMarkup(stats.operators || [])}
@@ -5377,27 +5392,26 @@ function renderTriageStats() {
 function triageStatsOperatorsMarkup(operators = []) {
   if (!operators.length) return '<p class="muted">Nenhuma triagem registrada.</p>';
   return `
-    <div class="triage-stats-table">
-      <div class="triage-stats-table-row triage-stats-table-head">
-        <span>Operador</span>
-        <span>Itens</span>
-        <span>Diagnosticados</span>
-        <span>Pendentes</span>
-        <span>Valor</span>
-        <span>Media</span>
-      </div>
+    <div class="triage-operator-ranking">
       ${operators.map((operator) => {
         const total = Number(operator.total || 0);
         const totalValue = Number(operator.totalValue || 0);
+        const diagnosed = Number(operator.diagnosed || 0);
+        const completion = total ? Math.round((diagnosed / total) * 100) : 0;
         return `
-          <div class="triage-stats-table-row">
-            <strong>${escapeHtml(operatorLabel(operator))}</strong>
-            <span>${total}</span>
-            <span>${operator.diagnosed || 0}</span>
-            <span>${operator.pending || 0}</span>
-            <span>${money(totalValue)}</span>
-            <span>${money(total ? totalValue / total : 0)}</span>
-          </div>
+          <article class="triage-operator-card">
+            <div class="triage-operator-main">
+              <strong>${escapeHtml(operatorLabel(operator))}</strong>
+              <span>${total} itens - ${money(totalValue)}</span>
+            </div>
+            <div class="triage-operator-progress" aria-hidden="true"><span style="width: ${completion}%"></span></div>
+            <div class="triage-operator-metrics">
+              <span><strong>${diagnosed}</strong><small>Diag.</small></span>
+              <span><strong>${operator.pending || 0}</strong><small>Pend.</small></span>
+              <span><strong>${completion}%</strong><small>Conclusao</small></span>
+              <span><strong>${money(total ? totalValue / total : 0)}</strong><small>Media</small></span>
+            </div>
+          </article>
         `;
       }).join("")}
     </div>
@@ -5406,24 +5420,25 @@ function triageStatsOperatorsMarkup(operators = []) {
 
 function triageStatsDestinationsMarkup(destinations = []) {
   if (!destinations.length) return '<p class="muted">Nenhum destino definido.</p>';
+  const maxValue = destinations.reduce((max, item) => Math.max(max, Number(item.totalValue || 0)), 0);
   return `
-    <div class="triage-stats-table">
-      <div class="triage-stats-table-row triage-stats-table-head triage-stats-destination-row">
-        <span>Destino</span>
-        <span>Itens</span>
-        <span>Valor</span>
-        <span>Media</span>
-      </div>
+    <div class="triage-destination-list">
       ${destinations.map((item) => {
         const total = Number(item.total || 0);
         const totalValue = Number(item.totalValue || 0);
+        const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
         return `
-          <div class="triage-stats-table-row triage-stats-destination-row">
-            <strong>${escapeHtml(destinationLabel(item.destination))}</strong>
-            <span>${total}</span>
-            <span>${money(totalValue)}</span>
-            <span>${money(total ? totalValue / total : 0)}</span>
-          </div>
+          <article class="triage-destination-card">
+            <div class="triage-destination-top">
+              <strong>${escapeHtml(destinationLabel(item.destination))}</strong>
+              <span>${money(totalValue)}</span>
+            </div>
+            <div class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></div>
+            <div class="triage-destination-meta">
+              <span>${total} itens</span>
+              <span>${money(total ? totalValue / total : 0)} media</span>
+            </div>
+          </article>
         `;
       }).join("")}
     </div>
