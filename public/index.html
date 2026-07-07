@@ -68,6 +68,7 @@
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
           <button data-profile-section="sync" type="button">Sincronizacao</button>
           <button data-profile-section="operators" type="button">Operadores</button>
+          <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
 
         <section id="profileDashboard" class="settings-shell profile-section hidden">
@@ -198,6 +199,12 @@
             <div id="operatorList" class="admin-users"></div>
           </section>
         </section>
+
+        <section id="profileTriageStats" class="settings-shell profile-section hidden">
+          <section class="entry-panel triage-stats-panel" id="profileTriageStatsPanel">
+            <p class="muted">Carregando estatisticas...</p>
+          </section>
+        </section>
       </section>
 
       <section id="lotsTab" class="layout hidden">
@@ -276,9 +283,7 @@
             <div class="aside-heading">
               <span class="muted">Triagem</span>
               <h2>Fila</h2>
-              <button type="button" class="ghost" id="triageStatsButton">Visualizar estatisticas</button>
             </div>
-            <section id="triageStatsPanel" class="triage-stats-panel hidden"></section>
             <div id="triageItems"></div>
           </aside>
           <section id="triageDetail" class="detail empty">Selecione um produto da triagem.</section>

@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+﻿import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -697,7 +697,6 @@ export async function getOperationalDashboardStats(userId) {
   const db = await readDb();
   return buildOperationalDashboardStats(db, userId);
 }
-
 
 export async function getTriageItem(userId, code) {
   await ensureStore();
@@ -5639,7 +5638,6 @@ function publicDashboardUser(user) {
   };
 }
 
-
 function buildTriageStatsFromRows(rows = []) {
   const byOperator = new Map();
   const destinations = new Map();
@@ -5653,7 +5651,10 @@ function buildTriageStatsFromRows(rows = []) {
     if (item.status === "diagnosticado") diagnosedTotal += 1;
     if (item.destination) {
       const destination = String(item.destination).trim().toUpperCase();
-      destinations.set(destination, (destinations.get(destination) || 0) + 1);
+      const destinationStats = destinations.get(destination) || { destination, total: 0, totalValue: 0 };
+      destinationStats.total += 1;
+      destinationStats.totalValue = roundMoney(destinationStats.totalValue + salePrice);
+      destinations.set(destination, destinationStats);
     }
 
     const user = row.user || null;
@@ -5675,8 +5676,7 @@ function buildTriageStatsFromRows(rows = []) {
     byOperator.set(operatorId, current);
   }
 
-  const destinationRows = [...destinations.entries()]
-    .map(([destination, total]) => ({ destination, total }))
+  const destinationRows = [...destinations.values()]
     .sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination));
 
   return {

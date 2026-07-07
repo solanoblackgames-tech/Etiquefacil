@@ -19,7 +19,6 @@ const state = {
   selectedTriageCode: null,
   triageStats: null,
   operationalStats: null,
-  triageStatsVisible: false,
   blingDeposits: [],
   blingDepositsLoaded: false,
   profileSection: "entries",
@@ -195,7 +194,6 @@ function bindEvents() {
     event.currentTarget.form.requestSubmit();
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
-  $("#triageStatsButton").addEventListener("click", toggleTriageStats);
   $("#triageDetail").addEventListener("submit", handleTriageDetailSubmit);
   $("#triageDetail").addEventListener("change", handleTriageDetailChange);
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
@@ -1439,10 +1437,9 @@ function applyUserPermissions(user) {
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
-  document.querySelector("#triageStatsButton")?.classList.toggle("hidden", !canViewTriageStats());
+  document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
-    state.triageStatsVisible = false;
-    document.querySelector("#triageStatsPanel")?.classList.add("hidden");
+    document.querySelector("#profileTriageStats")?.classList.add("hidden");
   }
   document.querySelector(".transfer-create-panel")?.classList.remove("hidden");
   document.body.classList.toggle("operator-view", operator);
@@ -1519,10 +1516,12 @@ function setProfileSection(section = "entries") {
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
+  $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
-  if (section === "sync") loadBlingIntegration();
   if (section === "dashboard") loadOperationalDashboard();
+  if (section === "sync") loadBlingIntegration();
   if (section === "operators") loadOperators();
+  if (section === "triageStats") loadTriageStats();
 }
 
 async function loadOperationalDashboard() {
@@ -5312,7 +5311,7 @@ async function loadTriageItems(selectCode = null) {
     const response = await api("/api/triage/items");
     state.triageItems = response.items || [];
     renderTriageItems();
-    if (state.triageStatsVisible) loadTriageStats();
+    refreshTriageStatsIfVisible();
     if (selectCode) await selectTriageItem(selectCode, { push: false });
   } catch (error) {
     $("#triageMessage").textContent = error.message;
@@ -5321,9 +5320,8 @@ async function loadTriageItems(selectCode = null) {
 
 async function loadTriageStats() {
   if (!canViewTriageStats()) return;
-  const panel = $("#triageStatsPanel");
+  const panel = $("#profileTriageStatsPanel");
   if (!panel) return;
-  panel.classList.remove("hidden");
   panel.innerHTML = '<p class="muted">Carregando estatisticas...</p>';
   try {
     const response = await api("/api/triage/stats");
@@ -5334,66 +5332,102 @@ async function loadTriageStats() {
   }
 }
 
-async function toggleTriageStats() {
-  if (!canViewTriageStats()) return;
-  state.triageStatsVisible = !state.triageStatsVisible;
-  const button = $("#triageStatsButton");
-  const panel = $("#triageStatsPanel");
-  if (button) button.textContent = state.triageStatsVisible ? "Ocultar estatisticas" : "Visualizar estatisticas";
-  if (!state.triageStatsVisible) {
-    panel?.classList.add("hidden");
-    return;
-  }
-  await loadTriageStats();
-}
-
 function refreshTriageStatsIfVisible() {
-  if (state.triageStatsVisible) loadTriageStats();
+  if (state.profileSection === "triageStats") loadTriageStats();
 }
 
 function renderTriageStats() {
-  const panel = $("#triageStatsPanel");
+  const panel = $("#profileTriageStatsPanel");
   const stats = state.triageStats;
   if (!panel || !stats) return;
   const mainDestination = stats.mainDestination
     ? `${escapeHtml(destinationLabel(stats.mainDestination.destination))} (${stats.mainDestination.total})`
     : "Sem destino";
+  const averageValue = stats.total ? Number(stats.totalValue || 0) / stats.total : 0;
   panel.innerHTML = `
+    <div class="panel-heading">
+      <span class="muted">Perfil</span>
+      <h3>Estatisticas de triagem</h3>
+    </div>
     <div class="triage-stats-summary">
-      <div class="metric"><span>Total</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticadas</small></div>
+      <div class="metric"><span>Itens triados</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticados</small></div>
       <div class="metric"><span>Valor agregado</span><strong>${money(stats.totalValue || 0)}</strong><small>Preco de venda Bling</small></div>
+      <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
     </div>
-    <div class="triage-stats-block">
-      <strong>Triagens por operador</strong>
-      ${triageStatsOperatorsMarkup(stats.operators || [])}
-    </div>
-    <div class="triage-stats-block">
-      <strong>Destinos</strong>
-      ${triageStatsDestinationsMarkup(stats.destinations || [])}
+    <div class="triage-stats-dashboard">
+      <section class="triage-stats-block">
+        <div>
+          <strong>Valor por destino</strong>
+          <span class="muted">Quantidade, valor agregado e media por destino.</span>
+        </div>
+        ${triageStatsDestinationsMarkup(stats.destinations || [])}
+      </section>
+      <section class="triage-stats-block">
+        <div>
+          <strong>Itens por operador</strong>
+          <span class="muted">Produtividade e valor agregado por pessoa.</span>
+        </div>
+        ${triageStatsOperatorsMarkup(stats.operators || [])}
+      </section>
     </div>
   `;
 }
 
 function triageStatsOperatorsMarkup(operators = []) {
   if (!operators.length) return '<p class="muted">Nenhuma triagem registrada.</p>';
-  return operators.map((operator) => `
-    <div class="triage-stats-row">
-      <span>${escapeHtml(operatorLabel(operator))}</span>
-      <strong>${operator.total || 0}</strong>
-      <small>${operator.diagnosed || 0} diag. - ${money(operator.totalValue || 0)}</small>
+  return `
+    <div class="triage-stats-table">
+      <div class="triage-stats-table-row triage-stats-table-head">
+        <span>Operador</span>
+        <span>Itens</span>
+        <span>Diagnosticados</span>
+        <span>Pendentes</span>
+        <span>Valor</span>
+        <span>Media</span>
+      </div>
+      ${operators.map((operator) => {
+        const total = Number(operator.total || 0);
+        const totalValue = Number(operator.totalValue || 0);
+        return `
+          <div class="triage-stats-table-row">
+            <strong>${escapeHtml(operatorLabel(operator))}</strong>
+            <span>${total}</span>
+            <span>${operator.diagnosed || 0}</span>
+            <span>${operator.pending || 0}</span>
+            <span>${money(totalValue)}</span>
+            <span>${money(total ? totalValue / total : 0)}</span>
+          </div>
+        `;
+      }).join("")}
     </div>
-  `).join("");
+  `;
 }
 
 function triageStatsDestinationsMarkup(destinations = []) {
   if (!destinations.length) return '<p class="muted">Nenhum destino definido.</p>';
-  return destinations.map((item) => `
-    <div class="triage-stats-row">
-      <span>${escapeHtml(destinationLabel(item.destination))}</span>
-      <strong>${item.total || 0}</strong>
+  return `
+    <div class="triage-stats-table">
+      <div class="triage-stats-table-row triage-stats-table-head triage-stats-destination-row">
+        <span>Destino</span>
+        <span>Itens</span>
+        <span>Valor</span>
+        <span>Media</span>
+      </div>
+      ${destinations.map((item) => {
+        const total = Number(item.total || 0);
+        const totalValue = Number(item.totalValue || 0);
+        return `
+          <div class="triage-stats-table-row triage-stats-destination-row">
+            <strong>${escapeHtml(destinationLabel(item.destination))}</strong>
+            <span>${total}</span>
+            <span>${money(totalValue)}</span>
+            <span>${money(total ? totalValue / total : 0)}</span>
+          </div>
+        `;
+      }).join("")}
     </div>
-  `).join("");
+  `;
 }
 
 function operatorLabel(operator = {}) {

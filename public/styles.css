@@ -808,53 +808,9 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  gap: 12px;
-  margin: 12px 0;
-  padding: 12px;
+  gap: 16px;
+  padding: 18px;
 }
-
-.triage-stats-panel.hidden {
-  display: none;
-}
-
-.triage-stats-summary {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.triage-stats-summary .metric {
-  padding: 10px;
-}
-
-.triage-stats-summary .metric strong {
-  font-size: 18px;
-  overflow-wrap: anywhere;
-}
-
-.triage-stats-block {
-  display: grid;
-  gap: 8px;
-}
-
-.triage-stats-row {
-  align-items: center;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding-top: 8px;
-}
-
-.triage-stats-row span {
-  overflow-wrap: anywhere;
-}
-
-.triage-stats-row small {
-  color: var(--muted);
-  grid-column: 1 / -1;
-}
-
 
 .operational-dashboard-panel {
   border: 1px solid var(--line);
@@ -864,8 +820,18 @@ h3 {
   padding: 18px;
 }
 
+.triage-stats-panel.hidden {
+  display: none;
+}
+
 .operational-dashboard-panel.hidden {
   display: none;
+}
+
+.triage-stats-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .operational-dashboard-summary {
@@ -874,8 +840,17 @@ h3 {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.triage-stats-summary .metric {
+  padding: 12px;
+}
+
 .operational-dashboard-summary .metric {
   padding: 12px;
+}
+
+.triage-stats-summary .metric strong {
+  font-size: 20px;
+  overflow-wrap: anywhere;
 }
 
 .operational-dashboard-summary .metric strong {
@@ -883,10 +858,25 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.triage-stats-dashboard {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(460px, 1.4fr);
+}
+
 .operational-dashboard-grid {
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(520px, 1.4fr) minmax(420px, 1fr);
+}
+
+.triage-stats-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
 }
 
 .operational-dashboard-block {
@@ -902,9 +892,21 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.triage-stats-block > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
 .operational-dashboard-block > div:first-child {
   display: grid;
   gap: 3px;
+}
+
+.triage-stats-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  overflow-x: auto;
 }
 
 .operational-dashboard-table {
@@ -912,6 +914,15 @@ h3 {
   border-radius: 8px;
   display: grid;
   overflow-x: auto;
+}
+
+.triage-stats-table-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(150px, 1.3fr) repeat(5, minmax(86px, 0.7fr));
+  min-width: 760px;
+  padding: 10px 12px;
 }
 
 .operational-dashboard-row {
@@ -935,8 +946,20 @@ h3 {
   grid-template-columns: minmax(220px, 1.5fr) minmax(130px, 0.9fr) repeat(4, minmax(90px, 0.7fr));
 }
 
+.triage-stats-table-row + .triage-stats-table-row {
+  border-top: 1px solid var(--line);
+}
+
 .operational-dashboard-row + .operational-dashboard-row {
   border-top: 1px solid var(--line);
+}
+
+.triage-stats-table-head {
+  background: #f8fafb;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .operational-dashboard-head {
@@ -945,6 +968,11 @@ h3 {
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.triage-stats-table-row strong,
+.triage-stats-table-row span {
+  overflow-wrap: anywhere;
 }
 
 .operational-dashboard-row strong,
@@ -958,6 +986,12 @@ h3 {
   font-weight: 500;
   margin-top: 3px;
 }
+
+.triage-stats-destination-row {
+  grid-template-columns: minmax(150px, 1.3fr) repeat(3, minmax(92px, 0.7fr));
+  min-width: 520px;
+}
+
 .triage-view-only {
   max-width: 980px;
 }
@@ -3094,6 +3128,7 @@ h3 {
   .operator-metrics,
   .operator-podium,
   .triage-stats-summary,
+  .triage-stats-dashboard,
   .operational-dashboard-summary,
   .operational-dashboard-grid,
   .operator-row,
