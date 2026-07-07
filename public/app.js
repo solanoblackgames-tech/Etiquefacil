@@ -1437,8 +1437,17 @@ function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
+  document.querySelector("#triageStatsButton")?.classList.toggle("hidden", !canViewTriageStats());
+  if (!canViewTriageStats()) {
+    state.triageStatsVisible = false;
+    document.querySelector("#triageStatsPanel")?.classList.add("hidden");
+  }
   document.querySelector(".transfer-create-panel")?.classList.remove("hidden");
   document.body.classList.toggle("operator-view", operator);
+}
+
+function canViewTriageStats() {
+  return state.user?.role === "owner";
 }
 
 function showAuth() {
@@ -5160,6 +5169,7 @@ async function loadTriageItems(selectCode = null) {
 }
 
 async function loadTriageStats() {
+  if (!canViewTriageStats()) return;
   const panel = $("#triageStatsPanel");
   if (!panel) return;
   panel.classList.remove("hidden");
@@ -5174,6 +5184,7 @@ async function loadTriageStats() {
 }
 
 async function toggleTriageStats() {
+  if (!canViewTriageStats()) return;
   state.triageStatsVisible = !state.triageStatsVisible;
   const button = $("#triageStatsButton");
   const panel = $("#triageStatsPanel");
