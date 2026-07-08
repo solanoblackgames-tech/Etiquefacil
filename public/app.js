@@ -1594,9 +1594,12 @@ function renderOperationalDashboard() {
   const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
   const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
   panel.innerHTML = `
-    <div class="panel-heading">
-      <span class="muted">Perfil</span>
-      <h3>Dashboard operacional</h3>
+    <div class="panel-heading operational-dashboard-heading">
+      <div>
+        <span class="muted">Perfil</span>
+        <h3>Dashboard operacional</h3>
+      </div>
+      <span class="operational-dashboard-updated">Atualizado em ${formatDateTime(stats.generatedAt)}</span>
     </div>
     <div class="operational-dashboard-hero">
       <section>
@@ -1667,7 +1670,6 @@ function renderOperationalDashboard() {
         ${operationalLotsMarkup(stats.recentLots || [])}
       </section>
     </div>
-    <p class="muted">Atualizado em ${formatDateTime(stats.generatedAt)}</p>
   `;
 }
 
