@@ -1654,8 +1654,8 @@ function renderOperationalDashboard() {
       </section>
       <section class="operational-dashboard-block">
         <div>
-          <strong>Remessas recentes</strong>
-          <span class="muted">Quantidade, conferencia e valor planejado.</span>
+          <strong>Remessas conferidas</strong>
+          <span class="muted">Entradas loja com quantidade recebida e valor conferido.</span>
         </div>
         ${operationalTransfersMarkup(stats.recentTransfers || [])}
       </section>
@@ -1800,22 +1800,22 @@ function operationalOperatorsMarkup(operators = []) {
 }
 
 function operationalTransfersMarkup(transfers = []) {
-  if (!transfers.length) return '<p class="muted">Nenhuma remessa criada.</p>';
+  if (!transfers.length) return '<p class="muted">Nenhuma entrada de loja conferida.</p>';
   return `
     <div class="operational-dashboard-table operational-transfer-table">
       <div class="operational-dashboard-row operational-dashboard-head">
         <span>Remessa</span>
         <span>Status</span>
-        <span>Qtd</span>
-        <span>Valor</span>
+        <span>Qtd conferida</span>
+        <span>Valor conferido</span>
         <span>Operador</span>
       </div>
       ${transfers.map((transfer) => `
         <div class="operational-dashboard-row">
           <strong>${escapeHtml(transfer.name || "")}<small>${escapeHtml(transfer.depositoOrigem || "")} -> ${escapeHtml(transfer.depositoDestino || "")}</small></strong>
           <span>${escapeHtml(transferStatusLabel(transfer.status))}<small>${formatDate(transfer.createdAt)}</small></span>
-          <span>${transfer.received || 0}/${transfer.planned || 0}<small>${transfer.pending || 0} faltando</small></span>
-          <span>${money(transfer.value || 0)}</span>
+          <span>${transfer.received || 0}<small>de ${transfer.planned || 0} planejadas</small></span>
+          <span>${money(transfer.receivedValue || 0)}</span>
           <span>${escapeHtml(operatorLabel(transfer.operator || {}))}</span>
         </div>
       `).join("")}

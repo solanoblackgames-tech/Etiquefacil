@@ -1312,6 +1312,36 @@ h3 {
   text-transform: uppercase;
 }
 
+.operational-sort-button {
+  align-items: center;
+  background: transparent;
+  border-radius: 4px;
+  color: inherit;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 4px;
+  justify-content: flex-start;
+  min-height: 26px;
+  padding: 0;
+  text-align: left;
+  text-transform: uppercase;
+  width: 100%;
+}
+
+.operational-sort-button:hover:not(:disabled),
+.operational-sort-button.active {
+  background: transparent;
+  color: #0f766e;
+}
+
+.operational-sort-button span {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  overflow-wrap: normal;
+}
+
 .triage-operator-metrics span {
   background: #ffffff;
   border: 1px solid #dce5ea;

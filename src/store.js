@@ -5564,6 +5564,7 @@ function buildOperationalDashboardStats(db, userId) {
   let transferQty = 0;
   let transferReceived = 0;
   let transferValue = 0;
+  let transferReceivedValue = 0;
   const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
   for (const item of transferItems) {
     const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
@@ -5571,9 +5572,11 @@ function buildOperationalDashboardStats(db, userId) {
     const qty = Number(item.quantidade || 0);
     const received = Number(item.quantidadeConferida || 0);
     const value = roundMoney(qty * unitValue);
+    const receivedValue = roundMoney(Math.min(qty, received) * unitValue);
     transferQty += qty;
     transferReceived += received;
     transferValue += value;
+    transferReceivedValue += receivedValue;
 
     const transfer = transfersById.get(item.transferLotId);
     const row = operatorFor(transfer?.createdByUserId || userId);
@@ -5584,6 +5587,7 @@ function buildOperationalDashboardStats(db, userId) {
 
   const triageDestinationRows = new Map();
   let triageValue = 0;
+  let triageDiagnosedValue = 0;
   let triageDiagnosed = 0;
   for (const item of triageItems) {
     const product = findTriageStatsProduct(products, lotIds, item);
@@ -5594,7 +5598,10 @@ function buildOperationalDashboardStats(db, userId) {
     row.totalValue = roundMoney(row.totalValue + value);
     triageDestinationRows.set(destination, row);
     triageValue = roundMoney(triageValue + value);
-    if (item.status === "diagnosticado") triageDiagnosed += 1;
+    if (item.status === "diagnosticado") {
+      triageDiagnosed += 1;
+      triageDiagnosedValue = roundMoney(triageDiagnosedValue + value);
+    }
 
     const operatorRow = operatorFor(item.operatorUserId || item.createdByUserId || userId);
     operatorRow.triageCount = Number(operatorRow.triageCount || 0) + 1;
@@ -5614,7 +5621,6 @@ function buildOperationalDashboardStats(db, userId) {
 
   const recentTransfers = transfers
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
-    .slice(0, 8)
     .map((transfer) => {
       const items = transferItems.filter((item) => item.transferLotId === transfer.id);
       const planned = items.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
@@ -5622,6 +5628,12 @@ function buildOperationalDashboardStats(db, userId) {
       const value = items.reduce((sum, item) => {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         return sum + Number(item.quantidade || 0) * Number(product?.valorUnit || 0);
+      }, 0);
+      const receivedValue = items.reduce((sum, item) => {
+        const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+        const qty = Number(item.quantidade || 0);
+        const receivedQty = Number(item.quantidadeConferida || 0);
+        return sum + Math.min(qty, receivedQty) * Number(product?.valorUnit || 0);
       }, 0);
       const user = userMap.get(transfer.createdByUserId || userId);
       return {
@@ -5634,10 +5646,13 @@ function buildOperationalDashboardStats(db, userId) {
         received,
         pending: Math.max(0, planned - received),
         value: roundMoney(value),
+        receivedValue: roundMoney(receivedValue),
         createdAt: transfer.createdAt,
         operator: user ? publicDashboardUser(user) : null
       };
-    });
+    })
+    .filter((transfer) => Number(transfer.received || 0) > 0)
+    .slice(0, 8);
 
   const recentLots = lots
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
@@ -5662,6 +5677,7 @@ function buildOperationalDashboardStats(db, userId) {
     diagnosed: triageDiagnosed,
     pending: Math.max(0, triageItems.length - triageDiagnosed),
     value: roundMoney(triageValue),
+    diagnosedValue: roundMoney(triageDiagnosedValue),
     destinations: [...triageDestinationRows.values()]
       .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.destination.localeCompare(b.destination))
       .slice(0, 6)
@@ -5672,7 +5688,7 @@ function buildOperationalDashboardStats(db, userId) {
       name: "Conferencia",
       quantity: lotQty,
       completed: lotCheckedQty,
-      value: roundMoney(lotValue),
+      value: roundMoney(lotCheckedValue),
       pending: Math.max(0, lotQty - lotCheckedQty)
     },
     {
@@ -5680,7 +5696,7 @@ function buildOperationalDashboardStats(db, userId) {
       name: "Transferencias",
       quantity: transferQty,
       completed: transferReceived,
-      value: roundMoney(transferValue),
+      value: roundMoney(transferReceivedValue),
       pending: Math.max(0, transferQty - transferReceived)
     },
     {
@@ -5688,7 +5704,7 @@ function buildOperationalDashboardStats(db, userId) {
       name: "Triagem",
       quantity: triageItems.length,
       completed: triageDiagnosed,
-      value: roundMoney(triageValue),
+      value: roundMoney(triageDiagnosedValue),
       pending: Math.max(0, triageItems.length - triageDiagnosed)
     }
   ];
@@ -5711,6 +5727,7 @@ function buildOperationalDashboardStats(db, userId) {
       received: transferReceived,
       pending: Math.max(0, transferQty - transferReceived),
       value: roundMoney(transferValue),
+      receivedValue: roundMoney(transferReceivedValue),
       divergenceReports: reports.length,
       statusCounts
     },
