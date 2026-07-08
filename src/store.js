@@ -5604,6 +5604,7 @@ function buildOperationalDashboardStats(db, userId) {
   }
 
   const triageDestinationRows = new Map();
+  const triageDiagnosisConditionRows = new Map();
   let triageValue = 0;
   let triageDiagnosedValue = 0;
   let triageDiagnosed = 0;
@@ -5615,6 +5616,13 @@ function buildOperationalDashboardStats(db, userId) {
     row.total += 1;
     row.totalValue = roundMoney(row.totalValue + value);
     triageDestinationRows.set(destination, row);
+    if (item.diagnosisCondition) {
+      const condition = String(item.diagnosisCondition).trim().toUpperCase();
+      const conditionRow = triageDiagnosisConditionRows.get(condition) || { condition, total: 0, totalValue: 0 };
+      conditionRow.total += 1;
+      conditionRow.totalValue = roundMoney(conditionRow.totalValue + value);
+      triageDiagnosisConditionRows.set(condition, conditionRow);
+    }
     triageValue = roundMoney(triageValue + value);
     if (item.status === "diagnosticado") {
       triageDiagnosed += 1;
@@ -5698,6 +5706,9 @@ function buildOperationalDashboardStats(db, userId) {
     diagnosedValue: roundMoney(triageDiagnosedValue),
     destinations: [...triageDestinationRows.values()]
       .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.destination.localeCompare(b.destination))
+      .slice(0, 6),
+    diagnosisConditions: [...triageDiagnosisConditionRows.values()]
+      .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.condition.localeCompare(b.condition))
       .slice(0, 6)
   };
   const sectors = [

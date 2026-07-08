@@ -63,6 +63,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           sku: "SKU1",
           status: "diagnosticado",
           destination: "venda",
+          diagnosisCondition: "NAO_LIGA",
           createdAt: "2026-07-04T00:00:00.000Z",
           updatedAt: "2026-07-04T00:00:00.000Z",
           diagnosedAt: "2026-07-04T00:10:00.000Z"
@@ -88,6 +89,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(stats.triage.diagnosed, 1);
     assert.equal(stats.triage.value, 10);
     assert.equal(stats.triage.diagnosedValue, 10);
+    assert.deepEqual(stats.triage.diagnosisConditions, [{ condition: "NAO_LIGA", total: 1, totalValue: 10 }]);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").value, 30);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").value, 20);
     assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 10);

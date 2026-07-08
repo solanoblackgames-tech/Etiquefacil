@@ -1651,6 +1651,13 @@ function renderOperationalDashboard() {
       </section>
       <section class="operational-dashboard-block">
         <div>
+          <strong>Diagnosticos da triagem</strong>
+          <span class="muted">Volume e valor por condicao do produto.</span>
+        </div>
+        ${operationalTriageDiagnosisConditionsMarkup(triage.diagnosisConditions || [])}
+      </section>
+      <section class="operational-dashboard-block">
+        <div>
           <strong>Valor agregado por operador</strong>
           <span class="muted">Entradas de lotes e remessas criadas.</span>
         </div>
@@ -1718,6 +1725,28 @@ function operationalTriageDestinationsMarkup(destinations = []) {
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
             <small>${money(destination.totalValue || 0)} em valor agregado</small>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function operationalTriageDiagnosisConditionsMarkup(conditions = []) {
+  if (!conditions.length) return '<p class="muted">Nenhum diagnostico registrado.</p>';
+  const maxTotal = Math.max(...conditions.map((condition) => Number(condition.total || 0)), 1);
+  return `
+    <div class="operational-sector-chart operational-destination-chart">
+      ${conditions.map((condition) => {
+        const percent = Math.max(4, Math.round((Number(condition.total || 0) / maxTotal) * 100));
+        return `
+          <article>
+            <div>
+              <strong>${escapeHtml(triageDiagnosisConditionLabel(condition.condition || ""))}</strong>
+              <span>${condition.total || 0} itens</span>
+            </div>
+            <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
+            <small>${money(condition.totalValue || 0)} em valor agregado</small>
           </article>
         `;
       }).join("")}
