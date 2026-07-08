@@ -2340,6 +2340,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   }
 
   setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
+  if (route.view === "triage") applyTriageFiltersFromQuery();
   if (route.view === "triage" && route.triageCode) {
     await loadTriageItems(route.triageCode);
     await selectTriageItem(route.triageCode, { push: false });
@@ -5676,16 +5677,22 @@ function handleTriageStatsFilterClick(event) {
 }
 
 function openTriageWithFilters({ status = "", destination = "" } = {}) {
+  const url = new URL(routePath("/triagem"));
+  if (status) url.searchParams.set("status", status);
+  if (destination) url.searchParams.set("destination", destination);
+  window.open(url.toString(), "_blank", "noopener");
+}
+
+function applyTriageFiltersFromQuery() {
+  const params = new URLSearchParams(window.location.search);
   state.triageFilters = {
     operator: "",
-    status,
-    destination,
+    status: params.get("status") || "",
+    destination: params.get("destination") || "",
     date: ""
   };
   state.selectedTriageCode = null;
   clearTriageDetail();
-  renderTriageItems();
-  setMainTab("triage", { resetSelection: false });
 }
 
 function applyTriageStatsFilterFromForm(form) {
