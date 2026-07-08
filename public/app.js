@@ -4275,7 +4275,7 @@ function renderLotDetail(lot) {
       ${lot.rzs.map((rz) => rzCard(rz, { canScan })).join("")}
     </div>
     `}
-    <div id="rzDetail"></div>
+    <div id="rzDetail">${operatorNoSheetLot ? '<div id="diversePanelMount"></div>' : ""}</div>
   `;
   $("#backToLotsButton")?.addEventListener("click", () => {
     state.selectedLotId = null;
@@ -4313,7 +4313,11 @@ function renderLotDetail(lot) {
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
     button.addEventListener("click", () => renderPallet(lot, button.dataset.palletRz));
   });
-  schedulePrimaryInputFocus(["#rzSearchInput"]);
+  if (operatorNoSheetLot) {
+    renderDiverseLot(lot);
+  } else {
+    schedulePrimaryInputFocus(["#rzSearchInput"]);
+  }
 }
 
 function emptyLotDetailMarkup() {
