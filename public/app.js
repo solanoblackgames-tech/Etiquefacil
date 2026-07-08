@@ -19,6 +19,7 @@ const state = {
   triageFilters: {
     operator: "",
     status: "",
+    diagnosisCondition: "",
     destination: "",
     date: ""
   },
@@ -5591,6 +5592,16 @@ function renderTriageStats() {
       <section class="triage-stats-block">
         <div class="triage-stats-block-heading">
           <div>
+            <strong>Itens por diagnostico</strong>
+            <span class="muted">Condicao registrada no laudo.</span>
+          </div>
+          <span class="muted">Quantidade, valor agregado e media por diagnostico.</span>
+        </div>
+        ${triageStatsDiagnosisConditionsMarkup(stats.diagnosisConditions || [])}
+      </section>
+      <section class="triage-stats-block">
+        <div class="triage-stats-block-heading">
+          <div>
             <strong>Itens por operador</strong>
             <span class="muted">Ranking de produtividade e valor.</span>
           </div>
@@ -5655,6 +5666,12 @@ function handleTriageStatsFilterChange(event) {
 }
 
 function handleTriageStatsFilterClick(event) {
+  const diagnosisConditionCard = event.target.closest("[data-open-triage-diagnosis-condition]");
+  if (diagnosisConditionCard) {
+    openTriageWithFilters({ diagnosisCondition: diagnosisConditionCard.dataset.openTriageDiagnosisCondition || "" });
+    return;
+  }
+
   const destinationCard = event.target.closest("[data-open-triage-destination]");
   if (destinationCard) {
     openTriageWithFilters({ destination: destinationCard.dataset.openTriageDestination || "" });
@@ -5678,10 +5695,11 @@ function handleTriageStatsFilterClick(event) {
   loadTriageStats();
 }
 
-function openTriageWithFilters({ status = "", destination = "" } = {}) {
+function openTriageWithFilters({ status = "", destination = "", diagnosisCondition = "" } = {}) {
   const url = new URL(routePath("/triagem"));
   if (status) url.searchParams.set("status", status);
   if (destination) url.searchParams.set("destination", destination);
+  if (diagnosisCondition) url.searchParams.set("diagnosisCondition", diagnosisCondition);
   window.open(url.toString(), "_blank", "noopener");
 }
 
@@ -5690,6 +5708,7 @@ function applyTriageFiltersFromQuery() {
   state.triageFilters = {
     operator: "",
     status: params.get("status") || "",
+    diagnosisCondition: params.get("diagnosisCondition") || "",
     destination: params.get("destination") || "",
     date: ""
   };
@@ -5748,6 +5767,33 @@ function triageStatsDestinationsMarkup(destinations = []) {
           <button type="button" class="triage-destination-card" data-open-triage-destination="${escapeHtml(item.destination)}">
             <span class="triage-destination-top">
               <strong>${escapeHtml(destinationLabel(item.destination))}</strong>
+              <span>${money(totalValue)}</span>
+            </span>
+            <span class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></span>
+            <span class="triage-destination-meta">
+              <span>${total} itens</span>
+              <span>${money(total ? totalValue / total : 0)} media</span>
+            </span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function triageStatsDiagnosisConditionsMarkup(conditions = []) {
+  if (!conditions.length) return '<p class="muted">Nenhum diagnostico registrado no periodo.</p>';
+  const maxValue = conditions.reduce((max, item) => Math.max(max, Number(item.totalValue || 0)), 0);
+  return `
+    <div class="triage-destination-list">
+      ${conditions.map((item) => {
+        const total = Number(item.total || 0);
+        const totalValue = Number(item.totalValue || 0);
+        const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
+        return `
+          <button type="button" class="triage-destination-card" data-open-triage-diagnosis-condition="${escapeHtml(item.condition)}">
+            <span class="triage-destination-top">
+              <strong>${escapeHtml(triageDiagnosisConditionLabel(item.condition))}</strong>
               <span>${money(totalValue)}</span>
             </span>
             <span class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></span>
@@ -5889,7 +5935,7 @@ function renderTriageItems() {
       <span>${escapeHtml(item.descricao || item.sku || item.ean || item.asin || "Produto sem descricao")}</span>
       <small>Operador: ${escapeHtml(triageOperatorLabel(item))}</small>
       <small>Entrada: ${escapeHtml(formatDate(item.createdAt))}</small>
-      <small>${triageStatusLabel(item)}${item.destination ? ` - ${escapeHtml(item.destination)}` : ""}</small>
+      <small>${triageStatusLabel(item)}${item.diagnosisCondition ? ` - ${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}` : ""}${item.destination ? ` - ${escapeHtml(item.destination)}` : ""}</small>
     </article>
   `).join("");
 }
@@ -5917,11 +5963,13 @@ function triageItemDateKey(item = {}) {
 function filteredTriageItems() {
   const operator = state.triageFilters.operator;
   const status = state.triageFilters.status;
+  const diagnosisCondition = state.triageFilters.diagnosisCondition;
   const destination = state.triageFilters.destination;
   const date = state.triageFilters.date;
   return state.triageItems.filter((item) => {
     if (operator && triageOperatorId(item) !== operator) return false;
     if (status && item.status !== status) return false;
+    if (diagnosisCondition && item.diagnosisCondition !== diagnosisCondition) return false;
     if (destination && item.destination !== destination) return false;
     if (date && triageItemDateKey(item) !== date) return false;
     return true;
@@ -5932,9 +5980,10 @@ function renderTriageFilterOptions() {
   const form = $("#triageFilterForm");
   const select = form?.elements.namedItem("operator");
   const statusSelect = form?.elements.namedItem("status");
+  const diagnosisConditionSelect = form?.elements.namedItem("diagnosisCondition");
   const destinationSelect = form?.elements.namedItem("destination");
   const dateInput = form?.elements.namedItem("date");
-  if (!select || !statusSelect || !destinationSelect || !dateInput) return;
+  if (!select || !statusSelect || !diagnosisConditionSelect || !destinationSelect || !dateInput) return;
   const current = state.triageFilters.operator;
   const operators = new Map();
   state.triageItems.forEach((item) => {
@@ -5949,6 +5998,7 @@ function renderTriageFilterOptions() {
   select.value = operators.has(current) ? current : "";
   if (select.value !== state.triageFilters.operator) state.triageFilters.operator = select.value;
   statusSelect.value = state.triageFilters.status || "";
+  diagnosisConditionSelect.value = state.triageFilters.diagnosisCondition || "";
   destinationSelect.value = state.triageFilters.destination || "";
   dateInput.value = state.triageFilters.date;
 }
@@ -5959,6 +6009,7 @@ function handleTriageFilterChange(event) {
   state.triageFilters = {
     operator: String(form.elements.namedItem("operator")?.value || ""),
     status: String(form.elements.namedItem("status")?.value || ""),
+    diagnosisCondition: String(form.elements.namedItem("diagnosisCondition")?.value || ""),
     destination: String(form.elements.namedItem("destination")?.value || ""),
     date: String(form.elements.namedItem("date")?.value || "")
   };
@@ -5967,7 +6018,7 @@ function handleTriageFilterChange(event) {
 
 function handleTriageFilterClick(event) {
   if (!event.target.matches("[data-clear-triage-filters]")) return;
-  state.triageFilters = { operator: "", status: "", destination: "", date: "" };
+  state.triageFilters = { operator: "", status: "", diagnosisCondition: "", destination: "", date: "" };
   renderTriageItems();
 }
 
@@ -6052,6 +6103,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
           <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
+          ${item.diagnosisCondition ? `<div><dt>Diagnostico</dt><dd>${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}</dd></div>` : ""}
           ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
         <div class="settings-actions">
@@ -6118,9 +6170,10 @@ function renderTriageItemView(item) {
         <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
         <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
         <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
+        ${item.diagnosisCondition ? `<div><dt>Diagnostico</dt><dd>${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}</dd></div>` : ""}
         ${item.diagnosedAt ? `<div><dt>Diagnostico em</dt><dd>${formatDateTime(item.diagnosedAt)}</dd></div>` : ""}
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
-        ${item.diagnosis ? `<div class="wide-field"><dt>Diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
+        ${item.diagnosis ? `<div class="wide-field"><dt>Descricao do diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
       ${triageDiagnosisFormMarkup(item, { qrMode: true })}
@@ -6135,7 +6188,16 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         <span class="muted">${qrMode ? "QR Code" : "Diagnostico"}</span>
         <h3>${qrMode ? "Atualizar laudo" : "Saida do teste"}</h3>
       </div>
-      <label>Diagnostico<textarea name="diagnosis" rows="4" required>${escapeHtml(item.diagnosis || "")}</textarea></label>
+      <label>Diagnostico
+        <select name="diagnosisCondition" required>
+          <option value="">Selecione</option>
+          <option value="OK_FUNCIONANDO" ${item.diagnosisCondition === "OK_FUNCIONANDO" ? "selected" : ""}>OK funcionando</option>
+          <option value="FUNCIONANDO_COM_DETALHES" ${item.diagnosisCondition === "FUNCIONANDO_COM_DETALHES" ? "selected" : ""}>Funcionando com detalhes</option>
+          <option value="NAO_LIGA" ${item.diagnosisCondition === "NAO_LIGA" ? "selected" : ""}>Nao liga</option>
+          <option value="QUEBRADO_DANIFICADO" ${item.diagnosisCondition === "QUEBRADO_DANIFICADO" ? "selected" : ""}>Quebrado/danificado</option>
+        </select>
+      </label>
+      <label>Descricao do diagnostico<textarea name="diagnosis" rows="4">${escapeHtml(item.diagnosis || "")}</textarea></label>
       <label>Destino
         <select name="destination" required>
           <option value="">Selecione</option>
@@ -6194,6 +6256,7 @@ function triageDiagnosisHistoryMarkup(history = []) {
           <div class="triage-history-meta">
             <strong>${formatDateTime(event.createdAt)}</strong>
             <span>${escapeHtml(triageHistoryOperatorLabel(event))}</span>
+            ${event.diagnosisCondition ? `<small>${escapeHtml(triageDiagnosisConditionLabel(event.diagnosisCondition))}</small>` : ""}
             ${event.destination ? `<small>${escapeHtml(event.destination)}</small>` : ""}
           </div>
           <p>${escapeHtml(event.diagnosis || "-")}</p>
@@ -6208,6 +6271,16 @@ function triageHistoryOperatorLabel(event) {
   const user = event?.operatorUser;
   if (user?.name && user?.email) return `${user.name} (${user.email})`;
   return user?.name || user?.email || "Usuario principal";
+}
+
+function triageDiagnosisConditionLabel(value) {
+  const labels = {
+    OK_FUNCIONANDO: "OK funcionando",
+    FUNCIONANDO_COM_DETALHES: "Funcionando com detalhes",
+    NAO_LIGA: "Nao liga",
+    QUEBRADO_DANIFICADO: "Quebrado/danificado"
+  };
+  return labels[value] || value || "-";
 }
 
 async function handleTriageDetailChange(event) {

@@ -611,6 +611,7 @@ export async function getTriageStats(userId, period = {}) {
           t.operator_user_id,
           t.status,
           t.destination,
+          t.diagnosis_condition,
           coalesce(p.valor_unit, t.valor_unit, 0) as valor_unit,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
@@ -652,7 +653,8 @@ export async function getTriageStats(userId, period = {}) {
         createdByUserId: row.created_by_user_id || userId,
         operatorUserId: row.operator_user_id || null,
         status: row.status || "aguardando_teste",
-        destination: row.destination || ""
+        destination: row.destination || "",
+        diagnosisCondition: row.diagnosis_condition || ""
       },
       salePrice: num(row.valor_unit),
       user: row.user__id ? sanitizeUser(userFromPrefixedRow(row, "user__")) : null
@@ -738,6 +740,7 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
     code: await nextTriageCode(userId),
     status: "aguardando_teste",
     destination: "",
+    diagnosisCondition: "",
     diagnosis: "",
     createdAt: now,
     updatedAt: now,
@@ -759,9 +762,9 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
 export async function updateTriageDiagnosis({ userId, code, operatorUserId = null, payload = {} }) {
   await ensureStore();
   const destination = normalizeTriageDestination(payload.destination);
+  const diagnosisCondition = normalizeTriageDiagnosisCondition(payload.diagnosisCondition ?? payload.diagnosis_condition);
   const diagnosis = String(payload.diagnosis || "").trim();
   const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
-  if (!diagnosis) throw new Error("Informe o diagnostico do produto.");
   const now = new Date().toISOString();
 
   if (hasPostgres()) {
@@ -772,14 +775,15 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
         `update triage_items
          set status = 'diagnosticado',
              destination = $3,
-             diagnosis = $4,
-             diagnosis_photo = $5,
-             operator_user_id = coalesce($6, operator_user_id),
-             updated_at = $7,
-             diagnosed_at = $7
+             diagnosis_condition = $4,
+             diagnosis = $5,
+             diagnosis_photo = $6,
+             operator_user_id = coalesce($7, operator_user_id),
+             updated_at = $8,
+             diagnosed_at = $8
          where user_id = $1 and upper(code) = upper($2)
          returning *`,
-        [userId, normalizeCode(code), destination, diagnosis, diagnosisPhoto, operatorUserId, now]
+        [userId, normalizeCode(code), destination, diagnosisCondition, diagnosis, diagnosisPhoto, operatorUserId, now]
       );
       if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
       const item = triageItemFromRow(result.rows[0]);
@@ -791,6 +795,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
           code: item.code,
           operatorUserId,
           destination,
+          diagnosisCondition,
           diagnosis,
           diagnosisPhoto,
           createdAt: now
@@ -811,6 +816,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   if (!item) throw notFound("Item de triagem nao encontrado.");
   item.status = "diagnosticado";
   item.destination = destination;
+  item.diagnosisCondition = diagnosisCondition;
   item.diagnosis = diagnosis;
   item.diagnosisPhoto = diagnosisPhoto;
   item.operatorUserId = operatorUserId || item.operatorUserId || null;
@@ -824,6 +830,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
     code: item.code,
     operatorUserId,
     destination,
+    diagnosisCondition,
     diagnosis,
     diagnosisPhoto,
     createdAt: now
@@ -859,6 +866,7 @@ export async function listTriageDiagnosisHistory({ userId, code }) {
         code: item.code,
         operatorUserId: item.operatorUserId,
         destination: item.destination,
+        diagnosisCondition: item.diagnosisCondition || "",
         diagnosis: item.diagnosis,
         diagnosisPhoto: item.diagnosisPhoto,
         createdAt: item.diagnosedAt || item.updatedAt || item.createdAt
@@ -2778,6 +2786,7 @@ async function ensurePgStore() {
       peso_caixa numeric,
       status text not null default 'aguardando_teste',
       destination text not null default '',
+      diagnosis_condition text not null default '',
       diagnosis text not null default '',
       diagnosis_photo text not null default '',
       created_at timestamptz not null default now(),
@@ -2792,6 +2801,7 @@ async function ensurePgStore() {
       code text not null,
       operator_user_id text references users(id) on delete set null,
       destination text not null default '',
+      diagnosis_condition text not null default '',
       diagnosis text not null default '',
       diagnosis_photo text not null default '',
       created_at timestamptz not null default now()
@@ -2911,6 +2921,8 @@ async function ensurePgStore() {
     alter table catalog_requests add column if not exists comprimento_caixa numeric;
     alter table catalog_requests add column if not exists peso_caixa numeric;
     alter table triage_items add column if not exists diagnosis_photo text not null default '';
+    alter table triage_items add column if not exists diagnosis_condition text not null default '';
+    alter table triage_events add column if not exists diagnosis_condition text not null default '';
     alter table triage_items add column if not exists altura_caixa numeric;
     alter table triage_items add column if not exists largura_caixa numeric;
     alter table triage_items add column if not exists comprimento_caixa numeric;
@@ -2958,6 +2970,7 @@ async function ensurePgStore() {
     create unique index if not exists triage_items_user_code_idx on triage_items(user_id, code);
     create index if not exists triage_items_user_status_idx on triage_items(user_id, status);
     create index if not exists triage_items_user_destination_idx on triage_items(user_id, destination);
+    create index if not exists triage_items_user_diagnosis_condition_idx on triage_items(user_id, diagnosis_condition);
     create index if not exists transfer_lots_user_id_idx on transfer_lots(user_id);
     create index if not exists transfer_items_transfer_lot_id_idx on transfer_items(transfer_lot_id);
     create index if not exists transfer_items_sku_idx on transfer_items(sku);
@@ -3533,6 +3546,7 @@ async function insertTriageItemRows(client, items = []) {
       "peso_caixa",
       "status",
       "destination",
+      "diagnosis_condition",
       "diagnosis",
       "diagnosis_photo",
       "created_at",
@@ -3560,6 +3574,7 @@ async function insertTriageItemRows(client, items = []) {
       item.pesoCaixa || null,
       item.status || "aguardando_teste",
       item.destination || "",
+      item.diagnosisCondition || "",
       item.diagnosis || "",
       item.diagnosisPhoto || "",
       item.createdAt,
@@ -3574,7 +3589,7 @@ async function insertTriageEventRows(client, events = []) {
   await insertRows(
     target,
     "triage_events",
-    ["id", "user_id", "triage_item_id", "code", "operator_user_id", "destination", "diagnosis", "diagnosis_photo", "created_at"],
+    ["id", "user_id", "triage_item_id", "code", "operator_user_id", "destination", "diagnosis_condition", "diagnosis", "diagnosis_photo", "created_at"],
     events.map((event) => [
       event.id,
       event.userId,
@@ -3582,6 +3597,7 @@ async function insertTriageEventRows(client, events = []) {
       event.code || "",
       event.operatorUserId || null,
       event.destination || "",
+      event.diagnosisCondition || "",
       event.diagnosis || "",
       event.diagnosisPhoto || "",
       event.createdAt
@@ -5376,6 +5392,7 @@ function triageItemFromRow(row) {
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     status: row.status || "aguardando_teste",
     destination: row.destination || "",
+    diagnosisCondition: row.diagnosis_condition || "",
     diagnosis: row.diagnosis || "",
     diagnosisPhoto: row.diagnosis_photo || "",
     createdAt: iso(row.created_at),
@@ -5392,6 +5409,7 @@ function triageEventFromRow(row) {
     code: row.code || "",
     operatorUserId: row.operator_user_id || null,
     destination: row.destination || "",
+    diagnosisCondition: row.diagnosis_condition || "",
     diagnosis: row.diagnosis || "",
     diagnosisPhoto: row.diagnosis_photo || "",
     createdAt: iso(row.created_at)
@@ -5751,6 +5769,7 @@ function publicDashboardUser(user) {
 function buildTriageStatsFromRows(rows = []) {
   const byOperator = new Map();
   const destinations = new Map();
+  const diagnosisConditions = new Map();
   let totalValue = 0;
   let diagnosedTotal = 0;
 
@@ -5765,6 +5784,13 @@ function buildTriageStatsFromRows(rows = []) {
       destinationStats.total += 1;
       destinationStats.totalValue = roundMoney(destinationStats.totalValue + salePrice);
       destinations.set(destination, destinationStats);
+    }
+    if (item.diagnosisCondition) {
+      const condition = String(item.diagnosisCondition).trim().toUpperCase();
+      const conditionStats = diagnosisConditions.get(condition) || { condition, total: 0, totalValue: 0 };
+      conditionStats.total += 1;
+      conditionStats.totalValue = roundMoney(conditionStats.totalValue + salePrice);
+      diagnosisConditions.set(condition, conditionStats);
     }
 
     const user = row.user || null;
@@ -5788,6 +5814,8 @@ function buildTriageStatsFromRows(rows = []) {
 
   const destinationRows = [...destinations.values()]
     .sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination));
+  const diagnosisConditionRows = [...diagnosisConditions.values()]
+    .sort((a, b) => b.total - a.total || a.condition.localeCompare(b.condition));
 
   return {
     total: rows.length,
@@ -5796,6 +5824,7 @@ function buildTriageStatsFromRows(rows = []) {
     totalValue: roundMoney(totalValue),
     mainDestination: destinationRows[0] || null,
     destinations: destinationRows,
+    diagnosisConditions: diagnosisConditionRows,
     operators: [...byOperator.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   };
 }
@@ -6397,6 +6426,7 @@ function normalizeTriageInput(input = {}) {
     pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso),
     status: input.status || "aguardando_teste",
     destination: input.destination || "",
+    diagnosisCondition: normalizeTriageDiagnosisCondition(input.diagnosisCondition ?? input.diagnosis_condition, { allowEmpty: true }),
     diagnosis: String(input.diagnosis || "").trim(),
     diagnosisPhoto: normalizeTriageDiagnosisPhoto(input.diagnosisPhoto ?? input.diagnosis_photo ?? input.photo ?? input.foto ?? ""),
     createdAt: input.createdAt,
@@ -6409,6 +6439,13 @@ function normalizeTriageDestination(value) {
   const destination = normalizeCode(value);
   if (!["LOJA", "VENDA_DIRETA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Venda direta, Internet ou RMA.");
   return destination;
+}
+
+function normalizeTriageDiagnosisCondition(value, { allowEmpty = false } = {}) {
+  const condition = normalizeCode(value);
+  if (!condition && allowEmpty) return "";
+  if (["OK_FUNCIONANDO", "FUNCIONANDO_COM_DETALHES", "NAO_LIGA", "QUEBRADO_DANIFICADO"].includes(condition)) return condition;
+  throw new Error("Diagnostico invalido. Use OK funcionando, Funcionando com detalhes, Nao liga ou Quebrado/danificado.");
 }
 
 function normalizeTriageDiagnosisPhoto(value) {

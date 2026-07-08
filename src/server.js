@@ -424,7 +424,7 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
       operatorUserId: operatorUserId(req) || req.session.user?.id,
       payload: req.body || {}
     });
-    await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination });
+    await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination, diagnosisCondition: item.diagnosisCondition });
     res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }) });
   } catch (error) {
     sendError(res, error);
