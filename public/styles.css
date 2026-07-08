@@ -165,6 +165,12 @@ h3 {
   width: 100%;
 }
 
+#profileTriageStats.settings-shell {
+  max-width: 1280px;
+  min-width: 0;
+  width: 100%;
+}
+
 #profileOperators .entry-panel {
   display: grid;
   gap: 12px;
@@ -911,14 +917,15 @@ h3 {
 }
 
 .triage-stats-filter {
-  align-items: center;
+  align-items: start;
   background: #f8fafb;
   border: 1px solid #dce5ea;
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(160px, 0.4fr) minmax(0, 1fr);
+  grid-template-columns: minmax(130px, 0.22fr) minmax(0, 1fr);
   margin: 0 18px;
+  min-width: 0;
   padding: 12px;
 }
 
@@ -931,7 +938,8 @@ h3 {
   align-items: end;
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(3, minmax(78px, auto)) repeat(2, minmax(140px, 1fr)) minmax(86px, auto);
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  min-width: 0;
 }
 
 .triage-stats-filter-fields label {
@@ -943,6 +951,7 @@ h3 {
 .triage-stats-filter-fields input,
 .triage-stats-filter-fields button {
   min-height: 38px;
+  width: 100%;
 }
 
 .triage-stats-filter-fields button {
