@@ -16,7 +16,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-operational-dashboard`;
-    const { getOperationalDashboardStats, writeDb } = await import(storeUrl.href);
+    const { getOperationalDashboardStats, getTriageStats, writeDb } = await import(storeUrl.href);
 
     await writeDb({
       users: [
@@ -66,6 +66,36 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           createdAt: "2026-07-04T00:00:00.000Z",
           updatedAt: "2026-07-04T00:00:00.000Z",
           diagnosedAt: "2026-07-04T00:10:00.000Z"
+        },
+        {
+          id: "triage-2",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-2",
+          productCode: "ML-NO-LOT",
+          sku: "SKU-NO-LOT",
+          status: "diagnosticado",
+          destination: "LOJA",
+          valorUnit: 125,
+          createdAt: "2026-07-05T00:00:00.000Z",
+          updatedAt: "2026-07-05T00:00:00.000Z",
+          diagnosedAt: "2026-07-05T00:10:00.000Z"
+        },
+        {
+          id: "triage-3",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-3",
+          productCode: "ML-NO-LOT",
+          sku: "SKU-NO-LOT",
+          status: "diagnosticado",
+          destination: "VENDA_DIRETA",
+          valorUnit: 0,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          diagnosedAt: "2026-07-06T00:10:00.000Z"
         }
       ],
       triageEvents: []
@@ -82,13 +112,18 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(stats.transfers.pending, 1);
     assert.equal(ana.lotValue, 20);
     assert.equal(ana.transferValue, 30);
-    assert.equal(stats.triage.total, 1);
-    assert.equal(stats.triage.diagnosed, 1);
-    assert.equal(stats.triage.value, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 10);
-    assert.equal(ana.triageCount, 1);
-    assert.equal(ana.triageValue, 10);
-    assert.equal(ana.totalValue, 60);
+    assert.equal(stats.triage.total, 3);
+    assert.equal(stats.triage.diagnosed, 3);
+    assert.equal(stats.triage.value, 260);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 260);
+    assert.equal(ana.triageCount, 3);
+    assert.equal(ana.triageValue, 260);
+    assert.equal(ana.totalValue, 310);
+
+    const triageStats = await getTriageStats("owner-1");
+    const directSale = triageStats.destinations.find((destination) => destination.destination === "VENDA_DIRETA");
+    assert.equal(directSale.total, 1);
+    assert.equal(directSale.totalValue, 125);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

@@ -611,7 +611,7 @@ export async function getTriageStats(userId, period = {}) {
           t.operator_user_id,
           t.status,
           t.destination,
-          coalesce(p.valor_unit, t.valor_unit, 0) as valor_unit,
+          coalesce(p.valor_unit, previous_triage.valor_unit, t.valor_unit, 0) as valor_unit,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -638,6 +638,21 @@ export async function getTriageStats(userId, period = {}) {
           order by pr.created_at desc
           limit 1
         ) p on true
+        left join lateral (
+          select previous.valor_unit
+          from triage_items previous
+          where previous.user_id = t.user_id
+            and previous.id <> t.id
+            and previous.valor_unit > 0
+            and (
+              (t.sku <> '' and upper(trim(previous.sku)) = upper(trim(t.sku)))
+              or (t.product_code <> '' and upper(trim(previous.product_code)) = upper(trim(t.product_code)))
+              or (t.codigo_bling2 <> '' and upper(trim(previous.codigo_bling2)) = upper(trim(t.codigo_bling2)))
+              or (t.asin <> '' and upper(trim(previous.asin)) = upper(trim(t.asin)))
+            )
+          order by previous.created_at desc
+          limit 1
+        ) previous_triage on true
         left join users u on u.id = coalesce(t.operator_user_id, t.created_by_user_id, t.user_id)
         where t.user_id = $1
           and ($2::timestamptz is null or t.created_at >= $2::timestamptz)
@@ -670,7 +685,7 @@ export async function getTriageStats(userId, period = {}) {
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
         item,
-        salePrice: Number(product?.valorUnit ?? item.valorUnit ?? 0),
+        salePrice: Number(product?.valorUnit ?? findPreviousTriageItemPrice(db.triageItems || [], item) ?? item.valorUnit ?? 0),
         user: userMap.get(responsibleUserId) || null
       };
     });
@@ -729,7 +744,7 @@ export async function getTriageItem(userId, code) {
 export async function createTriageItem({ userId, createdByUserId, operatorUserId = null, payload = {} }) {
   await ensureStore();
   const now = new Date().toISOString();
-  const item = normalizeTriageInput({
+  const item = await hydrateTriageInputPrice(userId, normalizeTriageInput({
     ...payload,
     id: randomUUID(),
     userId,
@@ -742,7 +757,7 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
     createdAt: now,
     updatedAt: now,
     diagnosedAt: null
-  });
+  }));
 
   if (hasPostgres()) {
     await insertTriageItemRows(null, [item]);
@@ -754,6 +769,36 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
   db.triageItems.push(item);
   await writeDb(db);
   return item;
+}
+
+async function hydrateTriageInputPrice(userId, item) {
+  if (Number(item.valorUnit || 0) > 0) return item;
+
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select valor_unit
+        from triage_items
+        where user_id = $1
+          and valor_unit > 0
+          and (
+            ($2 <> '' and upper(trim(sku)) = upper(trim($2)))
+            or ($3 <> '' and upper(trim(product_code)) = upper(trim($3)))
+            or ($4 <> '' and upper(trim(codigo_bling2)) = upper(trim($4)))
+            or ($5 <> '' and upper(trim(asin)) = upper(trim($5)))
+          )
+        order by created_at desc
+        limit 1
+      `,
+      [userId, item.sku || "", item.productCode || "", item.codigoBling2 || "", item.asin || ""]
+    );
+    if (result.rows.length) return { ...item, valorUnit: roundMoney(Number(result.rows[0].valor_unit || 0)) };
+    return item;
+  }
+
+  const db = await readDb();
+  const previousPrice = findPreviousTriageItemPrice(db.triageItems || [], item);
+  return previousPrice ? { ...item, valorUnit: previousPrice } : item;
 }
 
 export async function updateTriageDiagnosis({ userId, code, operatorUserId = null, payload = {} }) {
@@ -5587,7 +5632,7 @@ function buildOperationalDashboardStats(db, userId) {
   let triageDiagnosed = 0;
   for (const item of triageItems) {
     const product = findTriageStatsProduct(products, lotIds, item);
-    const value = roundMoney(Number(product?.valorUnit ?? item.valorUnit ?? 0));
+    const value = roundMoney(Number(product?.valorUnit ?? findPreviousTriageItemPrice(triageItems, item) ?? item.valorUnit ?? 0));
     const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
     const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0 };
     row.total += 1;
@@ -5793,6 +5838,26 @@ function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
       if (sku && normalizeCode(product.sku) === sku) return true;
       return codes.some((code) => normalizeCode(product.codigoMl) === code);
     }) || null;
+}
+
+function findPreviousTriageItemPrice(items = [], item = {}) {
+  const sku = normalizeCode(item.sku);
+  const productCode = normalizeCode(item.productCode);
+  const codigoBling2 = normalizeCode(item.codigoBling2);
+  const asin = normalizeCode(item.asin);
+  const matches = items
+    .filter((candidate) => candidate.userId === item.userId)
+    .filter((candidate) => candidate.id !== item.id)
+    .filter((candidate) => Number(candidate.valorUnit || 0) > 0)
+    .filter((candidate) => {
+      if (sku && normalizeCode(candidate.sku) === sku) return true;
+      if (productCode && normalizeCode(candidate.productCode) === productCode) return true;
+      if (codigoBling2 && normalizeCode(candidate.codigoBling2) === codigoBling2) return true;
+      if (asin && normalizeCode(candidate.asin) === asin) return true;
+      return false;
+    })
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  return matches.length ? roundMoney(Number(matches[0].valorUnit || 0)) : null;
 }
 
 function catalogProductFromRow(row) {
