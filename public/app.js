@@ -2263,7 +2263,8 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   if (route.view === "lotRz") {
     const lot = await selectLot(route.lotId, { push: false });
     if (lot) {
-      renderRz(lot, route.codigoRz, { push: false });
+      if (isNoSheetLot(lot)) openNoSheetRz(lot, route.codigoRz);
+      else renderRz(lot, route.codigoRz, { push: false });
     }
     if (replace) updateRoute(lot ? lotRzPath(route.lotId, route.codigoRz) : "/lotes", { replace: true });
     return;
@@ -4129,7 +4130,10 @@ function renderLots() {
       <span class="muted">${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}</span>
       ${lot.totalExcessExternal ? `<span class="badge excess">${lot.totalExcessExternal} excedente(s)</span>` : ""}
     `;
-    card.addEventListener("click", () => previewLot(lot.id));
+    card.addEventListener("click", () => {
+      if (state.user?.role === "operator") selectLot(lot.id);
+      else previewLot(lot.id);
+    });
     wrapper.appendChild(card);
   }
 }
@@ -4159,8 +4163,8 @@ async function selectLot(lotId, { push = true } = {}) {
   setMainTab("lots", { push: false });
   const response = await api(`/api/lots/${lotId}`);
   renderLots();
-  renderLotDetail(response.lot);
   hideNoSheetPanel();
+  renderLotDetail(response.lot);
   document.body.classList.add("lot-focus");
   if (push) updateRoute(lotPath(lotId));
   return response.lot;
