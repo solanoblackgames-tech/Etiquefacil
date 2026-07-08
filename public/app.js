@@ -637,24 +637,37 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const description = $("#manualProductDescription");
     const price = $("#manualProductPrice");
     const ean = $("#manualProductEan");
-    const alturaCaixa = $("#manualProductAlturaCaixa");
-    const larguraCaixa = $("#manualProductLarguraCaixa");
-    const comprimentoCaixa = $("#manualProductComprimentoCaixa");
-    const pesoCaixa = $("#manualProductPesoCaixa");
+    const logisticsFieldsWrap = $("#manualProductLogisticsFields");
     const link = $("#manualProductLink");
     const photo = $("#manualProductPhoto");
     const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
     const error = $("#manualProductError");
     const cancel = $("#manualProductCancel");
-    const logisticsFields = [alturaCaixa, larguraCaixa, comprimentoCaixa, pesoCaixa];
 
-    logisticsFields.forEach((input) => {
-      input.closest("label")?.classList.toggle("hidden", !includeLogisticsFields);
-    });
+    logisticsFieldsWrap.innerHTML = includeLogisticsFields
+      ? `
+          <label>Altura caixa (cm)
+            <input id="manualProductAlturaCaixa" name="alturaCaixa" inputmode="decimal" placeholder="Opcional" />
+          </label>
+          <label>Largura caixa (cm)
+            <input id="manualProductLarguraCaixa" name="larguraCaixa" inputmode="decimal" placeholder="Opcional" />
+          </label>
+          <label>Comprimento caixa (cm)
+            <input id="manualProductComprimentoCaixa" name="comprimentoCaixa" inputmode="decimal" placeholder="Opcional" />
+          </label>
+          <label>Peso caixa (kg)
+            <input id="manualProductPesoCaixa" name="pesoCaixa" inputmode="decimal" placeholder="Opcional" />
+          </label>
+        `
+      : "";
+    const alturaCaixa = $("#manualProductAlturaCaixa");
+    const larguraCaixa = $("#manualProductLarguraCaixa");
+    const comprimentoCaixa = $("#manualProductComprimentoCaixa");
+    const pesoCaixa = $("#manualProductPesoCaixa");
 
     const cleanup = () => {
       modal.classList.add("hidden");
-      logisticsFields.forEach((input) => input.closest("label")?.classList.remove("hidden"));
+      logisticsFieldsWrap.innerHTML = "";
       form.onsubmit = null;
       description.oninput = null;
       descriptionSuggestions.onclick = null;
@@ -672,10 +685,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     description.value = initialValues.descricao || "";
     price.value = initialValues.valorUnit ? String(initialValues.valorUnit).replace(".", ",") : "";
     ean.value = initialValues.ean || "";
-    alturaCaixa.value = initialValues.alturaCaixa || "";
-    larguraCaixa.value = initialValues.larguraCaixa || "";
-    comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
-    pesoCaixa.value = initialValues.pesoCaixa || "";
+    if (alturaCaixa) alturaCaixa.value = initialValues.alturaCaixa || "";
+    if (larguraCaixa) larguraCaixa.value = initialValues.larguraCaixa || "";
+    if (comprimentoCaixa) comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
+    if (pesoCaixa) pesoCaixa.value = initialValues.pesoCaixa || "";
     link.value = initialValues.link || "";
     photo.value = initialValues.foto || "";
     error.textContent = "";
@@ -706,10 +719,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (suggestion.source !== "lista_lote") {
         if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
         if (suggestion.ean) ean.value = suggestion.ean;
-        if (includeLogisticsFields && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
-        if (includeLogisticsFields && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
-        if (includeLogisticsFields && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
-        if (includeLogisticsFields && suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
+        if (alturaCaixa && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
+        if (larguraCaixa && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
+        if (comprimentoCaixa && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
+        if (pesoCaixa && suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
         if (suggestion.link) link.value = suggestion.link;
         if (suggestion.foto) photo.value = suggestion.foto;
       }
@@ -735,10 +748,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         descricao,
         valorUnit,
         ean: ean.value.trim(),
-        alturaCaixa: includeLogisticsFields ? alturaCaixa.value.trim() : "",
-        larguraCaixa: includeLogisticsFields ? larguraCaixa.value.trim() : "",
-        comprimentoCaixa: includeLogisticsFields ? comprimentoCaixa.value.trim() : "",
-        pesoCaixa: includeLogisticsFields ? pesoCaixa.value.trim() : "",
+        alturaCaixa: alturaCaixa ? alturaCaixa.value.trim() : "",
+        larguraCaixa: larguraCaixa ? larguraCaixa.value.trim() : "",
+        comprimentoCaixa: comprimentoCaixa ? comprimentoCaixa.value.trim() : "",
+        pesoCaixa: pesoCaixa ? pesoCaixa.value.trim() : "",
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -4194,20 +4207,22 @@ function renderLotPreview(lot) {
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
   const noSheetLot = isNoSheetLot(lot);
-  const canManage = state.user?.role !== "operator";
+  const isOperator = state.user?.role === "operator";
+  const canManage = !isOperator;
+  const operatorNoSheetLot = isOperator && noSheetLot;
   const canScan = true;
   moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
-    <div class="work-heading">
+    ${operatorNoSheetLot ? "" : `<div class="work-heading">
       <div>
         <span class="muted">Lote em trabalho</span>
         <h2>${escapeHtml(lot.nomeArquivo)}</h2>
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
-    </div>
-    ${noSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    ${noSheetLot ? `
+    </div>`}
+    ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    ${noSheetLot && !operatorNoSheetLot ? `
       <form id="lotNoSheetSuggestionUploadForm" class="suggestion-upload-form">
         <label>Lista de sugestao do lote<input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" /></label>
         <button type="submit" class="ghost">Subir lista</button>
@@ -4216,20 +4231,20 @@ function renderLotDetail(lot) {
     ` : ""}
     ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
-        <span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>
-        <button type="submit">Gerar RZ</button>
+        ${operatorNoSheetLot ? "" : `<span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>`}
+        <button type="submit">${operatorNoSheetLot ? "Gerar Novo RZ" : "Gerar RZ"}</button>
         <strong id="lotDiverseActiveRz">Nenhuma remessa ativa</strong>
         <span></span>
       </form>
     ` : ""}
-    <div class="actions ${canManage ? "" : "hidden"}">
+    ${operatorNoSheetLot ? "" : `<div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
       <button data-sync-products="complete">Criar produtos no Bling</button>
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
-    </div>
-    <p id="downloadMessage" class="message"></p>
-    ${noSheetLot ? `
+    </div>`}
+    ${operatorNoSheetLot ? "" : `<p id="downloadMessage" class="message"></p>`}
+    ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
         ${metric("Quantidade bipada", lot.progress.checkedQty)}
         ${metric("Valor bipado", money(lot.progress.checkedValue))}
@@ -4249,6 +4264,7 @@ function renderLotDetail(lot) {
         ${metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0)))}
       </div>
     `}
+    ${operatorNoSheetLot ? "" : `
     <h3 class="section-title">RZs</h3>
     <div class="rz-search">
       <input id="rzSearchInput" placeholder="Bipe ou digite o Código RZ" />
@@ -4258,9 +4274,10 @@ function renderLotDetail(lot) {
     <div class="rz-grid">
       ${lot.rzs.map((rz) => rzCard(rz, { canScan })).join("")}
     </div>
+    `}
     <div id="rzDetail"></div>
   `;
-  $("#backToLotsButton").addEventListener("click", () => {
+  $("#backToLotsButton")?.addEventListener("click", () => {
     state.selectedLotId = null;
     state.selectedRz = null;
     document.body.classList.remove("lot-focus");
@@ -4277,8 +4294,8 @@ function renderLotDetail(lot) {
     });
     $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
   }
-  $("#rzSearchButton").addEventListener("click", () => openRzFromSearch(lot));
-  $("#rzSearchInput").addEventListener("keydown", (event) => {
+  $("#rzSearchButton")?.addEventListener("click", () => openRzFromSearch(lot));
+  $("#rzSearchInput")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
@@ -5350,9 +5367,16 @@ function trashIcon() {
 function diverseItemsTable(lot) {
   const items = (lot.items || []).filter(isNoSheetItem);
   if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
+  const activeRz = state.selectedDiverseRz || "";
   const sortedItems = [...items].sort((a, b) => {
+    const activeRankA = a.codigoRz === activeRz ? 0 : 1;
+    const activeRankB = b.codigoRz === activeRz ? 0 : 1;
+    if (activeRankA !== activeRankB) return activeRankA - activeRankB;
+
     const byRz = String(a.codigoRz || "").localeCompare(String(b.codigoRz || ""));
     if (byRz) return byRz;
+    const byCreated = String(itemCreatedAt(b)).localeCompare(String(itemCreatedAt(a)));
+    if (byCreated) return byCreated;
     return String(a.product?.sku || "").localeCompare(String(b.product?.sku || ""));
   });
 
@@ -5376,6 +5400,10 @@ function diverseItemsTable(lot) {
 
 function isNoSheetItem(item) {
   return item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha";
+}
+
+function itemCreatedAt(item) {
+  return item?.product?.createdAt || item?.createdAt || "";
 }
 
 function diverseItemRow(item, startsRz = false) {
