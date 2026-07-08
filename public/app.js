@@ -916,7 +916,7 @@ function renderDiverseLot(lot) {
   state.selectedDiverseLot = lot;
   const rzs = diverseRzs(lot);
   if (state.selectedDiverseRz && rzs.length && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
-  if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || defaultDiverseRz(lot);
+  if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || nextNoSheetRzCode(lot);
   mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
