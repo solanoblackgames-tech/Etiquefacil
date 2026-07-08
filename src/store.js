@@ -2946,6 +2946,42 @@ async function ensurePgStore() {
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
+    alter table products
+      alter column valor_unit type numeric using coalesce(nullif(replace(valor_unit::text, ',', '.'), '')::numeric, 0),
+      alter column preco_custo type numeric using coalesce(nullif(replace(preco_custo::text, ',', '.'), '')::numeric, 0),
+      alter column altura_caixa type numeric using nullif(replace(altura_caixa::text, ',', '.'), '')::numeric,
+      alter column largura_caixa type numeric using nullif(replace(largura_caixa::text, ',', '.'), '')::numeric,
+      alter column comprimento_caixa type numeric using nullif(replace(comprimento_caixa::text, ',', '.'), '')::numeric,
+      alter column peso_caixa type numeric using nullif(replace(peso_caixa::text, ',', '.'), '')::numeric;
+    alter table catalog_products
+      alter column valor_unit type numeric using coalesce(nullif(replace(valor_unit::text, ',', '.'), '')::numeric, 0),
+      alter column preco_custo type numeric using coalesce(nullif(replace(preco_custo::text, ',', '.'), '')::numeric, 0),
+      alter column altura_caixa type numeric using nullif(replace(altura_caixa::text, ',', '.'), '')::numeric,
+      alter column largura_caixa type numeric using nullif(replace(largura_caixa::text, ',', '.'), '')::numeric,
+      alter column comprimento_caixa type numeric using nullif(replace(comprimento_caixa::text, ',', '.'), '')::numeric,
+      alter column peso_caixa type numeric using nullif(replace(peso_caixa::text, ',', '.'), '')::numeric;
+    alter table catalog_requests
+      alter column valor_unit type numeric using coalesce(nullif(replace(valor_unit::text, ',', '.'), '')::numeric, 0),
+      alter column preco_custo type numeric using coalesce(nullif(replace(preco_custo::text, ',', '.'), '')::numeric, 0),
+      alter column altura_caixa type numeric using nullif(replace(altura_caixa::text, ',', '.'), '')::numeric,
+      alter column largura_caixa type numeric using nullif(replace(largura_caixa::text, ',', '.'), '')::numeric,
+      alter column comprimento_caixa type numeric using nullif(replace(comprimento_caixa::text, ',', '.'), '')::numeric,
+      alter column peso_caixa type numeric using nullif(replace(peso_caixa::text, ',', '.'), '')::numeric;
+    alter table catalog_rejected_requests
+      alter column valor_unit type numeric using coalesce(nullif(replace(valor_unit::text, ',', '.'), '')::numeric, 0),
+      alter column preco_custo type numeric using coalesce(nullif(replace(preco_custo::text, ',', '.'), '')::numeric, 0),
+      alter column altura_caixa type numeric using nullif(replace(altura_caixa::text, ',', '.'), '')::numeric,
+      alter column largura_caixa type numeric using nullif(replace(largura_caixa::text, ',', '.'), '')::numeric,
+      alter column comprimento_caixa type numeric using nullif(replace(comprimento_caixa::text, ',', '.'), '')::numeric,
+      alter column peso_caixa type numeric using nullif(replace(peso_caixa::text, ',', '.'), '')::numeric;
+    alter table triage_items
+      alter column valor_unit type numeric using coalesce(nullif(replace(valor_unit::text, ',', '.'), '')::numeric, 0),
+      alter column preco_custo type numeric using coalesce(nullif(replace(preco_custo::text, ',', '.'), '')::numeric, 0),
+      alter column altura_caixa type numeric using nullif(replace(altura_caixa::text, ',', '.'), '')::numeric,
+      alter column largura_caixa type numeric using nullif(replace(largura_caixa::text, ',', '.'), '')::numeric,
+      alter column comprimento_caixa type numeric using nullif(replace(comprimento_caixa::text, ',', '.'), '')::numeric,
+      alter column peso_caixa type numeric using nullif(replace(peso_caixa::text, ',', '.'), '')::numeric;
+
     create index if not exists users_tenant_id_idx on users(tenant_id);
     create index if not exists users_parent_user_id_idx on users(parent_user_id);
     create index if not exists lots_user_id_idx on lots(user_id);
