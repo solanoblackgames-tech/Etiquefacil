@@ -50,7 +50,10 @@
       <header class="topbar">
         <div>
           <h1>Etiquefácil</h1>
-          <span id="userName"></span>
+          <div class="user-line">
+            <span id="userName"></span>
+            <button class="sync-shortcut" data-profile-section="sync" type="button">Sincronizacao</button>
+          </div>
         </div>
         <nav class="app-nav">
           <button data-tab="lots" type="button">Conferencia</button>
@@ -66,7 +69,6 @@
         <aside class="profile-menu">
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
-          <button data-profile-section="sync" type="button">Sincronizacao</button>
           <button data-profile-section="operators" type="button">Operadores</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>

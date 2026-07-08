@@ -676,10 +676,32 @@ h3 {
   letter-spacing: 0;
 }
 
+.user-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .topbar span {
   color: var(--muted);
-  display: block;
-  margin-top: 4px;
+  display: inline-block;
+}
+
+.sync-shortcut {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  min-height: 28px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.sync-shortcut:hover:not(:disabled),
+.sync-shortcut.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .app-nav {

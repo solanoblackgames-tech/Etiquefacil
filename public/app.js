@@ -26,6 +26,7 @@ const state = {
   triageStats: null,
   triageStatsFilter: null,
   operationalStats: null,
+  operationalOperatorSort: { key: "totalValue", direction: "desc" },
   blingDeposits: [],
   blingDepositsLoaded: false,
   profileSection: "entries",
@@ -219,8 +220,12 @@ function bindEvents() {
   $("#profileTriageStatsPanel").addEventListener("submit", handleTriageStatsFilterSubmit);
   $("#profileTriageStatsPanel").addEventListener("change", handleTriageStatsFilterChange);
   $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
+  $("#profileOperationalDashboardPanel").addEventListener("click", handleOperationalDashboardClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
-    button.addEventListener("click", () => setProfileSection(button.dataset.profileSection));
+    button.addEventListener("click", () => {
+      if (button.classList.contains("sync-shortcut")) setMainTab("profile");
+      setProfileSection(button.dataset.profileSection);
+    });
   });
   document.addEventListener("input", handleCodigoMlInput);
   document.addEventListener("change", handleNoSheetCostModeChange);
@@ -1475,6 +1480,7 @@ function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
+  document.querySelector(".sync-shortcut")?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
   document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
@@ -1583,7 +1589,7 @@ function renderOperationalDashboard() {
   const lots = stats.lots || {};
   const transfers = stats.transfers || {};
   const triage = stats.triage || {};
-  const totalOperationValue = Number(lots.value || 0) + Number(transfers.value || 0) + Number(triage.value || 0);
+  const totalOperationValue = Number(lots.checkedValue || 0) + Number(transfers.receivedValue || 0) + Number(triage.diagnosedValue || 0);
   const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
   const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
   const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
@@ -1716,6 +1722,43 @@ function operationalTriageDestinationsMarkup(destinations = []) {
   `;
 }
 
+function handleOperationalDashboardClick(event) {
+  const button = event.target.closest("[data-operational-operator-sort]");
+  if (!button) return;
+  const key = button.dataset.operationalOperatorSort;
+  const current = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  state.operationalOperatorSort = {
+    key,
+    direction: current.key === key && current.direction === "desc" ? "asc" : "desc"
+  };
+  renderOperationalDashboard();
+}
+
+function sortedOperationalOperators(operators = []) {
+  const sort = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  const direction = sort.direction === "asc" ? 1 : -1;
+  return [...operators].sort((a, b) => {
+    const left = operationalOperatorSortValue(a, sort.key);
+    const right = operationalOperatorSortValue(b, sort.key);
+    if (typeof left === "string" || typeof right === "string") {
+      return String(left).localeCompare(String(right), "pt-BR") * direction;
+    }
+    return ((Number(left || 0) - Number(right || 0)) * direction) || operatorLabel(a).localeCompare(operatorLabel(b), "pt-BR");
+  });
+}
+
+function operationalOperatorSortValue(operator, key) {
+  if (key === "operator") return operatorLabel(operator);
+  return Number(operator?.[key] || 0);
+}
+
+function operationalOperatorSortButton(key, label) {
+  const sort = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  const active = sort.key === key;
+  const arrow = active ? (sort.direction === "desc" ? "↓" : "↑") : "↕";
+  return `<button type="button" class="operational-sort-button ${active ? "active" : ""}" data-operational-operator-sort="${escapeHtml(key)}">${escapeHtml(label)} <span>${arrow}</span></button>`;
+}
+
 function operationalTransferStatusSummary(statusCounts = {}) {
   const labels = Object.entries(statusCounts)
     .filter(([, total]) => Number(total || 0) > 0)
@@ -1725,20 +1768,21 @@ function operationalTransferStatusSummary(statusCounts = {}) {
 
 function operationalOperatorsMarkup(operators = []) {
   if (!operators.length) return '<p class="muted">Nenhum operador com movimentacao.</p>';
+  const sortedOperators = sortedOperationalOperators(operators);
   return `
     <div class="operational-dashboard-table operational-operator-table">
       <div class="operational-dashboard-row operational-dashboard-head">
-        <span>Operador</span>
-        <span>Lotes</span>
-        <span>Qtd lote</span>
-        <span>Valor lote</span>
-        <span>Remessas</span>
-        <span>Qtd remessa</span>
-        <span>Valor remessa</span>
-        <span>Triagem</span>
-        <span>Total</span>
+        <span>${operationalOperatorSortButton("operator", "Operador")}</span>
+        <span>${operationalOperatorSortButton("lotCount", "Lotes")}</span>
+        <span>${operationalOperatorSortButton("lotQty", "Qtd lote")}</span>
+        <span>${operationalOperatorSortButton("lotValue", "Valor lote")}</span>
+        <span>${operationalOperatorSortButton("transferCount", "Remessas")}</span>
+        <span>${operationalOperatorSortButton("transferQty", "Qtd remessa")}</span>
+        <span>${operationalOperatorSortButton("transferValue", "Valor remessa")}</span>
+        <span>${operationalOperatorSortButton("triageValue", "Triagem")}</span>
+        <span>${operationalOperatorSortButton("totalValue", "Total")}</span>
       </div>
-      ${operators.map((operator) => `
+      ${sortedOperators.map((operator) => `
         <div class="operational-dashboard-row">
           <strong>${escapeHtml(operatorLabel(operator))}</strong>
           <span>${operator.lotCount || 0}</span>
