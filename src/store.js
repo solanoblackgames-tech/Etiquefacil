@@ -611,7 +611,7 @@ export async function getTriageStats(userId, period = {}) {
           t.operator_user_id,
           t.status,
           t.destination,
-          coalesce(p.valor_unit, 0) as valor_unit,
+          coalesce(p.valor_unit, t.valor_unit, 0) as valor_unit,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -670,7 +670,7 @@ export async function getTriageStats(userId, period = {}) {
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
         item,
-        salePrice: Number(product?.valorUnit || 0),
+        salePrice: Number(product?.valorUnit ?? item.valorUnit ?? 0),
         user: userMap.get(responsibleUserId) || null
       };
     });
@@ -681,7 +681,13 @@ export async function getOperationalDashboardStats(userId) {
   await ensureStore();
   if (hasPostgres()) {
     const lotsDb = await readPgUserLotsDb(userId);
-    const transferLotsResult = await query("select * from transfer_lots where user_id = $1 order by created_at desc", [userId]);
+    const [transferLotsResult, usersResult] = await Promise.all([
+      query("select * from transfer_lots where user_id = $1 order by created_at desc", [userId]),
+      query(
+        "select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users where id = $1 or parent_user_id = $1",
+        [userId]
+      )
+    ]);
     const transferLotIds = transferLotsResult.rows.map((row) => row.id);
     const [transferItemsResult, reportsResult] = transferLotIds.length
       ? await Promise.all([
@@ -689,11 +695,14 @@ export async function getOperationalDashboardStats(userId) {
         query("select * from transfer_divergence_reports where transfer_lot_id = any($1::text[]) order by created_at desc", [transferLotIds])
       ])
       : [{ rows: [] }, { rows: [] }];
+    const triageResult = await query("select * from triage_items where user_id = $1 order by created_at asc", [userId]);
     const db = {
       ...lotsDb,
+      users: usersResult.rows.map(userFromRow),
       transferLots: transferLotsResult.rows.map(transferLotFromRow),
       transferItems: transferItemsResult.rows.map(transferItemFromRow),
-      transferDivergenceReports: reportsResult.rows.map(transferDivergenceReportFromRow)
+      transferDivergenceReports: reportsResult.rows.map(transferDivergenceReportFromRow),
+      triageItems: triageResult.rows.map(triageItemFromRow)
     };
     return buildOperationalDashboardStats(db, userId);
   }
@@ -872,6 +881,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     asin: normalizeCode(payload.asin),
     codigoBling2: normalizeCode(payload.codigoBling2),
     descricao: String(payload.descricao || payload.description || "").trim(),
+    valorUnit: roundMoney(Number(payload.valorUnit ?? payload.valor_unit ?? payload.preco ?? 0)),
+    precoCusto: roundMoney(Number(payload.precoCusto ?? payload.preco_custo ?? payload.custo ?? 0)),
     serial: String(payload.serial || "").trim(),
     alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
@@ -901,12 +912,14 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            asin = $7,
            codigo_bling2 = $8,
            descricao = $9,
-           serial = $10,
-           altura_caixa = $11,
-           largura_caixa = $12,
-           comprimento_caixa = $13,
-           peso_caixa = $14,
-           updated_at = $15
+           valor_unit = case when $10 > 0 then $10 else valor_unit end,
+           preco_custo = case when $11 > 0 then $11 else preco_custo end,
+           serial = $12,
+           altura_caixa = $13,
+           largura_caixa = $14,
+           comprimento_caixa = $15,
+           peso_caixa = $16,
+           updated_at = $17
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
       [
@@ -919,6 +932,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
         details.asin,
         details.codigoBling2,
         details.descricao,
+        details.valorUnit,
+        details.precoCusto,
         details.serial,
         details.alturaCaixa || null,
         details.larguraCaixa || null,
@@ -940,6 +955,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     );
     if (duplicate) throw new Error("Ja existe um item de triagem com esta identificacao interna.");
   }
+  if (!details.valorUnit) delete details.valorUnit;
+  if (!details.precoCusto) delete details.precoCusto;
   Object.assign(item, details, { code: nextCode, updatedAt: now });
   await writeDb(db);
   return item;
@@ -2752,6 +2769,8 @@ async function ensurePgStore() {
       asin text not null default '',
       codigo_bling2 text not null default '',
       descricao text not null default '',
+      valor_unit numeric not null default 0,
+      preco_custo numeric not null default 0,
       serial text not null default '',
       altura_caixa numeric,
       largura_caixa numeric,
@@ -2896,6 +2915,8 @@ async function ensurePgStore() {
     alter table triage_items add column if not exists largura_caixa numeric;
     alter table triage_items add column if not exists comprimento_caixa numeric;
     alter table triage_items add column if not exists peso_caixa numeric;
+    alter table triage_items add column if not exists valor_unit numeric not null default 0;
+    alter table triage_items add column if not exists preco_custo numeric not null default 0;
     create index if not exists triage_events_item_created_idx on triage_events(triage_item_id, created_at desc);
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
@@ -3503,6 +3524,8 @@ async function insertTriageItemRows(client, items = []) {
       "asin",
       "codigo_bling2",
       "descricao",
+      "valor_unit",
+      "preco_custo",
       "serial",
       "altura_caixa",
       "largura_caixa",
@@ -3528,6 +3551,8 @@ async function insertTriageItemRows(client, items = []) {
       item.asin || "",
       item.codigoBling2 || "",
       item.descricao || "",
+      item.valorUnit || 0,
+      item.precoCusto || 0,
       item.serial || "",
       item.alturaCaixa || null,
       item.larguraCaixa || null,
@@ -5200,6 +5225,8 @@ function triageLookupFromProduct(product, row = {}) {
     asin: product.codigoMl || "",
     codigoBling2: product.codigoMl || "",
     descricao: product.descricao || "",
+    valorUnit: product.valorUnit || 0,
+    precoCusto: product.precoCusto || 0,
     categoria: product.categoria || "",
     subcategoria: product.subcategoria || "",
     alturaCaixa: product.alturaCaixa || "",
@@ -5340,6 +5367,8 @@ function triageItemFromRow(row) {
     asin: row.asin || "",
     codigoBling2: row.codigo_bling2 || "",
     descricao: row.descricao || "",
+    valorUnit: num(row.valor_unit),
+    precoCusto: num(row.preco_custo),
     serial: row.serial || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
@@ -5458,6 +5487,7 @@ function buildOperationalDashboardStats(db, userId) {
   const transferIds = new Set(transfers.map((lot) => lot.id));
   const transferItems = (db.transferItems || []).filter((item) => transferIds.has(item.transferLotId));
   const reports = (db.transferDivergenceReports || []).filter((report) => transferIds.has(report.transferLotId));
+  const triageItems = (db.triageItems || []).filter((item) => item.userId === userId);
 
   const productsById = new Map(products.map((product) => [product.id, product]));
   const productsBySku = new Map();
@@ -5552,10 +5582,31 @@ function buildOperationalDashboardStats(db, userId) {
     row.transferValue = roundMoney(row.transferValue + value);
   }
 
+  const triageDestinationRows = new Map();
+  let triageValue = 0;
+  let triageDiagnosed = 0;
+  for (const item of triageItems) {
+    const product = findTriageStatsProduct(products, lotIds, item);
+    const value = roundMoney(Number(product?.valorUnit ?? item.valorUnit ?? 0));
+    const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
+    const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0 };
+    row.total += 1;
+    row.totalValue = roundMoney(row.totalValue + value);
+    triageDestinationRows.set(destination, row);
+    triageValue = roundMoney(triageValue + value);
+    if (item.status === "diagnosticado") triageDiagnosed += 1;
+
+    const operatorRow = operatorFor(item.operatorUserId || item.createdByUserId || userId);
+    operatorRow.triageCount = Number(operatorRow.triageCount || 0) + 1;
+    operatorRow.triageValue = roundMoney(Number(operatorRow.triageValue || 0) + value);
+  }
+
   const operatorStats = [...operatorRows.values()].map((row) => {
     row.lotCount = row._lotIds.size;
     row.transferCount = row._transferIds.size;
-    row.totalValue = roundMoney(Number(row.lotValue || 0) + Number(row.transferValue || 0));
+    row.triageCount = Number(row.triageCount || 0);
+    row.triageValue = roundMoney(Number(row.triageValue || 0));
+    row.totalValue = roundMoney(Number(row.lotValue || 0) + Number(row.transferValue || 0) + Number(row.triageValue || 0));
     delete row._lotIds;
     delete row._transferIds;
     return row;
@@ -5606,6 +5657,42 @@ function buildOperationalDashboardStats(db, userId) {
       };
     });
 
+  const triage = {
+    total: triageItems.length,
+    diagnosed: triageDiagnosed,
+    pending: Math.max(0, triageItems.length - triageDiagnosed),
+    value: roundMoney(triageValue),
+    destinations: [...triageDestinationRows.values()]
+      .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.destination.localeCompare(b.destination))
+      .slice(0, 6)
+  };
+  const sectors = [
+    {
+      key: "conference",
+      name: "Conferencia",
+      quantity: lotQty,
+      completed: lotCheckedQty,
+      value: roundMoney(lotValue),
+      pending: Math.max(0, lotQty - lotCheckedQty)
+    },
+    {
+      key: "transfer",
+      name: "Transferencias",
+      quantity: transferQty,
+      completed: transferReceived,
+      value: roundMoney(transferValue),
+      pending: Math.max(0, transferQty - transferReceived)
+    },
+    {
+      key: "triage",
+      name: "Triagem",
+      quantity: triageItems.length,
+      completed: triageDiagnosed,
+      value: roundMoney(triageValue),
+      pending: Math.max(0, triageItems.length - triageDiagnosed)
+    }
+  ];
+
   return {
     generatedAt: new Date().toISOString(),
     lots: {
@@ -5627,6 +5714,8 @@ function buildOperationalDashboardStats(db, userId) {
       divergenceReports: reports.length,
       statusCounts
     },
+    triage,
+    sectors,
     operators: operatorStats,
     recentLots,
     recentTransfers
@@ -6282,6 +6371,8 @@ function normalizeTriageInput(input = {}) {
     asin,
     codigoBling2: normalizeCode(input.codigoBling2),
     descricao,
+    valorUnit: roundMoney(Number(input.valorUnit ?? input.valor_unit ?? input.preco ?? 0)),
+    precoCusto: roundMoney(Number(input.precoCusto ?? input.preco_custo ?? input.custo ?? 0)),
     serial: String(input.serial || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),

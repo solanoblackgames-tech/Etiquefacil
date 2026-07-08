@@ -352,6 +352,8 @@ export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
     asin,
     codigoBling2: code,
     descricao: product.nome || product.descricaoCurta || product.descricao || code,
+    valorUnit: numberOrZero(product.preco ?? product.valorUnit ?? product.precoVenda),
+    precoCusto: numberOrZero(product.precoCusto ?? product.precoCompra ?? product.custo),
     categoria: product.categoria?.descricao || product.categoria || "",
     subcategoria: "",
     ...triageDimensions,

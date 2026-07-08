@@ -42,6 +42,8 @@ test("Bling product maps to triage lookup fields", () => {
     {
       codigo: "190626L269",
       nome: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
+      preco: 242.9,
+      precoCusto: 52.54,
       gtin: "7891234567890",
       marca: "B0ABC12345",
       categoria: { descricao: "Eletro" }
@@ -56,6 +58,8 @@ test("Bling product maps to triage lookup fields", () => {
     asin: "B0ABC12345",
     codigoBling2: "190626L269",
     descricao: "FISCHER CHURRASQUEIRA ELETRICA PORTATIL",
+    valorUnit: 242.9,
+    precoCusto: 52.54,
     categoria: "Eletro",
     subcategoria: "",
     source: "bling",

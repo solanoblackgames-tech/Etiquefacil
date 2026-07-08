@@ -272,6 +272,8 @@
             <label class="triage-hidden-field">Comprimento caixa (cm)<input name="comprimentoCaixa" inputmode="decimal" placeholder="Ex: 45" /></label>
             <label class="triage-hidden-field">Peso caixa (kg)<input name="pesoCaixa" inputmode="decimal" placeholder="Ex: 1,2" /></label>
             <input name="productCode" type="hidden" />
+            <input name="valorUnit" type="hidden" />
+            <input name="precoCusto" type="hidden" />
             <button class="triage-hidden-field" type="submit">Gerar etiqueta QR</button>
           </form>
           <div id="triageLookupPreview" class="triage-lookup-preview hidden"></div>
@@ -286,6 +288,8 @@
             </div>
             <form id="triageFilterForm" class="triage-filter-form">
               <label>Operador<select name="operator"><option value="">Todos</option></select></label>
+              <label>Status<select name="status"><option value="">Todos</option><option value="diagnosticado">Diagnosticados</option><option value="aguardando_teste">Pendentes</option></select></label>
+              <label>Destino<select name="destination"><option value="">Todos</option><option value="INTERNET">Internet</option><option value="LOJA">Loja</option><option value="RMA">RMA</option><option value="VENDA_DIRETA">Venda direta</option></select></label>
               <label>Data<input name="date" type="date" /></label>
               <button type="button" class="ghost" data-clear-triage-filters>Limpar</button>
             </form>

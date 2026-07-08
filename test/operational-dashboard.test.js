@@ -52,7 +52,22 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
       catalogRequests: [],
       catalogRejectedRequests: [],
       noSheetSuggestions: [],
-      triageItems: [],
+      triageItems: [
+        {
+          id: "triage-1",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-1",
+          productCode: "ML1",
+          sku: "SKU1",
+          status: "diagnosticado",
+          destination: "venda",
+          createdAt: "2026-07-04T00:00:00.000Z",
+          updatedAt: "2026-07-04T00:00:00.000Z",
+          diagnosedAt: "2026-07-04T00:10:00.000Z"
+        }
+      ],
       triageEvents: []
     });
 
@@ -67,7 +82,13 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(stats.transfers.pending, 1);
     assert.equal(ana.lotValue, 20);
     assert.equal(ana.transferValue, 30);
-    assert.equal(ana.totalValue, 50);
+    assert.equal(stats.triage.total, 1);
+    assert.equal(stats.triage.diagnosed, 1);
+    assert.equal(stats.triage.value, 10);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 10);
+    assert.equal(ana.triageCount, 1);
+    assert.equal(ana.triageValue, 10);
+    assert.equal(ana.totalValue, 60);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

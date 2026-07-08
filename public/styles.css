@@ -166,7 +166,14 @@ h3 {
 }
 
 #profileTriageStats.settings-shell {
-  max-width: 1280px;
+  max-width: none;
+  min-width: 0;
+  padding: 24px 6px;
+  width: 100%;
+}
+
+#profileDashboard.settings-shell {
+  max-width: 1380px;
   min-width: 0;
   width: 100%;
 }
@@ -391,6 +398,10 @@ h3 {
 
   .triage-stats-filter-fields {
     grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+
+  .operational-dashboard-hero {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -961,7 +972,7 @@ h3 {
 .triage-stats-summary {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   padding: 0 18px;
 }
 
@@ -971,10 +982,81 @@ h3 {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.operational-dashboard-hero {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(240px, 1.25fr) repeat(3, minmax(180px, 1fr));
+}
+
+.operational-dashboard-hero section {
+  background: #102938;
+  border-radius: 8px;
+  color: #ffffff;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.operational-dashboard-hero section:not(:first-child) {
+  background: #f8fafb;
+  border: 1px solid #dce5ea;
+  color: #102938;
+}
+
+.operational-dashboard-hero .muted {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.operational-dashboard-hero section:not(:first-child) .muted {
+  color: var(--muted);
+}
+
+.operational-dashboard-hero strong {
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+
+.operational-dashboard-hero small {
+  color: inherit;
+  opacity: 0.78;
+}
+
+.operational-progress,
+.operational-bar {
+  background: #e3ebef;
+  border-radius: 999px;
+  display: block;
+  height: 9px;
+  overflow: hidden;
+}
+
+.operational-progress span,
+.operational-bar span {
+  background: linear-gradient(90deg, #14847a, #52b788);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
 .triage-stats-summary .metric {
   background: #f8fafb;
   border-color: #dce5ea;
   padding: 14px;
+}
+
+.triage-stats-link-card {
+  color: inherit;
+  cursor: pointer;
+  justify-items: start;
+  text-align: left;
+}
+
+.triage-stats-link-card:hover {
+  background: #fff;
+  border-color: #14847a;
+  box-shadow: 0 8px 18px rgb(20 132 122 / 0.14);
+  transform: translateY(-1px);
 }
 
 .operational-dashboard-summary .metric {
@@ -1050,6 +1132,47 @@ h3 {
   gap: 3px;
 }
 
+.operational-sector-chart {
+  display: grid;
+  gap: 12px;
+}
+
+.operational-sector-chart article {
+  background: #f8fafb;
+  border: 1px solid #dce5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.operational-sector-chart article > div:first-child {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.operational-sector-chart strong,
+.operational-sector-chart span {
+  overflow-wrap: anywhere;
+}
+
+.operational-sector-chart span {
+  color: #102938;
+  font-weight: 800;
+  text-align: right;
+}
+
+.operational-sector-chart small {
+  color: var(--muted);
+}
+
+.operational-bar-alt span {
+  background: linear-gradient(90deg, #3b82f6, #22c55e);
+}
+
 .triage-destination-list,
 .triage-operator-ranking {
   display: grid;
@@ -1073,6 +1196,25 @@ h3 {
   padding: 12px;
 }
 
+.triage-destination-card {
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.triage-destination-card:hover {
+  background: #f8fafb;
+  border-color: #14847a;
+  box-shadow: 0 8px 18px rgb(20 132 122 / 0.14);
+  transform: translateY(-1px);
+}
+
+.triage-destination-card:focus-visible,
+.triage-stats-link-card:focus-visible {
+  outline: 3px solid rgba(20, 132, 122, 0.28);
+  outline-offset: 2px;
+}
+
 .operational-dashboard-row {
   align-items: center;
   display: grid;
@@ -1082,8 +1224,8 @@ h3 {
 }
 
 .operational-operator-table .operational-dashboard-row {
-  grid-template-columns: minmax(160px, 1.4fr) repeat(7, minmax(90px, 0.7fr));
-  min-width: 960px;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(8, minmax(90px, 0.7fr));
+  min-width: 1050px;
 }
 
 .operational-transfer-table .operational-dashboard-row {
@@ -1117,6 +1259,7 @@ h3 {
 .triage-operator-progress {
   background: #e6edf0;
   border-radius: 999px;
+  display: block;
   height: 8px;
   overflow: hidden;
 }
@@ -3319,6 +3462,7 @@ h3 {
   .triage-stats-hero,
   .triage-stats-summary,
   .triage-stats-dashboard,
+  .operational-dashboard-hero,
   .operational-dashboard-summary,
   .operational-dashboard-grid,
   .operator-row,

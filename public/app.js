@@ -18,6 +18,8 @@ const state = {
   triageItems: [],
   triageFilters: {
     operator: "",
+    status: "",
+    destination: "",
     date: ""
   },
   selectedTriageCode: null,
@@ -575,8 +577,8 @@ async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitO
   });
 }
 
-function promptManualProduct(codigoMl, focusSelector, initialValues = {}) {
-  return askManualProduct(codigoMl, focusSelector, initialValues);
+function promptManualProduct(codigoMl, focusSelector, initialValues = {}, options = {}) {
+  return askManualProduct(codigoMl, focusSelector, initialValues, options);
 }
 
 function parseMoneyInput(value) {
@@ -622,12 +624,13 @@ function askPriceSuggestion({ codigoMl, product }) {
   });
 }
 
-function askManualProduct(codigoMl, focusSelector, initialValues = {}) {
-  return openManualProductModal(codigoMl, focusSelector, initialValues);
+function askManualProduct(codigoMl, focusSelector, initialValues = {}, options = {}) {
+  return openManualProductModal(codigoMl, focusSelector, initialValues, options);
 }
 
-function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']", initialValues = {}) {
+function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']", initialValues = {}, options = {}) {
   return new Promise((resolve) => {
+    const includeLogisticsFields = options.includeLogisticsFields !== false;
     const modal = $("#manualProductModal");
     const form = $("#manualProductForm");
     const code = $("#manualProductCode");
@@ -643,9 +646,15 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
     const error = $("#manualProductError");
     const cancel = $("#manualProductCancel");
+    const logisticsFields = [alturaCaixa, larguraCaixa, comprimentoCaixa, pesoCaixa];
+
+    logisticsFields.forEach((input) => {
+      input.closest("label")?.classList.toggle("hidden", !includeLogisticsFields);
+    });
 
     const cleanup = () => {
       modal.classList.add("hidden");
+      logisticsFields.forEach((input) => input.closest("label")?.classList.remove("hidden"));
       form.onsubmit = null;
       description.oninput = null;
       descriptionSuggestions.onclick = null;
@@ -697,10 +706,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (suggestion.source !== "lista_lote") {
         if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
         if (suggestion.ean) ean.value = suggestion.ean;
-        if (suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
-        if (suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
-        if (suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
-        if (suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
+        if (includeLogisticsFields && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
+        if (includeLogisticsFields && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
+        if (includeLogisticsFields && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
+        if (includeLogisticsFields && suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
         if (suggestion.link) link.value = suggestion.link;
         if (suggestion.foto) photo.value = suggestion.foto;
       }
@@ -726,10 +735,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         descricao,
         valorUnit,
         ean: ean.value.trim(),
-        alturaCaixa: alturaCaixa.value.trim(),
-        larguraCaixa: larguraCaixa.value.trim(),
-        comprimentoCaixa: comprimentoCaixa.value.trim(),
-        pesoCaixa: pesoCaixa.value.trim(),
+        alturaCaixa: includeLogisticsFields ? alturaCaixa.value.trim() : "",
+        larguraCaixa: includeLogisticsFields ? larguraCaixa.value.trim() : "",
+        comprimentoCaixa: includeLogisticsFields ? comprimentoCaixa.value.trim() : "",
+        pesoCaixa: includeLogisticsFields ? pesoCaixa.value.trim() : "",
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -1147,7 +1156,7 @@ function findDiverseProduct(productId) {
 }
 
 async function editDiverseProduct(product) {
-  const edited = await openProductEditModal(product);
+  const edited = await openProductEditModal(product, { includeLogisticsFields: false });
   if (!edited) return;
 
   const message = $("#diverseScanMessage");
@@ -1173,8 +1182,9 @@ async function editDiverseProduct(product) {
   }
 }
 
-function openProductEditModal(product) {
+function openProductEditModal(product, options = {}) {
   return new Promise((resolve) => {
+    const includeLogisticsFields = options.includeLogisticsFields !== false;
     const modal = $("#productEditModal");
     const form = $("#productEditForm");
     const code = $("#productEditCode");
@@ -1191,9 +1201,15 @@ function openProductEditModal(product) {
     const photo = $("#productEditPhoto");
     const error = $("#productEditError");
     const cancel = $("#productEditCancel");
+    const logisticsFields = [alturaCaixa, larguraCaixa, comprimentoCaixa, pesoCaixa];
+
+    logisticsFields.forEach((input) => {
+      input.closest("label")?.classList.toggle("hidden", !includeLogisticsFields);
+    });
 
     const cleanup = () => {
       modal.classList.add("hidden");
+      logisticsFields.forEach((input) => input.closest("label")?.classList.remove("hidden"));
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
@@ -1241,10 +1257,10 @@ function openProductEditModal(product) {
         valorUnit,
         precoCusto,
         ean: ean.value.trim(),
-        alturaCaixa: alturaCaixa.value.trim(),
-        larguraCaixa: larguraCaixa.value.trim(),
-        comprimentoCaixa: comprimentoCaixa.value.trim(),
-        pesoCaixa: pesoCaixa.value.trim(),
+        alturaCaixa: includeLogisticsFields ? alturaCaixa.value.trim() : product.alturaCaixa || "",
+        larguraCaixa: includeLogisticsFields ? larguraCaixa.value.trim() : product.larguraCaixa || "",
+        comprimentoCaixa: includeLogisticsFields ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
+        pesoCaixa: includeLogisticsFields ? pesoCaixa.value.trim() : product.pesoCaixa || "",
         link: link.value.trim(),
         foto: photo.value.trim()
       };
@@ -1553,19 +1569,63 @@ function renderOperationalDashboard() {
   if (!panel || !stats) return;
   const lots = stats.lots || {};
   const transfers = stats.transfers || {};
+  const triage = stats.triage || {};
+  const totalOperationValue = Number(lots.value || 0) + Number(transfers.value || 0) + Number(triage.value || 0);
+  const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
+  const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
+  const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
   panel.innerHTML = `
     <div class="panel-heading">
       <span class="muted">Perfil</span>
       <h3>Dashboard operacional</h3>
     </div>
+    <div class="operational-dashboard-hero">
+      <section>
+        <span class="muted">Visao geral</span>
+        <strong>${money(totalOperationValue)}</strong>
+        <small>Valor movimentado em conferencia, transferencias e triagem.</small>
+      </section>
+      <section>
+        <span class="muted">Progresso conferencia</span>
+        <strong>${lotProgress}%</strong>
+        <div class="operational-progress"><span style="width: ${lotProgress}%"></span></div>
+        <small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small>
+      </section>
+      <section>
+        <span class="muted">Progresso transferencias</span>
+        <strong>${transferProgress}%</strong>
+        <div class="operational-progress"><span style="width: ${transferProgress}%"></span></div>
+        <small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small>
+      </section>
+      <section>
+        <span class="muted">Progresso triagem</span>
+        <strong>${triageProgress}%</strong>
+        <div class="operational-progress"><span style="width: ${triageProgress}%"></span></div>
+        <small>${triage.diagnosed || 0}/${triage.total || 0} itens diagnosticados</small>
+      </section>
+    </div>
     <div class="operational-dashboard-summary">
-      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs - ${lots.remessas || 0} RZs/remessas</small></div>
+      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs · ${lots.remessas || 0} RZs/remessas</small></div>
       <div class="metric"><span>Valor dos lotes</span><strong>${money(lots.value || 0)}</strong><small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small></div>
       <div class="metric"><span>Remessas loja</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small></div>
       <div class="metric"><span>Valor das remessas</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
       <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
     </div>
     <div class="operational-dashboard-grid">
+      <section class="operational-dashboard-block">
+        <div>
+          <strong>Valor por setor</strong>
+          <span class="muted">Conferencia, transferencias e triagem.</span>
+        </div>
+        ${operationalSectorsMarkup(stats.sectors || [])}
+      </section>
+      <section class="operational-dashboard-block">
+        <div>
+          <strong>Destinos da triagem</strong>
+          <span class="muted">Volume e valor por destino final.</span>
+        </div>
+        ${operationalTriageDestinationsMarkup(triage.destinations || [])}
+      </section>
       <section class="operational-dashboard-block">
         <div>
           <strong>Valor agregado por operador</strong>
@@ -1592,11 +1652,62 @@ function renderOperationalDashboard() {
   `;
 }
 
+function operationalPercent(done, total) {
+  const totalNumber = Number(total || 0);
+  if (!totalNumber) return 0;
+  return Math.max(0, Math.min(100, Math.round((Number(done || 0) / totalNumber) * 100)));
+}
+
+function operationalSectorsMarkup(sectors = []) {
+  if (!sectors.length) return '<p class="muted">Sem setores com movimentacao.</p>';
+  const maxValue = Math.max(...sectors.map((sector) => Number(sector.value || 0)), 1);
+  return `
+    <div class="operational-sector-chart">
+      ${sectors.map((sector) => {
+        const valuePercent = Math.max(3, Math.round((Number(sector.value || 0) / maxValue) * 100));
+        const progress = operationalPercent(sector.completed || 0, sector.quantity || 0);
+        return `
+          <article>
+            <div>
+              <strong>${escapeHtml(sector.name || "")}</strong>
+              <span>${money(sector.value || 0)}</span>
+            </div>
+            <div class="operational-bar"><span style="width: ${valuePercent}%"></span></div>
+            <small>${sector.completed || 0}/${sector.quantity || 0} concluidos - ${sector.pending || 0} pendentes - ${progress}%</small>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function operationalTriageDestinationsMarkup(destinations = []) {
+  if (!destinations.length) return '<p class="muted">Nenhuma triagem registrada.</p>';
+  const maxTotal = Math.max(...destinations.map((destination) => Number(destination.total || 0)), 1);
+  return `
+    <div class="operational-sector-chart operational-destination-chart">
+      ${destinations.map((destination) => {
+        const percent = Math.max(4, Math.round((Number(destination.total || 0) / maxTotal) * 100));
+        return `
+          <article>
+            <div>
+              <strong>${escapeHtml(destinationLabel(destination.destination || ""))}</strong>
+              <span>${destination.total || 0} itens</span>
+            </div>
+            <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
+            <small>${money(destination.totalValue || 0)} em valor agregado</small>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function operationalTransferStatusSummary(statusCounts = {}) {
   const labels = Object.entries(statusCounts)
     .filter(([, total]) => Number(total || 0) > 0)
     .map(([status, total]) => `${transferStatusLabel(status)}: ${total}`);
-  return labels.length ? labels.join(" - ") : "Sem remessas";
+  return labels.length ? labels.join(" · ") : "Sem remessas";
 }
 
 function operationalOperatorsMarkup(operators = []) {
@@ -1611,6 +1722,7 @@ function operationalOperatorsMarkup(operators = []) {
         <span>Remessas</span>
         <span>Qtd remessa</span>
         <span>Valor remessa</span>
+        <span>Triagem</span>
         <span>Total</span>
       </div>
       ${operators.map((operator) => `
@@ -1622,6 +1734,7 @@ function operationalOperatorsMarkup(operators = []) {
           <span>${operator.transferCount || 0}</span>
           <span>${operator.transferQty || 0}</span>
           <span>${money(operator.transferValue || 0)}</span>
+          <span>${operator.triageCount || 0}<small>${money(operator.triageValue || 0)}</small></span>
           <span>${money(operator.totalValue || 0)}</span>
         </div>
       `).join("")}
@@ -1678,7 +1791,6 @@ function operationalLotsMarkup(lots = []) {
     </div>
   `;
 }
-
 
 async function loadOperators() {
   try {
@@ -4656,7 +4768,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
   const message = $("#scanMessage");
   const input = $("#scanInput");
   try {
-    const manualProduct = await promptManualProduct(codigoMl, "#scanInput");
+    const manualProduct = await promptManualProduct(codigoMl, "#scanInput", {}, { includeLogisticsFields: false });
     if (!manualProduct) {
       message.textContent = "ML nao encontrado neste lote nem no historico do usuario.";
       input?.select();
@@ -5376,8 +5488,9 @@ function renderTriageStats() {
     </div>
     ${triageStatsFilterMarkup(filter)}
     <div class="triage-stats-summary">
-      <div class="metric"><span>Itens triados</span><strong>${stats.total || 0}</strong><small>${stats.diagnosedTotal || 0} diagnosticados</small></div>
-      <div class="metric"><span>Conclusao</span><strong>${diagnosedPercent}%</strong><small>${stats.pendingTotal || 0} aguardando teste</small></div>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver fila completa</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
@@ -5459,6 +5572,18 @@ function handleTriageStatsFilterChange(event) {
 }
 
 function handleTriageStatsFilterClick(event) {
+  const destinationCard = event.target.closest("[data-open-triage-destination]");
+  if (destinationCard) {
+    openTriageWithFilters({ destination: destinationCard.dataset.openTriageDestination || "" });
+    return;
+  }
+
+  const statusCard = event.target.closest("[data-open-triage-status]");
+  if (statusCard) {
+    openTriageWithFilters({ status: statusCard.dataset.openTriageStatus || "" });
+    return;
+  }
+
   const button = event.target.closest("[data-triage-stats-period]");
   if (!button) return;
   const days = button.dataset.triageStatsPeriod;
@@ -5468,6 +5593,19 @@ function handleTriageStatsFilterClick(event) {
     endDate: formatInputDate(today)
   };
   loadTriageStats();
+}
+
+function openTriageWithFilters({ status = "", destination = "" } = {}) {
+  state.triageFilters = {
+    operator: "",
+    status,
+    destination,
+    date: ""
+  };
+  state.selectedTriageCode = null;
+  clearTriageDetail();
+  renderTriageItems();
+  setMainTab("triage", { resetSelection: false });
 }
 
 function applyTriageStatsFilterFromForm(form) {
@@ -5518,17 +5656,17 @@ function triageStatsDestinationsMarkup(destinations = []) {
         const totalValue = Number(item.totalValue || 0);
         const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
         return `
-          <article class="triage-destination-card">
-            <div class="triage-destination-top">
+          <button type="button" class="triage-destination-card" data-open-triage-destination="${escapeHtml(item.destination)}">
+            <span class="triage-destination-top">
               <strong>${escapeHtml(destinationLabel(item.destination))}</strong>
               <span>${money(totalValue)}</span>
-            </div>
-            <div class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></div>
-            <div class="triage-destination-meta">
+            </span>
+            <span class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></span>
+            <span class="triage-destination-meta">
               <span>${total} itens</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
-            </div>
-          </article>
+            </span>
+          </button>
         `;
       }).join("")}
     </div>
@@ -5613,6 +5751,8 @@ function fillTriageProduct(product) {
     sku: product.sku,
     ean: product.ean,
     asin: product.asin,
+    valorUnit: product.valorUnit,
+    precoCusto: product.precoCusto,
     alturaCaixa: product.alturaCaixa,
     larguraCaixa: product.larguraCaixa,
     comprimentoCaixa: product.comprimentoCaixa,
@@ -5687,9 +5827,13 @@ function triageItemDateKey(item = {}) {
 
 function filteredTriageItems() {
   const operator = state.triageFilters.operator;
+  const status = state.triageFilters.status;
+  const destination = state.triageFilters.destination;
   const date = state.triageFilters.date;
   return state.triageItems.filter((item) => {
     if (operator && triageOperatorId(item) !== operator) return false;
+    if (status && item.status !== status) return false;
+    if (destination && item.destination !== destination) return false;
     if (date && triageItemDateKey(item) !== date) return false;
     return true;
   });
@@ -5698,8 +5842,10 @@ function filteredTriageItems() {
 function renderTriageFilterOptions() {
   const form = $("#triageFilterForm");
   const select = form?.elements.namedItem("operator");
+  const statusSelect = form?.elements.namedItem("status");
+  const destinationSelect = form?.elements.namedItem("destination");
   const dateInput = form?.elements.namedItem("date");
-  if (!select || !dateInput) return;
+  if (!select || !statusSelect || !destinationSelect || !dateInput) return;
   const current = state.triageFilters.operator;
   const operators = new Map();
   state.triageItems.forEach((item) => {
@@ -5713,6 +5859,8 @@ function renderTriageFilterOptions() {
     .join("")}`;
   select.value = operators.has(current) ? current : "";
   if (select.value !== state.triageFilters.operator) state.triageFilters.operator = select.value;
+  statusSelect.value = state.triageFilters.status || "";
+  destinationSelect.value = state.triageFilters.destination || "";
   dateInput.value = state.triageFilters.date;
 }
 
@@ -5721,6 +5869,8 @@ function handleTriageFilterChange(event) {
   const form = event.currentTarget;
   state.triageFilters = {
     operator: String(form.elements.namedItem("operator")?.value || ""),
+    status: String(form.elements.namedItem("status")?.value || ""),
+    destination: String(form.elements.namedItem("destination")?.value || ""),
     date: String(form.elements.namedItem("date")?.value || "")
   };
   renderTriageItems();
@@ -5728,7 +5878,7 @@ function handleTriageFilterChange(event) {
 
 function handleTriageFilterClick(event) {
   if (!event.target.matches("[data-clear-triage-filters]")) return;
-  state.triageFilters = { operator: "", date: "" };
+  state.triageFilters = { operator: "", status: "", destination: "", date: "" };
   renderTriageItems();
 }
 
@@ -5836,6 +5986,8 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       <label>ASIN/COD ML<input name="asin" value="${escapeHtml(item.asin || "")}" /></label>
       <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
       <label>Codigo Bling 2<input name="codigoBling2" value="${escapeHtml(item.codigoBling2 || "")}" /></label>
+      <input type="hidden" name="valorUnit" value="${escapeHtml(item.valorUnit || "")}" />
+      <input type="hidden" name="precoCusto" value="${escapeHtml(item.precoCusto || "")}" />
       <label>Serial<input name="serial" value="${escapeHtml(item.serial || "")}" /></label>
       <label>Altura caixa (cm)<input name="alturaCaixa" inputmode="decimal" value="${escapeHtml(item.alturaCaixa || "")}" /></label>
       <label>Largura caixa (cm)<input name="larguraCaixa" inputmode="decimal" value="${escapeHtml(item.larguraCaixa || "")}" /></label>
