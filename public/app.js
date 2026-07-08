@@ -6060,6 +6060,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           ${deleteButton}
         </div>
       </div>
+      ${triageDiagnosisFormMarkup(item)}
     </section>
     ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
     ${triageDiagnosisHistoryMarkup(item.diagnosisHistory)}
@@ -6088,7 +6089,6 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       </div>
       <p class="message" id="triageEditMessage"></p>
     </form>
-    ${triageDiagnosisFormMarkup(item)}
   `;
   if (openEdit) {
     setTimeout(() => {

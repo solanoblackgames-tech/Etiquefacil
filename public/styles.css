@@ -413,6 +413,19 @@ h3 {
   .operational-dashboard-grid .operational-dashboard-block:nth-child(4) {
     grid-column: 1 / -1;
   }
+
+  .triage-detail-grid {
+    grid-template-columns: minmax(176px, 220px) minmax(0, 1fr);
+  }
+
+  .triage-detail-grid > .triage-diagnosis-form {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .triage-layout {
+    grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+  }
 }
 
 .operator-metrics {
@@ -807,14 +820,24 @@ h3 {
 .triage-shell {
   display: grid;
   flex: 1 1 auto;
-  gap: 16px;
+  gap: 12px;
   grid-template-rows: auto minmax(0, 1fr);
   margin: 0 auto;
   min-height: 0;
-  max-width: 1380px;
+  max-width: 1720px;
   overflow: hidden;
-  padding: 24px;
+  padding: 18px 24px 22px;
   width: 100%;
+}
+
+.triage-create-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.triage-create-panel .panel-heading {
+  margin-bottom: 0;
 }
 
 .triage-form {
@@ -833,9 +856,9 @@ h3 {
 }
 
 .triage-form input[name="lookupCode"] {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
-  min-height: 48px;
+  min-height: 42px;
 }
 
 .triage-lookup-preview {
@@ -853,7 +876,9 @@ h3 {
 }
 
 .triage-layout {
+  grid-template-columns: minmax(300px, 0.28fr) minmax(760px, 1fr);
   height: auto;
+  max-width: none;
   min-height: 0;
   padding: 0;
 }
@@ -866,6 +891,7 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: -4px 0 14px;
   padding-bottom: 14px;
 }
@@ -883,6 +909,7 @@ h3 {
 }
 
 .triage-filter-form button {
+  grid-column: 1 / -1;
   justify-self: start;
 }
 
@@ -1440,8 +1467,9 @@ h3 {
 
 .triage-detail-grid {
   display: grid;
-  gap: 18px;
-  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  grid-template-columns: minmax(176px, 220px) minmax(420px, 0.76fr) minmax(360px, 0.54fr);
 }
 
 .triage-label-preview {
@@ -1537,6 +1565,21 @@ h3 {
   display: grid;
   gap: 12px;
   margin-top: 18px;
+}
+
+.triage-detail-grid > .triage-diagnosis-form {
+  grid-column: 3;
+  grid-row: 1;
+  margin-top: 0;
+}
+
+.triage-detail-grid > .triage-diagnosis-form .panel-heading {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.triage-diagnosis-form textarea {
+  min-height: 96px;
 }
 
 .triage-photo-preview,
@@ -3623,6 +3666,26 @@ h3 {
     height: auto;
     overflow: visible;
     padding: 16px;
+  }
+
+  .triage-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .triage-detail-grid > .triage-diagnosis-form {
+    grid-column: auto;
+  }
+
+  .triage-label-preview {
+    max-width: 220px;
+  }
+
+  .triage-filter-form {
+    grid-template-columns: 1fr;
+  }
+
+  .triage-filter-form button {
+    grid-column: auto;
   }
 
   .transfer-receive-page {
