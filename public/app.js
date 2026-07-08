@@ -636,7 +636,7 @@ function askManualProduct(codigoMl, focusSelector, initialValues = {}, options =
 
 function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']", initialValues = {}, options = {}) {
   return new Promise((resolve) => {
-    const includeLogisticsFields = options.includeLogisticsFields !== false;
+    const includeLogisticsFields = options.includeLogisticsFields === true;
     const modal = $("#manualProductModal");
     const form = $("#manualProductForm");
     const code = $("#manualProductCode");
