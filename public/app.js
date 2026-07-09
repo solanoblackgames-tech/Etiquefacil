@@ -181,7 +181,7 @@ function bindEvents() {
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
-  $("#noSheetSuggestionUploadForm").addEventListener("submit", uploadNoSheetSuggestions);
+  $("#noSheetSuggestionUploadForm")?.addEventListener("submit", uploadNoSheetSuggestions);
   $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#diverseDownloadButton").addEventListener("click", () => {
@@ -930,7 +930,8 @@ function renderDiverseLot(lot) {
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
-  $("#noSheetSuggestionUploadStatus").textContent = lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : "";
+  const suggestionUploadStatus = $("#noSheetSuggestionUploadStatus");
+  if (suggestionUploadStatus) suggestionUploadStatus.textContent = lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : "";
   schedulePrimaryInputFocus();
 }
 
@@ -4315,13 +4316,6 @@ function renderLotDetail(lot) {
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>`}
     ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    ${noSheetLot && !operatorNoSheetLot ? `
-      <form id="lotNoSheetSuggestionUploadForm" class="suggestion-upload-form">
-        <label>Lista de sugestao do lote<input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" /></label>
-        <button type="submit" class="ghost">Subir lista</button>
-        <span id="lotNoSheetSuggestionUploadStatus" class="muted">${lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : ""}</span>
-      </form>
-    ` : ""}
     ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
         ${operatorNoSheetLot ? "" : `<span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>`}
@@ -4392,11 +4386,6 @@ function renderLotDetail(lot) {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
-  $("#lotNoSheetSuggestionUploadForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const response = await uploadNoSheetSuggestionsFromForm(event.currentTarget, $("#lotNoSheetSuggestionUploadStatus"), lot.id);
-    if (response?.lot) renderLotDetail(response.lot);
-  });
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
       if (noSheetLot) openNoSheetScanTab(lot, button.dataset.scanRz);
