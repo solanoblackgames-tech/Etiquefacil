@@ -1446,10 +1446,10 @@ async function splitLotProduct(product, codigoRz, { lotId = state.selectedLotId,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...split, codigoRz })
     });
+    showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt), quantity: response.labelQuantity || split.sellableQuantity });
     if (typeof render === "function") render(response.lot);
     else renderLotRz(response.lot, codigoRz, { replace: false });
     await refreshLotsList(response.lot.id);
-    showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt), quantity: response.labelQuantity || split.sellableQuantity });
     if (message) {
       const printed = response.labelQuantity || split.sellableQuantity;
       if (response.bling?.ok === false) {
@@ -4898,6 +4898,7 @@ function renderPallet(lot, codigoRz) {
       if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId: lot.id, messageSelector: "#palletMessage", render: (updatedLot) => renderPallet(updatedLot, codigoRz) });
     });
   });
+  bindProductPrintButtons($("#rzDetail"));
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -5006,6 +5007,7 @@ function bindScanControls(lotId, codigoRz, items = []) {
       if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
     });
   });
+  bindProductPrintButtons($("#lotDetail"));
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
@@ -5312,6 +5314,12 @@ async function printLabel(productId) {
   } catch (error) {
     alert(error.message);
   }
+}
+
+function bindProductPrintButtons(root = document) {
+  root.querySelectorAll("[data-print-product]").forEach((button) => {
+    button.addEventListener("click", () => printLabel(button.dataset.printProduct));
+  });
 }
 
 function findScannedProduct(lot, codigoRz, codigoMl) {
@@ -5672,6 +5680,7 @@ function itemRow(item) {
       <span class="item-actions">
         ${deleteButton}
         <button type="button" class="ghost" data-split-product="${escapeHtml(product.id || "")}">Desmembrar</button>
+        <button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button>
         <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
       </span>
     </article>
@@ -5776,7 +5785,7 @@ function palletRow(item) {
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
       <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
       <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small><small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small></span>
-      <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button></span>
+      <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button><button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button></span>
     </article>
   `;
 }
