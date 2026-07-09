@@ -2143,7 +2143,9 @@ function renderOperators() {
     }
     return acc;
   }, { activity: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
-  const topOperators = [...operators].sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name)).slice(0, 3);
+  const topOperators = [...operators]
+    .sort((a, b) => Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans) || a.name.localeCompare(b.name))
+    .slice(0, 3);
   const leader = topOperators[0];
   const periodDays = operatorPeriodDays(filter);
   const avgPerActiveOperatorDay = totals.activeOperators && periodDays ? totals.activity / totals.activeOperators / periodDays : 0;
@@ -2194,7 +2196,6 @@ function renderOperators() {
           <span>#</span>
           <span>Operador</span>
           <span>Cod.</span>
-          <span>Total</span>
           <span>Logins</span>
           <span>Buscas</span>
           <span>Bip. cadastro</span>
@@ -2205,13 +2206,12 @@ function renderOperators() {
           <span>Erros</span>
           <span>Dias trab.</span>
           <span>Media/dia</span>
-          <span>Melhor dia</span>
           <span>Ultima ativ.</span>
           <span>Triagem</span>
           <span>Senha</span>
         </div>
         ${operators
-          .sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name))
+          .sort((a, b) => Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans) || a.name.localeCompare(b.name))
           .map(operatorTableRow)
           .join("")}
       </div>
@@ -2389,9 +2389,9 @@ function operatorPodiumCard(operator, index) {
       <div class="operator-medal">${rank}</div>
       <strong>${escapeHtml(operator.name)}</strong>
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
-      <b>${operator.activity}</b>
-      <small>atividades registradas</small>
-      <em>${operator.bestDayTotal} no melhor dia</em>
+      <b>${Math.max(operator.registrationScans, operator.transferScans)}</b>
+      <small>${operator.registrationScans} cadastro / ${operator.transferScans} transferencia</small>
+      <em>${operator.creates} cad. manuais</em>
     </article>
   `;
 }
@@ -2405,7 +2405,6 @@ function operatorTableRow(operator, index) {
         <small>${escapeHtml(operator.email)}</small>
       </span>
       <strong>${escapeHtml(operator.operatorCode || "--")}</strong>
-      <strong>${operator.activity}</strong>
       <span>${operator.logins}</span>
       <span>${operator.searches}</span>
       <span>${operator.registrationScans}</span>
@@ -2416,7 +2415,6 @@ function operatorTableRow(operator, index) {
       <strong>${operator.productionErrors}</strong>
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
-      <strong>${operator.bestDayTotal}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
       ${state.user?.triageAccess ? `<button type="button" class="ghost" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Liberado" : "Bloqueado"}</button>` : "<span>Sem acesso</span>"}
       <form class="operator-password-form">
