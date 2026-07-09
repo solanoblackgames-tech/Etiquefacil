@@ -1309,16 +1309,18 @@ h3 {
 }
 
 .operational-operator-table .operational-dashboard-row {
-  grid-template-columns: minmax(160px, 1.4fr) repeat(8, minmax(90px, 0.7fr));
-  min-width: 1050px;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(10, minmax(92px, 0.7fr));
+  min-width: 1280px;
 }
 
 .operational-transfer-table .operational-dashboard-row {
-  grid-template-columns: minmax(190px, 1.3fr) minmax(120px, 0.8fr) minmax(90px, 0.7fr) minmax(110px, 0.8fr) minmax(150px, 1fr);
+  grid-template-columns: minmax(190px, 1.3fr) minmax(120px, 0.8fr) minmax(90px, 0.7fr) repeat(2, minmax(110px, 0.8fr)) minmax(150px, 1fr);
+  min-width: 900px;
 }
 
 .operational-lot-table .operational-dashboard-row {
-  grid-template-columns: minmax(220px, 1.5fr) minmax(130px, 0.9fr) repeat(4, minmax(90px, 0.7fr));
+  grid-template-columns: minmax(220px, 1.5fr) minmax(130px, 0.9fr) repeat(5, minmax(90px, 0.7fr));
+  min-width: 860px;
 }
 
 .operational-dashboard-row + .operational-dashboard-row {

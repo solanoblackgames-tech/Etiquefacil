@@ -72,7 +72,8 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
     assert.equal(history[0].destination, "VENDA_DIRETA");
     assert.equal(history[1].diagnosis, "Primeiro laudo");
     assert.equal(history[1].diagnosisCondition, "OK_FUNCIONANDO");
-    assert.deepEqual(stats.diagnosisConditions, [{ condition: "FUNCIONANDO_COM_DETALHES", total: 1, totalValue: 0 }]);
+    assert.equal(stats.totalCost, 0);
+    assert.deepEqual(stats.diagnosisConditions, [{ condition: "FUNCIONANDO_COM_DETALHES", total: 1, totalValue: 0, totalCost: 0 }]);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

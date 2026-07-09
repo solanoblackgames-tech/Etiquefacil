@@ -1223,19 +1223,24 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
 
 app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "create_manual_product", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    res.json(
-      await createManualExternalExcess({
-        userId: workspaceUserId(req),
-        createdByUserId: req.session.user?.id,
-        operatorUserId: operatorUserId(req),
-        lotId: req.params.lotId,
-        codigoRz: req.params.codigoRz,
-        codigoMl,
-        manualProduct: req.body.manualProduct
-      })
-    );
+    const result = await createManualExternalExcess({
+      userId,
+      createdByUserId: req.session.user?.id,
+      operatorUserId: operatorUserId(req),
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      codigoMl,
+      manualProduct: req.body.manualProduct
+    });
+    try {
+      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+    } catch (blingError) {
+      result.bling = { ok: false, error: blingError.message };
+    }
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }

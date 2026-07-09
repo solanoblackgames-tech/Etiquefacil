@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import pg from "pg";
-import { formatSku, roundMoney } from "./domain.js";
+import { formatSku, parseNumber, roundMoney } from "./domain.js";
 import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
 import { insertRows } from "./pg-bulk.js";
 
@@ -613,6 +613,7 @@ export async function getTriageStats(userId, period = {}) {
           t.destination,
           t.diagnosis_condition,
           coalesce(p.valor_unit, t.valor_unit, 0) as valor_unit,
+          coalesce(p.preco_custo, t.preco_custo, 0) as preco_custo,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -626,7 +627,7 @@ export async function getTriageStats(userId, period = {}) {
           u.created_at as user__created_at
         from triage_items t
         left join lateral (
-          select pr.valor_unit
+          select pr.valor_unit, pr.preco_custo
           from products pr
           join lots l on l.id = pr.lot_id
           where l.user_id = t.user_id
@@ -657,6 +658,7 @@ export async function getTriageStats(userId, period = {}) {
         diagnosisCondition: row.diagnosis_condition || ""
       },
       salePrice: num(row.valor_unit),
+      costPrice: num(row.preco_custo),
       user: row.user__id ? sanitizeUser(userFromPrefixedRow(row, "user__")) : null
     })));
   }
@@ -673,6 +675,7 @@ export async function getTriageStats(userId, period = {}) {
       return {
         item,
         salePrice: Number(product?.valorUnit ?? item.valorUnit ?? 0),
+        costPrice: Number(product?.precoCusto ?? item.precoCusto ?? 0),
         user: userMap.get(responsibleUserId) || null
       };
     });
@@ -881,6 +884,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   const currentCode = normalizeCode(code);
   const nextCode = normalizeCode(payload.code || currentCode);
   if (!nextCode) throw new Error("Informe a identificacao interna.");
+  const hasValorUnit = payload.valorUnit !== undefined || payload.valor_unit !== undefined || payload.preco !== undefined;
+  const hasPrecoCusto = payload.precoCusto !== undefined || payload.preco_custo !== undefined || payload.custo !== undefined;
 
   const details = {
     productCode: normalizeCode(payload.productCode || payload.codigoMl),
@@ -889,8 +894,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     asin: normalizeCode(payload.asin),
     codigoBling2: normalizeCode(payload.codigoBling2),
     descricao: String(payload.descricao || payload.description || "").trim(),
-    valorUnit: roundMoney(Number(payload.valorUnit ?? payload.valor_unit ?? payload.preco ?? 0)),
-    precoCusto: roundMoney(Number(payload.precoCusto ?? payload.preco_custo ?? payload.custo ?? 0)),
+    valorUnit: hasValorUnit ? decimalMoney(payload.valorUnit ?? payload.valor_unit ?? payload.preco) : null,
+    precoCusto: hasPrecoCusto ? decimalMoney(payload.precoCusto ?? payload.preco_custo ?? payload.custo) : null,
     serial: String(payload.serial || "").trim(),
     alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
@@ -920,8 +925,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            asin = $7,
            codigo_bling2 = $8,
            descricao = $9,
-           valor_unit = case when $10 > 0 then $10 else valor_unit end,
-           preco_custo = case when $11 > 0 then $11 else preco_custo end,
+           valor_unit = case when $10 is not null and $10 > 0 then $10 else valor_unit end,
+           preco_custo = case when $11 is not null and $11 > 0 then $11 else preco_custo end,
            serial = $12,
            altura_caixa = $13,
            largura_caixa = $14,
@@ -3206,7 +3211,7 @@ async function writePgDb(db) {
         user.tenantName || user.name,
         user.parentUserId || null,
         user.role || (user.parentUserId ? "operator" : "owner"),
-        user.operatorCode || null,
+        optionalInt(user.operatorCode) || null,
         Boolean(user.triageAccess),
         user.name,
         user.email,
@@ -3228,7 +3233,7 @@ async function writePgDb(db) {
         lot.percentualCusto || 0,
         lot.fornecedor,
         lot.prefixoSku,
-        lot.proximoSequencialSku,
+        optionalInt(lot.proximoSequencialSku),
         lot.createdAt
       ])
     );
@@ -3244,7 +3249,7 @@ async function writePgDb(db) {
         product.descricao,
         product.valorUnit,
         product.precoCusto,
-        product.qtdTotal,
+        requiredInt(product.qtdTotal),
         product.categoria || "",
         product.subcategoria || "",
         product.ean || "",
@@ -3268,8 +3273,8 @@ async function writePgDb(db) {
         item.productId,
         item.codigoRz,
         item.enderecoWms || "",
-        item.qtdEsperada,
-        item.qtdConferida,
+        requiredInt(item.qtdEsperada),
+        requiredInt(item.qtdConferida),
         item.condicaoGrade || "",
         item.valorTotal || 0,
         item.tipoItem || "esperado",
@@ -3381,7 +3386,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.descricao,
       product.valorUnit,
       product.precoCusto,
-      product.qtdTotal,
+      requiredInt(product.qtdTotal),
       product.categoria || "",
       product.subcategoria || "",
       product.ean || "",
@@ -3405,8 +3410,8 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       item.productId,
       item.codigoRz,
       item.enderecoWms || "",
-      item.qtdEsperada,
-      item.qtdConferida,
+      requiredInt(item.qtdEsperada),
+      requiredInt(item.qtdConferida),
       item.condicaoGrade || "",
       item.valorTotal || 0,
       item.tipoItem || "esperado",
@@ -3494,8 +3499,8 @@ async function insertTransferItemRows(client, items = []) {
       item.sku,
       item.descricao,
       item.ean || "",
-      item.quantidade || 0,
-      item.quantidadeConferida || 0,
+      requiredInt(item.quantidade),
+      requiredInt(item.quantidadeConferida),
       item.forceReason || "",
       item.forceCode || "",
       item.forceAt || null,
@@ -4714,7 +4719,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
 }
 
 function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) {
-  const valorUnit = roundMoney(options.valorUnitOverride === undefined || options.valorUnitOverride === "" ? history.valorUnit : Number(options.valorUnitOverride));
+  const valorUnit = decimalMoney(options.valorUnitOverride === undefined || options.valorUnitOverride === "" ? history.valorUnit : options.valorUnitOverride);
   const product = {
     id: randomUUID(),
     lotId: lot.id,
@@ -4810,7 +4815,7 @@ function productSuggestionFromProduct(product) {
 
 function normalizeManualProduct(input = {}, codigoMl) {
   const descricao = String(input.descricao || input.nome || "").trim();
-  const valorUnit = roundMoney(Number(input.valorUnit ?? input.preco ?? 0));
+  const valorUnit = decimalMoney(input.valorUnit ?? input.preco);
   const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
@@ -4832,8 +4837,8 @@ function normalizeManualProduct(input = {}, codigoMl) {
 
 function normalizeEditableProduct(input = {}) {
   const descricao = String(input.descricao || input.nome || "").trim();
-  const valorUnit = roundMoney(Number(input.valorUnit ?? input.preco ?? 0));
-  const precoCusto = roundMoney(Number(input.precoCusto ?? input.custo ?? 0));
+  const valorUnit = decimalMoney(input.valorUnit ?? input.preco);
+  const precoCusto = decimalMoney(input.precoCusto ?? input.custo);
   const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
@@ -5566,11 +5571,19 @@ function buildOperationalDashboardStats(db, userId) {
       lotSkus: 0,
       lotQty: 0,
       lotValue: 0,
+      lotCost: 0,
+      lotCheckedQty: 0,
+      lotCheckedValue: 0,
+      lotCheckedCost: 0,
       transferCount: 0,
       transferQty: 0,
       transferReceived: 0,
       transferValue: 0,
+      transferCost: 0,
+      transferReceivedValue: 0,
+      transferReceivedCost: 0,
       totalValue: 0,
+      totalCost: 0,
       _lotIds: new Set(),
       _transferIds: new Set()
     };
@@ -5590,22 +5603,32 @@ function buildOperationalDashboardStats(db, userId) {
   let lotQty = 0;
   let lotCheckedQty = 0;
   let lotValue = 0;
+  let lotCost = 0;
   let lotCheckedValue = 0;
+  let lotCheckedCost = 0;
   for (const product of products) {
     const qty = Number(qtyByProduct.get(product.id) || product.qtdTotal || 0);
     const checked = Number(checkedByProduct.get(product.id) || 0);
     const value = roundMoney(qty * Number(product.valorUnit || 0));
+    const cost = roundMoney(qty * Number(product.precoCusto || 0));
     const checkedValue = roundMoney(Math.min(qty, checked) * Number(product.valorUnit || 0));
+    const checkedCost = roundMoney(Math.min(qty, checked) * Number(product.precoCusto || 0));
     lotQty += qty;
     lotCheckedQty += checked;
     lotValue += value;
+    lotCost += cost;
     lotCheckedValue += checkedValue;
+    lotCheckedCost += checkedCost;
 
     const row = operatorFor(product.operatorUserId || product.createdByUserId || userId);
     row._lotIds.add(product.lotId);
     row.lotSkus += 1;
     row.lotQty += qty;
     row.lotValue = roundMoney(row.lotValue + value);
+    row.lotCost = roundMoney(row.lotCost + cost);
+    row.lotCheckedQty += Math.min(qty, checked);
+    row.lotCheckedValue = roundMoney(row.lotCheckedValue + checkedValue);
+    row.lotCheckedCost = roundMoney(row.lotCheckedCost + checkedCost);
   }
 
   const statusCounts = {};
@@ -5618,56 +5641,74 @@ function buildOperationalDashboardStats(db, userId) {
   let transferQty = 0;
   let transferReceived = 0;
   let transferValue = 0;
+  let transferCost = 0;
   let transferReceivedValue = 0;
+  let transferReceivedCost = 0;
   const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
   for (const item of transferItems) {
     const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
     const unitValue = Number(product?.valorUnit || 0);
+    const unitCost = Number(product?.precoCusto || 0);
     const qty = Number(item.quantidade || 0);
     const received = Number(item.quantidadeConferida || 0);
     const value = roundMoney(qty * unitValue);
+    const cost = roundMoney(qty * unitCost);
     const receivedValue = roundMoney(Math.min(qty, received) * unitValue);
+    const receivedCost = roundMoney(Math.min(qty, received) * unitCost);
     transferQty += qty;
     transferReceived += received;
     transferValue += value;
+    transferCost += cost;
     transferReceivedValue += receivedValue;
+    transferReceivedCost += receivedCost;
 
     const transfer = transfersById.get(item.transferLotId);
     const row = operatorFor(transfer?.createdByUserId || userId);
     row.transferQty += qty;
     row.transferReceived += received;
     row.transferValue = roundMoney(row.transferValue + value);
+    row.transferCost = roundMoney(row.transferCost + cost);
+    row.transferReceivedValue = roundMoney(row.transferReceivedValue + receivedValue);
+    row.transferReceivedCost = roundMoney(row.transferReceivedCost + receivedCost);
   }
 
   const triageDestinationRows = new Map();
   const triageDiagnosisConditionRows = new Map();
   let triageValue = 0;
+  let triageCost = 0;
   let triageDiagnosedValue = 0;
+  let triageDiagnosedCost = 0;
   let triageDiagnosed = 0;
   for (const item of triageItems) {
     const product = findTriageStatsProduct(products, lotIds, item);
     const value = roundMoney(Number(product?.valorUnit ?? item.valorUnit ?? 0));
+    const cost = roundMoney(Number(product?.precoCusto ?? item.precoCusto ?? 0));
     const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
-    const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0 };
+    const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
     row.total += 1;
     row.totalValue = roundMoney(row.totalValue + value);
+    row.totalCost = roundMoney(row.totalCost + cost);
     triageDestinationRows.set(destination, row);
     if (item.diagnosisCondition) {
       const condition = String(item.diagnosisCondition).trim().toUpperCase();
-      const conditionRow = triageDiagnosisConditionRows.get(condition) || { condition, total: 0, totalValue: 0 };
+      const conditionRow = triageDiagnosisConditionRows.get(condition) || { condition, total: 0, totalValue: 0, totalCost: 0 };
       conditionRow.total += 1;
       conditionRow.totalValue = roundMoney(conditionRow.totalValue + value);
+      conditionRow.totalCost = roundMoney(conditionRow.totalCost + cost);
       triageDiagnosisConditionRows.set(condition, conditionRow);
     }
     triageValue = roundMoney(triageValue + value);
+    triageCost = roundMoney(triageCost + cost);
     if (item.status === "diagnosticado") {
       triageDiagnosed += 1;
       triageDiagnosedValue = roundMoney(triageDiagnosedValue + value);
+      triageDiagnosedCost = roundMoney(triageDiagnosedCost + cost);
     }
 
     const operatorRow = operatorFor(item.operatorUserId || item.createdByUserId || userId);
     operatorRow.triageCount = Number(operatorRow.triageCount || 0) + 1;
     operatorRow.triageValue = roundMoney(Number(operatorRow.triageValue || 0) + value);
+    operatorRow.triageCost = roundMoney(Number(operatorRow.triageCost || 0) + cost);
   }
 
   const operatorStats = [...operatorRows.values()].map((row) => {
@@ -5675,11 +5716,13 @@ function buildOperationalDashboardStats(db, userId) {
     row.transferCount = row._transferIds.size;
     row.triageCount = Number(row.triageCount || 0);
     row.triageValue = roundMoney(Number(row.triageValue || 0));
-    row.totalValue = roundMoney(Number(row.lotValue || 0) + Number(row.transferValue || 0) + Number(row.triageValue || 0));
+    row.triageCost = roundMoney(Number(row.triageCost || 0));
+    row.totalValue = roundMoney(Number(row.lotCheckedValue || 0) + Number(row.transferReceivedValue || 0) + Number(row.triageValue || 0));
+    row.totalCost = roundMoney(Number(row.lotCheckedCost || 0) + Number(row.transferReceivedCost || 0) + Number(row.triageCost || 0));
     delete row._lotIds;
     delete row._transferIds;
     return row;
-  }).sort((a, b) => b.totalValue - a.totalValue || b.transferValue - a.transferValue || a.name.localeCompare(b.name));
+  }).sort((a, b) => b.totalValue - a.totalValue || b.transferReceivedValue - a.transferReceivedValue || a.name.localeCompare(b.name));
 
   const recentTransfers = transfers
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
@@ -5691,11 +5734,21 @@ function buildOperationalDashboardStats(db, userId) {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         return sum + Number(item.quantidade || 0) * Number(product?.valorUnit || 0);
       }, 0);
+      const cost = items.reduce((sum, item) => {
+        const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+        return sum + Number(item.quantidade || 0) * Number(product?.precoCusto || 0);
+      }, 0);
       const receivedValue = items.reduce((sum, item) => {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         const qty = Number(item.quantidade || 0);
         const receivedQty = Number(item.quantidadeConferida || 0);
         return sum + Math.min(qty, receivedQty) * Number(product?.valorUnit || 0);
+      }, 0);
+      const receivedCost = items.reduce((sum, item) => {
+        const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+        const qty = Number(item.quantidade || 0);
+        const receivedQty = Number(item.quantidadeConferida || 0);
+        return sum + Math.min(qty, receivedQty) * Number(product?.precoCusto || 0);
       }, 0);
       const user = userMap.get(transfer.createdByUserId || userId);
       return {
@@ -5708,7 +5761,9 @@ function buildOperationalDashboardStats(db, userId) {
         received,
         pending: Math.max(0, planned - received),
         value: roundMoney(value),
+        cost: roundMoney(cost),
         receivedValue: roundMoney(receivedValue),
+        receivedCost: roundMoney(receivedCost),
         createdAt: transfer.createdAt,
         operator: user ? publicDashboardUser(user) : null
       };
@@ -5723,6 +5778,7 @@ function buildOperationalDashboardStats(db, userId) {
       const lotProducts = products.filter((product) => product.lotId === lot.id);
       const expected = lotProducts.reduce((sum, product) => sum + Number(qtyByProduct.get(product.id) || product.qtdTotal || 0), 0);
       const value = lotProducts.reduce((sum, product) => sum + Number(qtyByProduct.get(product.id) || product.qtdTotal || 0) * Number(product.valorUnit || 0), 0);
+      const cost = lotProducts.reduce((sum, product) => sum + Number(qtyByProduct.get(product.id) || product.qtdTotal || 0) * Number(product.precoCusto || 0), 0);
       return {
         id: lot.id,
         name: lot.nomeArquivo,
@@ -5730,6 +5786,7 @@ function buildOperationalDashboardStats(db, userId) {
         skus: lotProducts.length,
         expected,
         value: roundMoney(value),
+        cost: roundMoney(cost),
         createdAt: lot.createdAt
       };
     });
@@ -5739,7 +5796,9 @@ function buildOperationalDashboardStats(db, userId) {
     diagnosed: triageDiagnosed,
     pending: Math.max(0, triageItems.length - triageDiagnosed),
     value: roundMoney(triageValue),
+    cost: roundMoney(triageCost),
     diagnosedValue: roundMoney(triageDiagnosedValue),
+    diagnosedCost: roundMoney(triageDiagnosedCost),
     destinations: [...triageDestinationRows.values()]
       .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.destination.localeCompare(b.destination))
       .slice(0, 6),
@@ -5754,6 +5813,7 @@ function buildOperationalDashboardStats(db, userId) {
       quantity: lotQty,
       completed: lotCheckedQty,
       value: roundMoney(lotCheckedValue),
+      cost: roundMoney(lotCheckedCost),
       pending: Math.max(0, lotQty - lotCheckedQty)
     },
     {
@@ -5762,6 +5822,7 @@ function buildOperationalDashboardStats(db, userId) {
       quantity: transferQty,
       completed: transferReceived,
       value: roundMoney(transferReceivedValue),
+      cost: roundMoney(transferReceivedCost),
       pending: Math.max(0, transferQty - transferReceived)
     },
     {
@@ -5770,6 +5831,7 @@ function buildOperationalDashboardStats(db, userId) {
       quantity: triageItems.length,
       completed: triageDiagnosed,
       value: roundMoney(triageDiagnosedValue),
+      cost: roundMoney(triageDiagnosedCost),
       pending: Math.max(0, triageItems.length - triageDiagnosed)
     }
   ];
@@ -5783,7 +5845,9 @@ function buildOperationalDashboardStats(db, userId) {
       quantity: lotQty,
       checkedQuantity: lotCheckedQty,
       value: roundMoney(lotValue),
-      checkedValue: roundMoney(lotCheckedValue)
+      cost: roundMoney(lotCost),
+      checkedValue: roundMoney(lotCheckedValue),
+      checkedCost: roundMoney(lotCheckedCost)
     },
     transfers: {
       total: transfers.length,
@@ -5792,7 +5856,9 @@ function buildOperationalDashboardStats(db, userId) {
       received: transferReceived,
       pending: Math.max(0, transferQty - transferReceived),
       value: roundMoney(transferValue),
+      cost: roundMoney(transferCost),
       receivedValue: roundMoney(transferReceivedValue),
+      receivedCost: roundMoney(transferReceivedCost),
       divergenceReports: reports.length,
       statusCounts
     },
@@ -5818,25 +5884,30 @@ function buildTriageStatsFromRows(rows = []) {
   const destinations = new Map();
   const diagnosisConditions = new Map();
   let totalValue = 0;
+  let totalCost = 0;
   let diagnosedTotal = 0;
 
   for (const row of rows) {
     const item = row.item || {};
     const salePrice = Number(row.salePrice || 0);
+    const costPrice = Number(row.costPrice || 0);
     totalValue += salePrice;
+    totalCost += costPrice;
     if (item.status === "diagnosticado") diagnosedTotal += 1;
     if (item.destination) {
       const destination = String(item.destination).trim().toUpperCase();
-      const destinationStats = destinations.get(destination) || { destination, total: 0, totalValue: 0 };
+      const destinationStats = destinations.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
       destinationStats.total += 1;
       destinationStats.totalValue = roundMoney(destinationStats.totalValue + salePrice);
+      destinationStats.totalCost = roundMoney(destinationStats.totalCost + costPrice);
       destinations.set(destination, destinationStats);
     }
     if (item.diagnosisCondition) {
       const condition = String(item.diagnosisCondition).trim().toUpperCase();
-      const conditionStats = diagnosisConditions.get(condition) || { condition, total: 0, totalValue: 0 };
+      const conditionStats = diagnosisConditions.get(condition) || { condition, total: 0, totalValue: 0, totalCost: 0 };
       conditionStats.total += 1;
       conditionStats.totalValue = roundMoney(conditionStats.totalValue + salePrice);
+      conditionStats.totalCost = roundMoney(conditionStats.totalCost + costPrice);
       diagnosisConditions.set(condition, conditionStats);
     }
 
@@ -5850,10 +5921,12 @@ function buildTriageStatsFromRows(rows = []) {
       total: 0,
       diagnosed: 0,
       pending: 0,
-      totalValue: 0
+      totalValue: 0,
+      totalCost: 0
     };
     current.total += 1;
     current.totalValue = roundMoney(current.totalValue + salePrice);
+    current.totalCost = roundMoney(current.totalCost + costPrice);
     if (item.status === "diagnosticado") current.diagnosed += 1;
     else current.pending += 1;
     byOperator.set(operatorId, current);
@@ -5869,6 +5942,7 @@ function buildTriageStatsFromRows(rows = []) {
     diagnosedTotal,
     pendingTotal: rows.length - diagnosedTotal,
     totalValue: roundMoney(totalValue),
+    totalCost: roundMoney(totalCost),
     mainDestination: destinationRows[0] || null,
     destinations: destinationRows,
     diagnosisConditions: diagnosisConditionRows,
@@ -6312,10 +6386,25 @@ function num(value) {
   return Number(value || 0);
 }
 
+function decimalMoney(value) {
+  return roundMoney(parseNumber(value));
+}
+
+function requiredInt(value) {
+  const number = parseNumber(value);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  if (!Number.isInteger(number)) throw new Error("Campo de quantidade recebeu um valor decimal. Confira os dados vindos do Bling.");
+  return number;
+}
+
+function optionalInt(value) {
+  if (value === undefined || value === null || value === "") return null;
+  return requiredInt(value);
+}
+
 function optionalNum(value) {
   if (value === undefined || value === null || value === "") return "";
-  const normalized = typeof value === "string" ? value.replace(",", ".") : value;
-  const number = Number(normalized);
+  const number = parseNumber(value);
   if (!Number.isFinite(number) || number < 0) throw new Error("Informe dimensoes da caixa validas.");
   return roundMoney(number);
 }
@@ -6464,8 +6553,8 @@ function normalizeTriageInput(input = {}) {
     asin,
     codigoBling2: normalizeCode(input.codigoBling2),
     descricao,
-    valorUnit: roundMoney(Number(input.valorUnit ?? input.valor_unit ?? input.preco ?? 0)),
-    precoCusto: roundMoney(Number(input.precoCusto ?? input.preco_custo ?? input.custo ?? 0)),
+    valorUnit: decimalMoney(input.valorUnit ?? input.valor_unit ?? input.preco),
+    precoCusto: decimalMoney(input.precoCusto ?? input.preco_custo ?? input.custo),
     serial: String(input.serial || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),

@@ -1591,6 +1591,7 @@ function renderOperationalDashboard() {
   const transfers = stats.transfers || {};
   const triage = stats.triage || {};
   const totalOperationValue = Number(lots.checkedValue || 0) + Number(transfers.receivedValue || 0) + Number(triage.diagnosedValue || 0);
+  const totalOperationCost = Number(lots.checkedCost || 0) + Number(transfers.receivedCost || 0) + Number(triage.diagnosedCost || 0);
   const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
   const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
   const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
@@ -1606,7 +1607,7 @@ function renderOperationalDashboard() {
       <section>
         <span class="muted">Visao geral</span>
         <strong>${money(totalOperationValue)}</strong>
-        <small>Valor movimentado em conferencia, transferencias e triagem.</small>
+        <small>Venda movimentada. Custo: ${money(totalOperationCost)}.</small>
       </section>
       <section>
         <span class="muted">Progresso conferencia</span>
@@ -1630,14 +1631,16 @@ function renderOperationalDashboard() {
     <div class="operational-dashboard-summary">
       <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs · ${lots.remessas || 0} RZs/remessas</small></div>
       <div class="metric"><span>Valor dos lotes</span><strong>${money(lots.value || 0)}</strong><small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small></div>
+      <div class="metric"><span>Custo dos lotes</span><strong>${money(lots.cost || 0)}</strong><small>${money(lots.checkedCost || 0)} ja conferido</small></div>
       <div class="metric"><span>Remessas loja</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small></div>
       <div class="metric"><span>Valor das remessas</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
+      <div class="metric"><span>Custo das remessas</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja recebido</small></div>
       <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
     </div>
     <div class="operational-dashboard-grid">
       <section class="operational-dashboard-block">
         <div>
-          <strong>Valor por setor</strong>
+          <strong>Venda e custo por setor</strong>
           <span class="muted">Conferencia, transferencias e triagem.</span>
         </div>
         ${operationalSectorsMarkup(stats.sectors || [])}
@@ -1658,22 +1661,22 @@ function renderOperationalDashboard() {
       </section>
       <section class="operational-dashboard-block">
         <div>
-          <strong>Valor agregado por operador</strong>
-          <span class="muted">Entradas de lotes e remessas criadas.</span>
+          <strong>Venda e custo por operador</strong>
+          <span class="muted">Somente itens bipados/conferidos na producao.</span>
         </div>
         ${operationalOperatorsMarkup(stats.operators || [])}
       </section>
       <section class="operational-dashboard-block">
         <div>
           <strong>Remessas conferidas</strong>
-          <span class="muted">Entradas loja com quantidade recebida e valor conferido.</span>
+          <span class="muted">Entradas loja com quantidade, venda e custo conferidos.</span>
         </div>
         ${operationalTransfersMarkup(stats.recentTransfers || [])}
       </section>
       <section class="operational-dashboard-block operational-dashboard-wide">
         <div>
           <strong>Lotes recentes</strong>
-          <span class="muted">SKUs, quantidades e valor agregado por lote.</span>
+          <span class="muted">SKUs, quantidades, venda e custo por lote.</span>
         </div>
         ${operationalLotsMarkup(stats.recentLots || [])}
       </section>
@@ -1702,7 +1705,7 @@ function operationalSectorsMarkup(sectors = []) {
               <span>${money(sector.value || 0)}</span>
             </div>
             <div class="operational-bar"><span style="width: ${valuePercent}%"></span></div>
-            <small>${sector.completed || 0}/${sector.quantity || 0} concluidos - ${sector.pending || 0} pendentes - ${progress}%</small>
+            <small>Custo ${money(sector.cost || 0)} - ${sector.completed || 0}/${sector.quantity || 0} concluidos - ${sector.pending || 0} pendentes - ${progress}%</small>
           </article>
         `;
       }).join("")}
@@ -1724,7 +1727,7 @@ function operationalTriageDestinationsMarkup(destinations = []) {
               <span>${destination.total || 0} itens</span>
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
-            <small>${money(destination.totalValue || 0)} em valor agregado</small>
+            <small>Venda ${money(destination.totalValue || 0)} - Custo ${money(destination.totalCost || 0)}</small>
           </article>
         `;
       }).join("")}
@@ -1746,7 +1749,7 @@ function operationalTriageDiagnosisConditionsMarkup(conditions = []) {
               <span>${condition.total || 0} itens</span>
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
-            <small>${money(condition.totalValue || 0)} em valor agregado</small>
+            <small>Venda ${money(condition.totalValue || 0)} - Custo ${money(condition.totalCost || 0)}</small>
           </article>
         `;
       }).join("")}
@@ -1805,26 +1808,30 @@ function operationalOperatorsMarkup(operators = []) {
     <div class="operational-dashboard-table operational-operator-table">
       <div class="operational-dashboard-row operational-dashboard-head">
         <span>${operationalOperatorSortButton("operator", "Operador")}</span>
-        <span>${operationalOperatorSortButton("lotCount", "Lotes")}</span>
-        <span>${operationalOperatorSortButton("lotQty", "Qtd lote")}</span>
-        <span>${operationalOperatorSortButton("lotValue", "Valor lote")}</span>
-        <span>${operationalOperatorSortButton("transferCount", "Remessas")}</span>
-        <span>${operationalOperatorSortButton("transferQty", "Qtd remessa")}</span>
-        <span>${operationalOperatorSortButton("transferValue", "Valor remessa")}</span>
+        <span>${operationalOperatorSortButton("lotCheckedQty", "Qtd bipada")}</span>
+        <span>${operationalOperatorSortButton("lotCheckedValue", "Venda bipada")}</span>
+        <span>${operationalOperatorSortButton("lotCheckedCost", "Custo bipado")}</span>
+        <span>${operationalOperatorSortButton("transferReceived", "Qtd conferida")}</span>
+        <span>${operationalOperatorSortButton("transferReceivedValue", "Venda conf.")}</span>
+        <span>${operationalOperatorSortButton("transferReceivedCost", "Custo conf.")}</span>
         <span>${operationalOperatorSortButton("triageValue", "Triagem")}</span>
+        <span>${operationalOperatorSortButton("triageCost", "Custo triagem")}</span>
         <span>${operationalOperatorSortButton("totalValue", "Total")}</span>
+        <span>${operationalOperatorSortButton("totalCost", "Custo total")}</span>
       </div>
       ${sortedOperators.map((operator) => `
         <div class="operational-dashboard-row">
           <strong>${escapeHtml(operatorLabel(operator))}</strong>
-          <span>${operator.lotCount || 0}</span>
-          <span>${operator.lotQty || 0}</span>
-          <span>${money(operator.lotValue || 0)}</span>
-          <span>${operator.transferCount || 0}</span>
-          <span>${operator.transferQty || 0}</span>
-          <span>${money(operator.transferValue || 0)}</span>
-          <span>${operator.triageCount || 0}<small>${money(operator.triageValue || 0)}</small></span>
+          <span>${operator.lotCheckedQty || 0}</span>
+          <span>${money(operator.lotCheckedValue || 0)}</span>
+          <span>${money(operator.lotCheckedCost || 0)}</span>
+          <span>${operator.transferReceived || 0}</span>
+          <span>${money(operator.transferReceivedValue || 0)}</span>
+          <span>${money(operator.transferReceivedCost || 0)}</span>
+          <span>${operator.triageCount || 0}<small>Venda ${money(operator.triageValue || 0)}</small></span>
+          <span>${money(operator.triageCost || 0)}</span>
           <span>${money(operator.totalValue || 0)}</span>
+          <span>${money(operator.totalCost || 0)}</span>
         </div>
       `).join("")}
     </div>
@@ -1839,7 +1846,8 @@ function operationalTransfersMarkup(transfers = []) {
         <span>Remessa</span>
         <span>Status</span>
         <span>Qtd conferida</span>
-        <span>Valor conferido</span>
+        <span>Venda conferida</span>
+        <span>Custo conferido</span>
         <span>Operador</span>
       </div>
       ${transfers.map((transfer) => `
@@ -1848,6 +1856,7 @@ function operationalTransfersMarkup(transfers = []) {
           <span>${escapeHtml(transferStatusLabel(transfer.status))}<small>${formatDate(transfer.createdAt)}</small></span>
           <span>${transfer.received || 0}<small>de ${transfer.planned || 0} planejadas</small></span>
           <span>${money(transfer.receivedValue || 0)}</span>
+          <span>${money(transfer.receivedCost || 0)}</span>
           <span>${escapeHtml(operatorLabel(transfer.operator || {}))}</span>
         </div>
       `).join("")}
@@ -1864,7 +1873,8 @@ function operationalLotsMarkup(lots = []) {
         <span>Fornecedor</span>
         <span>SKUs</span>
         <span>Qtd</span>
-        <span>Valor</span>
+        <span>Venda</span>
+        <span>Custo</span>
         <span>Criado</span>
       </div>
       ${lots.map((lot) => `
@@ -1874,6 +1884,7 @@ function operationalLotsMarkup(lots = []) {
           <span>${lot.skus || 0}</span>
           <span>${lot.expected || 0}</span>
           <span>${money(lot.value || 0)}</span>
+          <span>${money(lot.cost || 0)}</span>
           <span>${formatDate(lot.createdAt)}</span>
         </div>
       `).join("")}
@@ -2494,7 +2505,8 @@ async function showScanOnly({ lotId, codigoRz }) {
 
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
-    renderScanPage(response.lot, codigoRz);
+    if (isNoSheetLot(response.lot)) renderNoSheetScanPage(response.lot, codigoRz);
+    else renderScanPage(response.lot, codigoRz);
   } catch (error) {
     $("#lotDetail").classList.add("empty");
     $("#lotDetail").textContent = error.message;
@@ -4387,7 +4399,7 @@ function renderLotDetail(lot) {
   });
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (noSheetLot) openNoSheetRz(lot, button.dataset.scanRz);
+      if (noSheetLot) openNoSheetScanTab(lot, button.dataset.scanRz);
       else renderRz(lot, button.dataset.scanRz);
     });
   });
@@ -4468,7 +4480,32 @@ function openRzFromSearch(lot) {
 
 function createLotDetailNoSheetRz(event, lot) {
   event.preventDefault();
-  openNoSheetRz(lot, nextNoSheetRzCode(lot));
+  openNoSheetScanTab(lot, nextNoSheetRzCode(lot));
+}
+
+function openNoSheetScanTab(lot, codigoRz) {
+  const normalizedRz = normalizeCode(codigoRz);
+  if (!normalizedRz) return;
+  const opened = openScanWindow(lot.id, normalizedRz);
+  const message = $("#rzSearchMessage");
+  if (message) {
+    message.style.color = opened ? "#0f766e" : "";
+    message.textContent = opened
+      ? `Bipagem da remessa ${normalizedRz} aberta em uma nova guia.`
+      : "O navegador bloqueou a guia de bipagem. Permita pop-ups para o Etiquefacil.";
+  }
+  const rzDetail = $("#rzDetail");
+  if (rzDetail) {
+    rzDetail.innerHTML = `
+      <div class="scan-opened">
+        <strong>Bipagem aberta em uma nova guia.</strong>
+        <span class="muted">Use a guia dedicada para bipar e imprimir etiquetas automaticamente.</span>
+        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
+      </div>
+    `;
+    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, normalizedRz));
+  }
+  if (!opened) alert("O navegador bloqueou a guia de bipagem. Permita pop-ups para o Etiquefacil.");
 }
 
 function openNoSheetRz(lot, codigoRz) {
@@ -4476,6 +4513,8 @@ function openNoSheetRz(lot, codigoRz) {
   if (!normalizedRz) return;
 
   state.selectedDiverseRz = normalizedRz;
+  state.selectedDiverseLotId = lot.id;
+  state.selectedDiverseLot = lot;
   state.selectedRz = null;
   document.querySelectorAll(".rz-card").forEach((card) => {
     card.classList.toggle("selected", normalizeCode(card.dataset.rz) === normalizedRz);
@@ -4662,7 +4701,7 @@ function renderPallet(lot, codigoRz) {
     </section>
   `;
   $("#rzDetail [data-scan-rz]").addEventListener("click", () => {
-    if (isNoSheetLot(lot)) openNoSheetRz(lot, codigoRz);
+    if (isNoSheetLot(lot)) openNoSheetScanTab(lot, codigoRz);
     else renderRz(lot, codigoRz);
   });
   document.querySelectorAll("[data-pallet-split]").forEach((button) => {
@@ -4675,10 +4714,18 @@ function renderPallet(lot, codigoRz) {
 
 function openScanWindow(lotId, codigoRz) {
   const url = lotRzPath(lotId, codigoRz);
-  const target = `etiquefacil-bipagem-${String(lotId).replace(/\W/g, "")}-${String(codigoRz).replace(/\W/g, "")}`;
-  const scanWindow = window.open(url, target, "width=1180,height=760");
+  const scanWindow = window.open(url, "_blank");
   if (scanWindow) scanWindow.focus();
   return Boolean(scanWindow);
+}
+
+function renderNoSheetScanPage(lot, codigoRz) {
+  state.selectedLotId = lot.id;
+  state.selectedRz = null;
+  document.title = `Bipagem ${codigoRz}`;
+  $("#lotDetail").classList.remove("empty");
+  $("#lotDetail").innerHTML = '<div id="diversePanelMount"></div>';
+  openNoSheetRz(lot, codigoRz);
 }
 
 function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
@@ -4883,7 +4930,10 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
       body: JSON.stringify({ codigoMl, manualProduct })
     });
 
-    const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.`;
+    const blingMessage = response.bling?.ok === false
+      ? ` Bling nao atualizado: ${response.bling.error || "verifique a integracao."}`
+      : ` ${response.bling ? blingProductSyncMessage(response.bling) : "Produto sincronizado no Bling."}`;
+    const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.${blingMessage}`;
     renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = successMessage;
     if (response.product && state.labelOptions.autoPrint) {
@@ -5585,6 +5635,7 @@ function renderTriageStats() {
     : "Sem destino";
   const filter = normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter());
   const averageValue = stats.total ? Number(stats.totalValue || 0) / stats.total : 0;
+  const averageCost = stats.total ? Number(stats.totalCost || 0) / stats.total : 0;
   const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
   panel.innerHTML = `
     <div class="triage-stats-hero">
@@ -5596,7 +5647,7 @@ function renderTriageStats() {
       <div class="triage-stats-hero-value">
         <span>Valor agregado</span>
         <strong>${money(stats.totalValue || 0)}</strong>
-        <small>Preco de venda Bling</small>
+        <small>Preco de venda Bling. Custo: ${money(stats.totalCost || 0)}</small>
       </div>
     </div>
     ${triageStatsFilterMarkup(filter)}
@@ -5605,16 +5656,17 @@ function renderTriageStats() {
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
+      <div class="metric"><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></div>
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
       <section class="triage-stats-block">
         <div class="triage-stats-block-heading">
           <div>
-            <strong>Valor por destino</strong>
+            <strong>Venda e custo por destino</strong>
             <span class="muted">Onde esta indo o valor da bancada.</span>
           </div>
-          <span class="muted">Quantidade, valor agregado e media por destino.</span>
+          <span class="muted">Quantidade, venda, custo e media por destino.</span>
         </div>
         ${triageStatsDestinationsMarkup(stats.destinations || [])}
       </section>
@@ -5624,7 +5676,7 @@ function renderTriageStats() {
             <strong>Itens por diagnostico</strong>
             <span class="muted">Condicao registrada no laudo.</span>
           </div>
-          <span class="muted">Quantidade, valor agregado e media por diagnostico.</span>
+          <span class="muted">Quantidade, venda, custo e media por diagnostico.</span>
         </div>
         ${triageStatsDiagnosisConditionsMarkup(stats.diagnosisConditions || [])}
       </section>
@@ -5632,9 +5684,9 @@ function renderTriageStats() {
         <div class="triage-stats-block-heading">
           <div>
             <strong>Itens por operador</strong>
-            <span class="muted">Ranking de produtividade e valor.</span>
+            <span class="muted">Ranking de produtividade, venda e custo.</span>
           </div>
-          <span class="muted">Produtividade e valor agregado por pessoa.</span>
+          <span class="muted">Produtividade, venda e custo por pessoa.</span>
         </div>
         ${triageStatsOperatorsMarkup(stats.operators || [])}
       </section>
@@ -5761,13 +5813,14 @@ function triageStatsOperatorsMarkup(operators = []) {
       ${operators.map((operator) => {
         const total = Number(operator.total || 0);
         const totalValue = Number(operator.totalValue || 0);
+        const totalCost = Number(operator.totalCost || 0);
         const diagnosed = Number(operator.diagnosed || 0);
         const completion = total ? Math.round((diagnosed / total) * 100) : 0;
         return `
           <article class="triage-operator-card">
             <div class="triage-operator-main">
               <strong>${escapeHtml(operatorLabel(operator))}</strong>
-              <span>${total} itens - ${money(totalValue)}</span>
+              <span>${total} itens - Venda ${money(totalValue)} - Custo ${money(totalCost)}</span>
             </div>
             <div class="triage-operator-progress" aria-hidden="true"><span style="width: ${completion}%"></span></div>
             <div class="triage-operator-metrics">
@@ -5775,6 +5828,7 @@ function triageStatsOperatorsMarkup(operators = []) {
               <span><strong>${operator.pending || 0}</strong><small>Pend.</small></span>
               <span><strong>${completion}%</strong><small>Conclusao</small></span>
               <span><strong>${money(total ? totalValue / total : 0)}</strong><small>Media</small></span>
+              <span><strong>${money(total ? totalCost / total : 0)}</strong><small>Custo med.</small></span>
             </div>
           </article>
         `;
@@ -5791,6 +5845,7 @@ function triageStatsDestinationsMarkup(destinations = []) {
       ${destinations.map((item) => {
         const total = Number(item.total || 0);
         const totalValue = Number(item.totalValue || 0);
+        const totalCost = Number(item.totalCost || 0);
         const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
         return `
           <button type="button" class="triage-destination-card" data-open-triage-destination="${escapeHtml(item.destination)}">
@@ -5802,6 +5857,7 @@ function triageStatsDestinationsMarkup(destinations = []) {
             <span class="triage-destination-meta">
               <span>${total} itens</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
+              <span>${money(totalCost)} custo</span>
             </span>
           </button>
         `;
@@ -5818,6 +5874,7 @@ function triageStatsDiagnosisConditionsMarkup(conditions = []) {
       ${conditions.map((item) => {
         const total = Number(item.total || 0);
         const totalValue = Number(item.totalValue || 0);
+        const totalCost = Number(item.totalCost || 0);
         const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
         return `
           <button type="button" class="triage-destination-card" data-open-triage-diagnosis-condition="${escapeHtml(item.condition)}">
@@ -5829,6 +5886,7 @@ function triageStatsDiagnosisConditionsMarkup(conditions = []) {
             <span class="triage-destination-meta">
               <span>${total} itens</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
+              <span>${money(totalCost)} custo</span>
             </span>
           </button>
         `;
@@ -6157,8 +6215,6 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       <label>ASIN/COD ML<input name="asin" value="${escapeHtml(item.asin || "")}" /></label>
       <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
       <label>Codigo Bling 2<input name="codigoBling2" value="${escapeHtml(item.codigoBling2 || "")}" /></label>
-      <input type="hidden" name="valorUnit" value="${escapeHtml(item.valorUnit || "")}" />
-      <input type="hidden" name="precoCusto" value="${escapeHtml(item.precoCusto || "")}" />
       <label>Serial<input name="serial" value="${escapeHtml(item.serial || "")}" /></label>
       <label>Altura caixa (cm)<input name="alturaCaixa" inputmode="decimal" value="${escapeHtml(item.alturaCaixa || "")}" /></label>
       <label>Largura caixa (cm)<input name="larguraCaixa" inputmode="decimal" value="${escapeHtml(item.larguraCaixa || "")}" /></label>
@@ -6205,8 +6261,32 @@ function renderTriageItemView(item) {
         ${item.diagnosis ? `<div class="wide-field"><dt>Descricao do diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
-      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
+      ${triageDiagnosisPhotoFormMarkup(item)}
     </section>
+  `;
+}
+
+function triageDiagnosisPhotoFormMarkup(item) {
+  return `
+    <form class="triage-diagnosis-form triage-photo-only-form">
+      <div class="panel-heading">
+        <span class="muted">Laudo</span>
+        <h3>Adicionar foto ao laudo</h3>
+      </div>
+      <input type="hidden" name="diagnosisCondition" value="${escapeHtml(item.diagnosisCondition || "")}" />
+      <input type="hidden" name="diagnosis" value="${escapeHtml(item.diagnosis || "")}" />
+      <input type="hidden" name="destination" value="${escapeHtml(item.destination || "")}" />
+      <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
+      <label>Foto do laudo
+        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required />
+      </label>
+      <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
+        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
+        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
+      </div>
+      <button type="submit">Salvar foto</button>
+      <p class="message" id="triageDetailMessage"></p>
+    </form>
   `;
 }
 
@@ -6393,6 +6473,11 @@ async function handleTriageDetailSubmit(event) {
   const message = $("#triageDetailMessage");
   try {
     const form = event.target;
+    if (form.classList.contains("triage-photo-only-form")) {
+      const condition = form.elements?.diagnosisCondition?.value;
+      const destination = form.elements?.destination?.value;
+      if (!condition || !destination) throw new Error("Antes de adicionar foto, salve o diagnostico e o destino do laudo na triagem.");
+    }
     const formData = new FormData(form);
     formData.delete("diagnosisPhotoFile");
     formData.set("diagnosisPhoto", await readTriageDiagnosisPhoto(form));
@@ -6410,7 +6495,7 @@ async function handleTriageDetailSubmit(event) {
     }
     refreshTriageStatsIfVisible();
     $("#triageDetailMessage").style.color = "#0f766e";
-    $("#triageDetailMessage").textContent = "Diagnostico salvo.";
+    $("#triageDetailMessage").textContent = form.classList.contains("triage-photo-only-form") ? "Foto salva no laudo." : "Diagnostico salvo.";
   } catch (error) {
     message.textContent = error.message;
   }
@@ -6422,10 +6507,13 @@ async function handleTriageEditSubmit(event) {
   const message = $("#triageEditMessage");
   try {
     const previousCode = state.selectedTriageCode;
+    const payload = Object.fromEntries(new FormData(form));
+    delete payload.valorUnit;
+    delete payload.precoCusto;
     const response = await api(`/api/triage/items/${encodeURIComponent(previousCode)}/details`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(new FormData(form)))
+      body: JSON.stringify(payload)
     });
     state.selectedTriageCode = response.item.code;
     state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== previousCode && item.code !== response.item.code)]
