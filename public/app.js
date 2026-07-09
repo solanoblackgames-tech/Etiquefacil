@@ -2124,6 +2124,8 @@ function renderOperators() {
     acc.logins += operator.logins;
     acc.searches += operator.searches;
     acc.scans += operator.scans;
+    acc.registrationScans += operator.registrationScans;
+    acc.transferScans += operator.transferScans;
     acc.creates += operator.creates;
     acc.lotViews += operator.lotViews;
     acc.palletViews += operator.palletViews;
@@ -2140,7 +2142,7 @@ function renderOperators() {
       };
     }
     return acc;
-  }, { activity: 0, logins: 0, searches: 0, scans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
+  }, { activity: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
   const topOperators = [...operators].sort((a, b) => b.activity - a.activity || a.name.localeCompare(b.name)).slice(0, 3);
   const leader = topOperators[0];
   const periodDays = operatorPeriodDays(filter);
@@ -2159,7 +2161,12 @@ function renderOperators() {
         <article class="operator-metric">
           <span>Buscas e bipagens</span>
           <strong>${totals.searches + totals.scans}</strong>
-          <small>${totals.searches} buscas / ${totals.scans} bipagens</small>
+          <small>${totals.searches} buscas / ${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
+        </article>
+        <article class="operator-metric">
+          <span>Postos de bipagem</span>
+          <strong>${totals.registrationScans + totals.transferScans}</strong>
+          <small>${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
         </article>
         <article class="operator-metric">
           <span>Erros producao</span>
@@ -2190,8 +2197,9 @@ function renderOperators() {
           <span>Total</span>
           <span>Logins</span>
           <span>Buscas</span>
-          <span>Bipagens</span>
-          <span>Cadastros</span>
+          <span>Bip. cadastro</span>
+          <span>Bip. transf.</span>
+          <span>Cad. manuais</span>
           <span>Lotes</span>
           <span>Pallets</span>
           <span>Erros</span>
@@ -2335,6 +2343,8 @@ function operatorViewModel(operator) {
   const logins = stats.logins || 0;
   const searches = stats.searches || 0;
   const scans = stats.scans || 0;
+  const registrationScans = stats.registrationScans ?? scans;
+  const transferScans = stats.transferScans || 0;
   const creates = stats.creates || 0;
   const lotViews = stats.lotViews || 0;
   const palletViews = stats.palletViews || 0;
@@ -2356,6 +2366,8 @@ function operatorViewModel(operator) {
     logins,
     searches,
     scans,
+    registrationScans,
+    transferScans,
     creates,
     lotViews,
     palletViews,
@@ -2396,7 +2408,8 @@ function operatorTableRow(operator, index) {
       <strong>${operator.activity}</strong>
       <span>${operator.logins}</span>
       <span>${operator.searches}</span>
-      <span>${operator.scans}</span>
+      <span>${operator.registrationScans}</span>
+      <span>${operator.transferScans}</span>
       <span>${operator.creates}</span>
       <span>${operator.lotViews}</span>
       <span>${operator.palletViews}</span>
