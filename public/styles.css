@@ -199,6 +199,26 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.conference-settings-form {
+  grid-template-columns: 1fr;
+}
+
+.conference-settings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.conference-settings-row {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  margin: 0;
+  padding: 12px;
+}
+
 .integration-status {
   border: 1px solid var(--line);
   border-radius: 8px;

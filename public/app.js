@@ -56,6 +56,7 @@ const state = {
   labelQuantity: 1,
   labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
+  conferenceSettings: defaultConferenceSettings(),
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
     includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false",
@@ -68,6 +69,16 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const LABEL_PRINT_FALLBACK_MS = 15000;
 let labelPrintFallbackTimer = null;
+const CONFERENCE_FIELDS = [
+  { key: "ean", label: "EAN", formNames: ["ean"] },
+  { key: "link", label: "Link do produto", formNames: ["link"] },
+  { key: "photo", label: "Foto do produto", formNames: ["foto"] },
+  { key: "boxDimensions", label: "Dimensao da caixa", formNames: ["alturaCaixa", "larguraCaixa", "comprimentoCaixa"] },
+  { key: "weight", label: "Peso", formNames: ["pesoCaixa"] },
+  { key: "stockLocation", label: "Localizacao no estoque", formNames: ["localizacaoEstoque"], printOption: true },
+  { key: "category", label: "Categoria", formNames: ["categoria"] },
+  { key: "subcategory", label: "Subcategoria", formNames: ["subcategoria"] }
+];
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const formatDate = (value) => {
   const date = new Date(value);
@@ -93,6 +104,59 @@ const addDays = (date, days) => {
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
 const isOwnerUser = () => state.user?.role === "owner";
+
+function defaultConferenceSettings() {
+  return {
+    fields: {
+      ean: { enabled: true, required: false },
+      link: { enabled: true, required: false },
+      photo: { enabled: true, required: false },
+      boxDimensions: { enabled: false, required: false },
+      weight: { enabled: false, required: false },
+      stockLocation: { enabled: false, required: false, printOnLabel: false },
+      category: { enabled: false, required: false },
+      subcategory: { enabled: false, required: false }
+    }
+  };
+}
+
+function normalizeConferenceSettings(settings = {}) {
+  const defaults = defaultConferenceSettings();
+  const incomingFields = settings.fields || {};
+  for (const field of CONFERENCE_FIELDS) {
+    const incoming = incomingFields[field.key] || {};
+    const current = defaults.fields[field.key];
+    current.enabled = incoming.enabled === undefined ? current.enabled : Boolean(incoming.enabled);
+    current.required = current.enabled ? Boolean(incoming.required) : false;
+    if (field.printOption) current.printOnLabel = current.enabled ? Boolean(incoming.printOnLabel) : false;
+  }
+  return defaults;
+}
+
+function conferenceField(key) {
+  return normalizeConferenceSettings(state.conferenceSettings).fields[key] || {};
+}
+
+function isConferenceFieldEnabled(key) {
+  return Boolean(conferenceField(key).enabled);
+}
+
+function isConferenceFieldRequired(key) {
+  const field = conferenceField(key);
+  return Boolean(field.enabled && field.required);
+}
+
+function shouldPrintConferenceField(key) {
+  const field = conferenceField(key);
+  return Boolean(field.enabled && field.printOnLabel);
+}
+
+function requireTextField(input, message, error) {
+  if (!input || input.value.trim()) return false;
+  error.textContent = message;
+  input.focus();
+  return true;
+}
 
 await bootstrap();
 
@@ -184,12 +248,6 @@ function bindEvents() {
   $("#noSheetSuggestionUploadForm")?.addEventListener("submit", uploadNoSheetSuggestions);
   $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
-  $("#diverseDownloadButton").addEventListener("click", () => {
-    if (state.selectedDiverseLotId) downloadBling(state.selectedDiverseLotId, "complete", "#diverseScanMessage");
-  });
-  $("#diverseDownloadRzButton").addEventListener("click", () => {
-    if (state.selectedDiverseLotId && state.selectedDiverseRz) downloadDiverseRzBling(state.selectedDiverseLotId, state.selectedDiverseRz);
-  });
   $("#searchForm").addEventListener("submit", searchMl);
   $("#transferLotForm").addEventListener("submit", createTransferLot);
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
@@ -210,6 +268,7 @@ function bindEvents() {
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
+  $("#conferenceSettingsForm").addEventListener("submit", saveConferenceSettings);
   $("#operatorForm").addEventListener("submit", createOperator);
   $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
   $("#operatorManualToggle").addEventListener("click", toggleOperatorManualForm);
@@ -650,26 +709,50 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const error = $("#manualProductError");
     const cancel = $("#manualProductCancel");
 
-    logisticsFieldsWrap.innerHTML = includeLogisticsFields
+    const showBoxDimensions = includeLogisticsFields || isConferenceFieldEnabled("boxDimensions");
+    const showWeight = includeLogisticsFields || isConferenceFieldEnabled("weight");
+    logisticsFieldsWrap.innerHTML = `
+          ${isConferenceFieldEnabled("category") ? `<label>Categoria
+            <input id="manualProductCategoria" name="categoria" placeholder="${isConferenceFieldRequired("category") ? "Obrigatorio" : "Opcional"}" />
+          </label>` : ""}
+          ${isConferenceFieldEnabled("subcategory") ? `<label>Subcategoria
+            <input id="manualProductSubcategoria" name="subcategoria" placeholder="${isConferenceFieldRequired("subcategory") ? "Obrigatorio" : "Opcional"}" />
+          </label>` : ""}
+          ${showBoxDimensions
       ? `
           <label>Altura caixa (cm)
-            <input id="manualProductAlturaCaixa" name="alturaCaixa" inputmode="decimal" placeholder="Opcional" />
+            <input id="manualProductAlturaCaixa" name="alturaCaixa" inputmode="decimal" placeholder="${isConferenceFieldRequired("boxDimensions") ? "Obrigatorio" : "Opcional"}" />
           </label>
           <label>Largura caixa (cm)
-            <input id="manualProductLarguraCaixa" name="larguraCaixa" inputmode="decimal" placeholder="Opcional" />
+            <input id="manualProductLarguraCaixa" name="larguraCaixa" inputmode="decimal" placeholder="${isConferenceFieldRequired("boxDimensions") ? "Obrigatorio" : "Opcional"}" />
           </label>
           <label>Comprimento caixa (cm)
-            <input id="manualProductComprimentoCaixa" name="comprimentoCaixa" inputmode="decimal" placeholder="Opcional" />
-          </label>
-          <label>Peso caixa (kg)
-            <input id="manualProductPesoCaixa" name="pesoCaixa" inputmode="decimal" placeholder="Opcional" />
+            <input id="manualProductComprimentoCaixa" name="comprimentoCaixa" inputmode="decimal" placeholder="${isConferenceFieldRequired("boxDimensions") ? "Obrigatorio" : "Opcional"}" />
           </label>
         `
-      : "";
+      : ""}
+          ${showWeight
+      ? `
+          <label>Peso caixa (kg)
+            <input id="manualProductPesoCaixa" name="pesoCaixa" inputmode="decimal" placeholder="${isConferenceFieldRequired("weight") ? "Obrigatorio" : "Opcional"}" />
+          </label>
+        `
+      : ""}
+          ${isConferenceFieldEnabled("stockLocation") ? `<label>Localizacao no estoque
+            <input id="manualProductLocalizacaoEstoque" name="localizacaoEstoque" placeholder="${isConferenceFieldRequired("stockLocation") ? "Obrigatorio" : "Opcional"}" />
+          </label>
+          ` : ""}
+        `;
     const alturaCaixa = $("#manualProductAlturaCaixa");
     const larguraCaixa = $("#manualProductLarguraCaixa");
     const comprimentoCaixa = $("#manualProductComprimentoCaixa");
     const pesoCaixa = $("#manualProductPesoCaixa");
+    const localizacaoEstoque = $("#manualProductLocalizacaoEstoque");
+    const categoria = $("#manualProductCategoria");
+    const subcategoria = $("#manualProductSubcategoria");
+    ean.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("ean"));
+    link.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("link"));
+    photo.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("photo"));
 
     const cleanup = () => {
       modal.classList.add("hidden");
@@ -691,10 +774,13 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     description.value = initialValues.descricao || "";
     price.value = initialValues.valorUnit ? String(initialValues.valorUnit).replace(".", ",") : "";
     ean.value = initialValues.ean || "";
+    if (categoria) categoria.value = initialValues.categoria || "";
+    if (subcategoria) subcategoria.value = initialValues.subcategoria || "";
     if (alturaCaixa) alturaCaixa.value = initialValues.alturaCaixa || "";
     if (larguraCaixa) larguraCaixa.value = initialValues.larguraCaixa || "";
     if (comprimentoCaixa) comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
     if (pesoCaixa) pesoCaixa.value = initialValues.pesoCaixa || "";
+    if (localizacaoEstoque) localizacaoEstoque.value = initialValues.localizacaoEstoque || "";
     link.value = initialValues.link || "";
     photo.value = initialValues.foto || "";
     error.textContent = "";
@@ -725,10 +811,13 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (suggestion.source !== "lista_lote") {
         if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
         if (suggestion.ean) ean.value = suggestion.ean;
+        if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;
+        if (subcategoria && suggestion.subcategoria) subcategoria.value = suggestion.subcategoria;
         if (alturaCaixa && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
         if (larguraCaixa && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
         if (comprimentoCaixa && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
         if (pesoCaixa && suggestion.pesoCaixa) pesoCaixa.value = suggestion.pesoCaixa;
+        if (localizacaoEstoque && suggestion.localizacaoEstoque) localizacaoEstoque.value = suggestion.localizacaoEstoque;
         if (suggestion.link) link.value = suggestion.link;
         if (suggestion.foto) photo.value = suggestion.foto;
       }
@@ -750,16 +839,31 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         price.focus();
         return;
       }
+      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
+      if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
+      if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
+      if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
+      if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
+      if (isConferenceFieldRequired("boxDimensions")) {
+        if (requireTextField(alturaCaixa, "Informe a altura da caixa.", error)) return;
+        if (requireTextField(larguraCaixa, "Informe a largura da caixa.", error)) return;
+        if (requireTextField(comprimentoCaixa, "Informe o comprimento da caixa.", error)) return;
+      }
+      if (isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
+      if (isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
       const result = {
         descricao,
         valorUnit,
-        ean: ean.value.trim(),
+        categoria: categoria ? categoria.value.trim() : "",
+        subcategoria: subcategoria ? subcategoria.value.trim() : "",
+        ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : "",
         alturaCaixa: alturaCaixa ? alturaCaixa.value.trim() : "",
         larguraCaixa: larguraCaixa ? larguraCaixa.value.trim() : "",
         comprimentoCaixa: comprimentoCaixa ? comprimentoCaixa.value.trim() : "",
         pesoCaixa: pesoCaixa ? pesoCaixa.value.trim() : "",
-        link: link.value.trim(),
-        foto: photo.value.trim()
+        localizacaoEstoque: localizacaoEstoque ? localizacaoEstoque.value.trim() : "",
+        link: isConferenceFieldEnabled("link") ? link.value.trim() : "",
+        foto: isConferenceFieldEnabled("photo") ? photo.value.trim() : ""
       };
       cleanup();
       resolve(result);
@@ -972,7 +1076,6 @@ function renderDiverseRzControls(lot) {
   const active = state.selectedDiverseRz;
   $("#diverseNextRz").textContent = `Proxima RZ: ${nextNoSheetRzCode(lot)}`;
   $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
-  $("#diverseDownloadRzButton").disabled = !active;
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
   $("#diverseScanForm button[type='submit']").disabled = !active;
   $("#generateCodigoMlButton").disabled = !active;
@@ -1217,19 +1320,29 @@ function openProductEditModal(product, options = {}) {
     const larguraCaixa = $("#productEditLarguraCaixa");
     const comprimentoCaixa = $("#productEditComprimentoCaixa");
     const pesoCaixa = $("#productEditPesoCaixa");
+    const localizacaoEstoque = $("#productEditLocalizacaoEstoque");
     const link = $("#productEditLink");
     const photo = $("#productEditPhoto");
     const error = $("#productEditError");
     const cancel = $("#productEditCancel");
-    const logisticsFields = [alturaCaixa, larguraCaixa, comprimentoCaixa, pesoCaixa];
+    const fieldVisibility = [
+      [ean, isConferenceFieldEnabled("ean")],
+      [link, isConferenceFieldEnabled("link")],
+      [photo, isConferenceFieldEnabled("photo")],
+      [alturaCaixa, includeLogisticsFields && isConferenceFieldEnabled("boxDimensions")],
+      [larguraCaixa, includeLogisticsFields && isConferenceFieldEnabled("boxDimensions")],
+      [comprimentoCaixa, includeLogisticsFields && isConferenceFieldEnabled("boxDimensions")],
+      [pesoCaixa, includeLogisticsFields && isConferenceFieldEnabled("weight")],
+      [localizacaoEstoque, includeLogisticsFields && isConferenceFieldEnabled("stockLocation")]
+    ];
 
-    logisticsFields.forEach((input) => {
-      input.closest("label")?.classList.toggle("hidden", !includeLogisticsFields);
+    fieldVisibility.forEach(([input, visible]) => {
+      input.closest("label")?.classList.toggle("hidden", !visible);
     });
 
     const cleanup = () => {
       modal.classList.add("hidden");
-      logisticsFields.forEach((input) => input.closest("label")?.classList.remove("hidden"));
+      fieldVisibility.forEach(([input]) => input.closest("label")?.classList.remove("hidden"));
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
@@ -1248,6 +1361,7 @@ function openProductEditModal(product, options = {}) {
     larguraCaixa.value = product.larguraCaixa || "";
     comprimentoCaixa.value = product.comprimentoCaixa || "";
     pesoCaixa.value = product.pesoCaixa || "";
+    localizacaoEstoque.value = product.localizacaoEstoque || "";
     link.value = product.link || "";
     photo.value = product.foto || "";
     error.textContent = "";
@@ -1272,17 +1386,28 @@ function openProductEditModal(product, options = {}) {
         cost.focus();
         return;
       }
+      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
+      if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
+      if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
+      if (includeLogisticsFields && isConferenceFieldRequired("boxDimensions")) {
+        if (requireTextField(alturaCaixa, "Informe a altura da caixa.", error)) return;
+        if (requireTextField(larguraCaixa, "Informe a largura da caixa.", error)) return;
+        if (requireTextField(comprimentoCaixa, "Informe o comprimento da caixa.", error)) return;
+      }
+      if (includeLogisticsFields && isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
+      if (includeLogisticsFields && isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
       const result = {
         descricao: description.value.trim(),
         valorUnit,
         precoCusto,
-        ean: ean.value.trim(),
-        alturaCaixa: includeLogisticsFields ? alturaCaixa.value.trim() : product.alturaCaixa || "",
-        larguraCaixa: includeLogisticsFields ? larguraCaixa.value.trim() : product.larguraCaixa || "",
-        comprimentoCaixa: includeLogisticsFields ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
-        pesoCaixa: includeLogisticsFields ? pesoCaixa.value.trim() : product.pesoCaixa || "",
-        link: link.value.trim(),
-        foto: photo.value.trim()
+        ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
+        alturaCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? alturaCaixa.value.trim() : product.alturaCaixa || "",
+        larguraCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? larguraCaixa.value.trim() : product.larguraCaixa || "",
+        comprimentoCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
+        pesoCaixa: includeLogisticsFields && isConferenceFieldEnabled("weight") ? pesoCaixa.value.trim() : product.pesoCaixa || "",
+        localizacaoEstoque: includeLogisticsFields && isConferenceFieldEnabled("stockLocation") ? localizacaoEstoque.value.trim() : product.localizacaoEstoque || "",
+        link: isConferenceFieldEnabled("link") ? link.value.trim() : product.link || "",
+        foto: isConferenceFieldEnabled("photo") ? photo.value.trim() : product.foto || ""
       };
       cleanup();
       resolve(result);
@@ -1461,6 +1586,7 @@ async function showApp(user) {
   $("#app .app-nav")?.classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
   applyUserPermissions(user);
+  await loadConferenceSettings();
   const scanRequest = getScanRequest();
   if (scanRequest) {
     await showScanOnly(scanRequest);
@@ -1547,6 +1673,77 @@ async function deleteBlingIntegration() {
   }
 }
 
+async function loadConferenceSettings() {
+  try {
+    const response = await api("/api/profile/conference-settings");
+    state.conferenceSettings = normalizeConferenceSettings(response.settings);
+  } catch {
+    state.conferenceSettings = defaultConferenceSettings();
+  }
+}
+
+function renderConferenceSettings() {
+  const fields = $("#conferenceSettingsFields");
+  if (!fields) return;
+  const settings = normalizeConferenceSettings(state.conferenceSettings);
+  state.conferenceSettings = settings;
+  fields.innerHTML = CONFERENCE_FIELDS.map((field) => {
+    const value = settings.fields[field.key] || {};
+    return `
+      <fieldset class="conference-settings-row" data-conference-field="${escapeHtml(field.key)}">
+        <label class="check-option"><input name="${escapeHtml(field.key)}Enabled" type="checkbox" ${value.enabled ? "checked" : ""} /> ${escapeHtml(field.label)}</label>
+        <label class="check-option"><input name="${escapeHtml(field.key)}Required" type="checkbox" ${value.required ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Obrigatorio</label>
+        ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
+      </fieldset>
+    `;
+  }).join("");
+  fields.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.addEventListener("change", updateConferenceSettingsControlState);
+  });
+  updateConferenceSettingsControlState();
+}
+
+function updateConferenceSettingsControlState() {
+  document.querySelectorAll("[data-conference-field]").forEach((row) => {
+    const key = row.dataset.conferenceField;
+    const enabled = row.querySelector(`[name="${key}Enabled"]`)?.checked;
+    row.querySelectorAll("input").forEach((input) => {
+      if (input.name === `${key}Enabled`) return;
+      input.disabled = !enabled;
+      if (!enabled) input.checked = false;
+    });
+  });
+}
+
+async function saveConferenceSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = $("#conferenceSettingsMessage");
+  const fields = {};
+  for (const field of CONFERENCE_FIELDS) {
+    const enabled = Boolean(form.elements[`${field.key}Enabled`]?.checked);
+    fields[field.key] = {
+      enabled,
+      required: enabled ? Boolean(form.elements[`${field.key}Required`]?.checked) : false
+    };
+    if (field.printOption) fields[field.key].printOnLabel = enabled ? Boolean(form.elements[`${field.key}PrintOnLabel`]?.checked) : false;
+  }
+  try {
+    const response = await api("/api/profile/conference-settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields })
+    });
+    state.conferenceSettings = normalizeConferenceSettings(response.settings);
+    message.style.color = "#0f766e";
+    message.textContent = "Configuracao salva.";
+    renderConferenceSettings();
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  }
+}
+
 function getBlingCallbackMessage() {
   const params = new URLSearchParams(window.location.search);
   if (params.get("bling") === "connected") return "Integracao Bling autorizada com sucesso.";
@@ -1562,11 +1759,13 @@ function setProfileSection(section = "entries") {
   $("#profileDashboard").classList.toggle("hidden", section !== "dashboard");
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
+  $("#profileConferenceSettings").classList.toggle("hidden", section !== "conferenceSettings");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
   $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
   if (section === "dashboard") loadOperationalDashboard();
   if (section === "sync") loadBlingIntegration();
+  if (section === "conferenceSettings") renderConferenceSettings();
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
 }
@@ -5224,17 +5423,20 @@ function code39BarcodeValue(value) {
 function labelMarkup(product, meta = null) {
   const price = state.labelOptions.includePrice ? money(product.valorUnit) : "";
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
+  const stockLocation = shouldPrintConferenceField("stockLocation") ? String(product.localizacaoEstoque || "").trim() : "";
   const hasCustomText = Boolean(customText);
+  const noteText = [stockLocation ? `LOC ${stockLocation}` : "", customText].filter(Boolean).join(" | ");
+  const hasNote = Boolean(noteText);
   const footer = labelFooterText(meta);
   const hasMeta = Boolean(footer);
   const sku = code39BarcodeValue(product.sku);
   return `
-    <section class="label-print ${hasCustomText ? "has-note" : ""} ${hasMeta ? "has-meta" : ""}">
+    <section class="label-print ${hasNote ? "has-note" : ""} ${hasMeta ? "has-meta" : ""}">
       <p class="label-desc">${escapeHtml(product.descricao)}</p>
       ${code39Svg(sku)}
       <strong class="label-sku">${escapeHtml(sku)}</strong>
       <strong class="label-price">${escapeHtml(price)}</strong>
-      <strong class="label-note">${escapeHtml(customText)}</strong>
+      <strong class="label-note">${escapeHtml(noteText)}</strong>
       <span class="label-footer">${escapeHtml(footer)}</span>
     </section>
   `;

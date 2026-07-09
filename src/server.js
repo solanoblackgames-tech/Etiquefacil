@@ -64,6 +64,7 @@ import {
   getPublicUserById,
   getUserBlingCredentials,
   getUserBlingIntegration,
+  getUserConferenceSettings,
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
@@ -101,6 +102,7 @@ import {
   updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
+  saveUserConferenceSettings,
   saveBlingAppConfig,
   acceptOperatorInvite,
   verifyUser
@@ -317,6 +319,22 @@ app.patch("/api/operators/:operatorUserId/triage-access", requireAuth, requireOw
 app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json(await updateOperatorPasswordForOwner(workspaceUserId(req), req.params.operatorId, req.body.password));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/profile/conference-settings", requireAuth, async (req, res) => {
+  try {
+    res.json({ settings: await getUserConferenceSettings(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/profile/conference-settings", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json({ settings: await saveUserConferenceSettings(workspaceUserId(req), req.body || {}) });
   } catch (error) {
     sendError(res, error);
   }

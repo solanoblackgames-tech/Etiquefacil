@@ -18,6 +18,7 @@ let storeReady;
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
+const CONFERENCE_SETTINGS_KEY = "conference_registration";
 const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
 const OPERATOR_DASHBOARD_ACTIONS = [
   "login",
@@ -40,6 +41,7 @@ const emptyDb = () => ({
   labels: [],
   blingIntegrations: [],
   appSettings: {},
+  userSettings: [],
   transferLots: [],
   transferItems: [],
   transferForcedOccurrences: [],
@@ -52,6 +54,17 @@ const emptyDb = () => ({
   noSheetSuggestions: [],
   triageItems: [],
   triageEvents: []
+});
+
+const CONFERENCE_FIELD_DEFAULTS = Object.freeze({
+  ean: { enabled: true, required: false },
+  link: { enabled: true, required: false },
+  photo: { enabled: true, required: false },
+  boxDimensions: { enabled: false, required: false },
+  weight: { enabled: false, required: false },
+  stockLocation: { enabled: false, required: false, printOnLabel: false },
+  category: { enabled: false, required: false },
+  subcategory: { enabled: false, required: false }
 });
 
 export function hasPostgres() {
@@ -295,6 +308,50 @@ async function getUserById(userId) {
 
 export async function getPublicUserById(userId) {
   return sanitizeUser(await getUserById(userId));
+}
+
+export async function getUserConferenceSettings(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "select value from user_settings where user_id = $1 and key = $2 limit 1",
+      [userId, CONFERENCE_SETTINGS_KEY]
+    );
+    return normalizeConferenceSettings(result.rows[0]?.value || {});
+  }
+
+  const db = await readDb();
+  const setting = (db.userSettings || []).find((item) => item.userId === userId && item.key === CONFERENCE_SETTINGS_KEY);
+  return normalizeConferenceSettings(setting?.value || {});
+}
+
+export async function saveUserConferenceSettings(userId, payload = {}) {
+  await ensureStore();
+  const settings = normalizeConferenceSettings(payload);
+  const now = new Date().toISOString();
+
+  if (hasPostgres()) {
+    await query(
+      `insert into user_settings (user_id, key, value, updated_at)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, key)
+       do update set value = excluded.value, updated_at = excluded.updated_at`,
+      [userId, CONFERENCE_SETTINGS_KEY, settings, now]
+    );
+    return settings;
+  }
+
+  const db = await readDb();
+  db.userSettings = db.userSettings || [];
+  const existing = db.userSettings.find((item) => item.userId === userId && item.key === CONFERENCE_SETTINGS_KEY);
+  if (existing) {
+    existing.value = settings;
+    existing.updatedAt = now;
+  } else {
+    db.userSettings.push({ userId, key: CONFERENCE_SETTINGS_KEY, value: settings, createdAt: now, updatedAt: now });
+  }
+  await writeDb(db);
+  return settings;
 }
 
 export function sanitizeUser(user) {
@@ -1150,6 +1207,7 @@ export async function deleteUser(userId) {
   db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   db.operatorInvites = (db.operatorInvites || []).filter((invite) => invite.ownerUserId !== userId);
+  db.userSettings = (db.userSettings || []).filter((setting) => setting.userId !== userId);
   await writeDb(db);
   return { ok: true };
 }
@@ -1538,7 +1596,8 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             altura_caixa = $10,
             largura_caixa = $11,
             comprimento_caixa = $12,
-            peso_caixa = $13
+            peso_caixa = $13,
+            localizacao_estoque = $14
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1557,7 +1616,8 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.alturaCaixa || null,
         normalized.larguraCaixa || null,
         normalized.comprimentoCaixa || null,
-        normalized.pesoCaixa || null
+        normalized.pesoCaixa || null,
+        normalized.localizacaoEstoque
       ]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
@@ -2633,6 +2693,7 @@ async function ensurePgStore() {
       largura_caixa numeric,
       comprimento_caixa numeric,
       peso_caixa numeric,
+      localizacao_estoque text not null default '',
       origem text not null default 'planilha',
       created_at timestamptz not null default now()
     );
@@ -2652,6 +2713,7 @@ async function ensurePgStore() {
       largura_caixa numeric,
       comprimento_caixa numeric,
       peso_caixa numeric,
+      localizacao_estoque text not null default '',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -2702,6 +2764,15 @@ async function ensurePgStore() {
       key text primary key,
       value jsonb not null default '{}'::jsonb,
       updated_at timestamptz not null default now()
+    );
+
+    create table if not exists user_settings (
+      user_id text not null references users(id) on delete cascade,
+      key text not null,
+      value jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (user_id, key)
     );
 
     create table if not exists transfer_lots (
@@ -2834,6 +2905,7 @@ async function ensurePgStore() {
       largura_caixa numeric,
       comprimento_caixa numeric,
       peso_caixa numeric,
+      localizacao_estoque text not null default '',
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2864,6 +2936,7 @@ async function ensurePgStore() {
       largura_caixa numeric,
       comprimento_caixa numeric,
       peso_caixa numeric,
+      localizacao_estoque text not null default '',
       scope text not null default 'individual',
       alert_message text not null default '',
       double_checks jsonb not null default '[]'::jsonb,
@@ -2906,6 +2979,7 @@ async function ensurePgStore() {
     alter table products add column if not exists largura_caixa numeric;
     alter table products add column if not exists comprimento_caixa numeric;
     alter table products add column if not exists peso_caixa numeric;
+    alter table products add column if not exists localizacao_estoque text not null default '';
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
@@ -2921,10 +2995,12 @@ async function ensurePgStore() {
     alter table catalog_products add column if not exists largura_caixa numeric;
     alter table catalog_products add column if not exists comprimento_caixa numeric;
     alter table catalog_products add column if not exists peso_caixa numeric;
+    alter table catalog_products add column if not exists localizacao_estoque text not null default '';
     alter table catalog_requests add column if not exists altura_caixa numeric;
     alter table catalog_requests add column if not exists largura_caixa numeric;
     alter table catalog_requests add column if not exists comprimento_caixa numeric;
     alter table catalog_requests add column if not exists peso_caixa numeric;
+    alter table catalog_requests add column if not exists localizacao_estoque text not null default '';
     alter table triage_items add column if not exists diagnosis_photo text not null default '';
     alter table triage_items add column if not exists diagnosis_condition text not null default '';
     alter table triage_events add column if not exists diagnosis_condition text not null default '';
@@ -2943,6 +3019,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists largura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists comprimento_caixa numeric;
     alter table catalog_rejected_requests add column if not exists peso_caixa numeric;
+    alter table catalog_rejected_requests add column if not exists localizacao_estoque text not null default '';
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_items add column if not exists force_reason text not null default '';
     alter table transfer_items add column if not exists force_code text not null default '';
@@ -3042,6 +3119,11 @@ async function ensurePgStore() {
       ean,
       link,
       foto,
+      altura_caixa,
+      largura_caixa,
+      comprimento_caixa,
+      peso_caixa,
+      localizacao_estoque,
       double_checks,
       created_at,
       rejected_at
@@ -3065,6 +3147,11 @@ async function ensurePgStore() {
       cr.ean,
       cr.link,
       cr.foto,
+      cr.altura_caixa,
+      cr.largura_caixa,
+      cr.comprimento_caixa,
+      cr.peso_caixa,
+      cr.localizacao_estoque,
       cr.double_checks,
       cr.created_at,
       coalesce(cr.reviewed_at, now())
@@ -3138,7 +3225,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -3146,6 +3233,7 @@ async function readPgDb() {
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
     query("select * from bling_integrations order by updated_at asc"),
+    query("select * from user_settings order by updated_at asc"),
     query("select * from transfer_lots order by created_at asc"),
     query("select * from transfer_items order by created_at asc"),
     query("select * from transfer_forced_occurrences order by created_at asc"),
@@ -3166,6 +3254,7 @@ async function readPgDb() {
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
     blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
+    userSettings: userSettings.rows.map(userSettingFromRow),
     transferLots: transferLots.rows.map(transferLotFromRow),
     transferItems: transferItems.rows.map(transferItemFromRow),
     transferForcedOccurrences: transferForcedOccurrences.rows.map(transferForcedOccurrenceFromRow),
@@ -3193,6 +3282,7 @@ async function writePgDb(db) {
     await client.query("delete from transfer_items");
     await client.query("delete from transfer_lots");
     await client.query("delete from bling_integrations");
+    await client.query("delete from user_settings");
     await client.query("delete from labels");
     await client.query("delete from scans");
     await client.query("delete from rz_items");
@@ -3221,6 +3311,18 @@ async function writePgDb(db) {
     );
     await insertRows(
       client,
+      "user_settings",
+      ["user_id", "key", "value", "created_at", "updated_at"],
+      (db.userSettings || []).map((setting) => [
+        setting.userId,
+        setting.key,
+        setting.value || {},
+        setting.createdAt || setting.updatedAt || new Date().toISOString(),
+        setting.updatedAt || setting.createdAt || new Date().toISOString()
+      ])
+    );
+    await insertRows(
+      client,
       "lots",
       ["id", "user_id", "nome_arquivo", "percentual_arremate", "custo_medio_unitario", "tipo_custo", "percentual_custo", "fornecedor", "prefixo_sku", "proximo_sequencial_sku", "created_at"],
       (db.lots || []).map((lot) => [
@@ -3240,7 +3342,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -3259,6 +3361,7 @@ async function writePgDb(db) {
         product.larguraCaixa || null,
         product.comprimentoCaixa || null,
         product.pesoCaixa || null,
+        product.localizacaoEstoque || "",
         product.origem || "planilha",
         product.createdAt
       ])
@@ -3375,7 +3478,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -3396,6 +3499,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.larguraCaixa || null,
       product.comprimentoCaixa || null,
       product.pesoCaixa || null,
+      product.localizacaoEstoque || "",
       product.origem || "planilha",
       product.createdAt
     ])
@@ -3424,7 +3528,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -3440,6 +3544,7 @@ async function insertCatalogProductRows(client, products = []) {
       product.larguraCaixa || null,
       product.comprimentoCaixa || null,
       product.pesoCaixa || null,
+      product.localizacaoEstoque || "",
       product.createdAt,
       product.updatedAt || product.createdAt
     ])
@@ -3672,6 +3777,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "largura_caixa",
       "comprimento_caixa",
       "peso_caixa",
+      "localizacao_estoque",
       "scope",
       "alert_message",
       "double_checks",
@@ -3700,6 +3806,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.larguraCaixa || null,
       request.comprimentoCaixa || null,
       request.pesoCaixa || null,
+      request.localizacaoEstoque || "",
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -3736,6 +3843,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "largura_caixa",
       "comprimento_caixa",
       "peso_caixa",
+      "localizacao_estoque",
       "scope",
       "alert_message",
       "double_checks",
@@ -3765,6 +3873,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.larguraCaixa || null,
       request.comprimentoCaixa || null,
       request.pesoCaixa || null,
+      request.localizacaoEstoque || "",
       request.scope || "individual",
       request.alertMessage || "",
       JSON.stringify(request.doubleChecks || []),
@@ -4643,8 +4752,8 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, localizacao_estoque, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
@@ -4658,9 +4767,10 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             largura_caixa = excluded.largura_caixa,
             comprimento_caixa = excluded.comprimento_caixa,
             peso_caixa = excluded.peso_caixa,
+            localizacao_estoque = excluded.localizacao_estoque,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null, selected.localizacaoEstoque || ""]
       );
       await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -4699,6 +4809,11 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
     ean: history.ean || "",
     link: history.link || "",
     foto: history.foto || "",
+    alturaCaixa: history.alturaCaixa || "",
+    larguraCaixa: history.larguraCaixa || "",
+    comprimentoCaixa: history.comprimentoCaixa || "",
+    pesoCaixa: history.pesoCaixa || "",
+    localizacaoEstoque: history.localizacaoEstoque || "",
     origem: options.origem || "excedente_externo",
     createdAt: new Date().toISOString()
   };
@@ -4736,6 +4851,11 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     ean: history.ean || "",
     link: history.link || "",
     foto: history.foto || "",
+    alturaCaixa: history.alturaCaixa || "",
+    larguraCaixa: history.larguraCaixa || "",
+    comprimentoCaixa: history.comprimentoCaixa || "",
+    pesoCaixa: history.pesoCaixa || "",
+    localizacaoEstoque: history.localizacaoEstoque || "",
     origem: options.origem || "lote_sem_planilha",
     createdAt: new Date().toISOString()
   };
@@ -4809,7 +4929,8 @@ function productSuggestionFromProduct(product) {
     alturaCaixa: product.alturaCaixa || "",
     larguraCaixa: product.larguraCaixa || "",
     comprimentoCaixa: product.comprimentoCaixa || "",
-    pesoCaixa: product.pesoCaixa || ""
+    pesoCaixa: product.pesoCaixa || "",
+    localizacaoEstoque: product.localizacaoEstoque || ""
   };
 }
 
@@ -4831,7 +4952,8 @@ function normalizeManualProduct(input = {}, codigoMl) {
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
     comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
-    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso)
+    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso),
+    localizacaoEstoque: String(input.localizacaoEstoque ?? input.localizacao_estoque ?? input.localizacao ?? "").trim()
   };
 }
 
@@ -4853,7 +4975,8 @@ function normalizeEditableProduct(input = {}) {
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
     comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),
-    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso)
+    pesoCaixa: optionalNum(input.pesoCaixa ?? input.peso_caixa ?? input.peso),
+    localizacaoEstoque: String(input.localizacaoEstoque ?? input.localizacao_estoque ?? input.localizacao ?? "").trim()
   };
 }
 
@@ -4881,6 +5004,7 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     larguraCaixa: optionalNum(payload.larguraCaixa ?? product.larguraCaixa),
     comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? product.comprimentoCaixa),
     pesoCaixa: optionalNum(payload.pesoCaixa ?? product.pesoCaixa),
+    localizacaoEstoque: String(payload.localizacaoEstoque ?? product.localizacaoEstoque ?? "").trim(),
     scope: payload.scope || "individual",
     alertMessage: payload.alertMessage || "",
     createdAt: new Date().toISOString(),
@@ -5033,6 +5157,7 @@ function buildCatalogDoubleCheck(request) {
     larguraCaixa: request.larguraCaixa || "",
     comprimentoCaixa: request.comprimentoCaixa || "",
     pesoCaixa: request.pesoCaixa || "",
+    localizacaoEstoque: request.localizacaoEstoque || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     createdAt: request.createdAt || new Date().toISOString()
@@ -5072,6 +5197,7 @@ export function buildRejectedCatalogRequest(request, rejectedAt) {
     larguraCaixa: request.larguraCaixa || "",
     comprimentoCaixa: request.comprimentoCaixa || "",
     pesoCaixa: request.pesoCaixa || "",
+    localizacaoEstoque: request.localizacaoEstoque || "",
     scope: request.scope || "individual",
     alertMessage: request.alertMessage || "",
     doubleChecks: normalizeDoubleChecks(request.doubleChecks),
@@ -5528,6 +5654,7 @@ function productFromRow(row) {
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
+    localizacaoEstoque: row.localizacao_estoque || "",
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };
@@ -5978,6 +6105,7 @@ function catalogProductFromRow(row) {
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
+    localizacaoEstoque: row.localizacao_estoque || "",
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at || row.created_at)
   };
@@ -6006,6 +6134,7 @@ function catalogRequestFromRow(row) {
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
+    localizacaoEstoque: row.localizacao_estoque || "",
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -6039,6 +6168,7 @@ function catalogRejectedRequestFromRow(row) {
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
+    localizacaoEstoque: row.localizacao_estoque || "",
     scope: row.scope || "individual",
     alertMessage: row.alert_message || "",
     doubleChecks: parseJsonArray(row.double_checks),
@@ -6386,6 +6516,16 @@ function num(value) {
   return Number(value || 0);
 }
 
+function userSettingFromRow(row) {
+  return {
+    userId: row.user_id,
+    key: row.key,
+    value: row.value || {},
+    createdAt: iso(row.created_at || row.updated_at),
+    updatedAt: iso(row.updated_at || row.created_at)
+  };
+}
+
 function decimalMoney(value) {
   return roundMoney(parseNumber(value));
 }
@@ -6575,6 +6715,23 @@ function normalizeTriageDestination(value) {
   const destination = normalizeCode(value);
   if (!["LOJA", "VENDA_DIRETA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Venda direta, Internet ou RMA.");
   return destination;
+}
+
+function normalizeConferenceSettings(input = {}) {
+  const sourceFields = input.fields || input.conferenceRegistration?.fields || {};
+  const fields = {};
+  for (const [key, defaults] of Object.entries(CONFERENCE_FIELD_DEFAULTS)) {
+    const incoming = sourceFields[key] || {};
+    const enabled = incoming.enabled === undefined ? defaults.enabled : Boolean(incoming.enabled);
+    fields[key] = {
+      enabled,
+      required: enabled ? Boolean(incoming.required) : false
+    };
+    if (Object.prototype.hasOwnProperty.call(defaults, "printOnLabel")) {
+      fields[key].printOnLabel = enabled ? Boolean(incoming.printOnLabel) : false;
+    }
+  }
+  return { fields };
 }
 
 function normalizeTriageDiagnosisCondition(value, { allowEmpty = false } = {}) {

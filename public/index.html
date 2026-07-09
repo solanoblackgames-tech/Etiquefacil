@@ -69,6 +69,7 @@
         <aside class="profile-menu">
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
+          <button data-profile-section="conferenceSettings" type="button">Cadastro conferencia</button>
           <button data-profile-section="operators" type="button">Operadores</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
@@ -122,13 +123,11 @@
                   <span class="muted">Lote ativo</span>
                   <h2 id="diverseLotTitle"></h2>
                 </div>
-                <button type="button" id="diverseDownloadButton">Baixar Bling</button>
               </div>
               <form id="diverseRzForm" class="diverse-rz-form">
                 <span id="diverseNextRz" class="muted">Proxima RZ</span>
                 <button type="submit">Gerar RZ</button>
                 <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
-                <button type="button" id="diverseDownloadRzButton" disabled>Baixar Bling da remessa</button>
               </form>
               <div id="diverseRzList" class="diverse-rz-list"></div>
               <form id="diverseScanForm" class="search-bar">
@@ -160,6 +159,22 @@
             <button id="blingIntegrationDelete" type="button" class="danger">Remover autorizacao</button>
           </div>
           <p id="blingIntegrationStatus" class="message"></p>
+          </section>
+        </section>
+
+        <section id="profileConferenceSettings" class="settings-shell profile-section hidden">
+          <section class="entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Cadastro da conferencia</h3>
+            </div>
+            <form id="conferenceSettingsForm" class="settings-form conference-settings-form">
+              <div id="conferenceSettingsFields" class="conference-settings-list"></div>
+              <div class="settings-actions">
+                <button type="submit">Salvar configuracao</button>
+              </div>
+            </form>
+            <p id="conferenceSettingsMessage" class="message"></p>
           </section>
         </section>
 
@@ -486,6 +501,9 @@
           </label>
           <label>Peso caixa (kg)
             <input id="productEditPesoCaixa" name="pesoCaixa" inputmode="decimal" />
+          </label>
+          <label>Localizacao no estoque
+            <input id="productEditLocalizacaoEstoque" name="localizacaoEstoque" />
           </label>
           <label>Link do produto
             <input id="productEditLink" name="link" />
