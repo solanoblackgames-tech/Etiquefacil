@@ -671,8 +671,8 @@ export async function getTriageStats(userId, period = {}) {
           t.status,
           t.destination,
           t.diagnosis_condition,
-          coalesce(p.valor_unit, t.valor_unit, 0) as valor_unit,
-          coalesce(p.preco_custo, t.preco_custo, 0) as preco_custo,
+          coalesce(nullif(t.valor_unit, 0), nullif(p.valor_unit, 0), 0) as valor_unit,
+          coalesce(nullif(t.preco_custo, 0), nullif(p.preco_custo, 0), 0) as preco_custo,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -733,8 +733,8 @@ export async function getTriageStats(userId, period = {}) {
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
         item,
-        salePrice: Number(product?.valorUnit ?? item.valorUnit ?? 0),
-        costPrice: Number(product?.precoCusto ?? item.precoCusto ?? 0),
+        salePrice: triageStatMoney(item.valorUnit, product?.valorUnit),
+        costPrice: triageStatMoney(item.precoCusto, product?.precoCusto),
         user: userMap.get(responsibleUserId) || null
       };
     });
@@ -5810,8 +5810,8 @@ function buildOperationalDashboardStats(db, userId) {
   let triageDiagnosed = 0;
   for (const item of triageItems) {
     const product = findTriageStatsProduct(products, lotIds, item);
-    const value = roundMoney(Number(product?.valorUnit ?? item.valorUnit ?? 0));
-    const cost = roundMoney(Number(product?.precoCusto ?? item.precoCusto ?? 0));
+    const value = triageStatMoney(item.valorUnit, product?.valorUnit);
+    const cost = triageStatMoney(item.precoCusto, product?.precoCusto);
     const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
     const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
     row.total += 1;
@@ -6089,6 +6089,14 @@ function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
       if (sku && normalizeCode(product.sku) === sku) return true;
       return codes.some((code) => normalizeCode(product.codigoMl) === code);
     }) || null;
+}
+
+function triageStatMoney(primary, fallback) {
+  const primaryValue = Number(primary || 0);
+  if (Number.isFinite(primaryValue) && primaryValue > 0) return roundMoney(primaryValue);
+  const fallbackValue = Number(fallback || 0);
+  if (Number.isFinite(fallbackValue) && fallbackValue > 0) return roundMoney(fallbackValue);
+  return 0;
 }
 
 function catalogProductFromRow(row) {

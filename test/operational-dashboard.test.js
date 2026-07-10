@@ -61,6 +61,8 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           code: "TRIAGE-1",
           productCode: "ML1",
           sku: "SKU1",
+          valorUnit: 99,
+          precoCusto: 33,
           status: "diagnosticado",
           destination: "venda",
           diagnosisCondition: "NAO_LIGA",
@@ -98,24 +100,24 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(ana.transferReceivedCost, 10);
     assert.equal(stats.triage.total, 1);
     assert.equal(stats.triage.diagnosed, 1);
-    assert.equal(stats.triage.value, 10);
-    assert.equal(stats.triage.cost, 5);
-    assert.equal(stats.triage.diagnosedValue, 10);
-    assert.equal(stats.triage.diagnosedCost, 5);
-    assert.deepEqual(stats.triage.diagnosisConditions, [{ condition: "NAO_LIGA", total: 1, totalValue: 10, totalCost: 5 }]);
+    assert.equal(stats.triage.value, 99);
+    assert.equal(stats.triage.cost, 33);
+    assert.equal(stats.triage.diagnosedValue, 99);
+    assert.equal(stats.triage.diagnosedCost, 33);
+    assert.deepEqual(stats.triage.diagnosisConditions, [{ condition: "NAO_LIGA", total: 1, totalValue: 99, totalCost: 33 }]);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").value, 30);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").cost, 13);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").value, 20);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").cost, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 5);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 99);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 33);
     assert.equal(stats.recentTransfers[0].receivedValue, 20);
     assert.equal(stats.recentTransfers[0].receivedCost, 10);
     assert.equal(ana.triageCount, 1);
-    assert.equal(ana.triageValue, 10);
-    assert.equal(ana.triageCost, 5);
-    assert.equal(ana.totalValue, 40);
-    assert.equal(ana.totalCost, 20);
+    assert.equal(ana.triageValue, 99);
+    assert.equal(ana.triageCost, 33);
+    assert.equal(ana.totalValue, 129);
+    assert.equal(ana.totalCost, 48);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
