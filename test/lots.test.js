@@ -187,6 +187,36 @@ test("manual no-sheet products are exported as Bling excess", () => {
   );
 });
 
+test("summarizeLot preserves manual no-sheet item type", () => {
+  const lot = { id: "lot-1" };
+  const db = {
+    users: [],
+    lots: [lot],
+    products: [
+      { id: "product-1", lotId: "lot-1", valorUnit: 25, origem: "lote_sem_planilha_manual" }
+    ],
+    rzItems: [
+      {
+        id: "rz-1",
+        lotId: "lot-1",
+        productId: "product-1",
+        codigoRz: "PRI260626",
+        qtdEsperada: 2,
+        qtdConferida: 0,
+        tipoItem: "lote_sem_planilha_manual",
+        valorTotal: 50,
+        createdAt: "2026-07-10T00:00:00.000Z"
+      }
+    ],
+    scans: []
+  };
+
+  const summary = summarizeLot(db, lot, true);
+
+  assert.equal(summary.items[0].tipoItem, "lote_sem_planilha_manual");
+  assert.equal(summary.rzs[0].codigoRz, "PRI260626");
+});
+
 test("findApprovedProductHistory only returns history approved in catalog", () => {
   const db = {
     lots: [

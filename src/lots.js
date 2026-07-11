@@ -177,6 +177,7 @@ function consolidateRzItems(items) {
 
 function mergeTipoItem(first, second) {
   if (first === "excedente_externo" || second === "excedente_externo") return "excedente_externo";
+  if (first === "lote_sem_planilha_manual" || second === "lote_sem_planilha_manual") return "lote_sem_planilha_manual";
   if (first === "lote_sem_planilha" || second === "lote_sem_planilha") return "lote_sem_planilha";
   if (first === "entrada_diversos" || second === "entrada_diversos") return "entrada_diversos";
   return first || second || "esperado";
@@ -184,7 +185,7 @@ function mergeTipoItem(first, second) {
 
 function consolidatedTipoItem(item) {
   if (item.tipoItem === "excedente_externo") return "excedente_externo";
-  if (item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha") return item.tipoItem;
+  if (item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha" || item.tipoItem === "lote_sem_planilha_manual") return item.tipoItem;
   return item.qtdConferida > item.qtdEsperada ? "excedente_outro_rz" : "esperado";
 }
 

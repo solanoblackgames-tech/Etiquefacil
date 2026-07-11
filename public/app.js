@@ -37,6 +37,7 @@ const state = {
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
   selectedDiverseRz: null,
+  lotSelectionToken: 0,
   noSheetSuggestionTimer: null,
   selectedRz: null,
   scanOnly: false,
@@ -1608,7 +1609,7 @@ function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
-  document.querySelector(".sync-shortcut")?.classList.toggle("hidden", operator);
+  document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
   document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
@@ -1619,7 +1620,7 @@ function applyUserPermissions(user) {
 }
 
 function canViewTriageStats() {
-  return state.user?.role === "owner";
+  return Boolean(state.user?.triageAccess);
 }
 
 function showAuth() {
@@ -2008,6 +2009,8 @@ function operationalOperatorsMarkup(operators = []) {
     <div class="operational-dashboard-table operational-operator-table">
       <div class="operational-dashboard-row operational-dashboard-head">
         <span>${operationalOperatorSortButton("operator", "Operador")}</span>
+        <span>${operationalOperatorSortButton("todayLotSkus", "SKUs hoje")}</span>
+        <span>${operationalOperatorSortButton("todayLotValue", "Venda hoje")}</span>
         <span>${operationalOperatorSortButton("lotCheckedQty", "Qtd bipada")}</span>
         <span>${operationalOperatorSortButton("lotCheckedValue", "Venda bipada")}</span>
         <span>${operationalOperatorSortButton("lotCheckedCost", "Custo bipado")}</span>
@@ -2022,6 +2025,8 @@ function operationalOperatorsMarkup(operators = []) {
       ${sortedOperators.map((operator) => `
         <div class="operational-dashboard-row">
           <strong>${escapeHtml(operatorLabel(operator))}</strong>
+          <span>${operator.todayLotSkus || 0}<small>${operator.todayLotQty || 0} un.</small></span>
+          <span>${money(operator.todayLotValue || 0)}<small>Custo ${money(operator.todayLotCost || 0)}</small></span>
           <span>${operator.lotCheckedQty || 0}</span>
           <span>${money(operator.lotCheckedValue || 0)}</span>
           <span>${money(operator.lotCheckedCost || 0)}</span>
@@ -2144,7 +2149,7 @@ function renderOperators() {
     return acc;
   }, { activity: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
   const topOperators = [...operators]
-    .sort((a, b) => Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans) || a.name.localeCompare(b.name))
+    .sort(compareOperatorPerformance)
     .slice(0, 3);
   const leader = topOperators[0];
   const periodDays = operatorPeriodDays(filter);
@@ -2211,12 +2216,20 @@ function renderOperators() {
           <span>Senha</span>
         </div>
         ${operators
-          .sort((a, b) => Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans) || a.name.localeCompare(b.name))
+          .sort(compareOperatorPerformance)
           .map(operatorTableRow)
           .join("")}
       </div>
     </section>
   `;
+}
+
+function compareOperatorPerformance(a, b) {
+  return b.activity - a.activity
+    || b.scans - a.scans
+    || Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans)
+    || b.lotViews - a.lotViews
+    || a.name.localeCompare(b.name, "pt-BR");
 }
 
 function defaultOperatorDateFilter() {
@@ -4457,17 +4470,33 @@ async function previewLot(lotId) {
 }
 
 async function selectLot(lotId, { push = true } = {}) {
+  const selectionToken = ++state.lotSelectionToken;
   state.selectedLotId = lotId;
   state.previewLotId = null;
   state.selectedRz = null;
   setMainTab("lots", { push: false });
-  const response = await api(`/api/lots/${lotId}`);
   renderLots();
-  hideNoSheetPanel();
-  renderLotDetail(response.lot);
-  document.body.classList.add("lot-focus");
-  if (push) updateRoute(lotPath(lotId));
-  return response.lot;
+  $("#lotDetail").classList.remove("empty");
+  $("#lotDetail").innerHTML = '<p class="muted">Carregando lote...</p>';
+
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
+    if (selectionToken !== state.lotSelectionToken) return null;
+    renderLots();
+    hideNoSheetPanel();
+    renderLotDetail(response.lot);
+    document.body.classList.add("lot-focus");
+    if (push) updateRoute(lotPath(lotId));
+    return response.lot;
+  } catch (error) {
+    if (selectionToken !== state.lotSelectionToken) return null;
+    state.selectedLotId = null;
+    state.selectedRz = null;
+    renderLots();
+    $("#lotDetail").classList.add("empty");
+    $("#lotDetail").textContent = error.message;
+    return null;
+  }
 }
 
 function renderLotPreview(lot) {
@@ -4686,12 +4715,15 @@ function openNoSheetScanTab(lot, codigoRz) {
   const normalizedRz = normalizeCode(codigoRz);
   if (!normalizedRz) return;
   const opened = openScanWindow(lot.id, normalizedRz);
+  if (!opened) {
+    renderNoSheetScanPage(lot, normalizedRz);
+    updateRoute(lotRzPath(lot.id, normalizedRz));
+    return;
+  }
   const message = $("#rzSearchMessage");
   if (message) {
-    message.style.color = opened ? "#0f766e" : "";
-    message.textContent = opened
-      ? `Bipagem da remessa ${normalizedRz} aberta em uma nova guia.`
-      : "O navegador bloqueou a guia de bipagem. Permita pop-ups para o Etiquefacil.";
+    message.style.color = "#0f766e";
+    message.textContent = `Bipagem da remessa ${normalizedRz} aberta em uma nova guia.`;
   }
   const rzDetail = $("#rzDetail");
   if (rzDetail) {
@@ -4704,7 +4736,6 @@ function openNoSheetScanTab(lot, codigoRz) {
     `;
     $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, normalizedRz));
   }
-  if (!opened) alert("O navegador bloqueou a guia de bipagem. Permita pop-ups para o Etiquefacil.");
 }
 
 function openNoSheetRz(lot, codigoRz) {
@@ -4792,6 +4823,11 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const opened = openScanWindow(lot.id, codigoRz);
+  if (!opened) {
+    renderScanPage(lot, codigoRz);
+    if (push) updateRoute(lotRzPath(lot.id, codigoRz));
+    return;
+  }
   const rzDetail = $("#rzDetail");
   if (rzDetail) {
     rzDetail.innerHTML = `
@@ -4803,7 +4839,6 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
     `;
     $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, codigoRz));
   }
-  if (!opened) alert("O navegador bloqueou a janela de bipagem. Permita pop-ups para o Etiquefacil.");
   if (push) updateRoute(lotPath(lot.id));
   return;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -5745,7 +5780,7 @@ function diverseItemsTable(lot) {
 }
 
 function isNoSheetItem(item) {
-  return item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha";
+  return item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha" || item.tipoItem === "lote_sem_planilha_manual";
 }
 
 function itemCreatedAt(item) {

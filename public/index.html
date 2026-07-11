@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260703-operator-column" />
+    <link rel="stylesheet" href="/styles.css?v=20260710-operator-sort" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -53,6 +53,7 @@
           <div class="user-line">
             <span id="userName"></span>
             <button class="sync-shortcut" data-profile-section="sync" type="button">Sincronizacao</button>
+            <button class="sync-shortcut" data-profile-section="conferenceSettings" type="button">Cadastro conferencia</button>
           </div>
         </div>
         <nav class="app-nav">
@@ -69,7 +70,6 @@
         <aside class="profile-menu">
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
-          <button data-profile-section="conferenceSettings" type="button">Cadastro conferencia</button>
           <button data-profile-section="operators" type="button">Operadores</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
@@ -547,6 +547,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20260703-operator-column" type="module"></script>
+    <script src="/app.js?v=20260710-operator-sort" type="module"></script>
   </body>
 </html>

@@ -1329,8 +1329,8 @@ h3 {
 }
 
 .operational-operator-table .operational-dashboard-row {
-  grid-template-columns: minmax(160px, 1.4fr) repeat(10, minmax(92px, 0.7fr));
-  min-width: 1280px;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(12, minmax(92px, 0.7fr));
+  min-width: 1480px;
 }
 
 .operational-transfer-table .operational-dashboard-row {

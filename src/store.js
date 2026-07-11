@@ -5688,6 +5688,7 @@ function buildOperationalDashboardStats(db, userId) {
   }
 
   const operatorRows = new Map();
+  const todayLocalDay = operatorActivityLocalDay(new Date().toISOString());
   const operatorFor = (operatorId) => {
     const id = operatorId || userId;
     const user = userMap.get(id) || null;
@@ -5701,6 +5702,10 @@ function buildOperationalDashboardStats(db, userId) {
       lotQty: 0,
       lotValue: 0,
       lotCost: 0,
+      todayLotSkus: 0,
+      todayLotQty: 0,
+      todayLotValue: 0,
+      todayLotCost: 0,
       lotCheckedQty: 0,
       lotCheckedValue: 0,
       lotCheckedCost: 0,
@@ -5755,6 +5760,12 @@ function buildOperationalDashboardStats(db, userId) {
     row.lotQty += qty;
     row.lotValue = roundMoney(row.lotValue + value);
     row.lotCost = roundMoney(row.lotCost + cost);
+    if (operatorActivityLocalDay(product.createdAt) === todayLocalDay) {
+      row.todayLotSkus += 1;
+      row.todayLotQty += qty;
+      row.todayLotValue = roundMoney(row.todayLotValue + value);
+      row.todayLotCost = roundMoney(row.todayLotCost + cost);
+    }
     row.lotCheckedQty += Math.min(qty, checked);
     row.lotCheckedValue = roundMoney(row.lotCheckedValue + checkedValue);
     row.lotCheckedCost = roundMoney(row.lotCheckedCost + checkedCost);

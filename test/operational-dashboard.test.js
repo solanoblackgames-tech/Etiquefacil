@@ -17,6 +17,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-operational-dashboard`;
     const { getOperationalDashboardStats, writeDb } = await import(storeUrl.href);
+    const today = new Date().toISOString();
 
     await writeDb({
       users: [
@@ -27,7 +28,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
         { id: "lot-1", userId: "owner-1", nomeArquivo: "Lote 1", fornecedor: "FORN", prefixoSku: "SKU", percentualArremate: 0, proximoSequencialSku: 3, createdAt: "2026-07-02T00:00:00.000Z" }
       ],
       products: [
-        { id: "product-1", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML1", sku: "SKU1", descricao: "Produto 1", valorUnit: 10, precoCusto: 5, qtdTotal: 2, origem: "planilha", createdAt: "2026-07-02T00:00:00.000Z" },
+        { id: "product-1", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML1", sku: "SKU1", descricao: "Produto 1", valorUnit: 10, precoCusto: 5, qtdTotal: 2, origem: "planilha", createdAt: today },
         { id: "product-2", lotId: "lot-1", createdByUserId: "owner-1", operatorUserId: null, codigoMl: "ML2", sku: "SKU2", descricao: "Produto 2", valorUnit: 20, precoCusto: 8, qtdTotal: 1, origem: "planilha", createdAt: "2026-07-02T00:01:00.000Z" }
       ],
       rzItems: [
@@ -91,6 +92,10 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(stats.transfers.pending, 1);
     assert.equal(ana.lotValue, 20);
     assert.equal(ana.lotCost, 10);
+    assert.equal(ana.todayLotSkus, 1);
+    assert.equal(ana.todayLotQty, 2);
+    assert.equal(ana.todayLotValue, 20);
+    assert.equal(ana.todayLotCost, 10);
     assert.equal(ana.lotCheckedQty, 1);
     assert.equal(ana.lotCheckedValue, 10);
     assert.equal(ana.lotCheckedCost, 5);
