@@ -1023,10 +1023,12 @@ function setDiverseRz(codigoRz) {
 }
 
 function renderDiverseLot(lot) {
+  const previousDiverseLotId = state.selectedDiverseLotId;
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
   const rzs = diverseRzs(lot);
-  if (state.selectedDiverseRz && rzs.length && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
+  const activeBelongsToThisLot = previousDiverseLotId === lot.id || !previousDiverseLotId;
+  if (state.selectedDiverseRz && !activeBelongsToThisLot && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
   if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || nextNoSheetRzCode(lot);
   mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
@@ -4771,7 +4773,14 @@ function openRzFromSearch(lot) {
 
 function createLotDetailNoSheetRz(event, lot) {
   event.preventDefault();
-  openNoSheetScanTab(lot, nextNoSheetRzCode(lot));
+  const codigoRz = nextNoSheetRzCode(lot);
+  const normalizedRz = normalizeCode(codigoRz);
+  state.selectedDiverseRz = normalizedRz;
+  state.selectedDiverseLotId = lot.id;
+  state.selectedDiverseLot = lot;
+  const activeRz = $("#lotDiverseActiveRz");
+  if (activeRz) activeRz.textContent = `Remessa ativa: ${normalizedRz}`;
+  openNoSheetScanTab(lot, codigoRz);
 }
 
 function openNoSheetScanTab(lot, codigoRz) {
