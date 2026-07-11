@@ -1599,7 +1599,7 @@ async function showApp(user) {
     return;
   }
   await loadLots();
-  await loadTransferLots();
+  if (user.transferAccess) await loadTransferLots();
   if (user.triageAccess) await loadTriageItems();
   await applyRouteFromLocation({ replace: true });
   schedulePrimaryInputFocus();
@@ -1608,6 +1608,7 @@ async function showApp(user) {
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
+  document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
@@ -1615,7 +1616,7 @@ function applyUserPermissions(user) {
   if (!canViewTriageStats()) {
     document.querySelector("#profileTriageStats")?.classList.add("hidden");
   }
-  document.querySelector(".transfer-create-panel")?.classList.remove("hidden");
+  document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
 }
 
@@ -2213,6 +2214,7 @@ function renderOperators() {
           <span>Media/dia</span>
           <span>Ultima ativ.</span>
           <span>Triagem</span>
+          <span>Transferencia</span>
           <span>Senha</span>
         </div>
         ${operators
@@ -2303,6 +2305,34 @@ function handleOperatorFilterChange(event) {
 }
 
 function handleOperatorFilterClick(event) {
+  const transferButton = event.target.closest("[data-toggle-operator-transfer]");
+  if (transferButton) {
+    transferButton.disabled = true;
+    $("#operatorMessage").textContent = "";
+    try {
+      api(`/api/operators/${encodeURIComponent(transferButton.dataset.toggleOperatorTransfer)}/transfer-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transferAccess: transferButton.dataset.transferAccess === "true" })
+      })
+        .then(async () => {
+          $("#operatorMessage").style.color = "#0f766e";
+          $("#operatorMessage").textContent = "Permissao de transferencia do operador atualizada.";
+          await loadOperators();
+        })
+        .catch((error) => {
+          $("#operatorMessage").style.color = "";
+          $("#operatorMessage").textContent = error.message;
+        })
+        .finally(() => {
+          transferButton.disabled = false;
+        });
+    } catch {
+      transferButton.disabled = false;
+    }
+    return;
+  }
+
   const triageButton = event.target.closest("[data-toggle-operator-triage]");
   if (triageButton) {
     triageButton.disabled = true;
@@ -2376,6 +2406,7 @@ function operatorViewModel(operator) {
     email: operator.email || "",
     operatorCode: operator.operatorCode || "",
     triageAccess: Boolean(operator.triageAccess),
+    transferAccess: Boolean(operator.transferAccess),
     logins,
     searches,
     scans,
@@ -2429,7 +2460,8 @@ function operatorTableRow(operator, index) {
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
-      ${state.user?.triageAccess ? `<button type="button" class="ghost" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Liberado" : "Bloqueado"}</button>` : "<span>Sem acesso</span>"}
+      ${state.user?.triageAccess ? `<button type="button" class="ghost" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">Triagem ${operator.triageAccess ? "liberada" : "bloqueada"}</button>` : "<span>Triagem sem acesso</span>"}
+      ${state.user?.transferAccess ? `<button type="button" class="ghost" data-toggle-operator-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">Transferencia ${operator.transferAccess ? "liberada" : "bloqueada"}</button>` : "<span>Transferencia sem acesso</span>"}
       <form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
@@ -2587,6 +2619,12 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
+  if (route.view === "transfers" && !state.user?.transferAccess) {
+    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    return;
+  }
+
   if (route.view === "triage" && !state.user?.triageAccess) {
     setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
     if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
@@ -2656,6 +2694,8 @@ function updateRoute(path, { replace = false } = {}) {
 function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
   let target = tab || "profile";
   if (state.user?.role === "operator" && target === "profile") target = "lots";
+  if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
+  if (target === "triage" && !state.user?.triageAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {
     state.selectedLotId = null;
     state.previewLotId = null;
@@ -3191,6 +3231,7 @@ function adminUserRow(user) {
             <button type="submit">Salvar senha</button>
           </form>
           <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
+          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
       </div>
@@ -3225,6 +3266,7 @@ function adminOperatorRow(operator) {
           <button type="submit">Salvar senha</button>
         </form>
         <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
+        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
     </div>
@@ -3266,6 +3308,27 @@ async function handleAdminPasswordSubmit(event) {
 }
 
 async function handleAdminUsersClick(event) {
+  const transferButton = event.target.closest("[data-toggle-admin-transfer]");
+  if (transferButton) {
+    transferButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(transferButton.dataset.toggleAdminTransfer)}/transfer-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transferAccess: transferButton.dataset.transferAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de transferencia atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      transferButton.disabled = false;
+    }
+    return;
+  }
+
   const triageButton = event.target.closest("[data-toggle-admin-triage]");
   if (triageButton) {
     triageButton.disabled = true;

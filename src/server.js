@@ -95,10 +95,12 @@ import {
   updateNoSheetSuggestions,
   updateLotProduct,
   updateOperatorTriageAccess,
+  updateOperatorTransferAccess,
   updateTriageDiagnosis,
   updateTriageItemDetails,
   updateProductRegistrationFromTriage,
   updateUserTriageAccessForAdmin,
+  updateUserTransferAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
@@ -272,6 +274,14 @@ app.patch("/api/admin/users/:userId/triage-access", requireAdmin, async (req, re
   }
 });
 
+app.patch("/api/admin/users/:userId/transfer-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserTransferAccessForAdmin(req.params.userId, Boolean(req.body?.transferAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     res.json(await deleteUser(req.params.userId));
@@ -310,6 +320,18 @@ app.patch("/api/operators/:operatorUserId/triage-access", requireAuth, requireOw
       ownerUserId: workspaceUserId(req),
       operatorUserId: req.params.operatorUserId,
       triageAccess: Boolean(req.body?.triageAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/transfer-access", requireAuth, requireOwner, requireTransferAccess, async (req, res) => {
+  try {
+    res.json(await updateOperatorTransferAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      transferAccess: Boolean(req.body?.transferAccess)
     }));
   } catch (error) {
     sendError(res, error);
@@ -499,7 +521,7 @@ app.post("/api/operator-invites/:token/accept", async (req, res) => {
   }
 });
 
-app.get("/api/bling/deposits", requireAuth, async (req, res) => {
+app.get("/api/bling/deposits", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
     const integration = await getRequiredBlingCredentials(userId);
@@ -513,12 +535,12 @@ app.get("/api/bling/deposits", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/transfer-lots", requireAuth, async (req, res) => {
+app.get("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, res) => {
   await recordOperatorActivity(req.session.user, "view_transfer_lots");
   res.json({ lots: await listTransferLots(workspaceUserId(req)) });
 });
 
-app.post("/api/transfer-lots", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await createTransferLot({
       userId: workspaceUserId(req),
@@ -534,7 +556,7 @@ app.post("/api/transfer-lots", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/transfer-lots/:transferLotId", requireAuth, async (req, res) => {
+app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferAccess, async (req, res) => {
   const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
   if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
   res.json({ lot });
@@ -546,7 +568,7 @@ app.get("/api/public/transfer-lots/:transferLotId", async (req, res) => {
   res.json({ lot });
 });
 
-app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "scan_transfer", { transferLotId: req.params.transferLotId, code });
@@ -560,7 +582,7 @@ app.post("/api/transfer-lots/:transferLotId/scan", requireAuth, async (req, res)
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/release", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/release", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const result = await releaseTransferLotForStore({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId });
     await recordOperatorActivity(req.session.user, "release_transfer_lot", { transferLotId: req.params.transferLotId });
@@ -570,7 +592,7 @@ app.post("/api/transfer-lots/:transferLotId/release", requireAuth, async (req, r
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code });
@@ -580,7 +602,7 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, async (r
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const payload = {
       userId: workspaceUserId(req),
@@ -635,7 +657,7 @@ app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", async (r
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     res.json(await decrementTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId }));
   } catch (error) {
@@ -643,7 +665,7 @@ app.post("/api/transfer-lots/:transferLotId/items/:itemId/decrement", requireAut
   }
 });
 
-app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, async (req, res) => {
+app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const reason = String(req.body?.reason || req.body?.justificativa || "").trim();
     const result = await deleteTransferLotItem({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, itemId: req.params.itemId });
@@ -676,7 +698,7 @@ app.post("/api/public/transfer-lots/:transferLotId/divergence-reports", async (r
   }
 });
 
-app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, async (req, res) => {
+app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
@@ -689,7 +711,7 @@ app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, async (req, res
   }
 });
 
-app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, async (req, res) => {
+app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
@@ -707,7 +729,7 @@ app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, async (req, res)
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
     const lot = await getTransferLotDetail(userId, req.params.transferLotId);
@@ -1441,6 +1463,17 @@ async function requireTriageAccess(req, res, next) {
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.triageAccess) return next();
     return res.status(403).json({ error: "Modulo de triagem nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+async function requireTransferAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.transferAccess) return next();
+    return res.status(403).json({ error: "Modulo de transferencia nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
   }

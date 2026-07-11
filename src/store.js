@@ -189,6 +189,7 @@ export async function createUser({ name, email, password, parentUserId = null })
     role: owner ? "operator" : "owner",
     operatorCode,
     triageAccess: false,
+    transferAccess: false,
     name: name.trim(),
     email: normalizedEmail,
     passwordHash: await bcrypt.hash(password, 10),
@@ -198,9 +199,9 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -368,6 +369,7 @@ export function sanitizeUser(user) {
     email: user.email
   };
   if (user.triageAccess) sanitized.triageAccess = true;
+  if (user.transferAccess) sanitized.transferAccess = true;
   return sanitized;
 }
 
@@ -387,6 +389,22 @@ export async function updateUserTriageAccessForAdmin(userId, triageAccess) {
   return { user: sanitizeUser(user) };
 }
 
+export async function updateUserTransferAccessForAdmin(userId, transferAccess) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("update users set transfer_access = $2 where id = $1 returning *", [userId, Boolean(transferAccess)]);
+    if (!result.rows.length) throw notFound("Usuario nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuario nao encontrado.");
+  user.transferAccess = Boolean(transferAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
 export async function updateOperatorTriageAccess({ ownerUserId, operatorUserId, triageAccess }) {
   await ensureStore();
   if (hasPostgres()) {
@@ -402,6 +420,25 @@ export async function updateOperatorTriageAccess({ ownerUserId, operatorUserId, 
   const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
   if (!user) throw notFound("Operador nao encontrado.");
   user.triageAccess = Boolean(triageAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateOperatorTransferAccess({ ownerUserId, operatorUserId, transferAccess }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update users set transfer_access = $3 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, Boolean(transferAccess)]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!user) throw notFound("Operador nao encontrado.");
+  user.transferAccess = Boolean(transferAccess);
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -534,6 +571,7 @@ export async function listUsersForAdmin() {
           u.role,
           u.operator_code,
           u.triage_access,
+          u.transfer_access,
           u.name,
           u.email,
           u.created_at,
@@ -554,6 +592,7 @@ export async function listUsersForAdmin() {
       role: row.role || (row.parent_user_id ? "operator" : "owner"),
       operatorCode: row.operator_code ? Number(row.operator_code) : null,
       triageAccess: Boolean(row.triage_access),
+      transferAccess: Boolean(row.transfer_access),
       name: row.name,
       email: row.email,
       createdAt: iso(row.created_at),
@@ -680,6 +719,7 @@ export async function getTriageStats(userId, period = {}) {
           u.role as user__role,
           u.operator_code as user__operator_code,
           u.triage_access as user__triage_access,
+          u.transfer_access as user__transfer_access,
           u.name as user__name,
           u.email as user__email,
           u.password_hash as user__password_hash,
@@ -2654,6 +2694,7 @@ async function ensurePgStore() {
       role text not null default 'owner',
       operator_code integer,
       triage_access boolean not null default false,
+      transfer_access boolean not null default false,
       name text not null,
       email text not null unique,
       password_hash text not null,
@@ -2952,6 +2993,7 @@ async function ensurePgStore() {
     alter table users add column if not exists role text not null default 'owner';
     alter table users add column if not exists operator_code integer;
     alter table users add column if not exists triage_access boolean not null default false;
+    alter table users add column if not exists transfer_access boolean not null default false;
     update users set tenant_id = id where tenant_id is null or tenant_id = '';
     update users set tenant_name = name where tenant_name is null or tenant_name = '';
     update users set role = 'operator' where parent_user_id is not null and (role is null or role = 'owner');
@@ -3296,7 +3338,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
@@ -3305,6 +3347,7 @@ async function writePgDb(db) {
         user.role || (user.parentUserId ? "operator" : "owner"),
         optionalInt(user.operatorCode) || null,
         Boolean(user.triageAccess),
+        Boolean(user.transferAccess),
         user.name,
         user.email,
         user.passwordHash,
@@ -5532,6 +5575,7 @@ function userFromRow(row) {
     role: row.role || (row.parent_user_id ? "operator" : "owner"),
     operatorCode: row.operator_code ? Number(row.operator_code) : null,
     triageAccess: Boolean(row.triage_access),
+    transferAccess: Boolean(row.transfer_access),
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
@@ -5594,6 +5638,7 @@ function userFromPrefixedRow(row, prefix) {
     role: row[`${prefix}role`] || (row[`${prefix}parent_user_id`] ? "operator" : "owner"),
     operatorCode: row[`${prefix}operator_code`] ? Number(row[`${prefix}operator_code`]) : null,
     triageAccess: Boolean(row[`${prefix}triage_access`]),
+    transferAccess: Boolean(row[`${prefix}transfer_access`]),
     name: row[`${prefix}name`],
     email: row[`${prefix}email`],
     passwordHash: row[`${prefix}password_hash`],
@@ -6652,6 +6697,10 @@ function normalizeDbTenants(db) {
     }
     if (user.triageAccess === undefined) {
       user.triageAccess = false;
+      changed = true;
+    }
+    if (user.transferAccess === undefined) {
+      user.transferAccess = false;
       changed = true;
     }
   }
