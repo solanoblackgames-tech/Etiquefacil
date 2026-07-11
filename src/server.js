@@ -887,7 +887,7 @@ app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   }
 });
 
-app.post("/api/diverse-lots", requireAuth, async (req, res) => {
+app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
   try {
     const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();

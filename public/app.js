@@ -4486,7 +4486,7 @@ function clearLotDetail() {
   document.body.classList.remove("lot-focus");
   state.previewLotId = null;
   $("#lotDetail").classList.add("empty");
-  $("#lotDetail").innerHTML = emptyLotDetailMarkup();
+  $("#lotDetail").innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
   hideNoSheetPanel();
 }
 
@@ -5564,6 +5564,18 @@ function labelMarkup(product, meta = null) {
       <strong class="label-price">${escapeHtml(price)}</strong>
       <strong class="label-note">${escapeHtml(noteText)}</strong>
       <span class="label-footer">${escapeHtml(footer)}</span>
+    </section>
+  `;
+}
+
+function operatorLotDetailMarkup() {
+  return `
+    <section class="empty-lot-start">
+      <div>
+        <span class="muted">Conferencia</span>
+        <h2>Selecione um lote</h2>
+        <p>Use os lotes liberados pelo usuario principal para conferir as RZs.</p>
+      </div>
     </section>
   `;
 }
