@@ -432,15 +432,19 @@ test("no-sheet lot suggestions keep suggested sale price", async () => {
       averageCost: 10,
       suggestions: [
         { descricao: "Kit vestido infantil", valorUnit: "129,90" },
-        { descricao: "Sapato social", preco: "89.50" }
+        { descricao: "Sapato social", maiorPreco: "89.50" }
       ]
     });
 
     const result = await suggestNoSheetProducts({ userId: "user-1", lotId: lot.id, query: "vestido" });
+    const alternateResult = await suggestNoSheetProducts({ userId: "user-1", lotId: lot.id, query: "sapato" });
 
     assert.equal(result.source, "lista_lote");
     assert.deepEqual(result.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit]), [
       ["Kit vestido infantil", 129.9]
+    ]);
+    assert.deepEqual(alternateResult.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit]), [
+      ["Sapato social", 89.5]
     ]);
   } finally {
     process.chdir(originalCwd);

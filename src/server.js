@@ -927,6 +927,9 @@ app.post("/api/lots/:lotId/no-sheet-suggestions", requireAuth, upload.single("fi
   try {
     const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
     if (!suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use colunas descricao e preco, ou linhas Produto; 129,90.");
+    if (req.file && !suggestions.some((suggestion) => Number(suggestion.valorUnit || 0) > 0)) {
+      throw new Error("A planilha foi lida, mas nenhum preco foi encontrado. Use uma coluna como Maior Preco, Preco ou Valor.");
+    }
     res.json(await updateNoSheetSuggestions({ userId: workspaceUserId(req), lotId: req.params.lotId, suggestions }));
   } catch (error) {
     sendError(res, error);
