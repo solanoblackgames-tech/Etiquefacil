@@ -552,7 +552,7 @@ function renderManualDescriptionSuggestions(suggestions) {
     return;
   }
   menu.innerHTML = suggestions.map((suggestion, index) => `
-    <button type="button" data-manual-description-suggestion="${index}">
+    <button type="button" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
       <strong>${escapeHtml(suggestion.descricao)}</strong>
       <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
     </button>
@@ -570,7 +570,17 @@ function hideManualDescriptionSuggestions() {
 }
 
 function suggestionPriceValue(suggestion) {
-  return parseMoneyInput(suggestion?.valorUnit ?? suggestion?.valor_unit ?? suggestion?.preco ?? suggestion?.precoSugerido ?? suggestion?.preco_sugerido ?? suggestion?.valorSugerido ?? suggestion?.valor_sugerido ?? suggestion?.price ?? suggestion?.valor);
+  return parseMoneyInput(manualSuggestionPriceText(suggestion));
+}
+
+function manualSuggestionPriceText(suggestion) {
+  return suggestion?.valorUnit ?? suggestion?.valor_unit ?? suggestion?.preco ?? suggestion?.precoSugerido ?? suggestion?.preco_sugerido ?? suggestion?.valorSugerido ?? suggestion?.valor_sugerido ?? suggestion?.price ?? suggestion?.valor ?? "";
+}
+
+function findNoSheetSuggestionByDescription(description) {
+  const key = normalizeSearchText(description);
+  if (!key) return null;
+  return (state.selectedDiverseLot?.noSheetSuggestions || []).find((suggestion) => normalizeSearchText(suggestion.descricao) === key) || null;
 }
 
 async function uploadNoSheetSuggestions(event) {
@@ -612,7 +622,8 @@ async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
     }
     if (status) {
       status.style.color = "#0f766e";
-      status.textContent = `Lista ativa: ${response.suggestions.length} sugestao${response.suggestions.length === 1 ? "" : "es"} carregada${response.suggestions.length === 1 ? "" : "s"}.`;
+      const pricedCount = response.suggestions.filter((suggestion) => suggestionPriceValue(suggestion) > 0).length;
+      status.textContent = `Lista ativa: ${response.suggestions.length} sugestao${response.suggestions.length === 1 ? "" : "es"} carregada${response.suggestions.length === 1 ? "" : "s"} (${pricedCount} com preco).`;
     }
     if (state.selectedDiverseLotId === lotId) renderDiverseLot(response.lot);
     await refreshLotsList(lotId);
@@ -794,6 +805,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       logisticsFieldsWrap.innerHTML = "";
       form.onsubmit = null;
       description.oninput = null;
+      descriptionSuggestions.onpointerdown = null;
       descriptionSuggestions.onclick = null;
       ean.onkeydown = null;
       cancel.onclick = null;
@@ -818,6 +830,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     if (localizacaoEstoque) localizacaoEstoque.value = initialValues.localizacaoEstoque || "";
     link.value = initialValues.link || "";
     photo.value = initialValues.foto || "";
+    error.style.color = "";
     error.textContent = "";
     modal.classList.remove("hidden");
 
@@ -837,14 +850,21 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       }, 220);
     };
 
-    descriptionSuggestions.onclick = (event) => {
-      const button = event.target.closest("[data-manual-description-suggestion]");
+    const applySelectedDescriptionSuggestion = (button) => {
       if (!button) return;
       const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
       if (!suggestion) return;
       description.value = suggestion.descricao || "";
-      const suggestedPrice = suggestionPriceValue(suggestion);
-      if (Number.isFinite(suggestedPrice) && suggestedPrice > 0) price.value = String(suggestedPrice).replace(".", ",");
+      const lotSuggestion = findNoSheetSuggestionByDescription(description.value);
+      const suggestedPrice = parseMoneyInput(button.dataset.suggestedPrice || manualSuggestionPriceText(suggestion) || manualSuggestionPriceText(lotSuggestion));
+      if (Number.isFinite(suggestedPrice) && suggestedPrice > 0) {
+        price.value = String(suggestedPrice).replace(".", ",");
+        error.style.color = "#0f766e";
+        error.textContent = `Preco sugerido aplicado: ${money(suggestedPrice)}.`;
+      } else {
+        error.style.color = "";
+        error.textContent = "Esta sugestao nao tem preco salvo. Suba novamente a lista com a coluna de preco.";
+      }
       if (suggestion.source !== "lista_lote") {
         if (suggestion.ean) ean.value = suggestion.ean;
         if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;
@@ -858,11 +878,25 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         if (suggestion.foto) photo.value = suggestion.foto;
       }
       hideManualDescriptionSuggestions();
-      price.focus();
+      if (price.value) price.focus();
+    };
+
+    descriptionSuggestions.onpointerdown = (event) => {
+      const button = event.target.closest("[data-manual-description-suggestion]");
+      if (!button) return;
+      event.preventDefault();
+      applySelectedDescriptionSuggestion(button);
+    };
+
+    descriptionSuggestions.onclick = (event) => {
+      const button = event.target.closest("[data-manual-description-suggestion]");
+      if (!button) return;
+      applySelectedDescriptionSuggestion(button);
     };
 
     form.onsubmit = (event) => {
       event.preventDefault();
+      error.style.color = "";
       const descricao = description.value.trim();
       const valorUnit = parseMoneyInput(price.value);
       if (!descricao) {
@@ -1748,7 +1782,8 @@ function noSheetSuggestionUploadMarkup(lot, { includeHelp = true } = {}) {
 function noSheetSuggestionStatusText(lot) {
   const count = Number(lot?.noSheetSuggestions?.length || 0);
   if (!count) return "Lista inativa: nenhuma sugestao carregada ainda.";
-  return `Lista ativa: ${count} sugestao${count === 1 ? "" : "es"} carregada${count === 1 ? "" : "s"}.`;
+  const pricedCount = (lot?.noSheetSuggestions || []).filter((suggestion) => suggestionPriceValue(suggestion) > 0).length;
+  return `Lista ativa: ${count} sugestao${count === 1 ? "" : "es"} carregada${count === 1 ? "" : "s"} (${pricedCount} com preco).`;
 }
 
 function renderConferenceSettings() {
