@@ -2520,6 +2520,31 @@ h3 {
   display: none !important;
 }
 
+.suggestion-menu-header {
+  align-items: center;
+  background: #f7faf8;
+  border-bottom: 1px solid #dce7e1;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.suggestion-menu-header button {
+  background: #e6ecef;
+  color: var(--ink);
+  min-height: 30px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.suggestion-menu-header button:hover {
+  background: #d8e2e6;
+}
+
 .suggestion-menu [data-manual-description-suggestion] {
   background: #fff;
   border-bottom: 1px solid #e7eee9;

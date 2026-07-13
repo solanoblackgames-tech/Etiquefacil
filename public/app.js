@@ -555,12 +555,18 @@ function renderManualDescriptionSuggestions(suggestions) {
     hideManualDescriptionSuggestions();
     return;
   }
-  menu.innerHTML = suggestions.map((suggestion, index) => `
-    <div role="button" tabindex="0" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
-      <strong>${escapeHtml(suggestion.descricao)}</strong>
-      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
+  menu.innerHTML = `
+    <div class="suggestion-menu-header">
+      <strong>Sugestoes da lista</strong>
+      <button type="button" data-manual-description-suggestion-close aria-label="Fechar sugestoes">X</button>
     </div>
-  `).join("");
+    ${suggestions.map((suggestion, index) => `
+      <div role="button" tabindex="0" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
+        <strong>${escapeHtml(suggestion.descricao)}</strong>
+        <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
+      </div>
+    `).join("")}
+  `;
   menu._suggestions = suggestions;
   menu.style.display = "";
   menu.classList.remove("hidden");
@@ -899,6 +905,15 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     };
 
     const handleDescriptionSuggestionPick = (event) => {
+      if (event.target.closest("[data-manual-description-suggestion-close]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.clearTimeout(state.noSheetSuggestionTimer);
+        state.manualSuggestionSuppressUntil = Date.now() + 1200;
+        hideManualDescriptionSuggestions();
+        description.focus();
+        return;
+      }
       const button = event.target.closest("[data-manual-description-suggestion]");
       if (!button) return;
       event.preventDefault();
