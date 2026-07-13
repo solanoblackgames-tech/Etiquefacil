@@ -2067,10 +2067,11 @@ function parseNoSheetSuggestionFile(file) {
 function parseNoSheetSuggestionRows(rows) {
   const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
   if (!usefulRows.length) return [];
-  const header = usefulRows[0].map((cell) => normalizeHeader(cell));
+  const headerIndex = usefulRows.findIndex((row, index) => index < 10 && findNoSheetNameColumn(row.map((cell) => normalizeHeader(cell))) >= 0);
+  const header = headerIndex >= 0 ? usefulRows[headerIndex].map((cell) => normalizeHeader(cell)) : usefulRows[0].map((cell) => normalizeHeader(cell));
   const priceColumn = header.findIndex((name) => ["preco", "valor", "venda", "valor unitario", "valorunitario", "valorunit", "preco de venda", "precodevenda", "precovenda", "preco sugerido", "precosugerido", "valor sugerido", "valorsugerido"].includes(name));
-  const nameColumn = header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
-  const start = nameColumn >= 0 ? 1 : 0;
+  const nameColumn = findNoSheetNameColumn(header);
+  const start = headerIndex >= 0 ? headerIndex + 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
   return usefulRows.slice(start)
     .map((row) => buildNoSheetSuggestion(row[column], noSheetSuggestionPriceCell(row, column, priceColumn)))
@@ -2079,8 +2080,21 @@ function parseNoSheetSuggestionRows(rows) {
 
 function noSheetSuggestionPriceCell(row, nameColumn, priceColumn) {
   if (priceColumn >= 0) return row[priceColumn];
-  const nextColumn = nameColumn + 1;
-  return nextColumn < row.length ? row[nextColumn] : "";
+  return row.slice(nameColumn + 1).find((cell) => looksLikeMoney(cell)) || "";
+}
+
+function findNoSheetNameColumn(header) {
+  return header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
+}
+
+function looksLikeMoney(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (typeof value === "number") return value > 0;
+  if (!/\d/.test(text)) return false;
+  if (/^\d{8,}$/.test(text.replace(/\D/g, ""))) return false;
+  const parsed = parseNumber(text);
+  return Number.isFinite(parsed) && parsed > 0;
 }
 
 function parseNoSheetSuggestions(value) {
@@ -2090,6 +2104,7 @@ function parseNoSheetSuggestions(value) {
   return text
     .split(/\r?\n/)
     .map(parseNoSheetSuggestionLine)
+    .filter((suggestion) => normalizeHeader(suggestion.descricao) !== "descricao")
     .filter((suggestion) => suggestion.descricao);
 }
 
