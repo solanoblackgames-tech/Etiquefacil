@@ -611,6 +611,30 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.operator-row button.access-toggle {
+  border: 1px solid transparent;
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.08);
+  color: #fff;
+}
+
+.operator-row button.access-toggle.is-enabled {
+  background: #15803d;
+  border-color: #166534;
+}
+
+.operator-row button.access-toggle.is-enabled:hover:not(:disabled) {
+  background: #166534;
+}
+
+.operator-row button.access-toggle.is-disabled {
+  background: #dc2626;
+  border-color: #b91c1c;
+}
+
+.operator-row button.access-toggle.is-disabled:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
 .operator-password-form {
   align-items: center;
   display: grid;

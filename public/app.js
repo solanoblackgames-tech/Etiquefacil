@@ -2462,8 +2462,8 @@ function operatorTableRow(operator, index) {
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
-      ${state.user?.triageAccess ? `<button type="button" class="ghost" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">Triagem ${operator.triageAccess ? "liberada" : "bloqueada"}</button>` : "<span>Triagem sem acesso</span>"}
-      ${state.user?.transferAccess ? `<button type="button" class="ghost" data-toggle-operator-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">Transferencia ${operator.transferAccess ? "liberada" : "bloqueada"}</button>` : "<span>Transferencia sem acesso</span>"}
+      ${state.user?.triageAccess ? `<button type="button" class="ghost access-toggle ${operator.triageAccess ? "is-enabled" : "is-disabled"}" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">Triagem ${operator.triageAccess ? "liberada" : "bloqueada"}</button>` : "<span>Triagem sem acesso</span>"}
+      ${state.user?.transferAccess ? `<button type="button" class="ghost access-toggle ${operator.transferAccess ? "is-enabled" : "is-disabled"}" data-toggle-operator-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">Transferencia ${operator.transferAccess ? "liberada" : "bloqueada"}</button>` : "<span>Transferencia sem acesso</span>"}
       <form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
