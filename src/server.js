@@ -2069,7 +2069,7 @@ function parseNoSheetSuggestionRows(rows) {
   if (!usefulRows.length) return [];
   const headerIndex = usefulRows.findIndex((row, index) => index < 10 && findNoSheetNameColumn(row.map((cell) => normalizeHeader(cell))) >= 0);
   const header = headerIndex >= 0 ? usefulRows[headerIndex].map((cell) => normalizeHeader(cell)) : usefulRows[0].map((cell) => normalizeHeader(cell));
-  const priceColumn = header.findIndex((name) => ["preco", "valor", "venda", "valor unitario", "valorunitario", "valorunit", "preco de venda", "precodevenda", "precovenda", "preco sugerido", "precosugerido", "valor sugerido", "valorsugerido"].includes(name));
+  const priceColumn = header.findIndex(isNoSheetPriceColumn);
   const nameColumn = findNoSheetNameColumn(header);
   const start = headerIndex >= 0 ? headerIndex + 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
@@ -2084,7 +2084,13 @@ function noSheetSuggestionPriceCell(row, nameColumn, priceColumn) {
 }
 
 function findNoSheetNameColumn(header) {
-  return header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
+  return header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name) || name.includes("produto") || name.includes("descricao"));
+}
+
+function isNoSheetPriceColumn(name) {
+  const compact = String(name || "").replace(/[^a-z0-9]/g, "");
+  if (["preco", "valor", "venda", "valorunitario", "valorunit", "precodevenda", "precovenda", "precosugerido", "valorsugerido", "maiorpreco"].includes(compact)) return true;
+  return compact.includes("preco") || compact.includes("valor") || compact.includes("venda");
 }
 
 function looksLikeMoney(value) {
