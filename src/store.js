@@ -4941,10 +4941,13 @@ function normalizeNoSheetSuggestions(input) {
     const key = normalizeSearchText(descricao);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    suggestions.push({
+    const suggestion = {
       id: String(item?.id || key).slice(0, 120),
       descricao
-    });
+    };
+    const valorUnit = decimalMoney(item?.valorUnit ?? item?.valor_unit ?? item?.preco ?? item?.price ?? item?.valor);
+    if (Number.isFinite(valorUnit) && valorUnit > 0) suggestion.valorUnit = valorUnit;
+    suggestions.push(suggestion);
   }
   return suggestions.slice(0, 1000);
 }

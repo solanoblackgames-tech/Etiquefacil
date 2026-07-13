@@ -409,3 +409,43 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("no-sheet lot suggestions keep suggested sale price", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-no-sheet-suggestion-price-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-no-sheet-suggestion-price`;
+    const { createDiverseLot, suggestNoSheetProducts } = await import(storeUrl.href);
+
+    const lot = await createDiverseLot({
+      userId: "user-1",
+      name: "Lote sem planilha",
+      fornecedor: "Fornecedor",
+      skuPrefix: "DIV",
+      startSequence: 1,
+      averageCost: 10,
+      suggestions: [
+        { descricao: "Kit vestido infantil", valorUnit: "129,90" },
+        { descricao: "Sapato social", preco: "89.50" }
+      ]
+    });
+
+    const result = await suggestNoSheetProducts({ userId: "user-1", lotId: lot.id, query: "vestido" });
+
+    assert.equal(result.source, "lista_lote");
+    assert.deepEqual(result.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit]), [
+      ["Kit vestido infantil", 129.9]
+    ]);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

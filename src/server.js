@@ -23,7 +23,7 @@ import {
   syncBlingStockTransfers,
   updateBlingProductFromTriage
 } from "./bling-api.js";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook } from "./domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import {
   addDiverseLotItem,
@@ -2067,10 +2067,13 @@ function parseNoSheetSuggestionRows(rows) {
   const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
   if (!usefulRows.length) return [];
   const header = usefulRows[0].map((cell) => normalizeHeader(cell));
+  const priceColumn = header.findIndex((name) => ["preco", "valor", "valor unitario", "valorunitario", "valorunit", "preco de venda", "precodevenda", "precovenda"].includes(name));
   const nameColumn = header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
   const start = nameColumn >= 0 ? 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
-  return usefulRows.slice(start).map((row) => row[column]).filter((value) => String(value ?? "").trim());
+  return usefulRows.slice(start)
+    .map((row) => buildNoSheetSuggestion(row[column], priceColumn >= 0 ? row[priceColumn] : ""))
+    .filter((suggestion) => suggestion.descricao);
 }
 
 function parseNoSheetSuggestions(value) {
@@ -2079,9 +2082,24 @@ function parseNoSheetSuggestions(value) {
   if (!text) return [];
   return text
     .split(/\r?\n/)
-    .map((line) => line.split(/[;\t,]/)[0])
-    .map((item) => item.trim())
-    .filter(Boolean);
+    .map(parseNoSheetSuggestionLine)
+    .filter((suggestion) => suggestion.descricao);
+}
+
+function parseNoSheetSuggestionLine(line) {
+  const text = String(line || "").trim();
+  if (!text) return {};
+  const delimiter = text.includes(";") ? ";" : text.includes("\t") ? "\t" : text.includes(",") ? "," : "";
+  if (!delimiter) return buildNoSheetSuggestion(text);
+  const parts = text.split(delimiter);
+  return buildNoSheetSuggestion(parts[0], parts.slice(1).join(delimiter));
+}
+
+function buildNoSheetSuggestion(descricao, valorUnit = "") {
+  const suggestion = { descricao: String(descricao ?? "").trim() };
+  const price = roundMoney(parseNumber(valorUnit));
+  if (Number.isFinite(price) && price > 0) suggestion.valorUnit = price;
+  return suggestion;
 }
 
 function normalizeHeader(value) {

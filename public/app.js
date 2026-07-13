@@ -554,7 +554,7 @@ function renderManualDescriptionSuggestions(suggestions) {
   menu.innerHTML = suggestions.map((suggestion, index) => `
     <button type="button" data-manual-description-suggestion="${index}">
       <strong>${escapeHtml(suggestion.descricao)}</strong>
-      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}</span>
+      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${Number(suggestion.valorUnit || 0) > 0 ? ` · Preco sugerido ${money(suggestion.valorUnit)}` : ""}</span>
     </button>
   `).join("");
   menu._suggestions = suggestions;
@@ -809,8 +809,8 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
       if (!suggestion) return;
       description.value = suggestion.descricao || "";
+      if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
       if (suggestion.source !== "lista_lote") {
-        if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
         if (suggestion.ean) ean.value = suggestion.ean;
         if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;
         if (subcategoria && suggestion.subcategoria) subcategoria.value = suggestion.subcategoria;
@@ -4730,7 +4730,7 @@ function emptyLotDetailMarkup() {
         <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
         <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
         <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-        <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha, sem codigo"></textarea></label>
+        <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha. Opcional: Produto; 129,90"></textarea></label>
         <button type="submit">Criar lote</button>
       </form>
       <p id="noSheetLotMessage" class="message"></p>
