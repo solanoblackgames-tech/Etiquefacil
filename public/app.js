@@ -554,7 +554,7 @@ function renderManualDescriptionSuggestions(suggestions) {
   menu.innerHTML = suggestions.map((suggestion, index) => `
     <button type="button" data-manual-description-suggestion="${index}">
       <strong>${escapeHtml(suggestion.descricao)}</strong>
-      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${Number(suggestion.valorUnit || 0) > 0 ? ` · Preco sugerido ${money(suggestion.valorUnit)}` : ""}</span>
+      <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
     </button>
   `).join("");
   menu._suggestions = suggestions;
@@ -567,6 +567,10 @@ function hideManualDescriptionSuggestions() {
   menu.classList.add("hidden");
   menu.innerHTML = "";
   menu._suggestions = [];
+}
+
+function suggestionPriceValue(suggestion) {
+  return parseMoneyInput(suggestion?.valorUnit ?? suggestion?.valor_unit ?? suggestion?.preco ?? suggestion?.precoSugerido ?? suggestion?.preco_sugerido ?? suggestion?.valorSugerido ?? suggestion?.valor_sugerido ?? suggestion?.price ?? suggestion?.valor);
 }
 
 async function uploadNoSheetSuggestions(event) {
@@ -839,7 +843,8 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
       if (!suggestion) return;
       description.value = suggestion.descricao || "";
-      if (suggestion.valorUnit) price.value = String(suggestion.valorUnit).replace(".", ",");
+      const suggestedPrice = suggestionPriceValue(suggestion);
+      if (Number.isFinite(suggestedPrice) && suggestedPrice > 0) price.value = String(suggestedPrice).replace(".", ",");
       if (suggestion.source !== "lista_lote") {
         if (suggestion.ean) ean.value = suggestion.ean;
         if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;

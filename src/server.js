@@ -2073,8 +2073,14 @@ function parseNoSheetSuggestionRows(rows) {
   const start = nameColumn >= 0 ? 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
   return usefulRows.slice(start)
-    .map((row) => buildNoSheetSuggestion(row[column], priceColumn >= 0 ? row[priceColumn] : ""))
+    .map((row) => buildNoSheetSuggestion(row[column], noSheetSuggestionPriceCell(row, column, priceColumn)))
     .filter((suggestion) => suggestion.descricao);
+}
+
+function noSheetSuggestionPriceCell(row, nameColumn, priceColumn) {
+  if (priceColumn >= 0) return row[priceColumn];
+  const nextColumn = nameColumn + 1;
+  return nextColumn < row.length ? row[nextColumn] : "";
 }
 
 function parseNoSheetSuggestions(value) {

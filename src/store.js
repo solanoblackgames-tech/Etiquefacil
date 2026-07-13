@@ -4945,7 +4945,7 @@ function normalizeNoSheetSuggestions(input) {
       id: String(item?.id || key).slice(0, 120),
       descricao
     };
-    const valorUnit = decimalMoney(item?.valorUnit ?? item?.valor_unit ?? item?.preco ?? item?.price ?? item?.valor);
+    const valorUnit = decimalMoney(item?.valorUnit ?? item?.valor_unit ?? item?.preco ?? item?.precoSugerido ?? item?.preco_sugerido ?? item?.valorSugerido ?? item?.valor_sugerido ?? item?.price ?? item?.valor);
     if (Number.isFinite(valorUnit) && valorUnit > 0) suggestion.valorUnit = valorUnit;
     suggestions.push(suggestion);
   }
