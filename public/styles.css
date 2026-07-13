@@ -2516,23 +2516,26 @@ h3 {
   z-index: 12;
 }
 
-.suggestion-menu button {
+.suggestion-menu [data-manual-description-suggestion] {
   background: #fff;
   border-bottom: 1px solid #e7eee9;
   border-radius: 0;
   color: #10251a;
   display: block;
+  cursor: pointer;
   min-height: 54px;
   padding: 10px 12px;
   text-align: left;
   width: 100%;
 }
 
-.suggestion-menu button:hover {
+.suggestion-menu [data-manual-description-suggestion]:hover,
+.suggestion-menu [data-manual-description-suggestion]:focus {
   background: #eef7f1;
+  outline: none;
 }
 
-.suggestion-menu button:last-child {
+.suggestion-menu [data-manual-description-suggestion]:last-child {
   border-bottom: 0;
 }
 

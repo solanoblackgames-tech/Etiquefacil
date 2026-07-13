@@ -552,10 +552,10 @@ function renderManualDescriptionSuggestions(suggestions) {
     return;
   }
   menu.innerHTML = suggestions.map((suggestion, index) => `
-    <button type="button" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
+    <div role="button" tabindex="0" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
       <strong>${escapeHtml(suggestion.descricao)}</strong>
       <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
-    </button>
+    </div>
   `).join("");
   menu._suggestions = suggestions;
   menu.classList.remove("hidden");
@@ -805,8 +805,10 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       logisticsFieldsWrap.innerHTML = "";
       form.onsubmit = null;
       description.oninput = null;
+      descriptionSuggestions.onmousedown = null;
       descriptionSuggestions.onpointerdown = null;
       descriptionSuggestions.onclick = null;
+      descriptionSuggestions.onkeydown = null;
       ean.onkeydown = null;
       cancel.onclick = null;
       modal.onkeydown = null;
@@ -881,16 +883,25 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (price.value) price.focus();
     };
 
-    descriptionSuggestions.onpointerdown = (event) => {
+    const handleDescriptionSuggestionPick = (event) => {
       const button = event.target.closest("[data-manual-description-suggestion]");
       if (!button) return;
       event.preventDefault();
+      event.stopPropagation();
       applySelectedDescriptionSuggestion(button);
     };
 
-    descriptionSuggestions.onclick = (event) => {
+    descriptionSuggestions.onmousedown = handleDescriptionSuggestionPick;
+    descriptionSuggestions.onpointerdown = (event) => {
+      if (event.pointerType === "mouse") return;
+      handleDescriptionSuggestionPick(event);
+    };
+    descriptionSuggestions.onclick = handleDescriptionSuggestionPick;
+    descriptionSuggestions.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
       const button = event.target.closest("[data-manual-description-suggestion]");
       if (!button) return;
+      event.preventDefault();
       applySelectedDescriptionSuggestion(button);
     };
 
