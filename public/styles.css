@@ -2448,8 +2448,13 @@ h3 {
 }
 
 .no-sheet-suggestion-panel .message {
+  color: var(--muted);
   grid-column: 1 / -1;
   margin: 0;
+}
+
+.no-sheet-suggestion-panel .message.success {
+  color: #0f766e;
 }
 
 .diverse-rz-form {

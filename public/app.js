@@ -246,9 +246,7 @@ function bindEvents() {
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
-  document.addEventListener("submit", (event) => {
-    if (event.target.matches(".no-sheet-suggestion-upload-form")) uploadNoSheetSuggestions(event);
-  });
+  bindNoSheetSuggestionUploadForms();
   $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#searchForm").addEventListener("submit", searchMl);
@@ -577,19 +575,21 @@ async function uploadNoSheetSuggestions(event) {
   const lotId = form.dataset.lotId || state.selectedDiverseLotId;
   if (!lotId) return;
   const status = form.closest(".no-sheet-suggestion-panel")?.querySelector("[data-no-sheet-suggestion-status]") || $("#noSheetSuggestionUploadStatus");
+  if (status) status.style.color = "";
   const response = await uploadNoSheetSuggestionsFromForm(form, status, lotId);
   if (!response?.lot) return;
   if (state.previewLotId === lotId) renderLotPreview(response.lot);
   else if (state.selectedLotId === lotId && state.selectedDiverseLotId !== lotId) renderLotDetail(response.lot);
+  bindNoSheetSuggestionUploadForms();
 }
 
 async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
   const file = form.querySelector("input[type='file']")?.files?.[0];
   if (!file) {
-    status.textContent = "Selecione um arquivo.";
+    if (status) status.textContent = "Selecione um arquivo.";
     return;
   }
-  status.textContent = "Enviando...";
+  if (status) status.textContent = "Enviando...";
   try {
     const body = new FormData();
     body.append("file", file);
@@ -599,13 +599,35 @@ async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
     });
     state.selectedDiverseLot = response.lot;
     form.reset();
-    status.textContent = `${response.suggestions.length} nomes carregados.`;
+    if (!response.suggestions.length) {
+      if (status) {
+        status.style.color = "#b42318";
+        status.textContent = "Nenhuma sugestao valida encontrada. Use colunas descricao e preco, ou linhas Produto; 129,90.";
+      }
+      return null;
+    }
+    if (status) {
+      status.style.color = "#0f766e";
+      status.textContent = `Lista ativa: ${response.suggestions.length} sugestao${response.suggestions.length === 1 ? "" : "es"} carregada${response.suggestions.length === 1 ? "" : "s"}.`;
+    }
     if (state.selectedDiverseLotId === lotId) renderDiverseLot(response.lot);
     await refreshLotsList(lotId);
     return response;
   } catch (error) {
-    status.textContent = error.message;
+    if (status) {
+      status.style.color = "#b42318";
+      status.textContent = error.message;
+    }
   }
+}
+
+function bindNoSheetSuggestionUploadForms(root = document) {
+  if (!root) return;
+  root.querySelectorAll(".no-sheet-suggestion-upload-form").forEach((form) => {
+    if (form.dataset.bound === "true") return;
+    form.dataset.bound = "true";
+    form.addEventListener("submit", uploadNoSheetSuggestions);
+  });
 }
 
 async function showDiverseBlingSyncStatus(response, baseMessage) {
@@ -1046,7 +1068,11 @@ function renderDiverseLot(lot) {
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
   const suggestionUploadStatus = $("#diverseScanPanel [data-no-sheet-suggestion-status]") || $("#noSheetSuggestionUploadStatus");
-  if (suggestionUploadStatus) suggestionUploadStatus.textContent = lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : "";
+  if (suggestionUploadStatus) {
+    suggestionUploadStatus.textContent = noSheetSuggestionStatusText(lot);
+    suggestionUploadStatus.classList.toggle("success", Number(lot.noSheetSuggestions?.length || 0) > 0);
+  }
+  bindNoSheetSuggestionUploadForms($("#diverseScanPanel"));
   schedulePrimaryInputFocus();
 }
 
@@ -1709,9 +1735,15 @@ function noSheetSuggestionUploadMarkup(lot, { includeHelp = true } = {}) {
         </label>
         <button type="submit">Subir lista</button>
       </form>
-      <p class="message" data-no-sheet-suggestion-status>${count ? `${count} nomes na lista.` : ""}</p>
+      <p class="message ${count ? "success" : ""}" data-no-sheet-suggestion-status>${noSheetSuggestionStatusText(lot)}</p>
     </section>
   `;
+}
+
+function noSheetSuggestionStatusText(lot) {
+  const count = Number(lot?.noSheetSuggestions?.length || 0);
+  if (!count) return "Lista inativa: nenhuma sugestao carregada ainda.";
+  return `Lista ativa: ${count} sugestao${count === 1 ? "" : "es"} carregada${count === 1 ? "" : "s"}.`;
 }
 
 function renderConferenceSettings() {
@@ -4639,6 +4671,7 @@ function renderLotPreview(lot) {
     </section>
   `;
   $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
+  bindNoSheetSuggestionUploadForms(detail);
 }
 
 function renderLotDetail(lot) {
@@ -4730,6 +4763,7 @@ function renderLotDetail(lot) {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
+  bindNoSheetSuggestionUploadForms(detail);
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
       if (noSheetLot) openNoSheetScanTab(lot, button.dataset.scanRz);

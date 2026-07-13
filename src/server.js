@@ -926,6 +926,7 @@ app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
 app.post("/api/lots/:lotId/no-sheet-suggestions", requireAuth, upload.single("file"), async (req, res) => {
   try {
     const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
+    if (!suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use colunas descricao e preco, ou linhas Produto; 129,90.");
     res.json(await updateNoSheetSuggestions({ userId: workspaceUserId(req), lotId: req.params.lotId, suggestions }));
   } catch (error) {
     sendError(res, error);
@@ -2067,7 +2068,7 @@ function parseNoSheetSuggestionRows(rows) {
   const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
   if (!usefulRows.length) return [];
   const header = usefulRows[0].map((cell) => normalizeHeader(cell));
-  const priceColumn = header.findIndex((name) => ["preco", "valor", "valor unitario", "valorunitario", "valorunit", "preco de venda", "precodevenda", "precovenda"].includes(name));
+  const priceColumn = header.findIndex((name) => ["preco", "valor", "venda", "valor unitario", "valorunitario", "valorunit", "preco de venda", "precodevenda", "precovenda", "preco sugerido", "precosugerido", "valor sugerido", "valorsugerido"].includes(name));
   const nameColumn = header.findIndex((name) => ["produto", "nome", "descricao", "descrição", "item"].includes(name));
   const start = nameColumn >= 0 ? 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
