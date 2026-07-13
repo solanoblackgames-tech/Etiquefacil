@@ -871,6 +871,25 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       }, 220);
     };
 
+    const fillSuggestedPriceFromDescription = async ({ showMessage = false } = {}) => {
+      const descricao = description.value.trim();
+      if (!descricao) return false;
+      let matchedSuggestion = findNoSheetSuggestionByDescription(descricao);
+      if (!matchedSuggestion) {
+        const matches = await loadNoSheetSuggestionMatches(descricao).catch(() => []);
+        const key = normalizeSearchText(descricao);
+        matchedSuggestion = matches.find((suggestion) => normalizeSearchText(suggestion.descricao) === key) || null;
+      }
+      const matchedPrice = suggestionPriceValue(matchedSuggestion);
+      if (!Number.isFinite(matchedPrice) || matchedPrice <= 0) return false;
+      price.value = String(matchedPrice).replace(".", ",");
+      if (showMessage) {
+        error.style.color = "#0f766e";
+        error.textContent = `Preco sugerido aplicado: ${money(matchedPrice)}.`;
+      }
+      return true;
+    };
+
     const applySelectedDescriptionSuggestion = (button) => {
       if (!button) return;
       const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
@@ -887,6 +906,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       } else {
         error.style.color = "";
         error.textContent = "Esta sugestao nao tem preco salvo. Suba novamente a lista com a coluna de preco.";
+        fillSuggestedPriceFromDescription({ showMessage: true });
       }
       if (suggestion.source !== "lista_lote") {
         if (suggestion.ean) ean.value = suggestion.ean;
@@ -935,10 +955,11 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       applySelectedDescriptionSuggestion(button);
     };
 
-    form.onsubmit = (event) => {
+    form.onsubmit = async (event) => {
       event.preventDefault();
       error.style.color = "";
       const descricao = description.value.trim();
+      if (!price.value.trim()) await fillSuggestedPriceFromDescription();
       const valorUnit = parseMoneyInput(price.value);
       if (!descricao) {
         error.textContent = "Informe o nome/descricao do produto.";
