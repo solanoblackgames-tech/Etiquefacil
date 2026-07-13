@@ -2516,6 +2516,10 @@ h3 {
   z-index: 12;
 }
 
+.suggestion-menu.hidden {
+  display: none !important;
+}
+
 .suggestion-menu [data-manual-description-suggestion] {
   background: #fff;
   border-bottom: 1px solid #e7eee9;

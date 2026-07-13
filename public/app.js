@@ -547,6 +547,10 @@ async function loadNoSheetSuggestionMatches(query) {
 
 function renderManualDescriptionSuggestions(suggestions) {
   const menu = $("#manualProductDescriptionSuggestions");
+  if (Date.now() < Number(state.manualSuggestionSuppressUntil || 0)) {
+    hideManualDescriptionSuggestions();
+    return;
+  }
   if (!menu || !suggestions.length) {
     hideManualDescriptionSuggestions();
     return;
@@ -558,6 +562,7 @@ function renderManualDescriptionSuggestions(suggestions) {
     </div>
   `).join("");
   menu._suggestions = suggestions;
+  menu.style.display = "";
   menu.classList.remove("hidden");
 }
 
@@ -565,6 +570,7 @@ function hideManualDescriptionSuggestions() {
   const menu = $("#manualProductDescriptionSuggestions");
   if (!menu) return;
   menu.classList.add("hidden");
+  menu.style.display = "none";
   menu.innerHTML = "";
   menu._suggestions = [];
 }
@@ -839,13 +845,20 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     description.oninput = () => {
       const query = description.value.trim();
       window.clearTimeout(state.noSheetSuggestionTimer);
+      if (Date.now() < Number(state.manualSuggestionSuppressUntil || 0)) {
+        hideManualDescriptionSuggestions();
+        return;
+      }
       if (query.length < 2) {
         hideManualDescriptionSuggestions();
         return;
       }
       state.noSheetSuggestionTimer = window.setTimeout(async () => {
         try {
-          renderManualDescriptionSuggestions(await loadNoSheetSuggestionMatches(query));
+          const suggestions = await loadNoSheetSuggestionMatches(query);
+          if (Date.now() < Number(state.manualSuggestionSuppressUntil || 0)) return;
+          if (description.value.trim() !== query) return;
+          renderManualDescriptionSuggestions(suggestions);
         } catch {
           hideManualDescriptionSuggestions();
         }
@@ -856,6 +869,8 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (!button) return;
       const suggestion = descriptionSuggestions._suggestions?.[Number(button.dataset.manualDescriptionSuggestion)];
       if (!suggestion) return;
+      window.clearTimeout(state.noSheetSuggestionTimer);
+      state.manualSuggestionSuppressUntil = Date.now() + 1200;
       description.value = suggestion.descricao || "";
       const lotSuggestion = findNoSheetSuggestionByDescription(description.value);
       const suggestedPrice = parseMoneyInput(button.dataset.suggestedPrice || manualSuggestionPriceText(suggestion) || manualSuggestionPriceText(lotSuggestion));
