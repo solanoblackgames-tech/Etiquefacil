@@ -2131,6 +2131,7 @@ function renderOperators() {
     acc.activity += operator.activity;
     acc.logins += operator.logins;
     acc.searches += operator.searches;
+    acc.bippedItems += operator.bippedItems;
     acc.scans += operator.scans;
     acc.registrationScans += operator.registrationScans;
     acc.transferScans += operator.transferScans;
@@ -2150,7 +2151,7 @@ function renderOperators() {
       };
     }
     return acc;
-  }, { activity: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
+  }, { activity: 0, logins: 0, searches: 0, bippedItems: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, activeOperators: 0, bestDay: null, lastActivityAt: null });
   const topOperators = [...operators]
     .sort(compareOperatorPerformance)
     .slice(0, 3);
@@ -2169,14 +2170,19 @@ function renderOperators() {
           <small>${operators.length} operadores cadastrados</small>
         </article>
         <article class="operator-metric">
-          <span>Buscas e bipagens</span>
-          <strong>${totals.searches + totals.scans}</strong>
-          <small>${totals.searches} buscas / ${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
+          <span>Itens bipados</span>
+          <strong>${totals.bippedItems}</strong>
+          <small>${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
         </article>
         <article class="operator-metric">
-          <span>Postos de bipagem</span>
-          <strong>${totals.registrationScans + totals.transferScans}</strong>
-          <small>${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
+          <span>Itens cadastrados</span>
+          <strong>${totals.registrationScans}</strong>
+          <small>${totals.creates} cad. manuais / ${totals.registrationScans + totals.creates} total com manuais</small>
+        </article>
+        <article class="operator-metric">
+          <span>Itens transferidos</span>
+          <strong>${totals.transferScans}</strong>
+          <small>${totals.searches} buscas registradas no periodo</small>
         </article>
         <article class="operator-metric">
           <span>Erros producao</span>
@@ -2206,6 +2212,7 @@ function renderOperators() {
           <span>Cod.</span>
           <span>Logins</span>
           <span>Buscas</span>
+          <span>Itens bipados</span>
           <span>Bip. cadastro</span>
           <span>Bip. transf.</span>
           <span>Cad. manuais</span>
@@ -2422,6 +2429,7 @@ function operatorViewModel(operator) {
     averagePerDay: activeDays ? activity / activeDays : 0,
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
+    bippedItems: Math.max(registrationScans, transferScans),
     activity,
     lastActivityAt: stats.lastActivityAt || null
   };
@@ -2453,6 +2461,7 @@ function operatorTableRow(operator, index) {
       <strong>${escapeHtml(operator.operatorCode || "--")}</strong>
       <span>${operator.logins}</span>
       <span>${operator.searches}</span>
+      <strong>${operator.bippedItems}</strong>
       <span>${operator.registrationScans}</span>
       <span>${operator.transferScans}</span>
       <span>${operator.creates}</span>
