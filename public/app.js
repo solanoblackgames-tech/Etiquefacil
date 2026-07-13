@@ -246,7 +246,9 @@ function bindEvents() {
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
-  $("#noSheetSuggestionUploadForm")?.addEventListener("submit", uploadNoSheetSuggestions);
+  document.addEventListener("submit", (event) => {
+    if (event.target.matches(".no-sheet-suggestion-upload-form")) uploadNoSheetSuggestions(event);
+  });
   $("#generateCodigoMlButton").addEventListener("click", generateRandomCodigoMlForNoSheet);
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#searchForm").addEventListener("submit", searchMl);
@@ -571,8 +573,14 @@ function hideManualDescriptionSuggestions() {
 
 async function uploadNoSheetSuggestions(event) {
   event.preventDefault();
-  if (!state.selectedDiverseLotId) return;
-  await uploadNoSheetSuggestionsFromForm(event.currentTarget, $("#noSheetSuggestionUploadStatus"), state.selectedDiverseLotId);
+  const form = event.currentTarget;
+  const lotId = form.dataset.lotId || state.selectedDiverseLotId;
+  if (!lotId) return;
+  const status = form.closest(".no-sheet-suggestion-panel")?.querySelector("[data-no-sheet-suggestion-status]") || $("#noSheetSuggestionUploadStatus");
+  const response = await uploadNoSheetSuggestionsFromForm(form, status, lotId);
+  if (!response?.lot) return;
+  if (state.previewLotId === lotId) renderLotPreview(response.lot);
+  else if (state.selectedLotId === lotId && state.selectedDiverseLotId !== lotId) renderLotDetail(response.lot);
 }
 
 async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
@@ -1037,7 +1045,7 @@ function renderDiverseLot(lot) {
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
   bindDiverseLabelOptions();
   $("#diverseItems").innerHTML = diverseItemsTable(lot);
-  const suggestionUploadStatus = $("#noSheetSuggestionUploadStatus");
+  const suggestionUploadStatus = $("#diverseScanPanel [data-no-sheet-suggestion-status]") || $("#noSheetSuggestionUploadStatus");
   if (suggestionUploadStatus) suggestionUploadStatus.textContent = lot.noSheetSuggestions?.length ? `${lot.noSheetSuggestions.length} nomes na lista.` : "";
   schedulePrimaryInputFocus();
 }
@@ -1684,6 +1692,26 @@ async function loadConferenceSettings() {
   } catch {
     state.conferenceSettings = defaultConferenceSettings();
   }
+}
+
+function noSheetSuggestionUploadMarkup(lot, { includeHelp = true } = {}) {
+  const count = Number(lot?.noSheetSuggestions?.length || 0);
+  return `
+    <section class="no-sheet-suggestion-panel">
+      <div>
+        <span class="muted">Lista de sugestao</span>
+        <h3>Adicionar sugestoes ao lote</h3>
+        ${includeHelp ? '<p class="muted">Suba uma planilha com colunas descricao e preco, ou um CSV/TXT no formato Produto; 129,90.</p>' : ""}
+      </div>
+      <form class="no-sheet-suggestion-upload-form" data-lot-id="${escapeHtml(lot?.id || "")}">
+        <label>Planilha/lista
+          <input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" required />
+        </label>
+        <button type="submit">Subir lista</button>
+      </form>
+      <p class="message" data-no-sheet-suggestion-status>${count ? `${count} nomes na lista.` : ""}</p>
+    </section>
+  `;
 }
 
 function renderConferenceSettings() {
@@ -4574,6 +4602,7 @@ async function selectLot(lotId, { push = true } = {}) {
 }
 
 function renderLotPreview(lot) {
+  const noSheetLot = isNoSheetLot(lot);
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
   const checkedRzs = lot.rzs.filter((rz) => Number(rz.qtyPercent || 0) >= 100 && Number(rz.missing || 0) === 0 && Number(rz.excess || 0) === 0).length;
@@ -4602,6 +4631,7 @@ function renderLotPreview(lot) {
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
       </div>
+      ${noSheetLot ? noSheetSuggestionUploadMarkup(lot) : ""}
       <h3 class="section-title">Resumo das RZs</h3>
       <div class="preview-rz-list">
         ${lot.rzs.length ? lot.rzs.map(previewRzRow).join("") : '<p class="muted">Nenhuma RZ encontrada neste lote.</p>'}
@@ -4637,6 +4667,7 @@ function renderLotDetail(lot) {
         <span></span>
       </form>
     ` : ""}
+    ${noSheetLot && !operatorNoSheetLot ? noSheetSuggestionUploadMarkup(lot) : ""}
     ${operatorNoSheetLot ? "" : `<div class="actions ${canManage ? "" : "hidden"}">
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>

@@ -2419,6 +2419,39 @@ h3 {
   margin-top: 12px;
 }
 
+.no-sheet-suggestion-panel {
+  align-items: end;
+  background: #f7faf8;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 0.9fr);
+  margin: 12px 0;
+  padding: 14px;
+}
+
+.no-sheet-suggestion-panel h3 {
+  font-size: 16px;
+  margin: 2px 0 4px;
+}
+
+.no-sheet-suggestion-panel p {
+  margin: 0;
+}
+
+.no-sheet-suggestion-panel form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.no-sheet-suggestion-panel .message {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .diverse-rz-form {
   align-items: center;
   background: #dfe8eb;
@@ -3693,6 +3726,8 @@ h3 {
   .diverse-rz-form,
   .diverse-label-options,
   .diverse-form,
+  .no-sheet-suggestion-panel,
+  .no-sheet-suggestion-panel form,
   .diverse-row,
   .pallet-row,
   .result-card,

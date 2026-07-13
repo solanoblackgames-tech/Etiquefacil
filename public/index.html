@@ -130,6 +130,20 @@
                 <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
               </form>
               <div id="diverseRzList" class="diverse-rz-list"></div>
+              <section class="no-sheet-suggestion-panel">
+                <div>
+                  <span class="muted">Lista de sugestao</span>
+                  <h3>Adicionar sugestoes ao lote</h3>
+                  <p class="muted">Suba uma planilha com colunas descricao e preco, ou um CSV/TXT no formato Produto; 129,90.</p>
+                </div>
+                <form class="no-sheet-suggestion-upload-form">
+                  <label>Planilha/lista
+                    <input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" required />
+                  </label>
+                  <button type="submit">Subir lista</button>
+                </form>
+                <p id="noSheetSuggestionUploadStatus" class="message" data-no-sheet-suggestion-status></p>
+              </section>
               <form id="diverseScanForm" class="search-bar">
                 <input name="codigoMl" placeholder="Bipe ou digite o Codigo ML" autocomplete="off" required />
                 <button type="button" id="generateCodigoMlButton" class="ghost">Gerar Codigo ML</button>
