@@ -21,10 +21,18 @@ test("operator entry items count scans and manual registrations once", async () 
     await writeDb({
       users: [
         { id: "owner-1", role: "owner", name: "Loja", email: "loja@example.com", createdAt: "2026-07-01T00:00:00.000Z" },
-        { id: "operator-1", parentUserId: "owner-1", role: "operator", operatorCode: 1001, name: "Ana", email: "ana@example.com", createdAt: "2026-07-01T00:00:00.000Z" }
+        { id: "operator-1", parentUserId: "owner-1", role: "operator", operatorCode: 1001, name: "Ana", email: "ana@example.com", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "operator-2", parentUserId: "owner-1", role: "operator", operatorCode: 1002, name: "Bia", email: "bia@example.com", createdAt: "2026-07-01T00:01:00.000Z" }
       ],
-      lots: [],
-      products: [],
+      lots: [
+        { id: "lot-1", userId: "owner-1", nomeArquivo: "Lote 1", fornecedor: "", prefixoSku: "SKU", percentualArremate: 0, proximoSequencialSku: 1, createdAt: "2026-07-14T09:00:00.000Z" }
+      ],
+      products: [
+        { id: "product-1", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML2", sku: "SKU1", descricao: "Manual comum", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "excedente_externo", createdAt: "2026-07-14T10:01:30.000Z" },
+        { id: "product-2", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML3", sku: "SKU2", descricao: "Manual diverso", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T10:03:30.000Z" },
+        { id: "product-3", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML4", sku: "SKU3", descricao: "Achado sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha", createdAt: "2026-07-14T11:00:00.000Z" },
+        { id: "product-4", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML5", sku: "SKU4", descricao: "Manual sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T11:01:00.000Z" }
+      ],
       rzItems: [],
       scans: [],
       labels: [],
@@ -51,12 +59,17 @@ test("operator entry items count scans and manual registrations once", async () 
       triageEvents: []
     });
 
-    const [operator] = await listOperatorsForUser("owner-1", { startDate: "2026-07-14", endDate: "2026-07-14" });
+    const operators = await listOperatorsForUser("owner-1", { startDate: "2026-07-14", endDate: "2026-07-14" });
+    const operator = operators.find((item) => item.id === "operator-1");
+    const productOnlyOperator = operators.find((item) => item.id === "operator-2");
 
-    assert.equal(operator.stats.registrationScans, 2);
+    assert.equal(operator.stats.registrationScans, 1);
     assert.equal(operator.stats.creates, 2);
     assert.equal(operator.stats.transferScans, 1);
     assert.equal(operator.stats.entryItems, 3);
+    assert.equal(productOnlyOperator.stats.registrationScans, 1);
+    assert.equal(productOnlyOperator.stats.creates, 1);
+    assert.equal(productOnlyOperator.stats.entryItems, 2);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

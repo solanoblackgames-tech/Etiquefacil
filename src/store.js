@@ -471,15 +471,34 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
           count(oa.id) filter (where oa.action = 'login')::int as login_total,
           count(oa.id) filter (where oa.action = 'search_ml')::int as search_total,
           count(oa.id) filter (where oa.action in ('scan_ml', 'scan_transfer'))::int as scan_total,
-          count(oa.id) filter (where oa.action = 'scan_ml')::int as registration_scan_total,
-          count(oa.id) filter (where oa.action = 'scan_transfer')::int as transfer_scan_total,
-          count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))::int as create_total,
           (
-            count(oa.id) filter (where oa.action = 'scan_ml')
-            + count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))
-            - count(oa.id) filter (
+            count(oa.id) filter (
+              where oa.action = 'scan_ml'
+                and coalesce(oa.metadata->>'source', '') <> 'diverse_lot'
+            )
+            + coalesce(op.entry_found_total, 0)
+          )::int as registration_scan_total,
+          count(oa.id) filter (where oa.action = 'scan_transfer')::int as transfer_scan_total,
+          coalesce(
+            nullif(op.entry_created_total, 0),
+            count(oa.id) filter (
               where oa.action in ('create_manual_product', 'create_external_excess')
-                and coalesce(oa.metadata->>'source', '') = 'diverse_lot'
+                and coalesce(oa.metadata->>'source', '') <> 'diverse_lot'
+            ),
+            0
+          )::int as create_total,
+          (
+            count(oa.id) filter (
+              where oa.action = 'scan_ml'
+                and coalesce(oa.metadata->>'source', '') <> 'diverse_lot'
+            )
+            + coalesce(
+              nullif(op.entry_product_total, 0),
+              count(oa.id) filter (
+                where oa.action in ('create_manual_product', 'create_external_excess')
+                  and coalesce(oa.metadata->>'source', '') <> 'diverse_lot'
+              ),
+              0
             )
           )::int as entry_item_total,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
@@ -520,8 +539,22 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
           ) daily_operator_activity
           group by operator_user_id
         ) od on od.operator_user_id = u.id
+        left join (
+          select
+            coalesce(p.operator_user_id, p.created_by_user_id) as operator_user_id,
+            count(*) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos'))::int as entry_found_total,
+            count(*) filter (where p.origem in ('lote_sem_planilha_manual', 'excedente_externo'))::int as entry_created_total,
+            count(*) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos', 'lote_sem_planilha_manual', 'excedente_externo'))::int as entry_product_total
+          from products p
+          join lots l on l.id = p.lot_id
+          where l.user_id = $1
+            and coalesce(p.operator_user_id, p.created_by_user_id) is not null
+            and ($2::timestamptz is null or p.created_at >= $2::timestamptz)
+            and ($3::timestamptz is null or p.created_at <= $3::timestamptz)
+          group by coalesce(p.operator_user_id, p.created_by_user_id)
+        ) op on op.operator_user_id = u.id
         where u.parent_user_id = $1
-        group by u.id, od.day_totals
+        group by u.id, od.day_totals, op.entry_found_total, op.entry_created_total, op.entry_product_total
         order by u.created_at desc
       `,
       [ownerUserId, range.startAt, range.endAt, OPERATOR_DASHBOARD_ACTIONS]
@@ -533,7 +566,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
   return db.users
     .filter((user) => user.parentUserId === ownerUserId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id, range, user) }));
+    .map((user) => ({ ...sanitizeUser(user), stats: summarizeOperatorActivities(db.operatorActivities || [], user.id, range, user, db) }));
 }
 
 export async function recordOperatorActivity(user, action, metadata = {}) {
@@ -6617,8 +6650,10 @@ function operatorStatsFromRow(row) {
   };
 }
 
-function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}) {
-  const stats = { total: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, entryItems: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
+function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}, db = {}) {
+  const productStats = summarizeOperatorEntryProducts(db, operatorUserId, range);
+  const stats = { total: 0, logins: 0, searches: 0, scans: 0, registrationScans: productStats.found, transferScans: 0, creates: 0, entryItems: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
+  let fallbackCreates = 0;
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
     if (!isOperatorActivityInRange(activity, range)) continue;
@@ -6631,21 +6666,42 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
     if (activity.action === "scan_ml" || activity.action === "scan_transfer") stats.scans += 1;
-    if (activity.action === "scan_ml") {
+    if (activity.action === "scan_ml" && activity.metadata?.source !== "diverse_lot") {
       stats.registrationScans += 1;
       stats.entryItems += 1;
     }
     if (activity.action === "scan_transfer") stats.transferScans += 1;
     if (activity.action === "create_manual_product" || activity.action === "create_external_excess") {
-      stats.creates += 1;
-      if (activity.metadata?.source !== "diverse_lot") stats.entryItems += 1;
+      if (activity.metadata?.source !== "diverse_lot") fallbackCreates += 1;
     }
     if (activity.action === "view_lot") stats.lotViews += 1;
     if (activity.action === "view_pallet") stats.palletViews += 1;
     if (activity.action === "report_transfer_divergence") stats.productionErrors += 1;
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
   }
+  stats.creates = productStats.created || fallbackCreates;
+  stats.entryItems += productStats.total || fallbackCreates;
   return stats;
+}
+
+function summarizeOperatorEntryProducts(db = {}, operatorUserId, range = {}) {
+  const lotIds = new Set((db.lots || []).map((lot) => lot.id));
+  const result = { found: 0, created: 0, total: 0 };
+  for (const product of db.products || []) {
+    const responsibleUserId = product.operatorUserId || product.createdByUserId || "";
+    if (responsibleUserId !== operatorUserId) continue;
+    if (product.lotId && !lotIds.has(product.lotId)) continue;
+    if (!isWithinDateRange(product.createdAt, range)) continue;
+    if (product.origem === "lote_sem_planilha" || product.origem === "entrada_diversos") {
+      result.found += 1;
+      result.total += 1;
+    }
+    if (product.origem === "lote_sem_planilha_manual" || product.origem === "excedente_externo") {
+      result.created += 1;
+      result.total += 1;
+    }
+  }
+  return result;
 }
 
 function isOperatorDashboardActivity(action) {
