@@ -2653,7 +2653,7 @@ function operatorViewModel(operator) {
     averagePerDay: activeDays ? activity / activeDays : 0,
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
-    bippedItems: Math.max(registrationScans, transferScans),
+    bippedItems: registrationScans + transferScans,
     activity,
     lastActivityAt: stats.lastActivityAt || null
   };
@@ -2667,7 +2667,7 @@ function operatorPodiumCard(operator, index) {
       <div class="operator-medal">${rank}</div>
       <strong>${escapeHtml(operator.name)}</strong>
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
-      <b>${Math.max(operator.registrationScans, operator.transferScans)}</b>
+      <b>${operator.bippedItems}</b>
       <small>${operator.registrationScans} cadastro / ${operator.transferScans} transferencia</small>
       <em>${operator.creates} cad. manuais</em>
     </article>
