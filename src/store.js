@@ -474,6 +474,14 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
           count(oa.id) filter (where oa.action = 'scan_ml')::int as registration_scan_total,
           count(oa.id) filter (where oa.action = 'scan_transfer')::int as transfer_scan_total,
           count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))::int as create_total,
+          (
+            count(oa.id) filter (where oa.action = 'scan_ml')
+            + count(oa.id) filter (where oa.action in ('create_manual_product', 'create_external_excess'))
+            - count(oa.id) filter (
+              where oa.action in ('create_manual_product', 'create_external_excess')
+                and coalesce(oa.metadata->>'source', '') = 'diverse_lot'
+            )
+          )::int as entry_item_total,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
           count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total,
           count(oa.id) filter (where oa.action = 'report_transfer_divergence')::int as production_error_total
@@ -6600,6 +6608,7 @@ function operatorStatsFromRow(row) {
     registrationScans: Number(row.registration_scan_total || 0),
     transferScans: Number(row.transfer_scan_total || 0),
     creates: Number(row.create_total || 0),
+    entryItems: Number(row.entry_item_total || 0),
     lotViews: Number(row.lot_view_total || 0),
     palletViews: Number(row.pallet_view_total || 0),
     productionErrors: Number(row.production_error_total || 0),
@@ -6609,7 +6618,7 @@ function operatorStatsFromRow(row) {
 }
 
 function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}) {
-  const stats = { total: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
+  const stats = { total: 0, logins: 0, searches: 0, scans: 0, registrationScans: 0, transferScans: 0, creates: 0, entryItems: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
     if (!isOperatorActivityInRange(activity, range)) continue;
@@ -6622,9 +6631,15 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (activity.action === "login") stats.logins += 1;
     if (activity.action === "search_ml") stats.searches += 1;
     if (activity.action === "scan_ml" || activity.action === "scan_transfer") stats.scans += 1;
-    if (activity.action === "scan_ml") stats.registrationScans += 1;
+    if (activity.action === "scan_ml") {
+      stats.registrationScans += 1;
+      stats.entryItems += 1;
+    }
     if (activity.action === "scan_transfer") stats.transferScans += 1;
-    if (activity.action === "create_manual_product" || activity.action === "create_external_excess") stats.creates += 1;
+    if (activity.action === "create_manual_product" || activity.action === "create_external_excess") {
+      stats.creates += 1;
+      if (activity.metadata?.source !== "diverse_lot") stats.entryItems += 1;
+    }
     if (activity.action === "view_lot") stats.lotViews += 1;
     if (activity.action === "view_pallet") stats.palletViews += 1;
     if (activity.action === "report_transfer_divergence") stats.productionErrors += 1;

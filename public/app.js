@@ -2622,6 +2622,7 @@ function operatorViewModel(operator) {
   const registrationScans = stats.registrationScans ?? scans;
   const transferScans = stats.transferScans || 0;
   const creates = stats.creates || 0;
+  const entryItems = stats.entryItems ?? (registrationScans + creates);
   const lotViews = stats.lotViews || 0;
   const palletViews = stats.palletViews || 0;
   const productionErrors = stats.productionErrors || 0;
@@ -2653,7 +2654,7 @@ function operatorViewModel(operator) {
     averagePerDay: activeDays ? activity / activeDays : 0,
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
-    bippedItems: registrationScans + creates,
+    bippedItems: entryItems,
     activity,
     lastActivityAt: stats.lastActivityAt || null
   };
