@@ -2396,12 +2396,12 @@ function renderOperators() {
         <article class="operator-metric">
           <span>Itens bipados</span>
           <strong>${totals.bippedItems}</strong>
-          <small>${totals.registrationScans} cadastro / ${totals.transferScans} transferencia</small>
+          <small>${totals.registrationScans} bipados / ${totals.creates} cadastrados</small>
         </article>
         <article class="operator-metric">
           <span>Itens cadastrados</span>
-          <strong>${totals.registrationScans}</strong>
-          <small>${totals.creates} cad. manuais / ${totals.registrationScans + totals.creates} total com manuais</small>
+          <strong>${totals.creates}</strong>
+          <small>${totals.bippedItems} total somando bipados</small>
         </article>
         <article class="operator-metric">
           <span>Itens transferidos</span>
@@ -2462,7 +2462,7 @@ function renderOperators() {
 function compareOperatorPerformance(a, b) {
   return b.activity - a.activity
     || b.scans - a.scans
-    || Math.max(b.registrationScans, b.transferScans) - Math.max(a.registrationScans, a.transferScans)
+    || b.bippedItems - a.bippedItems
     || b.lotViews - a.lotViews
     || a.name.localeCompare(b.name, "pt-BR");
 }
@@ -2653,7 +2653,7 @@ function operatorViewModel(operator) {
     averagePerDay: activeDays ? activity / activeDays : 0,
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
-    bippedItems: registrationScans + transferScans,
+    bippedItems: registrationScans + creates,
     activity,
     lastActivityAt: stats.lastActivityAt || null
   };
@@ -2668,7 +2668,7 @@ function operatorPodiumCard(operator, index) {
       <strong>${escapeHtml(operator.name)}</strong>
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.bippedItems}</b>
-      <small>${operator.registrationScans} cadastro / ${operator.transferScans} transferencia</small>
+      <small>${operator.registrationScans} bipados / ${operator.creates} cadastrados</small>
       <em>${operator.creates} cad. manuais</em>
     </article>
   `;
