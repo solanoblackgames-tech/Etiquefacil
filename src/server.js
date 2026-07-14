@@ -46,6 +46,7 @@ import {
   deleteUserLot,
   deleteLotRzItem,
   deleteTransferLotItem,
+  decrementDiverseLotItemQuantity,
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
@@ -1193,6 +1194,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
     const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML.");
+    const justificativa = normalizeRequiredJustification(req.body.justificativa);
+    const operator = operatorAuditLabel(req.session.user);
 
     const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
     if (!item) return res.status(404).json({ error: "Produto nao encontrado nesta RZ." });
@@ -1203,7 +1206,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
       item,
       depositoName: BLING_STOCK_DEPOSIT,
       operation: "exit",
-      observacao: `Saida automatica por diminuicao RZ ${req.params.codigoRz}`,
+      observacao: `Saida automatica por diminuicao RZ ${req.params.codigoRz}. Operador: ${operator}. Justificativa: ${justificativa}`,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
     res.json(result);
@@ -1227,8 +1230,21 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML para diminuir.");
-    await recordOperatorActivity(req.session.user, "decrement_scan", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    const justificativa = normalizeRequiredJustification(req.body.justificativa);
+    await recordOperatorActivity(req.session.user, "decrement_scan", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl, justificativa });
     res.json(await decrementLotRzScan({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rz/:codigoRz/items/decrement-quantity", requireAuth, async (req, res) => {
+  try {
+    const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+    if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML para diminuir.");
+    const justificativa = normalizeRequiredJustification(req.body.justificativa);
+    await recordOperatorActivity(req.session.user, "decrement_item_quantity", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl, justificativa });
+    res.json(await decrementDiverseLotItemQuantity({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
@@ -1875,6 +1891,19 @@ function withLotSupplier(items, lot) {
 
 function normalizeServerCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeRequiredJustification(value) {
+  const justification = String(value || "").trim();
+  if (!justification) throw new Error("Informe a justificativa para diminuir a quantidade.");
+  return justification.slice(0, 500);
+}
+
+function operatorAuditLabel(user = {}) {
+  const name = String(user.name || "").trim();
+  const email = String(user.email || "").trim();
+  const code = user.operatorCode ? ` #${user.operatorCode}` : "";
+  return `${name || email || "Sem operador"}${code}`;
 }
 
 function code39BarcodeValue(value) {

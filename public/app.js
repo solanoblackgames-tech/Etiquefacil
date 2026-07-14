@@ -1174,7 +1174,68 @@ function renderDiverseLot(lot) {
     suggestionUploadStatus.classList.toggle("success", Number(lot.noSheetSuggestions?.length || 0) > 0);
   }
   bindNoSheetSuggestionUploadForms($("#diverseScanPanel"));
+  bindDiverseQuantityControls(lot);
   schedulePrimaryInputFocus();
+}
+
+function bindDiverseQuantityControls(lot) {
+  const panel = $("#diverseScanPanel");
+  panel?.querySelectorAll("[data-diverse-add-ml]").forEach((button) => {
+    button.addEventListener("click", () => addDiverseQuantity(lot.id, button.dataset.diverseRz, button.dataset.diverseAddMl, button));
+  });
+  panel?.querySelectorAll("[data-diverse-decrement-ml]").forEach((button) => {
+    button.addEventListener("click", () => decrementDiverseQuantity(lot.id, button.dataset.diverseRz, button.dataset.diverseDecrementMl, button));
+  });
+}
+
+async function addDiverseQuantity(lotId, codigoRz, codigoMl, button) {
+  if (!lotId || !codigoRz || !codigoMl) return;
+  try {
+    if (button) button.disabled = true;
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/diverse-items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl, codigoRz })
+    });
+    renderDiverseLot(response.lot);
+    $("#diverseScanMessage").style.color = "#0f766e";
+    $("#diverseScanMessage").textContent = "Quantidade aumentada.";
+  } catch (error) {
+    if (button) button.disabled = false;
+    $("#diverseScanMessage").style.color = "";
+    $("#diverseScanMessage").textContent = error.message;
+  }
+}
+
+async function decrementDiverseQuantity(lotId, codigoRz, codigoMl, button) {
+  if (!lotId || !codigoRz || !codigoMl) return;
+  const justificativa = requestDecrementJustification();
+  if (!justificativa) return;
+
+  try {
+    if (button) button.disabled = true;
+    const bling = await syncDiverseDecrementStockExit(lotId, codigoRz, codigoMl, justificativa);
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/items/decrement-quantity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigoMl, justificativa })
+    });
+    renderDiverseLot(response.lot);
+    $("#diverseScanMessage").style.color = "#0f766e";
+    $("#diverseScanMessage").textContent = `Quantidade diminuida e saida lancada no Bling (${bling.deposito?.descricao || "Geral"}).`;
+  } catch (error) {
+    if (button) button.disabled = false;
+    $("#diverseScanMessage").style.color = "";
+    $("#diverseScanMessage").textContent = error.message;
+  }
+}
+
+async function syncDiverseDecrementStockExit(lotId, codigoRz, codigoMl, justificativa) {
+  return api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-exit/sync-one`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigoMl, justificativa })
+  });
 }
 
 function hideNoSheetPanel() {
@@ -5289,6 +5350,9 @@ function bindScanControls(lotId, codigoRz, items = []) {
   document.querySelectorAll("[data-decrement-ml]").forEach((button) => {
     button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
   });
+  document.querySelectorAll("[data-add-ml]").forEach((button) => {
+    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl));
+  });
   document.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
     button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
   });
@@ -5340,12 +5404,12 @@ function bindLabelTextControls() {
   });
 }
 
-async function scanCurrent(lotId, codigoRz) {
+async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
   if (state.pendingScan) return;
   const input = $("#scanInput");
-  if (!input) return;
-  const codigoMl = normalizeCodigoMl(input.value);
-  input.value = "";
+  if (!input && !codigoMlFromButton) return;
+  const codigoMl = normalizeCodigoMl(codigoMlFromButton || input?.value);
+  if (input) input.value = "";
   if (!codigoMl) return;
 
   try {
@@ -5436,6 +5500,8 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
   const codigoMl = normalizeCodigoMl(codigoMlFromButton || input?.value);
   if (input && !codigoMlFromButton) input.value = codigoMl;
   if (!codigoMl) return;
+  const justificativa = requestDecrementJustification();
+  if (!justificativa) return;
 
   try {
     state.pendingDecrement = true;
@@ -5443,12 +5509,12 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan/decrement`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl })
+      body: JSON.stringify({ codigoMl, justificativa })
     });
     if (input && !codigoMlFromButton) input.value = "";
     renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = "Quantidade bipada diminuida.";
-    await syncDecrementStockExit(lotId, codigoRz, codigoMl);
+    await syncDecrementStockExit(lotId, codigoRz, codigoMl, justificativa);
   } catch (error) {
     $("#scanMessage").textContent = error.message;
   } finally {
@@ -5479,13 +5545,23 @@ async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl) {
   }
 }
 
-async function syncDecrementStockExit(lotId, codigoRz, codigoMl) {
+function requestDecrementJustification() {
+  const value = prompt("Informe a justificativa para diminuir a quantidade:");
+  const justificativa = String(value || "").trim();
+  if (!justificativa) {
+    alert("A justificativa e obrigatoria para diminuir a quantidade.");
+    return "";
+  }
+  return justificativa;
+}
+
+async function syncDecrementStockExit(lotId, codigoRz, codigoMl, justificativa) {
   const message = $("#scanMessage");
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-exit/sync-one`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl })
+      body: JSON.stringify({ codigoMl, justificativa })
     });
     if (message) {
       message.style.color = "#0f766e";
@@ -6049,6 +6125,8 @@ function itemCreatedAt(item) {
 
 function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
+  const quantity = item.qtdEsperada || 0;
+  const code = product.codigoMl || product.sku || "";
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Remessa ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
@@ -6057,7 +6135,11 @@ function diverseItemRow(item, startsRz = false) {
       <span>${escapeHtml(product.codigoMl || "")}</span>
       <span>${escapeHtml(product.descricao || "")}</span>
       <span>${escapeHtml(productOperatorLabel(product))}</span>
-      <span>${item.qtdEsperada || 0}</span>
+      <span class="quantity-stepper">
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
+        <strong>${quantity}</strong>
+        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${quantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+      </span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
       <span class="diverse-row-actions">

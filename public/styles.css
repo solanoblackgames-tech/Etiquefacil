@@ -2649,6 +2649,24 @@ h3 {
   gap: 6px;
 }
 
+.quantity-stepper {
+  align-items: center;
+  display: inline-grid;
+  gap: 4px;
+  grid-template-columns: 28px minmax(20px, auto) 28px;
+  justify-content: start;
+}
+
+.quantity-stepper strong {
+  text-align: center;
+}
+
+.diverse-row .quantity-button {
+  min-height: 28px;
+  padding: 0;
+  width: 28px;
+}
+
 .diverse-row:last-child {
   border-bottom: 0;
 }

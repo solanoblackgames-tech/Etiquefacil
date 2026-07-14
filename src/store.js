@@ -2253,6 +2253,50 @@ export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) 
   return { scan, lot: summarizeLot(db, lot, true) };
 }
 
+export async function decrementDiverseLotItemQuantity({ userId, lotId, codigoRz, codigoMl }) {
+  await ensureStore();
+  const normalizedMl = normalizeCode(codigoMl);
+  const normalizedRz = String(codigoRz || "").trim().toUpperCase();
+  if (!normalizedMl) throw new Error("Informe o Codigo ML para diminuir.");
+  if (!normalizedRz) throw new Error("Informe a remessa.");
+
+  if (hasPostgres()) return decrementDiverseLotItemQuantityPg({ userId, lotId, codigoRz: normalizedRz, codigoMl: normalizedMl });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const rzItems = db.rzItems.filter((item) => item.lotId === lot.id && item.codigoRz === normalizedRz);
+  const matches = findRzItemsByScannedCode(rzItems, db.products, normalizedMl);
+  const productIds = new Set(matches.map((item) => item.productId).filter(Boolean));
+  if (productIds.size > 1) throw new Error("Codigo corresponde a mais de um produto nesta remessa.");
+  const item = matches[0];
+  if (!item) throw notFound("Produto nao encontrado nesta remessa.");
+  if (!isNoSheetRzItem(item)) throw new Error("Esta diminuicao esta disponivel apenas para itens sem planilha.");
+  if (Number(item.qtdEsperada || 0) <= 0) throw new Error("Este produto ja esta com quantidade zerada.");
+
+  const product = db.products.find((candidate) => candidate.id === item.productId);
+  item.qtdEsperada = Math.max(0, Number(item.qtdEsperada || 0) - 1);
+  item.valorTotal = roundMoney(item.qtdEsperada * Number(product?.valorUnit || 0));
+  if (product) product.qtdTotal = Math.max(0, Number(product.qtdTotal || 0) - 1);
+  if (item.qtdEsperada <= 0 && Number(item.qtdConferida || 0) <= 0) {
+    db.rzItems = db.rzItems.filter((candidate) => candidate.id !== item.id);
+    const stillUsed = db.rzItems.some((candidate) => candidate.productId === item.productId);
+    if (!stillUsed) db.products = db.products.filter((candidate) => candidate.id !== item.productId);
+  }
+
+  db.scans.push({
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz: normalizedRz,
+    codigoMl: normalizedMl,
+    status: "quantidade_diminuida",
+    createdAt: new Date().toISOString()
+  });
+  await writeDb(db);
+  return { lot: summarizeLot(db, lot, true) };
+}
+
 export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
@@ -4142,6 +4186,78 @@ async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
   }
 
   return { scan, lot: await getUserLotDetail(userId, lotId) };
+}
+
+async function decrementDiverseLotItemQuantityPg({ userId, lotId, codigoRz, codigoMl }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nao encontrado.");
+
+    const itemResult = await client.query(
+      `
+        select
+          ri.*,
+          p.codigo_ml as product_codigo_ml,
+          p.sku as product_sku,
+          p.valor_unit as product_valor_unit
+        from rz_items ri
+        join products p on p.id = ri.product_id
+        where ri.lot_id = $1
+          and ri.codigo_rz = $2
+          and (
+            upper(trim(p.codigo_ml)) = upper(trim($3))
+            or upper(trim(p.sku)) = upper(trim($3))
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($3))
+          )
+        order by ri.created_at asc
+        for update of ri
+      `,
+      [lot.id, codigoRz, codigoMl]
+    );
+    ensureUnambiguousPgScanRows(itemResult.rows);
+    const item = itemResult.rows[0];
+    if (!item) throw notFound("Produto nao encontrado nesta remessa.");
+    if (!isNoSheetRzItem({ tipoItem: item.tipo_item })) throw new Error("Esta diminuicao esta disponivel apenas para itens sem planilha.");
+    if (Number(item.qtd_esperada || 0) <= 0) throw new Error("Este produto ja esta com quantidade zerada.");
+
+    const nextExpected = Math.max(0, Number(item.qtd_esperada || 0) - 1);
+    if (nextExpected <= 0 && Number(item.qtd_conferida || 0) <= 0) {
+      await client.query("delete from rz_items where id = $1", [item.id]);
+    } else {
+      await client.query(
+        "update rz_items set qtd_esperada = $1, valor_total = $2 where id = $3",
+        [nextExpected, roundMoney(nextExpected * Number(item.product_valor_unit || 0)), item.id]
+      );
+    }
+    await client.query("update products set qtd_total = greatest(qtd_total - 1, 0) where id = $1", [item.product_id]);
+    const stillUsed = await client.query("select 1 from rz_items where product_id = $1 limit 1", [item.product_id]);
+    if (!stillUsed.rows.length) await client.query("delete from products where id = $1", [item.product_id]);
+
+    const scan = {
+      id: randomUUID(),
+      lotId: lot.id,
+      codigoRz,
+      codigoMl,
+      status: "quantidade_diminuida",
+      createdAt: new Date().toISOString()
+    };
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [scan.id, scan.lotId, scan.codigoRz, scan.codigoMl, scan.status, null, scan.createdAt]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { lot: await getUserLotDetail(userId, lotId) };
 }
 
 async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
@@ -6316,6 +6432,10 @@ function chooseRzItemForDecrement(items) {
     items[0] ||
     null
   );
+}
+
+function isNoSheetRzItem(item = {}) {
+  return ["entrada_diversos", "lote_sem_planilha", "lote_sem_planilha_manual"].includes(item.tipoItem || item.tipo_item);
 }
 
 function choosePgRzItemForScan(rows) {
