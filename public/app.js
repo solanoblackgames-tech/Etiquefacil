@@ -6136,9 +6136,9 @@ function diverseItemRow(item, startsRz = false) {
       <span>${escapeHtml(product.descricao || "")}</span>
       <span>${escapeHtml(productOperatorLabel(product))}</span>
       <span class="quantity-stepper">
-        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
-        <strong>${quantity}</strong>
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${quantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+        <strong>${quantity}</strong>
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>

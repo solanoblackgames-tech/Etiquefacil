@@ -2614,7 +2614,8 @@ h3 {
 .diverse-table {
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .diverse-row {
@@ -2623,7 +2624,17 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 0.65fr 0.9fr 1fr 1.8fr 1fr 0.45fr 0.7fr 0.7fr minmax(160px, 0.95fr);
+  grid-template-columns:
+    minmax(92px, 0.65fr)
+    minmax(120px, 0.85fr)
+    minmax(130px, 0.9fr)
+    minmax(260px, 2fr)
+    minmax(150px, 1fr)
+    116px
+    minmax(98px, 0.7fr)
+    minmax(98px, 0.7fr)
+    minmax(170px, 0.9fr);
+  min-width: 1280px;
   padding: 10px;
 }
 
@@ -2651,20 +2662,26 @@ h3 {
 
 .quantity-stepper {
   align-items: center;
-  display: inline-grid;
-  gap: 4px;
-  grid-template-columns: 28px minmax(20px, auto) 28px;
-  justify-content: start;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 30px 34px 30px;
+  justify-content: center;
+  width: 100%;
 }
 
 .quantity-stepper strong {
+  font-size: 15px;
+  line-height: 30px;
   text-align: center;
 }
 
 .diverse-row .quantity-button {
-  min-height: 28px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 900;
+  min-height: 30px;
   padding: 0;
-  width: 28px;
+  width: 30px;
 }
 
 .diverse-row:last-child {
@@ -3793,6 +3810,15 @@ h3 {
   .admin-lot-row,
   .admin-operator-item {
     grid-template-columns: 1fr;
+  }
+
+  .diverse-row {
+    min-width: 0;
+  }
+
+  .quantity-stepper {
+    justify-content: start;
+    width: fit-content;
   }
 
   .operator-page-header {
