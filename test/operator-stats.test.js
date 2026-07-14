@@ -29,9 +29,9 @@ test("operator entry items count scans and manual registrations once", async () 
       ],
       products: [
         { id: "product-1", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML2", sku: "SKU1", descricao: "Manual comum", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "excedente_externo", createdAt: "2026-07-14T10:01:30.000Z" },
-        { id: "product-2", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML3", sku: "SKU2", descricao: "Manual diverso", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T10:03:30.000Z" },
-        { id: "product-3", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML4", sku: "SKU3", descricao: "Achado sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha", createdAt: "2026-07-14T11:00:00.000Z" },
-        { id: "product-4", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML5", sku: "SKU4", descricao: "Manual sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 1, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T11:01:00.000Z" }
+        { id: "product-2", lotId: "lot-1", createdByUserId: "operator-1", operatorUserId: "operator-1", codigoMl: "ML3", sku: "SKU2", descricao: "Manual diverso", valorUnit: 10, precoCusto: 5, qtdTotal: 2, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T10:03:30.000Z" },
+        { id: "product-3", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML4", sku: "SKU3", descricao: "Achado sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 2, origem: "lote_sem_planilha", createdAt: "2026-07-14T11:00:00.000Z" },
+        { id: "product-4", lotId: "lot-1", createdByUserId: "operator-2", operatorUserId: "operator-2", codigoMl: "ML5", sku: "SKU4", descricao: "Manual sem evento", valorUnit: 10, precoCusto: 5, qtdTotal: 3, origem: "lote_sem_planilha_manual", createdAt: "2026-07-14T11:01:00.000Z" }
       ],
       rzItems: [],
       scans: [],
@@ -64,12 +64,12 @@ test("operator entry items count scans and manual registrations once", async () 
     const productOnlyOperator = operators.find((item) => item.id === "operator-2");
 
     assert.equal(operator.stats.registrationScans, 1);
-    assert.equal(operator.stats.creates, 2);
+    assert.equal(operator.stats.creates, 3);
     assert.equal(operator.stats.transferScans, 1);
-    assert.equal(operator.stats.entryItems, 3);
-    assert.equal(productOnlyOperator.stats.registrationScans, 1);
-    assert.equal(productOnlyOperator.stats.creates, 1);
-    assert.equal(productOnlyOperator.stats.entryItems, 2);
+    assert.equal(operator.stats.entryItems, 4);
+    assert.equal(productOnlyOperator.stats.registrationScans, 2);
+    assert.equal(productOnlyOperator.stats.creates, 3);
+    assert.equal(productOnlyOperator.stats.entryItems, 5);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

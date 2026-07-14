@@ -542,9 +542,9 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         left join (
           select
             coalesce(p.operator_user_id, p.created_by_user_id) as operator_user_id,
-            count(*) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos'))::int as entry_found_total,
-            count(*) filter (where p.origem in ('lote_sem_planilha_manual', 'excedente_externo'))::int as entry_created_total,
-            count(*) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos', 'lote_sem_planilha_manual', 'excedente_externo'))::int as entry_product_total
+            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos')), 0)::int as entry_found_total,
+            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_created_total,
+            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos', 'lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_product_total
           from products p
           join lots l on l.id = p.lot_id
           where l.user_id = $1
@@ -6693,12 +6693,14 @@ function summarizeOperatorEntryProducts(db = {}, operatorUserId, range = {}) {
     if (product.lotId && !lotIds.has(product.lotId)) continue;
     if (!isWithinDateRange(product.createdAt, range)) continue;
     if (product.origem === "lote_sem_planilha" || product.origem === "entrada_diversos") {
-      result.found += 1;
-      result.total += 1;
+      const quantity = Math.max(Number(product.qtdTotal || 0), 1);
+      result.found += quantity;
+      result.total += quantity;
     }
     if (product.origem === "lote_sem_planilha_manual" || product.origem === "excedente_externo") {
-      result.created += 1;
-      result.total += 1;
+      const quantity = Math.max(Number(product.qtdTotal || 0), 1);
+      result.created += quantity;
+      result.total += quantity;
     }
   }
   return result;
