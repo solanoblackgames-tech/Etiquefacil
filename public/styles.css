@@ -2633,8 +2633,8 @@ h3 {
     116px
     minmax(98px, 0.7fr)
     minmax(98px, 0.7fr)
-    minmax(170px, 0.9fr);
-  min-width: 1280px;
+    132px;
+  min-width: 1220px;
   padding: 10px;
 }
 
@@ -2656,8 +2656,15 @@ h3 {
 .diverse-row-actions {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  justify-content: flex-start;
+}
+
+.diverse-row-actions .icon-button {
+  height: 34px;
+  min-height: 34px;
+  width: 34px;
 }
 
 .quantity-stepper {

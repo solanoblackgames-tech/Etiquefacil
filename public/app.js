@@ -6082,6 +6082,36 @@ function trashIcon() {
   `;
 }
 
+function editIcon() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 20h9"></path>
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+    </svg>
+  `;
+}
+
+function splitIcon() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 7h7"></path>
+      <path d="M4 17h7"></path>
+      <path d="M14 5l5 5-5 5"></path>
+      <path d="M11 12h8"></path>
+    </svg>
+  `;
+}
+
+function printIcon() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M6 9V3h12v6"></path>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+      <path d="M6 14h12v7H6z"></path>
+    </svg>
+  `;
+}
+
 function diverseItemsTable(lot) {
   const items = (lot.items || []).filter(isNoSheetItem);
   if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
@@ -6144,9 +6174,9 @@ function diverseItemRow(item, startsRz = false) {
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
       <span class="diverse-row-actions">
-        <button type="button" class="ghost" data-diverse-edit="${escapeHtml(product.id || "")}">Editar</button>
-        <button type="button" class="ghost" data-diverse-split="${escapeHtml(product.id || "")}">Desmembrar</button>
-        <button type="button" data-diverse-label="${escapeHtml(product.id || "")}">Reimprimir</button>
+        <button type="button" class="ghost icon-button" data-diverse-edit="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
+        <button type="button" class="ghost icon-button" data-diverse-split="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
+        <button type="button" class="icon-button" data-diverse-label="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
       </span>
     </article>
   `;
