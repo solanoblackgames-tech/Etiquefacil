@@ -379,7 +379,9 @@ class BlingApiClient {
     const product = (payload?.data || []).find((candidate) => normalizeCode(candidate.codigo) === normalizeCode(sku));
     if (!detail || !product?.id) return product || null;
     const detailPayload = await this.request(`/produtos/${encodeURIComponent(product.id)}`);
-    return detailPayload?.data || product;
+    const detailedProduct = detailPayload?.data || product;
+    const supplierCost = await this.findProductSupplierCost(product.id);
+    return supplierCost > 0 ? { ...detailedProduct, precoCusto: supplierCost, precoCompra: supplierCost } : detailedProduct;
   }
 
   async createProduct(payload) {
@@ -418,6 +420,13 @@ class BlingApiClient {
     return (payload?.data || []).find((item) => {
       return String(item.produto?.id || item.idProduto || "") === String(productId) && String(item.fornecedor?.id || item.idFornecedor || "") === String(supplierId);
     });
+  }
+
+  async findProductSupplierCost(productId) {
+    const payload = await this.request("/produtos/fornecedores", {
+      query: { idProduto: productId, limite: 100 }
+    });
+    return supplierCostFromPayload(payload?.data || []);
   }
 
   async findOrCreateSupplier(name) {
@@ -600,6 +609,14 @@ function blingErrorMessage(payload, status) {
     ? payload.error.fields.map((field) => field.msg || field.message || field.element).filter(Boolean).join("; ")
     : "";
   return [description || `Erro ${status} na API do Bling`, fields].filter(Boolean).join(": ");
+}
+
+function supplierCostFromPayload(items = []) {
+  for (const item of items) {
+    const cost = numberOrZero(item?.precoCusto ?? item?.precoCompra ?? item?.custo ?? item?.valor);
+    if (cost > 0) return cost;
+  }
+  return 0;
 }
 
 function compactObject(input) {

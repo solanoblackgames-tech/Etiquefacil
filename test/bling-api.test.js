@@ -8,6 +8,7 @@ import {
   buildBlingStockExitPayload,
   buildBlingStockTransferPayload,
   blingProductToTriageLookup,
+  lookupBlingProductForTriage,
   syncBlingProducts
 } from "../src/bling-api.js";
 
@@ -66,6 +67,44 @@ test("Bling product maps to triage lookup fields", () => {
     sourceLotId: "",
     sourceLotName: "Bling"
   });
+});
+
+test("Bling triage lookup reads supplier cost relationship", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "SKU-1" }] }) },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: { id: 123, codigo: "SKU-1", nome: "Produto Bling", preco: 100, precoCusto: 0 } })
+    },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: [{ id: 555, produto: { id: 123 }, precoCusto: 31.25, precoCompra: 31.25 }] })
+    }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET" });
+    return responses.shift();
+  };
+
+  try {
+    const product = await lookupBlingProductForTriage({
+      integration: { accessToken: "token" },
+      code: "SKU-1"
+    });
+
+    assert.equal(product.valorUnit, 100);
+    assert.equal(product.precoCusto, 31.25);
+    assert.ok(calls.some((call) => call.url.includes("/produtos/fornecedores") && call.url.includes("idProduto=123")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Bling product supplier payload maps supplier cost relationship", () => {

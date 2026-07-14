@@ -1352,6 +1352,23 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
     });
 
     if (!preview && result?.product?.id) {
+      await recordOperatorActivity(req.session.user, "scan_ml", {
+        lotId: req.params.lotId,
+        codigoRz,
+        codigoMl,
+        productId: result.product.id,
+        source: "diverse_lot",
+        status: result.status
+      });
+      if (result.status === "cadastro_manual") {
+        await recordOperatorActivity(req.session.user, "create_manual_product", {
+          lotId: req.params.lotId,
+          codigoRz,
+          codigoMl,
+          productId: result.product.id,
+          source: "diverse_lot"
+        });
+      }
       try {
         result.bling = await syncSingleNoSheetProductStockEntry(userId, result.lot, result.product, codigoRz);
       } catch (blingError) {
