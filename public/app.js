@@ -2394,19 +2394,19 @@ function renderOperators() {
           <small>${operators.length} operadores cadastrados</small>
         </article>
         <article class="operator-metric">
-          <span>Itens bipados</span>
+          <span>Itens na entrada</span>
           <strong>${totals.bippedItems}</strong>
-          <small>${totals.registrationScans} bipados / ${totals.creates} cadastrados</small>
+          <small>${totals.registrationScans} bipados encontrados / ${totals.creates} cadastrados</small>
         </article>
         <article class="operator-metric">
           <span>Itens cadastrados</span>
           <strong>${totals.creates}</strong>
-          <small>${totals.bippedItems} total somando bipados</small>
+          <small>Entram no total de itens da entrada</small>
         </article>
         <article class="operator-metric">
           <span>Itens transferidos</span>
           <strong>${totals.transferScans}</strong>
-          <small>${totals.searches} buscas registradas no periodo</small>
+          <small>Dado extra, fora da soma da entrada</small>
         </article>
         <article class="operator-metric">
           <span>Erros producao</span>
@@ -2436,8 +2436,8 @@ function renderOperators() {
           <span>Cod.</span>
           <span>Logins</span>
           <span>Buscas</span>
-          <span>Itens bipados</span>
-          <span>Bip. cadastro</span>
+          <span>Itens entrada</span>
+          <span>Bip. achados</span>
           <span>Bip. transf.</span>
           <span>Cad. manuais</span>
           <span>Lotes</span>
@@ -2668,7 +2668,7 @@ function operatorPodiumCard(operator, index) {
       <strong>${escapeHtml(operator.name)}</strong>
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.bippedItems}</b>
-      <small>${operator.registrationScans} bipados / ${operator.creates} cadastrados</small>
+      <small>${operator.registrationScans} bipados encontrados / ${operator.creates} cadastrados</small>
       <em>${operator.creates} cad. manuais</em>
     </article>
   `;
