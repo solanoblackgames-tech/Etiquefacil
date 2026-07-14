@@ -1199,7 +1199,8 @@ async function addDiverseQuantity(lotId, codigoRz, codigoMl, button) {
     });
     renderDiverseLot(response.lot);
     $("#diverseScanMessage").style.color = "#0f766e";
-    $("#diverseScanMessage").textContent = "Quantidade aumentada.";
+    $("#diverseScanMessage").textContent = "Quantidade aumentada e etiqueta gerada.";
+    if (response.product) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
   } catch (error) {
     if (button) button.disabled = false;
     $("#diverseScanMessage").style.color = "";
