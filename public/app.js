@@ -5448,7 +5448,7 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
       $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       if (scannedProduct && state.labelOptions.autoPrint) {
         showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
-        await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+        syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
       }
     }
   } catch (error) {
@@ -5488,7 +5488,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
     $("#scanMessage").textContent = successMessage;
     if (response.product && state.labelOptions.autoPrint) {
       showLabel(response.product, { autoPrint: true, meta: labelMeta() });
-      await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+      syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
     }
   } catch (error) {
     message.textContent = error.message;
@@ -5529,6 +5529,10 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
 
 async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl) {
   const message = $("#scanMessage");
+  if (message) {
+    message.style.color = "#0f766e";
+    message.textContent = "Bipagem registrada, etiqueta enviada para impressao e Bling sincronizando...";
+  }
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-entry/sync-one`, {
       method: "POST",
@@ -5588,7 +5592,7 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     $("#scanMessage").textContent = "Excedente externo cadastrado.";
     if (response.product && state.labelOptions.autoPrint) {
       showLabel(response.product, { autoPrint: true, meta: labelMeta() });
-      await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+      syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
