@@ -3223,11 +3223,16 @@ async function ensurePgStore() {
     create index if not exists products_lot_id_idx on products(lot_id);
     create index if not exists products_codigo_ml_idx on products(codigo_ml);
     create index if not exists products_lot_codigo_ml_idx on products(lot_id, codigo_ml);
+    create index if not exists products_lot_codigo_ml_norm_idx on products(lot_id, upper(trim(codigo_ml)));
+    create index if not exists products_lot_sku_norm_idx on products(lot_id, upper(trim(sku)));
+    create index if not exists products_lot_sku_code39_idx on products(lot_id, regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g'));
+    create index if not exists products_lot_ean_norm_idx on products(lot_id, upper(trim(ean)));
     create index if not exists catalog_products_codigo_ml_idx on catalog_products(codigo_ml);
     create index if not exists rz_items_lot_id_idx on rz_items(lot_id);
     create index if not exists rz_items_product_id_idx on rz_items(product_id);
     create index if not exists rz_items_lot_codigo_rz_idx on rz_items(lot_id, codigo_rz);
     create index if not exists scans_lot_id_idx on scans(lot_id);
+    create index if not exists scans_lot_rz_codigo_ml_norm_created_idx on scans(lot_id, codigo_rz, upper(trim(codigo_ml)), created_at desc);
     create index if not exists labels_product_id_idx on labels(product_id);
     create index if not exists labels_lot_id_idx on labels(lot_id);
     create index if not exists labels_user_id_idx on labels(user_id);

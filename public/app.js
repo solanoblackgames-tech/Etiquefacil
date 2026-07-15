@@ -5305,26 +5305,53 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelTextControls()}
       </div>
-      <div class="summary-grid">
-        ${metric("Conferido", rz.checked)}
-        ${metric("Faltante", rz.missing)}
-        ${metric("Excedente", rz.excess)}
-        ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
-      </div>
+      <div class="summary-grid" id="scanSummary">${scanSummaryMarkup(rz)}</div>
       <h3 class="section-title">Progresso do RZ</h3>
-      <div class="summary-grid">
-        ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
-        ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
-        ${metric("Valor faltante", money(rz.missingValue))}
-        ${metric("Valor excedente", money(rz.excessValue))}
-      </div>
+      <div class="summary-grid" id="scanProgress">${scanProgressMarkup(rz)}</div>
       <div id="scanMessage" class="message"></div>
-      <div class="items">
+      <div class="items" id="scanItems">
         ${displayItems.map(itemRow).join("")}
       </div>
     </section>
   `;
   bindScanControls(lot.id, codigoRz, items);
+}
+
+function scanSummaryMarkup(rz) {
+  return `
+    ${metric("Conferido", rz.checked)}
+    ${metric("Faltante", rz.missing)}
+    ${metric("Excedente", rz.excess)}
+    ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+  `;
+}
+
+function scanProgressMarkup(rz) {
+  return `
+    ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
+    ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
+    ${metric("Valor faltante", money(rz.missingValue))}
+    ${metric("Valor excedente", money(rz.excessValue))}
+  `;
+}
+
+function updateRenderedScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
+  const scanPage = $("#lotDetail .scan-page");
+  const summary = $("#scanSummary");
+  const progress = $("#scanProgress");
+  const itemsWrapper = $("#scanItems");
+  if (!scanPage || !summary || !progress || !itemsWrapper || state.selectedLotId !== lot.id || state.selectedRz !== codigoRz) return false;
+
+  const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
+  if (!rz) return false;
+  const items = lot.items.filter((item) => item.codigoRz === codigoRz);
+  const displayItems = prioritizeScannedItems(items, lastCodigoMl);
+
+  summary.innerHTML = scanSummaryMarkup(rz);
+  progress.innerHTML = scanProgressMarkup(rz);
+  itemsWrapper.innerHTML = displayItems.map(itemRow).join("");
+  bindScanItemControls(lot.id, codigoRz, items, itemsWrapper);
+  return true;
 }
 
 function prioritizeScannedItems(items, codigoMl) {
@@ -5349,25 +5376,7 @@ function itemMatchesScanCode(item, normalizedCode) {
 function bindScanControls(lotId, codigoRz, items = []) {
   $("#scanButton").addEventListener("click", () => scanCurrent(lotId, codigoRz));
   $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lotId, codigoRz));
-  document.querySelectorAll("[data-decrement-ml]").forEach((button) => {
-    button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
-  });
-  document.querySelectorAll("[data-add-ml]").forEach((button) => {
-    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl));
-  });
-  document.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
-    button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
-  });
-  document.querySelectorAll("[data-delete-rz-item]").forEach((button) => {
-    button.addEventListener("click", () => deleteLotRzItem(lotId, codigoRz, button.dataset.deleteRzItem, button));
-  });
-  document.querySelectorAll("[data-split-product]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
-      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
-    });
-  });
-  bindProductPrintButtons($("#lotDetail"));
+  bindScanItemControls(lotId, codigoRz, items);
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
@@ -5384,6 +5393,28 @@ function bindScanControls(lotId, codigoRz, items = []) {
     }
   });
   schedulePrimaryInputFocus(["#scanInput"]);
+}
+
+function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
+  root.querySelectorAll("[data-decrement-ml]").forEach((button) => {
+    button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
+  });
+  root.querySelectorAll("[data-add-ml]").forEach((button) => {
+    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl));
+  });
+  root.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
+    button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
+  });
+  root.querySelectorAll("[data-delete-rz-item]").forEach((button) => {
+    button.addEventListener("click", () => deleteLotRzItem(lotId, codigoRz, button.dataset.deleteRzItem, button));
+  });
+  root.querySelectorAll("[data-split-product]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
+      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
+    });
+  });
+  bindProductPrintButtons(root);
 }
 
 function bindLabelTextControls() {
@@ -5444,7 +5475,9 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
     } else {
       message.textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       const scannedProduct = findScannedProduct(response.lot, codigoRz, codigoMl);
-      renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
+      if (!updateRenderedScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl })) {
+        renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
+      }
       $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       if (scannedProduct && state.labelOptions.autoPrint) {
         showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
