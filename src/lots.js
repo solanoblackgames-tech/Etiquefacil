@@ -35,30 +35,51 @@ export function summarizeLot(db, lot, includeItems = false) {
   };
 
   if (includeItems) {
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    const latestScans = latestScanIndex(db.scans || []);
     result.products = products;
-    result.items = items.map((item) => enrichRzItemWithProductAndScans(db, item, products));
+    result.items = items.map((item) => enrichRzItemWithProductAndScans(item, productsById, latestScans));
   }
 
   return result;
 }
 
-function enrichRzItemWithProductAndScans(db, item, products) {
-  const product = products.find((candidate) => candidate.id === item.productId);
+function enrichRzItemWithProductAndScans(item, productsById, latestScans) {
+  const product = productsById.get(item.productId);
   return {
     ...item,
-    lastScanAt: lastRzItemScanAt(db, item, product),
+    lastScanAt: lastRzItemScanAt(item, product, latestScans),
     product
   };
 }
 
-function lastRzItemScanAt(db, item, product) {
+function lastRzItemScanAt(item, product, latestScans) {
   if (!product) return "";
   const matchingCodes = productScanCodes(product);
-  return (db.scans || [])
-    .filter((scan) => scan.lotId === item.lotId && scan.codigoRz === item.codigoRz)
-    .filter((scan) => matchingCodes.has(normalizeCode(scan.codigoMl)))
-    .map((scan) => scan.createdAt || "")
-    .sort((a, b) => String(b).localeCompare(String(a)))[0] || "";
+  let lastScanAt = "";
+  for (const code of matchingCodes) {
+    const scanAt = latestScans.get(scanIndexKey(item.lotId, item.codigoRz, code)) || "";
+    if (String(scanAt).localeCompare(String(lastScanAt)) > 0) lastScanAt = scanAt;
+  }
+  return lastScanAt;
+}
+
+function latestScanIndex(scans) {
+  const index = new Map();
+  for (const scan of scans) {
+    const code = normalizeCode(scan.codigoMl);
+    if (!code) continue;
+    const key = scanIndexKey(scan.lotId, scan.codigoRz, code);
+    const createdAt = scan.createdAt || "";
+    if (String(createdAt).localeCompare(String(index.get(key) || "")) > 0) {
+      index.set(key, createdAt);
+    }
+  }
+  return index;
+}
+
+function scanIndexKey(lotId, codigoRz, code) {
+  return `${lotId || ""}\u0000${codigoRz || ""}\u0000${normalizeCode(code)}`;
 }
 
 function productScanCodes(product) {

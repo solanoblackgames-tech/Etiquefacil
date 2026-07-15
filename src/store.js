@@ -1663,6 +1663,30 @@ export async function getUserLotDetail(userId, lotId) {
   return lot ? summarizeLot(db, lot, true) : null;
 }
 
+async function getUserLotRzDetail(userId, lotId, codigoRz) {
+  if (hasPostgres()) {
+    const db = await readPgUserLotsDb(userId, { lotId, codigoRz });
+    const lot = db.lots[0];
+    return lot ? summarizeLot(db, lot, true) : null;
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) return null;
+  return summarizeLot(scopeDbToLotRz(db, lot.id, codigoRz), lot, true);
+}
+
+function scopeDbToLotRz(db, lotId, codigoRz) {
+  const rzItems = (db.rzItems || []).filter((item) => item.lotId === lotId && item.codigoRz === codigoRz);
+  const productIds = new Set(rzItems.map((item) => item.productId));
+  return {
+    ...db,
+    products: (db.products || []).filter((product) => product.lotId === lotId && productIds.has(product.id)),
+    rzItems,
+    scans: (db.scans || []).filter((scan) => scan.lotId === lotId && scan.codigoRz === codigoRz)
+  };
+}
+
 export async function updateLotProduct({ userId, lotId, productId, payload }) {
   await ensureStore();
   const normalized = normalizeEditableProduct(payload);
@@ -2254,7 +2278,7 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
 
   db.scans.push(scan);
   await writeDb(db);
-  return { scan, lot: summarizeLot(db, lot, true) };
+  return { scan, lot: summarizeLot(scopeDbToLotRz(db, lot.id, codigoRz), lot, true) };
 }
 
 export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) {
@@ -3555,7 +3579,7 @@ async function writePgDb(db) {
   }
 }
 
-async function readPgUserLotsDb(userId, { lotId } = {}) {
+async function readPgUserLotsDb(userId, { lotId, codigoRz } = {}) {
   const lotParams = lotId ? [userId, lotId] : [userId];
   const lotsResult = await query(
     `select * from lots where user_id = $1 ${lotId ? "and id = $2" : ""} order by created_at asc`,
@@ -3565,10 +3589,41 @@ async function readPgUserLotsDb(userId, { lotId } = {}) {
   if (!lots.length) return { ...emptyDb(), lots };
 
   const lotIds = lots.map((lot) => lot.id);
+  const scopedProductsSql = codigoRz
+    ? `
+        select distinct p.*
+        from products p
+        join rz_items ri on ri.product_id = p.id
+        where p.lot_id = any($1::text[])
+          and ri.lot_id = p.lot_id
+          and ri.codigo_rz = $2
+        order by p.created_at asc
+      `
+    : "select * from products where lot_id = any($1::text[]) order by created_at asc";
+  const scopedRzItemsSql = codigoRz
+    ? "select * from rz_items where lot_id = any($1::text[]) and codigo_rz = $2 order by created_at asc"
+    : "select * from rz_items where lot_id = any($1::text[]) order by created_at asc";
+  const scopedScansSql = codigoRz
+    ? `
+        select distinct on (lot_id, codigo_rz, upper(trim(codigo_ml)))
+          *
+        from scans
+        where lot_id = any($1::text[])
+          and codigo_rz = $2
+        order by lot_id, codigo_rz, upper(trim(codigo_ml)), created_at desc
+      `
+    : `
+        select distinct on (lot_id, codigo_rz, upper(trim(codigo_ml)))
+          *
+        from scans
+        where lot_id = any($1::text[])
+        order by lot_id, codigo_rz, upper(trim(codigo_ml)), created_at desc
+      `;
+  const scopedParams = codigoRz ? [lotIds, codigoRz] : [lotIds];
   const [products, rzItems, scans, users] = await Promise.all([
-    query("select * from products where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
-    query("select * from rz_items where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
-    query("select * from scans where lot_id = any($1::text[]) order by created_at asc", [lotIds]),
+    query(scopedProductsSql, scopedParams),
+    query(scopedRzItemsSql, scopedParams),
+    query(scopedScansSql, scopedParams),
     query(
       "select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users where id = $1 or parent_user_id = $1",
       [userId]
@@ -4101,7 +4156,7 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
     client.release();
   }
 
-  return { scan, lot: await getUserLotDetail(userId, lotId) };
+  return { scan, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
 }
 
 async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {

@@ -359,6 +359,18 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
           qtdTotal: 4,
           origem: "planilha",
           createdAt: "2026-07-03T00:00:00.000Z"
+        },
+        {
+          id: "product-2",
+          lotId: "lot-1",
+          codigoMl: "ML2",
+          sku: "SKU2",
+          descricao: "Produto de outro RZ",
+          valorUnit: 20,
+          precoCusto: 4,
+          qtdTotal: 2,
+          origem: "planilha",
+          createdAt: "2026-07-03T00:01:00.000Z"
         }
       ],
       rzItems: [
@@ -372,6 +384,17 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
           tipoItem: "esperado",
           valorTotal: 40,
           createdAt: "2026-07-03T00:00:00.000Z"
+        },
+        {
+          id: "item-2",
+          lotId: "lot-1",
+          productId: "product-2",
+          codigoRz: "RZ-2",
+          qtdEsperada: 2,
+          qtdConferida: 0,
+          tipoItem: "esperado",
+          valorTotal: 40,
+          createdAt: "2026-07-03T00:01:00.000Z"
         }
       ],
       scans: [],
@@ -398,8 +421,11 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
     assert.equal(result.scan.status, "ok");
     assert.equal(result.lot.progress.checkedQty, 1);
     assert.equal(result.lot.progress.expectedQty, 4);
+    assert.equal(result.lot.rzs.length, 1);
+    assert.equal(result.lot.rzs[0].codigoRz, "RZ-1");
     assert.equal(result.lot.rzs[0].checked, 1);
     assert.equal(result.lot.rzs[0].missing, 3);
+    assert.equal(result.lot.items.length, 1);
     assert.equal(result.lot.items[0].qtdConferida, 1);
     assert.equal(db.rzItems[0].qtdConferida, 1);
   } finally {
