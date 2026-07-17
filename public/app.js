@@ -1900,7 +1900,7 @@ function canViewOperatorStats() {
 }
 
 function canViewTriageStats() {
-  return canViewOperatorStats();
+  return Boolean(state.user?.triageAccess && canViewOperatorStats());
 }
 
 function showAuth() {

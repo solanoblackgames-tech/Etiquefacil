@@ -419,7 +419,7 @@ app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) 
   }
 });
 
-app.get("/api/triage/stats", requireAuth, requireOperatorStatsAccess, async (req, res) => {
+app.get("/api/triage/stats", requireAuth, requireTriageAccess, requireOperatorStatsAccess, async (req, res) => {
   try {
     res.json({
       stats: await getTriageStats(workspaceUserId(req), {
