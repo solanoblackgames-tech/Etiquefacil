@@ -110,6 +110,7 @@ const COLUMN_ALIASES = {
   precoCusto: ["Preco de custo", "Preço de custo", "Custo", "Valor Custo", "Custo especifico", "Custo específico"],
   categoria: ["Categoria"],
   subcategoria: ["Subcategoria"],
+  ncm: ["NCM", "N.C.M.", "Codigo NCM", "Codigo fiscal"],
   ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
   foto: ["URL Imagens Externas", "URL da imagem", "URL/foto do produto", "Foto", "Imagem"],
   link: ["Link Externo", "Link do produto", "URL do produto", "Link"],
@@ -210,6 +211,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     const descricao = String(get(row, "descricao") ?? "").trim();
     const categoria = String(get(row, "categoria") ?? "").trim();
     const subcategoria = String(get(row, "subcategoria") ?? "").trim();
+    const ncm = String(get(row, "ncm") ?? "").replace(/\D/g, "").slice(0, 8);
     const ean = String(get(row, "ean") ?? "").trim();
     const foto = String(get(row, "foto") ?? "").trim();
     const link = String(get(row, "link") ?? "").trim();
@@ -226,6 +228,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
         qtdTotal: 0,
         categoria,
         subcategoria,
+        ncm,
         ean,
         foto,
         link,
@@ -321,6 +324,7 @@ export function buildBlingCsv(products, lot) {
     row["Código"] = product.sku;
     row["Descrição"] = product.descricao;
     row["Unidade"] = "UN";
+    row["NCM"] = product.ncm || "";
     row["Origem"] = "0";
     row["Preço"] = formatBrMoney(product.valorUnit);
     row["Valor IPI fixo"] = "0";

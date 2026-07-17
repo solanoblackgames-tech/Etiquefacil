@@ -80,7 +80,8 @@ const CONFERENCE_FIELDS = [
   { key: "weight", label: "Peso", formNames: ["pesoCaixa"] },
   { key: "stockLocation", label: "Localizacao no estoque", formNames: ["localizacaoEstoque"], printOption: true },
   { key: "category", label: "Categoria", formNames: ["categoria"] },
-  { key: "subcategory", label: "Subcategoria", formNames: ["subcategoria"] }
+  { key: "subcategory", label: "Subcategoria", formNames: ["subcategoria"] },
+  { key: "ncm", label: "NCM", formNames: ["ncm"] }
 ];
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const formatDate = (value) => {
@@ -118,8 +119,10 @@ function defaultConferenceSettings() {
       weight: { enabled: false, required: false },
       stockLocation: { enabled: false, required: false, printOnLabel: false },
       category: { enabled: false, required: false },
-      subcategory: { enabled: false, required: false }
-    }
+      subcategory: { enabled: false, required: false },
+      ncm: { enabled: false, required: false }
+    },
+    ncmByCategory: []
   };
 }
 
@@ -142,7 +145,30 @@ function normalizeConferenceSettings(settings = {}) {
     current.required = current.enabled ? Boolean(incoming.required) : false;
     if (field.printOption) current.printOnLabel = current.enabled ? Boolean(incoming.printOnLabel) : false;
   }
+  defaults.ncmByCategory = normalizeNcmByCategory(settings.ncmByCategory || settings.ncm_by_category || []);
   return defaults;
+}
+
+function normalizeNcmText(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function normalizeNcmByCategory(rows = []) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      category: String(row.category || row.categoria || "").trim(),
+      ncm: normalizeNcmText(row.ncm),
+      note: String(row.note || row.observacao || row.observacaoFiscal || "").trim()
+    }))
+    .filter((row) => row.category && row.ncm);
+}
+
+function ncmForCategory(category) {
+  const key = normalizeSearchText(category);
+  if (!key) return "";
+  const row = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory.find((item) => normalizeSearchText(item.category) === key);
+  return row?.ncm || "";
 }
 
 function conferenceField(key) {
@@ -240,6 +266,7 @@ function bindEvents() {
   });
 
   $("#uploadForm").addEventListener("submit", uploadLot);
+  $("#ncmCategoryUploadForm")?.addEventListener("submit", uploadNcmCategories);
 
   window.addEventListener("popstate", () => {
     if (state.transferReceiveOnly) {
@@ -815,15 +842,26 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const descriptionSuggestions = $("#manualProductDescriptionSuggestions");
     const error = $("#manualProductError");
     const cancel = $("#manualProductCancel");
+    const ncmOptions = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory;
+    const ncmListId = `manualProductNcmList-${Date.now()}`;
 
     const showBoxDimensions = includeLogisticsFields || isConferenceFieldEnabled("boxDimensions");
     const showWeight = includeLogisticsFields || isConferenceFieldEnabled("weight");
     logisticsFieldsWrap.innerHTML = `
           ${isConferenceFieldEnabled("category") ? `<label>Categoria
-            <input id="manualProductCategoria" name="categoria" placeholder="${isConferenceFieldRequired("category") ? "Obrigatorio" : "Opcional"}" />
+            <input id="manualProductCategoria" name="categoria" list="${escapeHtml(ncmListId)}Categories" placeholder="${isConferenceFieldRequired("category") ? "Obrigatorio" : "Opcional"}" />
+            <datalist id="${escapeHtml(ncmListId)}Categories">
+              ${ncmOptions.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.ncm)}</option>`).join("")}
+            </datalist>
           </label>` : ""}
           ${isConferenceFieldEnabled("subcategory") ? `<label>Subcategoria
             <input id="manualProductSubcategoria" name="subcategoria" placeholder="${isConferenceFieldRequired("subcategory") ? "Obrigatorio" : "Opcional"}" />
+          </label>` : ""}
+          ${isConferenceFieldEnabled("ncm") ? `<label>NCM
+            <input id="manualProductNcm" name="ncm" inputmode="numeric" maxlength="8" list="${escapeHtml(ncmListId)}" placeholder="${isConferenceFieldRequired("ncm") ? "Obrigatorio" : "Opcional"}" />
+            <datalist id="${escapeHtml(ncmListId)}">
+              ${ncmOptions.map((row) => `<option value="${escapeHtml(row.ncm)}">${escapeHtml(row.category)}</option>`).join("")}
+            </datalist>
           </label>` : ""}
           ${showBoxDimensions
       ? `
@@ -857,6 +895,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const localizacaoEstoque = $("#manualProductLocalizacaoEstoque");
     const categoria = $("#manualProductCategoria");
     const subcategoria = $("#manualProductSubcategoria");
+    const ncm = $("#manualProductNcm");
     ean.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("ean"));
     link.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("link"));
     photo.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("photo"));
@@ -886,6 +925,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     ean.value = initialValues.ean || "";
     if (categoria) categoria.value = initialValues.categoria || "";
     if (subcategoria) subcategoria.value = initialValues.subcategoria || "";
+    if (ncm) ncm.value = initialValues.ncm || ncmForCategory(initialValues.categoria);
     if (alturaCaixa) alturaCaixa.value = initialValues.alturaCaixa || "";
     if (larguraCaixa) larguraCaixa.value = initialValues.larguraCaixa || "";
     if (comprimentoCaixa) comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
@@ -961,6 +1001,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         if (suggestion.ean) ean.value = suggestion.ean;
         if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;
         if (subcategoria && suggestion.subcategoria) subcategoria.value = suggestion.subcategoria;
+        if (ncm && !ncm.value && suggestion.categoria) ncm.value = ncmForCategory(suggestion.categoria);
         if (alturaCaixa && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
         if (larguraCaixa && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
         if (comprimentoCaixa && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
@@ -1025,6 +1066,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
       if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
       if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
+      if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
       if (isConferenceFieldRequired("boxDimensions")) {
         if (requireTextField(alturaCaixa, "Informe a altura da caixa.", error)) return;
         if (requireTextField(larguraCaixa, "Informe a largura da caixa.", error)) return;
@@ -1037,6 +1079,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         valorUnit,
         categoria: categoria ? categoria.value.trim() : "",
         subcategoria: subcategoria ? subcategoria.value.trim() : "",
+        ncm: ncm ? normalizeNcmText(ncm.value) : ncmForCategory(categoria?.value),
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : "",
         alturaCaixa: alturaCaixa ? alturaCaixa.value.trim() : "",
         larguraCaixa: larguraCaixa ? larguraCaixa.value.trim() : "",
@@ -1061,6 +1104,20 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         form.requestSubmit();
       }
     };
+
+    categoria?.addEventListener("change", () => {
+      if (!ncm) return;
+      const mappedNcm = ncmForCategory(categoria.value);
+      if (mappedNcm) ncm.value = mappedNcm;
+    });
+    categoria?.addEventListener("blur", () => {
+      if (!ncm) return;
+      const mappedNcm = ncmForCategory(categoria.value);
+      if (mappedNcm) ncm.value = mappedNcm;
+    });
+    ncm?.addEventListener("input", () => {
+      ncm.value = normalizeNcmText(ncm.value);
+    });
 
     modal.onkeydown = (event) => {
       if (event.key === "Escape") {
@@ -1582,6 +1639,7 @@ function openProductEditModal(product, options = {}) {
     const price = $("#productEditPrice");
     const cost = $("#productEditCost");
     const ean = $("#productEditEan");
+    const ncm = $("#productEditNcm");
     const alturaCaixa = $("#productEditAlturaCaixa");
     const larguraCaixa = $("#productEditLarguraCaixa");
     const comprimentoCaixa = $("#productEditComprimentoCaixa");
@@ -1593,6 +1651,7 @@ function openProductEditModal(product, options = {}) {
     const cancel = $("#productEditCancel");
     const fieldVisibility = [
       [ean, isConferenceFieldEnabled("ean")],
+      [ncm, isConferenceFieldEnabled("ncm")],
       [link, isConferenceFieldEnabled("link")],
       [photo, isConferenceFieldEnabled("photo")],
       [alturaCaixa, includeLogisticsFields && isConferenceFieldEnabled("boxDimensions")],
@@ -1623,6 +1682,7 @@ function openProductEditModal(product, options = {}) {
     price.value = String(product.valorUnit || "").replace(".", ",");
     cost.value = String(product.precoCusto || "").replace(".", ",");
     ean.value = product.ean || "";
+    ncm.value = product.ncm || "";
     alturaCaixa.value = product.alturaCaixa || "";
     larguraCaixa.value = product.larguraCaixa || "";
     comprimentoCaixa.value = product.comprimentoCaixa || "";
@@ -1653,6 +1713,7 @@ function openProductEditModal(product, options = {}) {
         return;
       }
       if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
+      if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
       if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
       if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
       if (includeLogisticsFields && isConferenceFieldRequired("boxDimensions")) {
@@ -1667,6 +1728,7 @@ function openProductEditModal(product, options = {}) {
         valorUnit,
         precoCusto,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
+        ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncm.value) : product.ncm || "",
         alturaCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? alturaCaixa.value.trim() : product.alturaCaixa || "",
         larguraCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? larguraCaixa.value.trim() : product.larguraCaixa || "",
         comprimentoCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
@@ -1678,6 +1740,10 @@ function openProductEditModal(product, options = {}) {
       cleanup();
       resolve(result);
     };
+
+    ncm.addEventListener("input", () => {
+      ncm.value = normalizeNcmText(ncm.value);
+    });
 
     cancel.onclick = () => {
       cleanup();
@@ -2062,11 +2128,52 @@ function renderConferenceSettings() {
         ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
       </fieldset>
     `;
-  }).join("");
+  }).join("") + `
+    <section class="ncm-category-settings">
+      <div class="panel-heading compact-heading">
+        <span class="muted">Tabela opcional</span>
+        <h4>NCM por categoria</h4>
+      </div>
+      <div class="ncm-category-list" data-ncm-category-list>
+        ${renderNcmCategoryRows(settings.ncmByCategory)}
+      </div>
+      <button class="ghost" type="button" data-add-ncm-category>Adicionar categoria</button>
+    </section>
+  `;
   fields.querySelectorAll('input[type="checkbox"]').forEach((input) => {
     input.addEventListener("change", updateConferenceSettingsControlState);
   });
+  fields.querySelector("[data-add-ncm-category]")?.addEventListener("click", () => addNcmCategoryRow());
+  fields.querySelector("[data-ncm-category-list]")?.addEventListener("click", (event) => {
+    const removeButton = event.target.closest("[data-remove-ncm-category]");
+    if (!removeButton) return;
+    removeButton.closest("[data-ncm-category-row]")?.remove();
+  });
+  fields.querySelector("[data-ncm-category-list]")?.addEventListener("input", (event) => {
+    if (!event.target.matches('[name="ncmCategoryNcm"]')) return;
+    event.target.value = normalizeNcmText(event.target.value);
+  });
   updateConferenceSettingsControlState();
+}
+
+function renderNcmCategoryRows(rows = []) {
+  const normalized = normalizeNcmByCategory(rows);
+  const list = normalized.length ? normalized : [{ category: "", ncm: "" }];
+  return list.map((row) => `
+    <div class="ncm-category-row" data-ncm-category-row>
+      <label>Categoria<input name="ncmCategoryName" value="${escapeHtml(row.category)}" placeholder="Ex: Camisetas" /></label>
+      <label>NCM<input name="ncmCategoryNcm" value="${escapeHtml(row.ncm)}" inputmode="numeric" maxlength="8" placeholder="8 digitos" /></label>
+      <label>Observacao<input name="ncmCategoryNote" value="${escapeHtml(row.note || "")}" placeholder="Opcional" /></label>
+      <button class="ghost icon-action" type="button" data-remove-ncm-category aria-label="Remover categoria">x</button>
+    </div>
+  `).join("");
+}
+
+function addNcmCategoryRow() {
+  const list = document.querySelector("[data-ncm-category-list]");
+  if (!list) return;
+  list.insertAdjacentHTML("beforeend", renderNcmCategoryRows([{ category: "", ncm: "" }]));
+  list.querySelector("[data-ncm-category-row]:last-child input")?.focus();
 }
 
 function updateConferenceSettingsControlState() {
@@ -2094,11 +2201,18 @@ async function saveConferenceSettings(event) {
     };
     if (field.printOption) fields[field.key].printOnLabel = enabled ? Boolean(form.elements[`${field.key}PrintOnLabel`]?.checked) : false;
   }
+  const ncmByCategory = [...form.querySelectorAll("[data-ncm-category-row]")]
+    .map((row) => ({
+      category: row.querySelector('[name="ncmCategoryName"]')?.value || "",
+      ncm: row.querySelector('[name="ncmCategoryNcm"]')?.value || "",
+      note: row.querySelector('[name="ncmCategoryNote"]')?.value || ""
+    }))
+    .filter((row) => row.category.trim() || row.ncm.trim());
   try {
     const response = await api("/api/profile/conference-settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields })
+      body: JSON.stringify({ fields, ncmByCategory })
     });
     state.conferenceSettings = normalizeConferenceSettings(response.settings);
     message.style.color = "#0f766e";
@@ -2107,6 +2221,31 @@ async function saveConferenceSettings(event) {
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
+  }
+}
+
+async function uploadNcmCategories(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = $("#ncmCategoryUploadMessage");
+  const button = form.querySelector("button");
+  message.textContent = "";
+  button.disabled = true;
+  try {
+    const response = await api("/api/profile/ncm-categories", {
+      method: "POST",
+      body: new FormData(form)
+    });
+    state.conferenceSettings = normalizeConferenceSettings(response.settings);
+    renderConferenceSettings();
+    form.reset();
+    message.style.color = "#0f766e";
+    message.textContent = `Base importada com ${response.count || state.conferenceSettings.ncmByCategory.length} categorias.`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 

@@ -25,6 +25,7 @@ import {
 } from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
+import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import {
   addDiverseLotItem,
   canDeleteTriageItem,
@@ -390,6 +391,31 @@ app.get("/api/profile/conference-settings", requireAuth, async (req, res) => {
 app.patch("/api/profile/conference-settings", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json({ settings: await saveUserConferenceSettings(workspaceUserId(req), req.body || {}) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/profile/ncm-categories/template", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const settings = await getUserConferenceSettings(workspaceUserId(req));
+    const workbook = buildNcmCategoryWorkbook(settings.ncmByCategory?.length ? settings.ncmByCategory : DEFAULT_NCM_BY_CATEGORY);
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="base-categoria-ncm-etiquefacil.xlsx"');
+    res.send(buffer);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/profile/ncm-categories", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) throw new Error("Envie uma planilha .xlsx com as colunas Categoria e NCM.");
+    const ncmByCategory = parseNcmCategoryFile(req.file);
+    const current = await getUserConferenceSettings(workspaceUserId(req));
+    const settings = await saveUserConferenceSettings(workspaceUserId(req), { ...current, ncmByCategory });
+    res.json({ settings, count: settings.ncmByCategory.length });
   } catch (error) {
     sendError(res, error);
   }
@@ -907,6 +933,7 @@ app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (r
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
 
     const imported = await importSpecialistWorkbook(req.file.buffer, { auctionPercent, fornecedor, skuPrefix });
+    applyNcmByCategory(imported, await getUserConferenceSettings(workspaceUserId(req)));
     const lot = await createLotFromImport({
       userId: workspaceUserId(req),
       originalName: req.file.originalname,
@@ -2195,6 +2222,85 @@ function buildLotImportTemplateWorkbook() {
   XLSX.utils.book_append_sheet(workbook, productsSheet, "Produtos");
   XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
   return workbook;
+}
+
+function buildNcmCategoryWorkbook(rows = DEFAULT_NCM_BY_CATEGORY) {
+  const header = ["Categoria", "NCM", "Observacao"];
+  const data = normalizeNcmCategoryRows(rows).map((row) => [row.category, row.ncm, row.note || ""]);
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ["Base Categoria x NCM"],
+    ["O usuario pode alterar esta tabela e enviar novamente. O NCM sera aplicado automaticamente quando a categoria bater."],
+    [],
+    header,
+    ...data
+  ]);
+  sheet["!cols"] = [{ wch: 36 }, { wch: 12 }, { wch: 64 }];
+  sheet["!autofilter"] = { ref: `A4:C${Math.max(4, data.length + 4)}` };
+  XLSX.utils.book_append_sheet(workbook, sheet, "Categoria NCM");
+  return workbook;
+}
+
+function parseNcmCategoryFile(file) {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (ext !== ".xlsx" && ext !== ".xls") throw new Error("Envie uma planilha .xlsx ou .xls com as colunas Categoria e NCM.");
+  const workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) throw new Error("A planilha esta vazia.");
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const parsed = normalizeNcmCategoryRows(readNcmCategoryRows(rows));
+  if (!parsed.length) throw new Error("Nenhuma categoria com NCM valido foi encontrada. Use as colunas Categoria e NCM.");
+  return parsed;
+}
+
+function readNcmCategoryRows(rows) {
+  const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
+  const headerIndex = usefulRows.findIndex((row, index) => index < 10 && hasNcmCategoryHeader(row));
+  if (headerIndex === -1) throw new Error("Nao encontrei as colunas Categoria e NCM na planilha.");
+  const header = usefulRows[headerIndex].map((cell) => normalizeHeader(cell));
+  const categoryIndex = header.findIndex((name) => ["categoria", "category"].includes(name) || name.includes("categoria"));
+  const ncmIndex = header.findIndex((name) => name === "ncm" || name.includes("ncm"));
+  const noteIndex = header.findIndex((name) => ["observacao", "observacoes", "obs", "nota"].includes(name) || name.includes("observ"));
+  return usefulRows.slice(headerIndex + 1).map((row) => ({
+    category: row[categoryIndex],
+    ncm: row[ncmIndex],
+    note: noteIndex >= 0 ? row[noteIndex] : ""
+  }));
+}
+
+function hasNcmCategoryHeader(row) {
+  const header = row.map((cell) => normalizeHeader(cell));
+  return header.some((name) => ["categoria", "category"].includes(name) || name.includes("categoria")) &&
+    header.some((name) => name === "ncm" || name.includes("ncm"));
+}
+
+function normalizeNcmCategoryRows(rows = []) {
+  const byCategory = new Map();
+  for (const row of rows || []) {
+    const category = String(row.category || row.categoria || "").trim();
+    const ncm = normalizeNcmText(row.ncm);
+    if (!category || !ncm) continue;
+    byCategory.set(normalizeHeader(category), {
+      category,
+      ncm,
+      note: String(row.note || row.observacao || row.observacaoFiscal || "").trim()
+    });
+  }
+  return [...byCategory.values()];
+}
+
+function normalizeNcmText(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function applyNcmByCategory(imported, settings = {}) {
+  const map = new Map(normalizeNcmCategoryRows(settings.ncmByCategory || DEFAULT_NCM_BY_CATEGORY).map((row) => [normalizeHeader(row.category), row.ncm]));
+  for (const product of imported?.products || []) {
+    if (normalizeNcmText(product.ncm)) continue;
+    const ncm = map.get(normalizeHeader(product.categoria));
+    if (ncm) product.ncm = ncm;
+  }
+  return imported;
 }
 
 function buildPalletPdf(pallet) {

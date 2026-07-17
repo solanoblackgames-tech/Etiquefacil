@@ -16,6 +16,7 @@ test("parseCatalogRows imports Bling-like catalog using Marca as ML code", () =>
       precoCusto: 123.45,
       categoria: "Auto",
       subcategoria: "",
+      ncm: "",
       ean: "",
       foto: "",
       link: ""
@@ -25,10 +26,11 @@ test("parseCatalogRows imports Bling-like catalog using Marca as ML code", () =>
 
 test("parseCatalogRows imports optional EAN image URL and link", () => {
   const products = parseCatalogRows([
-    ["Marca", "Descricao", "Preco", "EAN", "URL Imagens Externas", "Link Externo"],
-    ["ML123", "Produto catalogo", "10,00", "7891234567890", "https://img.example/produto.jpg", "https://example/produto"]
+    ["Marca", "Descricao", "Preco", "NCM", "EAN", "URL Imagens Externas", "Link Externo"],
+    ["ML123", "Produto catalogo", "10,00", "6203.42.00", "7891234567890", "https://img.example/produto.jpg", "https://example/produto"]
   ]);
 
+  assert.equal(products[0].ncm, "62034200");
   assert.equal(products[0].ean, "7891234567890");
   assert.equal(products[0].foto, "https://img.example/produto.jpg");
   assert.equal(products[0].link, "https://example/produto");

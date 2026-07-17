@@ -109,6 +109,7 @@ test("Bling CSV maps SKU, ML brand and total stock", () => {
         valorUnit: 1659.17,
         precoCusto: 331.83,
         qtdTotal: 3,
+        ncm: "62034200",
         ean: "7891234567890",
         foto: "https://img.example/produto.jpg",
         link: "https://example/produto"
@@ -126,6 +127,7 @@ test("Bling CSV maps SKU, ML brand and total stock", () => {
   assert.equal(value("Marca"), "JQQR53377");
   assert.equal(value("Estoque"), "3");
   assert.equal(value("Fornecedor"), "AMZ04LOTE");
+  assert.equal(value("NCM"), "62034200");
   assert.equal(value("GTIN/EAN"), "7891234567890");
   assert.equal(value("URL Imagens Externas"), "https://img.example/produto.jpg");
   assert.equal(value("Link Externo"), "https://example/produto");

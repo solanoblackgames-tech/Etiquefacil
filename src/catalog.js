@@ -8,6 +8,7 @@ const CATALOG_ALIASES = {
   precoCusto: ["Preco de custo", "Custo", "Valor Custo", "Preço de custo"],
   categoria: ["Categoria", "Categoria do produto"],
   subcategoria: ["Subcategoria", "Sub categoria"],
+  ncm: ["NCM", "N.C.M.", "Codigo NCM", "Codigo fiscal"],
   ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
   foto: ["URL Imagens Externas", "URL da imagem", "URL/foto do produto", "Foto", "Imagem"],
   link: ["Link Externo", "Link do produto", "URL do produto", "Link"]
@@ -43,6 +44,7 @@ export function parseCatalogRows(rows) {
       precoCusto: roundMoney(parseNumber(valueAt(row, index, "precoCusto"))),
       categoria: String(valueAt(row, index, "categoria") ?? "").trim(),
       subcategoria: String(valueAt(row, index, "subcategoria") ?? "").trim(),
+      ncm: String(valueAt(row, index, "ncm") ?? "").replace(/\D/g, "").slice(0, 8),
       ean: String(valueAt(row, index, "ean") ?? "").trim(),
       foto: String(valueAt(row, index, "foto") ?? "").trim(),
       link: String(valueAt(row, index, "link") ?? "").trim()

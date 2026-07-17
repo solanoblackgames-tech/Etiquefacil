@@ -219,6 +219,65 @@ h3 {
   padding: 12px;
 }
 
+.ncm-category-settings {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+}
+
+.compact-heading h4 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.ncm-category-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ncm-category-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(170px, 1fr) minmax(110px, 150px) minmax(180px, 1.2fr) 40px;
+}
+
+.ncm-category-row label {
+  margin: 0;
+}
+
+.icon-action {
+  min-height: 40px;
+  padding: 0;
+}
+
+.ncm-upload-panel {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.ncm-upload-panel > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.inline-upload-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.inline-upload-form label {
+  margin: 0;
+  min-width: 220px;
+}
+
 .integration-status {
   border: 1px solid var(--line);
   border-radius: 8px;

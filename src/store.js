@@ -6,6 +6,7 @@ import pg from "pg";
 import { formatSku, parseNumber, roundMoney } from "./domain.js";
 import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
 import { insertRows } from "./pg-bulk.js";
+import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 
 const { Pool } = pg;
 
@@ -65,7 +66,8 @@ const CONFERENCE_FIELD_DEFAULTS = Object.freeze({
   weight: { enabled: false, required: false },
   stockLocation: { enabled: false, required: false, printOnLabel: false },
   category: { enabled: false, required: false },
-  subcategory: { enabled: false, required: false }
+  subcategory: { enabled: false, required: false },
+  ncm: { enabled: false, required: false }
 });
 
 const PRICE_DISPLAY_DEFAULTS = Object.freeze({
@@ -1789,14 +1791,15 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         set descricao = $4,
             valor_unit = $5,
             preco_custo = $6,
-            ean = $7,
-            link = $8,
-            foto = $9,
-            altura_caixa = $10,
-            largura_caixa = $11,
-            comprimento_caixa = $12,
-            peso_caixa = $13,
-            localizacao_estoque = $14
+            ncm = $7,
+            ean = $8,
+            link = $9,
+            foto = $10,
+            altura_caixa = $11,
+            largura_caixa = $12,
+            comprimento_caixa = $13,
+            peso_caixa = $14,
+            localizacao_estoque = $15
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1809,6 +1812,7 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.descricao,
         normalized.valorUnit,
         normalized.precoCusto,
+        normalized.ncm,
         normalized.ean,
         normalized.link,
         normalized.foto,
@@ -2931,6 +2935,7 @@ async function ensurePgStore() {
       qtd_total integer not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ncm text not null default '',
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
@@ -2951,6 +2956,7 @@ async function ensurePgStore() {
       preco_custo numeric not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ncm text not null default '',
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
@@ -3143,6 +3149,7 @@ async function ensurePgStore() {
       preco_custo numeric not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ncm text not null default '',
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
@@ -3174,6 +3181,7 @@ async function ensurePgStore() {
       preco_custo numeric not null default 0,
       categoria text not null default '',
       subcategoria text not null default '',
+      ncm text not null default '',
       ean text not null default '',
       link text not null default '',
       foto text not null default '',
@@ -3218,6 +3226,7 @@ async function ensurePgStore() {
     alter table lots add column if not exists percentual_custo numeric not null default 0;
     alter table lots add column if not exists no_sheet_suggestions jsonb not null default '[]'::jsonb;
     alter table products add column if not exists ean text not null default '';
+    alter table products add column if not exists ncm text not null default '';
     alter table products add column if not exists link text not null default '';
     alter table products add column if not exists foto text not null default '';
     alter table products add column if not exists created_by_user_id text references users(id) on delete set null;
@@ -3228,9 +3237,11 @@ async function ensurePgStore() {
     alter table products add column if not exists peso_caixa numeric;
     alter table products add column if not exists localizacao_estoque text not null default '';
     alter table catalog_products add column if not exists ean text not null default '';
+    alter table catalog_products add column if not exists ncm text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists ean text not null default '';
+    alter table catalog_requests add column if not exists ncm text not null default '';
     alter table catalog_requests add column if not exists link text not null default '';
     alter table catalog_requests add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists scope text not null default 'individual';
@@ -3262,6 +3273,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
     alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
     alter table catalog_rejected_requests add column if not exists alert_message text not null default '';
+    alter table catalog_rejected_requests add column if not exists ncm text not null default '';
     alter table catalog_rejected_requests add column if not exists altura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists largura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists comprimento_caixa numeric;
@@ -3368,6 +3380,7 @@ async function ensurePgStore() {
       preco_custo,
       categoria,
       subcategoria,
+      ncm,
       ean,
       link,
       foto,
@@ -3396,6 +3409,7 @@ async function ensurePgStore() {
       cr.preco_custo,
       cr.categoria,
       cr.subcategoria,
+      cr.ncm,
       cr.ean,
       cr.link,
       cr.foto,
@@ -3596,7 +3610,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -3608,6 +3622,7 @@ async function writePgDb(db) {
         requiredInt(product.qtdTotal),
         product.categoria || "",
         product.subcategoria || "",
+        product.ncm || "",
         product.ean || "",
         product.link || "",
         product.foto || "",
@@ -3763,7 +3778,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -3777,6 +3792,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       requiredInt(product.qtdTotal),
       product.categoria || "",
       product.subcategoria || "",
+      product.ncm || "",
       product.ean || "",
       product.link || "",
       product.foto || "",
@@ -3813,7 +3829,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -3822,6 +3838,7 @@ async function insertCatalogProductRows(client, products = []) {
       product.precoCusto,
       product.categoria || "",
       product.subcategoria || "",
+      product.ncm || "",
       product.ean || "",
       product.link || "",
       product.foto || "",
@@ -4055,6 +4072,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "preco_custo",
       "categoria",
       "subcategoria",
+      "ncm",
       "ean",
       "link",
       "foto",
@@ -4084,6 +4102,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.precoCusto || 0,
       request.categoria || "",
       request.subcategoria || "",
+      request.ncm || "",
       request.ean || "",
       request.link || "",
       request.foto || "",
@@ -4121,6 +4140,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "preco_custo",
       "categoria",
       "subcategoria",
+      "ncm",
       "ean",
       "link",
       "foto",
@@ -4151,6 +4171,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.precoCusto || 0,
       request.categoria || "",
       request.subcategoria || "",
+      request.ncm || "",
       request.ean || "",
       request.link || "",
       request.foto || "",
@@ -4963,6 +4984,7 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         cp.preco_custo as catalog__preco_custo,
         cp.categoria as catalog__categoria,
         cp.subcategoria as catalog__subcategoria,
+        cp.ncm as catalog__ncm,
         cp.ean as catalog__ean,
         cp.link as catalog__link,
         cp.foto as catalog__foto
@@ -4989,6 +5011,7 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
       precoCusto: num(row.catalog__preco_custo),
       categoria: row.catalog__categoria || "",
       subcategoria: row.catalog__subcategoria || "",
+      ncm: row.catalog__ncm || "",
       ean: row.catalog__ean || "",
       link: row.catalog__link || "",
       foto: row.catalog__foto || "",
@@ -5109,14 +5132,15 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, localizacao_estoque, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ncm, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, localizacao_estoque, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
             preco_custo = excluded.preco_custo,
             categoria = excluded.categoria,
             subcategoria = excluded.subcategoria,
+            ncm = excluded.ncm,
             ean = excluded.ean,
             link = excluded.link,
             foto = excluded.foto,
@@ -5127,7 +5151,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             localizacao_estoque = excluded.localizacao_estoque,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null, selected.localizacaoEstoque || ""]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ncm || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null, selected.localizacaoEstoque || ""]
       );
       await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -5163,6 +5187,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
+    ncm: history.ncm || "",
     ean: history.ean || "",
     link: history.link || "",
     foto: history.foto || "",
@@ -5205,6 +5230,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     qtdTotal: 1,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
+    ncm: history.ncm || "",
     ean: history.ean || "",
     link: history.link || "",
     foto: history.foto || "",
@@ -5306,6 +5332,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
     valorUnit,
     categoria: String(input.categoria || "").trim(),
     subcategoria: String(input.subcategoria || "").trim(),
+    ncm: normalizeNcmText(input.ncm),
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
     foto: String(foto || "").trim(),
@@ -5329,6 +5356,7 @@ function normalizeEditableProduct(input = {}) {
     descricao,
     valorUnit,
     precoCusto,
+    ncm: normalizeNcmText(input.ncm),
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),
     foto: String(foto || "").trim(),
@@ -5357,6 +5385,7 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     precoCusto: roundMoney(payload.precoCusto ?? product.precoCusto),
     categoria: payload.categoria || product.categoria || "",
     subcategoria: payload.subcategoria || product.subcategoria || "",
+    ncm: normalizeNcmText(payload.ncm ?? product.ncm),
     ean: payload.ean || product.ean || "",
     link: payload.link || product.link || "",
     foto: payload.foto || product.foto || "",
@@ -5510,6 +5539,7 @@ function buildCatalogDoubleCheck(request) {
     precoCusto: roundMoney(request.precoCusto || 0),
     categoria: request.categoria || "",
     subcategoria: request.subcategoria || "",
+    ncm: request.ncm || "",
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
@@ -5628,6 +5658,7 @@ function upsertCatalogProduct(db, request) {
     precoCusto: Number(request.precoCusto || 0),
     categoria: request.categoria || "",
     subcategoria: request.subcategoria || "",
+    ncm: request.ncm || "",
     ean: request.ean || "",
     link: request.link || "",
     foto: request.foto || "",
@@ -6011,6 +6042,7 @@ function productFromRow(row) {
     qtdTotal: Number(row.qtd_total),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ncm: row.ncm || "",
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
@@ -6481,6 +6513,7 @@ function catalogProductFromRow(row) {
     precoCusto: num(row.preco_custo),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ncm: row.ncm || "",
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
@@ -6510,6 +6543,7 @@ function catalogRequestFromRow(row) {
     precoCusto: num(row.preco_custo),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ncm: row.ncm || "",
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
@@ -6544,6 +6578,7 @@ function catalogRejectedRequestFromRow(row) {
     precoCusto: num(row.preco_custo),
     categoria: row.categoria || "",
     subcategoria: row.subcategoria || "",
+    ncm: row.ncm || "",
     ean: row.ean || "",
     link: row.link || "",
     foto: row.foto || "",
@@ -7162,7 +7197,26 @@ function normalizeConferenceSettings(input = {}) {
       fields[key].printOnLabel = enabled ? Boolean(incoming.printOnLabel) : false;
     }
   }
-  return { fields };
+  const hasCustomNcm = Object.prototype.hasOwnProperty.call(input, "ncmByCategory") || Object.prototype.hasOwnProperty.call(input, "ncm_by_category");
+  return {
+    fields,
+    ncmByCategory: normalizeNcmByCategory(hasCustomNcm ? input.ncmByCategory || input.ncm_by_category || [] : DEFAULT_NCM_BY_CATEGORY)
+  };
+}
+
+function normalizeNcmText(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function normalizeNcmByCategory(rows = []) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      category: String(row.category || row.categoria || "").trim(),
+      ncm: normalizeNcmText(row.ncm),
+      note: String(row.note || row.observacao || row.observacaoFiscal || "").trim()
+    }))
+    .filter((row) => row.category && row.ncm);
 }
 
 function normalizePriceDisplaySettings(input = {}) {
