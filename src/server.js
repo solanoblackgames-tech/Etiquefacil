@@ -2192,26 +2192,9 @@ function buildLotImportTemplateWorkbook() {
   productsSheet["!autofilter"] = { ref: "A1:O1" };
   instructionsSheet["!autofilter"] = { ref: "A1:C1" };
 
-  addSheetComments(productsSheet, {
-    A1: "Obrigatorio. Codigo que sera usado na leitura/conferencia.",
-    B1: "Obrigatorio. Identifica a RZ/pallet do produto.",
-    C1: "Obrigatorio. Quantidade esperada na RZ.",
-    D1: "Obrigatorio. Descricao do produto.",
-    E1: "Obrigatorio. Preco de venda unitario.",
-    F1: "Obrigatorio. Valor total da linha.",
-    G1: "Opcional. Quando preenchido, substitui o custo calculado pelo percentual de arremate."
-  });
-
   XLSX.utils.book_append_sheet(workbook, productsSheet, "Produtos");
   XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
   return workbook;
-}
-
-function addSheetComments(sheet, comments) {
-  for (const [cellAddress, text] of Object.entries(comments)) {
-    if (!sheet[cellAddress]) continue;
-    sheet[cellAddress].c = [{ a: "Etiquefacil", t: text }];
-  }
 }
 
 function buildPalletPdf(pallet) {
