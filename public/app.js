@@ -185,8 +185,10 @@ async function bootstrap() {
     await showTransferReceiveOnly(transferReceiveRequest);
     return;
   }
+  const scanRequest = getScanRequest();
   const me = await api("/api/me");
   if (me.user) showApp(me.user);
+  else if (scanRequest) showScanSessionExpired(scanRequest);
   else showAuth();
 }
 
@@ -1910,6 +1912,41 @@ function showAuth() {
   $("#app").classList.add("hidden");
   $("#adminApp").classList.add("hidden");
   schedulePrimaryInputFocus(["#loginForm input[name='email']"]);
+}
+
+function showScanSessionExpired({ lotId, codigoRz }) {
+  document.body.classList.add("scan-only");
+  document.body.classList.remove("lot-focus");
+  stopTransferCamera();
+  $("#auth").classList.add("hidden");
+  $("#operatorInviteAuth").classList.add("hidden");
+  $("#adminApp").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  $("#app .topbar h1").textContent = "Bipagem";
+  $("#app .app-nav")?.classList.add("hidden");
+  $("#uploadForm").closest(".upload-band")?.classList.add("hidden");
+  $(".tabs")?.classList.add("hidden");
+  $("#lotsTab").classList.remove("hidden");
+  $("#searchTab").classList.add("hidden");
+  $("#profileTab").classList.add("hidden");
+  $("#lotDetail").classList.add("empty");
+  $("#lotDetail").innerHTML = `
+    <section class="scan-page">
+      <div class="scan-heading">
+        <div>
+          <span class="muted">${escapeHtml(lotId)}</span>
+          <h2>${escapeHtml(codigoRz)}</h2>
+        </div>
+      </div>
+      <p class="message">Sessao expirada ou nao encontrada. Volte para a janela principal, entre com o operador correto e reabra a bipagem.</p>
+      <div class="actions">
+        <button type="button" id="scanBackToLoginButton">Ir para login</button>
+      </div>
+    </section>
+  `;
+  $("#scanBackToLoginButton").addEventListener("click", () => {
+    window.location.href = "/";
+  });
 }
 
 async function loadBlingIntegration() {

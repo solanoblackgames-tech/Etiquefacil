@@ -15,15 +15,15 @@
     <main id="auth" class="auth">
       <section class="auth-panel">
         <h1>Etiquefácil</h1>
-        <form id="loginForm" class="form">
-          <label>E-mail<input name="email" type="email" required /></label>
-          <label>Senha<input name="password" type="password" required /></label>
+        <form id="loginForm" class="form" autocomplete="on">
+          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
+          <label>Senha<input name="password" type="password" autocomplete="current-password" required /></label>
           <button type="submit">Entrar</button>
         </form>
         <form id="registerForm" class="form secondary">
-          <label>Nome<input name="name" required /></label>
-          <label>E-mail<input name="email" type="email" required /></label>
-          <label>Senha<input name="password" type="password" required /></label>
+          <label>Nome<input name="name" autocomplete="name" required /></label>
+          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
+          <label>Senha<input name="password" type="password" autocomplete="new-password" required /></label>
           <button type="submit">Criar conta</button>
         </form>
         <p id="authMessage" class="message"></p>
@@ -37,9 +37,9 @@
           <p id="operatorInviteDetails" class="muted"></p>
         </div>
         <form id="operatorInviteForm" class="form">
-          <label>Nome<input name="name" required /></label>
-          <label>E-mail<input name="email" type="email" required /></label>
-          <label>Senha<input name="password" type="password" required /></label>
+          <label>Nome<input name="name" autocomplete="name" required /></label>
+          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
+          <label>Senha<input name="password" type="password" autocomplete="new-password" required /></label>
           <button type="submit">Concluir cadastro</button>
         </form>
         <p id="operatorInviteMessage" class="message"></p>
