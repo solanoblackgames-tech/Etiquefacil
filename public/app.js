@@ -2007,6 +2007,20 @@ async function loadPriceDisplaySettings() {
   }
 }
 
+async function refreshPriceDisplaySettingsForm() {
+  const message = $("#priceDisplaySettingsMessage");
+  try {
+    const response = await api("/api/profile/price-display-settings");
+    state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
+    renderPriceDisplaySettings();
+  } catch (error) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    }
+  }
+}
+
 function noSheetSuggestionUploadMarkup(lot, { includeHelp = true } = {}) {
   const count = Number(lot?.noSheetSuggestions?.length || 0);
   return `
@@ -2130,9 +2144,9 @@ async function savePriceDisplaySettings(event) {
       })
     });
     state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
+    await refreshPriceDisplaySettingsForm();
     message.style.color = "#0f766e";
     message.textContent = "Configuracao de preco clube salva.";
-    renderPriceDisplaySettings();
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -2168,7 +2182,7 @@ function setProfileSection(section = "entries") {
   if (section === "sync") loadBlingIntegration();
   if (section === "conferenceSettings") {
     renderConferenceSettings();
-    renderPriceDisplaySettings();
+    refreshPriceDisplaySettingsForm();
   }
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
