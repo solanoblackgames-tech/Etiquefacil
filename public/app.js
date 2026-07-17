@@ -1879,7 +1879,6 @@ function applyUserPermissions(user) {
   document.querySelector('[data-profile-section="entries"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="sync"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="conferenceSettings"]')?.classList.toggle("hidden", operator);
-  document.querySelector('[data-profile-section="priceDisplay"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="operators"]')?.classList.toggle("hidden", !canViewOperatorStats());
   document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
@@ -1887,9 +1886,6 @@ function applyUserPermissions(user) {
   }
   if (!canViewOperatorStats()) {
     document.querySelector("#profileOperators")?.classList.add("hidden");
-  }
-  if (operator) {
-    document.querySelector("#profilePriceDisplay")?.classList.add("hidden");
   }
   document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isOwnerUser());
   if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
@@ -2128,14 +2124,15 @@ function setProfileSection(section = "entries") {
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileConferenceSettings").classList.toggle("hidden", section !== "conferenceSettings");
-  $("#profilePriceDisplay").classList.toggle("hidden", section !== "priceDisplay");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
   $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
   if (section === "dashboard") loadOperationalDashboard();
   if (section === "sync") loadBlingIntegration();
-  if (section === "conferenceSettings") renderConferenceSettings();
-  if (section === "priceDisplay") renderPriceDisplaySettings();
+  if (section === "conferenceSettings") {
+    renderConferenceSettings();
+    renderPriceDisplaySettings();
+  }
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
 }
