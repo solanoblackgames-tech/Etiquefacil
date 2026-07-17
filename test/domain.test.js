@@ -82,6 +82,23 @@ test("specialist import sums Saldo 1 to Saldo 4 when quantity column is absent",
   assert.equal(result.items[1].qtdEsperada, 2);
 });
 
+test("specialist import uses explicit product cost when provided", async () => {
+  const rows = [
+    ["Codigo ML", "Codigo RZ", "Qtd", "Descricao", "Valor Unit", "Valor Total", "Preco de custo"],
+    ["ML-COST", "RZ-1", 1, "Produto com custo informado", 100, 100, 37.45],
+    ["ML-PERCENT", "RZ-1", 1, "Produto com custo percentual", 200, 200, ""]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  const result = await importSpecialistWorkbook(buffer, { skuPrefix: "cst", auctionPercent: 20 });
+
+  assert.equal(result.products.find((product) => product.codigoMl === "ML-COST").precoCusto, 37.45);
+  assert.equal(result.products.find((product) => product.codigoMl === "ML-PERCENT").precoCusto, 40);
+});
+
 test("Bling CSV maps SKU, ML brand and total stock", () => {
   const csv = buildBlingCsv(
     [

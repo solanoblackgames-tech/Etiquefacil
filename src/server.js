@@ -308,6 +308,14 @@ app.get("/api/lots", requireAuth, async (req, res) => {
   res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
 });
 
+app.get("/api/lots/template", requireAuth, requireOwner, async (req, res) => {
+  const workbook = buildLotImportTemplateWorkbook();
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="modelo-importacao-lote-etiquefacil.xlsx"');
+  res.send(buffer);
+});
+
 app.get("/api/operators", requireAuth, requireOperatorStatsAccess, async (req, res) => {
   res.json({
     operators: await listOperatorsForUser(workspaceUserId(req), {
@@ -2115,6 +2123,95 @@ function buildPalletWorkbook(pallet) {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), "Resumo");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), "Itens");
   return workbook;
+}
+
+function buildLotImportTemplateWorkbook() {
+  const headers = [
+    "Codigo ML",
+    "Codigo RZ",
+    "Qtd",
+    "Descricao",
+    "Valor Unit",
+    "Valor Total",
+    "Preco de custo",
+    "Categoria",
+    "Subcategoria",
+    "NCM",
+    "EAN",
+    "Endereco WMS",
+    "Condicao (Grade)",
+    "URL da imagem",
+    "Link do produto"
+  ];
+  const rows = [
+    headers,
+    ["ML123456", "RZ-001", 2, "Produto exemplo", 149.9, 299.8, 45.5, "Eletronicos", "Acessorios", "85171231", "7891234567890", "A1-01", "Novo", "https://exemplo.com/foto.jpg", "https://exemplo.com/produto"],
+    ["ML987654", "RZ-001", 1, "Produto sem custo especifico", 89.9, 89.9, "", "Casa", "Decoracao", "", "", "A1-02", "Usado", "", ""]
+  ];
+  const instructions = [
+    ["Coluna", "Obrigatoria?", "Como preencher"],
+    ["Codigo ML", "Sim", "Codigo usado para identificar/bipar o produto. Pode ser o codigo do Mercado Livre ou codigo interno."],
+    ["Codigo RZ", "Sim", "RZ/pallet/destino onde o item deve ser conferido."],
+    ["Qtd", "Sim", "Quantidade esperada deste produto nesta RZ. Tambem pode usar Saldo 1 a Saldo 4 no lugar de Qtd."],
+    ["Descricao", "Sim", "Nome do produto que sera usado no lote, etiqueta e Bling."],
+    ["Valor Unit", "Sim", "Preco de venda unitario do produto."],
+    ["Valor Total", "Sim", "Valor total da linha. Normalmente Qtd x Valor Unit."],
+    ["Preco de custo", "Nao", "Se preencher, o sistema usa este custo direto no produto. Se deixar vazio, calcula pelo percentual de arremate informado na tela."],
+    ["Categoria", "Nao", "Categoria do produto."],
+    ["Subcategoria", "Nao", "Subcategoria do produto."],
+    ["NCM", "Nao", "Codigo fiscal com ate 8 digitos, quando souber."],
+    ["EAN", "Nao", "Codigo de barras/GTIN."],
+    ["Endereco WMS", "Nao", "Endereco fisico ou posicao de estoque."],
+    ["Condicao (Grade)", "Nao", "Condicao, grade ou observacao curta do item."],
+    ["URL da imagem", "Nao", "Link publico da foto do produto."],
+    ["Link do produto", "Nao", "Link publico da pagina do produto."]
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  const productsSheet = XLSX.utils.aoa_to_sheet(rows);
+  const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
+
+  productsSheet["!cols"] = [
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 8 },
+    { wch: 34 },
+    { wch: 13 },
+    { wch: 13 },
+    { wch: 15 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 11 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 28 }
+  ];
+  instructionsSheet["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 90 }];
+  productsSheet["!autofilter"] = { ref: "A1:O1" };
+  instructionsSheet["!autofilter"] = { ref: "A1:C1" };
+
+  addSheetComments(productsSheet, {
+    A1: "Obrigatorio. Codigo que sera usado na leitura/conferencia.",
+    B1: "Obrigatorio. Identifica a RZ/pallet do produto.",
+    C1: "Obrigatorio. Quantidade esperada na RZ.",
+    D1: "Obrigatorio. Descricao do produto.",
+    E1: "Obrigatorio. Preco de venda unitario.",
+    F1: "Obrigatorio. Valor total da linha.",
+    G1: "Opcional. Quando preenchido, substitui o custo calculado pelo percentual de arremate."
+  });
+
+  XLSX.utils.book_append_sheet(workbook, productsSheet, "Produtos");
+  XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
+  return workbook;
+}
+
+function addSheetComments(sheet, comments) {
+  for (const [cellAddress, text] of Object.entries(comments)) {
+    if (!sheet[cellAddress]) continue;
+    sheet[cellAddress].c = [{ a: "Etiquefacil", t: text }];
+  }
 }
 
 function buildPalletPdf(pallet) {

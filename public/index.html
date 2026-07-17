@@ -92,6 +92,16 @@
               <span class="muted">Com planilha</span>
               <h3>Importar XLSX</h3>
             </div>
+            <div class="import-template-help">
+              <a class="button-link ghost-link" href="/api/lots/template">Baixar modelo XLSX</a>
+              <p>Preencha as colunas obrigatorias do modelo. A coluna <strong>Preco de custo</strong> e opcional: quando preenchida, o sistema usa esse custo no produto; quando vazia, calcula pelo % arremate.</p>
+              <dl>
+                <div><dt>Codigo ML</dt><dd>codigo usado para bipagem e identificacao do produto.</dd></div>
+                <div><dt>Codigo RZ</dt><dd>RZ/pallet onde o item sera conferido.</dd></div>
+                <div><dt>Qtd</dt><dd>quantidade esperada na RZ.</dd></div>
+                <div><dt>Valor Unit / Valor Total</dt><dd>preco de venda unitario e total da linha.</dd></div>
+              </dl>
+            </div>
             <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
             <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
             <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>

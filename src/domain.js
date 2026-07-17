@@ -107,6 +107,7 @@ const COLUMN_ALIASES = {
   descricao: ["Descrição do Item", "Descricao do Item", "Descrição", "Descricao"],
   valorUnit: ["Valor Unit", "Valor Unitário", "Valor Unitario"],
   valorTotal: ["Valor Total"],
+  precoCusto: ["Preco de custo", "Preço de custo", "Custo", "Valor Custo", "Custo especifico", "Custo específico"],
   categoria: ["Categoria"],
   subcategoria: ["Subcategoria"],
   ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
@@ -205,6 +206,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     const qtd = readQuantity(row, indexByColumn, get);
     const valorUnit = parseNumber(get(row, "valorUnit"));
     const valorTotal = parseNumber(get(row, "valorTotal"));
+    const explicitCost = indexByColumn.has("precoCusto") ? roundMoney(parseNumber(get(row, "precoCusto"))) : 0;
     const descricao = String(get(row, "descricao") ?? "").trim();
     const categoria = String(get(row, "categoria") ?? "").trim();
     const subcategoria = String(get(row, "subcategoria") ?? "").trim();
@@ -219,7 +221,8 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
         sku: formatSku(lotInput.skuPrefix, sequence++),
         descricao,
         valorUnit,
-        precoCusto: roundMoney(valorUnit * percentage),
+        precoCusto: explicitCost > 0 ? explicitCost : roundMoney(valorUnit * percentage),
+        hasExplicitCost: explicitCost > 0,
         qtdTotal: 0,
         categoria,
         subcategoria,
@@ -232,6 +235,10 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     }
 
     const product = byMl.get(codigoMl);
+    if (!product.hasExplicitCost && explicitCost > 0) {
+      product.precoCusto = explicitCost;
+      product.hasExplicitCost = true;
+    }
     product.qtdTotal += qtd;
     items.push({
       id: randomUUID(),
@@ -250,7 +257,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
   if (!byMl.size) throw new Error("Nenhum item válido foi encontrado na aba importada.");
 
   return {
-    products: [...byMl.values()],
+    products: [...byMl.values()].map(({ hasExplicitCost, ...product }) => product),
     items,
     nextSequence: sequence
   };

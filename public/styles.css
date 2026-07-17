@@ -914,6 +914,49 @@ h3 {
   grid-template-columns: 2fr 1fr 1fr 1fr auto;
 }
 
+.import-template-help {
+  align-items: start;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(260px, 1fr);
+  padding: 12px;
+}
+
+.import-template-help p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.import-template-help dl {
+  display: grid;
+  gap: 8px 14px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.import-template-help dt {
+  color: var(--ink);
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.import-template-help dd {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.ghost-link {
+  background: #ffffff;
+  border: 1px solid var(--accent);
+  color: var(--accent-strong);
+}
+
 .triage-shell {
   display: grid;
   flex: 1 1 auto;
@@ -3924,6 +3967,8 @@ h3 {
 
   .form,
   .upload-grid,
+  .import-template-help,
+  .import-template-help dl,
   .transfer-form,
   .layout,
   .summary-grid,
