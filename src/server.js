@@ -66,6 +66,7 @@ import {
   getUserBlingCredentials,
   getUserBlingIntegration,
   getUserConferenceSettings,
+  getUserPriceDisplaySettings,
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
@@ -97,15 +98,18 @@ import {
   updateLotProduct,
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
+  updateOperatorStatsAccess,
   updateTriageDiagnosis,
   updateTriageItemDetails,
   updateProductRegistrationFromTriage,
   updateUserTriageAccessForAdmin,
   updateUserTransferAccessForAdmin,
+  updateUserOperatorStatsAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
   saveUserConferenceSettings,
+  saveUserPriceDisplaySettings,
   saveBlingAppConfig,
   acceptOperatorInvite,
   verifyUser
@@ -283,6 +287,14 @@ app.patch("/api/admin/users/:userId/transfer-access", requireAdmin, async (req, 
   }
 });
 
+app.patch("/api/admin/users/:userId/operator-stats-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserOperatorStatsAccessForAdmin(req.params.userId, Boolean(req.body?.operatorStatsAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     res.json(await deleteUser(req.params.userId));
@@ -296,7 +308,7 @@ app.get("/api/lots", requireAuth, async (req, res) => {
   res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
 });
 
-app.get("/api/operators", requireAuth, requireOwner, async (req, res) => {
+app.get("/api/operators", requireAuth, requireOperatorStatsAccess, async (req, res) => {
   res.json({
     operators: await listOperatorsForUser(workspaceUserId(req), {
       startDate: req.query.startDate,
@@ -339,6 +351,18 @@ app.patch("/api/operators/:operatorUserId/transfer-access", requireAuth, require
   }
 });
 
+app.patch("/api/operators/:operatorUserId/operator-stats-access", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorStatsAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      operatorStatsAccess: Boolean(req.body?.operatorStatsAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json(await updateOperatorPasswordForOwner(workspaceUserId(req), req.params.operatorId, req.body.password));
@@ -363,6 +387,22 @@ app.patch("/api/profile/conference-settings", requireAuth, requireOwner, async (
   }
 });
 
+app.get("/api/profile/price-display-settings", requireAuth, async (req, res) => {
+  try {
+    res.json({ settings: await getUserPriceDisplaySettings(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/profile/price-display-settings", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json({ settings: await saveUserPriceDisplaySettings(workspaceUserId(req), req.body || {}) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({ items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req))) });
@@ -371,7 +411,7 @@ app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) 
   }
 });
 
-app.get("/api/triage/stats", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
+app.get("/api/triage/stats", requireAuth, requireOperatorStatsAccess, async (req, res) => {
   try {
     res.json({
       stats: await getTriageStats(workspaceUserId(req), {
@@ -1492,6 +1532,18 @@ function requireOwner(req, res, next) {
   const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
   if (role !== "owner") return res.status(403).json({ error: "Acesso restrito ao usuario principal." });
   next();
+}
+
+async function requireOperatorStatsAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    const role = freshUser?.role || (freshUser?.parentUserId ? "operator" : "owner");
+    if (role === "owner" || freshUser?.operatorStatsAccess) return next();
+    return res.status(403).json({ error: "Estatisticas de operadores nao liberadas para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
 }
 
 async function requireTriageAccess(req, res, next) {

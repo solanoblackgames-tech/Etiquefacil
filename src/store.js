@@ -19,6 +19,7 @@ const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
 const CONFERENCE_SETTINGS_KEY = "conference_registration";
+const PRICE_DISPLAY_SETTINGS_KEY = "price_display";
 const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
 const OPERATOR_DASHBOARD_ACTIONS = [
   "login",
@@ -65,6 +66,13 @@ const CONFERENCE_FIELD_DEFAULTS = Object.freeze({
   stockLocation: { enabled: false, required: false, printOnLabel: false },
   category: { enabled: false, required: false },
   subcategory: { enabled: false, required: false }
+});
+
+const PRICE_DISPLAY_DEFAULTS = Object.freeze({
+  enabled: false,
+  discountPercent: 30,
+  discountLabel: "CLIENTE CLUBE PAGA",
+  regularLabel: "DEMAIS CLIENTES"
 });
 
 export function hasPostgres() {
@@ -190,6 +198,7 @@ export async function createUser({ name, email, password, parentUserId = null })
     operatorCode,
     triageAccess: false,
     transferAccess: false,
+    operatorStatsAccess: false,
     name: name.trim(),
     email: normalizedEmail,
     passwordHash: await bcrypt.hash(password, 10),
@@ -199,9 +208,9 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, operator_stats_access, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.operatorStatsAccess, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -355,6 +364,50 @@ export async function saveUserConferenceSettings(userId, payload = {}) {
   return settings;
 }
 
+export async function getUserPriceDisplaySettings(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "select value from user_settings where user_id = $1 and key = $2 limit 1",
+      [userId, PRICE_DISPLAY_SETTINGS_KEY]
+    );
+    return normalizePriceDisplaySettings(result.rows[0]?.value || {});
+  }
+
+  const db = await readDb();
+  const setting = (db.userSettings || []).find((item) => item.userId === userId && item.key === PRICE_DISPLAY_SETTINGS_KEY);
+  return normalizePriceDisplaySettings(setting?.value || {});
+}
+
+export async function saveUserPriceDisplaySettings(userId, payload = {}) {
+  await ensureStore();
+  const settings = normalizePriceDisplaySettings(payload);
+  const now = new Date().toISOString();
+
+  if (hasPostgres()) {
+    await query(
+      `insert into user_settings (user_id, key, value, updated_at)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, key)
+       do update set value = excluded.value, updated_at = excluded.updated_at`,
+      [userId, PRICE_DISPLAY_SETTINGS_KEY, settings, now]
+    );
+    return settings;
+  }
+
+  const db = await readDb();
+  db.userSettings = db.userSettings || [];
+  const existing = db.userSettings.find((item) => item.userId === userId && item.key === PRICE_DISPLAY_SETTINGS_KEY);
+  if (existing) {
+    existing.value = settings;
+    existing.updatedAt = now;
+  } else {
+    db.userSettings.push({ userId, key: PRICE_DISPLAY_SETTINGS_KEY, value: settings, createdAt: now, updatedAt: now });
+  }
+  await writeDb(db);
+  return settings;
+}
+
 export function sanitizeUser(user) {
   if (!user) return null;
   const sanitized = {
@@ -370,6 +423,7 @@ export function sanitizeUser(user) {
   };
   if (user.triageAccess) sanitized.triageAccess = true;
   if (user.transferAccess) sanitized.transferAccess = true;
+  if (user.operatorStatsAccess) sanitized.operatorStatsAccess = true;
   return sanitized;
 }
 
@@ -401,6 +455,22 @@ export async function updateUserTransferAccessForAdmin(userId, transferAccess) {
   const user = db.users.find((item) => item.id === userId);
   if (!user) throw notFound("Usuario nao encontrado.");
   user.transferAccess = Boolean(transferAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateUserOperatorStatsAccessForAdmin(userId, operatorStatsAccess) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("update users set operator_stats_access = $2 where id = $1 returning *", [userId, Boolean(operatorStatsAccess)]);
+    if (!result.rows.length) throw notFound("Usuario nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuario nao encontrado.");
+  user.operatorStatsAccess = Boolean(operatorStatsAccess);
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -439,6 +509,25 @@ export async function updateOperatorTransferAccess({ ownerUserId, operatorUserId
   const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
   if (!user) throw notFound("Operador nao encontrado.");
   user.transferAccess = Boolean(transferAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateOperatorStatsAccess({ ownerUserId, operatorUserId, operatorStatsAccess }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update users set operator_stats_access = $3 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, Boolean(operatorStatsAccess)]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!user) throw notFound("Operador nao encontrado.");
+  user.operatorStatsAccess = Boolean(operatorStatsAccess);
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -613,6 +702,7 @@ export async function listUsersForAdmin() {
           u.operator_code,
           u.triage_access,
           u.transfer_access,
+          u.operator_stats_access,
           u.name,
           u.email,
           u.created_at,
@@ -634,6 +724,7 @@ export async function listUsersForAdmin() {
       operatorCode: row.operator_code ? Number(row.operator_code) : null,
       triageAccess: Boolean(row.triage_access),
       transferAccess: Boolean(row.transfer_access),
+      operatorStatsAccess: Boolean(row.operator_stats_access),
       name: row.name,
       email: row.email,
       createdAt: iso(row.created_at),
@@ -761,6 +852,7 @@ export async function getTriageStats(userId, period = {}) {
           u.operator_code as user__operator_code,
           u.triage_access as user__triage_access,
           u.transfer_access as user__transfer_access,
+          u.operator_stats_access as user__operator_stats_access,
           u.name as user__name,
           u.email as user__email,
           u.password_hash as user__password_hash,
@@ -2804,6 +2896,7 @@ async function ensurePgStore() {
       operator_code integer,
       triage_access boolean not null default false,
       transfer_access boolean not null default false,
+      operator_stats_access boolean not null default false,
       name text not null,
       email text not null unique,
       password_hash text not null,
@@ -3103,6 +3196,7 @@ async function ensurePgStore() {
     alter table users add column if not exists operator_code integer;
     alter table users add column if not exists triage_access boolean not null default false;
     alter table users add column if not exists transfer_access boolean not null default false;
+    alter table users add column if not exists operator_stats_access boolean not null default false;
     update users set tenant_id = id where tenant_id is null or tenant_id = '';
     update users set tenant_name = name where tenant_name is null or tenant_name = '';
     update users set role = 'operator' where parent_user_id is not null and (role is null or role = 'owner');
@@ -3452,7 +3546,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "operator_stats_access", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
@@ -3462,6 +3556,7 @@ async function writePgDb(db) {
         optionalInt(user.operatorCode) || null,
         Boolean(user.triageAccess),
         Boolean(user.transferAccess),
+        Boolean(user.operatorStatsAccess),
         user.name,
         user.email,
         user.passwordHash,
@@ -5796,6 +5891,7 @@ function userFromRow(row) {
     operatorCode: row.operator_code ? Number(row.operator_code) : null,
     triageAccess: Boolean(row.triage_access),
     transferAccess: Boolean(row.transfer_access),
+    operatorStatsAccess: Boolean(row.operator_stats_access),
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
@@ -5859,6 +5955,7 @@ function userFromPrefixedRow(row, prefix) {
     operatorCode: row[`${prefix}operator_code`] ? Number(row[`${prefix}operator_code`]) : null,
     triageAccess: Boolean(row[`${prefix}triage_access`]),
     transferAccess: Boolean(row[`${prefix}transfer_access`]),
+    operatorStatsAccess: Boolean(row[`${prefix}operator_stats_access`]),
     name: row[`${prefix}name`],
     email: row[`${prefix}email`],
     passwordHash: row[`${prefix}password_hash`],
@@ -6959,6 +7056,10 @@ function normalizeDbTenants(db) {
       user.transferAccess = false;
       changed = true;
     }
+    if (user.operatorStatsAccess === undefined) {
+      user.operatorStatsAccess = false;
+      changed = true;
+    }
   }
   const operatorsByOwner = new Map();
   for (const user of db.users || []) {
@@ -7062,6 +7163,21 @@ function normalizeConferenceSettings(input = {}) {
     }
   }
   return { fields };
+}
+
+function normalizePriceDisplaySettings(input = {}) {
+  const discountPercent = Number(input.discountPercent ?? input.discount_percent ?? PRICE_DISPLAY_DEFAULTS.discountPercent);
+  const boundedDiscount = Number.isFinite(discountPercent)
+    ? Math.min(95, Math.max(0, roundMoney(discountPercent)))
+    : PRICE_DISPLAY_DEFAULTS.discountPercent;
+  const discountLabel = String(input.discountLabel ?? input.discount_label ?? PRICE_DISPLAY_DEFAULTS.discountLabel).trim();
+  const regularLabel = String(input.regularLabel ?? input.regular_label ?? PRICE_DISPLAY_DEFAULTS.regularLabel).trim();
+  return {
+    enabled: Boolean(input.enabled),
+    discountPercent: boundedDiscount,
+    discountLabel: discountLabel || PRICE_DISPLAY_DEFAULTS.discountLabel,
+    regularLabel: regularLabel || PRICE_DISPLAY_DEFAULTS.regularLabel
+  };
 }
 
 function normalizeTriageDiagnosisCondition(value, { allowEmpty = false } = {}) {

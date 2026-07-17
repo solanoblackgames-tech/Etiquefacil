@@ -582,8 +582,8 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(11, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(150px, 0.8fr) minmax(170px, 0.8fr) minmax(210px, 1fr);
-  min-width: 1810px;
+  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(11, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(150px, 0.8fr) minmax(210px, 1fr);
+  min-width: 1640px;
   padding: 14px 12px;
 }
 
@@ -611,28 +611,81 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.operator-row button.access-toggle {
+.operator-row button.access-toggle,
+.operator-permission-row button.access-toggle {
   border: 1px solid transparent;
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.08);
   color: #fff;
 }
 
-.operator-row button.access-toggle.is-enabled {
+.operator-row button.access-toggle.is-enabled,
+.operator-permission-row button.access-toggle.is-enabled {
   background: #15803d;
   border-color: #166534;
 }
 
-.operator-row button.access-toggle.is-enabled:hover:not(:disabled) {
+.operator-row button.access-toggle.is-enabled:hover:not(:disabled),
+.operator-permission-row button.access-toggle.is-enabled:hover:not(:disabled) {
   background: #166534;
 }
 
-.operator-row button.access-toggle.is-disabled {
+.operator-row button.access-toggle.is-disabled,
+.operator-permission-row button.access-toggle.is-disabled {
   background: #dc2626;
   border-color: #b91c1c;
 }
 
-.operator-row button.access-toggle.is-disabled:hover:not(:disabled) {
+.operator-row button.access-toggle.is-disabled:hover:not(:disabled),
+.operator-permission-row button.access-toggle.is-disabled:hover:not(:disabled) {
   background: #b91c1c;
+}
+
+.operator-permissions-list {
+  border: 1px solid #c9d9ca;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.operator-permission-row {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #c9d9ca;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, auto);
+  padding: 14px;
+}
+
+.operator-permission-row:last-child {
+  border-bottom: 0;
+}
+
+.operator-permission-row strong,
+.operator-permission-row span {
+  display: block;
+}
+
+.operator-permission-row span {
+  color: #345040;
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.permission-status {
+  border-radius: 6px;
+  color: #fff !important;
+  font-weight: 800;
+  margin-top: 0 !important;
+  padding: 9px 12px;
+  text-align: center;
+}
+
+.permission-status.is-enabled {
+  background: #15803d;
+}
+
+.permission-status.is-disabled {
+  background: #dc2626;
 }
 
 .operator-password-form {
@@ -2246,7 +2299,7 @@ h3 {
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: 1fr auto auto auto auto auto;
+  grid-template-columns: minmax(220px, 1fr) repeat(6, auto);
   margin: 18px 0;
   padding: 14px;
 }
@@ -3657,6 +3710,23 @@ h3 {
   grid-template-rows: 7.5mm 9.8mm 3mm 4.5mm 3.6mm 2.4mm;
 }
 
+.label-print.has-club-price {
+  grid-template-rows: 7.2mm 8mm 2.6mm 14.6mm;
+}
+
+.label-print.has-club-price.has-meta {
+  grid-template-rows: 6.8mm 7.6mm 2.5mm 13.4mm 2mm;
+}
+
+.label-print.has-club-price.has-note {
+  grid-template-rows: 6.7mm 7.4mm 2.5mm 12.8mm 3.4mm;
+}
+
+.label-print.has-club-price.has-note.has-meta {
+  grid-template-rows: 6.2mm 7.4mm 2.5mm 12.4mm 2.8mm 1.9mm;
+  padding-bottom: 1.2mm;
+}
+
 .label-desc {
   font-family: Arial, sans-serif;
   font-size: 8.5px;
@@ -3671,6 +3741,11 @@ h3 {
   line-height: 1.12;
 }
 
+.has-club-price .label-desc {
+  font-size: 7.6px;
+  line-height: 1.1;
+}
+
 .label-barcode {
   align-self: end;
   fill: #111;
@@ -3683,6 +3758,10 @@ h3 {
 
 .has-note .label-barcode {
   height: 11.5mm;
+}
+
+.has-club-price .label-barcode {
+  height: 8.4mm;
 }
 
 .label-sku {
@@ -3700,6 +3779,10 @@ h3 {
   font-size: 7.4px;
 }
 
+.has-club-price .label-sku {
+  font-size: 7.2px;
+}
+
 .label-price {
   align-self: end;
   font-family: Arial Black, Arial, sans-serif;
@@ -3710,6 +3793,66 @@ h3 {
 
 .has-note .label-price {
   font-size: 14.5px;
+}
+
+.label-price-club {
+  align-self: center;
+  display: grid;
+  font-family: Arial, sans-serif;
+  gap: 0.45mm;
+  justify-items: center;
+  line-height: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.label-price-caption {
+  font-size: 6.2px;
+  font-weight: 800;
+  max-width: 52mm;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.label-price-discount {
+  font-family: Arial Black, Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 0.92;
+  white-space: nowrap;
+}
+
+.label-price-caption-regular {
+  font-size: 5.8px;
+  font-weight: 500;
+  margin-top: 0.2mm;
+}
+
+.label-price-regular {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 0.9;
+  white-space: nowrap;
+}
+
+.has-note.has-meta .label-price-discount {
+  font-size: 16.5px;
+}
+
+.has-note.has-meta .label-price-regular {
+  font-size: 12.6px;
+}
+
+.has-club-price .label-note {
+  font-size: 5.6px;
+  line-height: 1.05;
+  padding-top: 0.55mm;
+}
+
+.has-club-price .label-footer {
+  font-size: 7.2px;
 }
 
 .label-note {

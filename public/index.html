@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260713-access-buttons" />
+    <link rel="stylesheet" href="/styles.css?v=20260717-price-club" />
   </head>
   <body>
     <main id="auth" class="auth">
@@ -71,6 +71,7 @@
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
           <button data-profile-section="operators" type="button">Operadores</button>
+          <button data-profile-section="priceDisplay" type="button">Preco clube</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
 
@@ -189,6 +190,31 @@
               </div>
             </form>
             <p id="conferenceSettingsMessage" class="message"></p>
+          </section>
+        </section>
+
+        <section id="profilePriceDisplay" class="settings-shell profile-section hidden">
+          <section class="entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Preco clube na etiqueta</h3>
+            </div>
+            <form id="priceDisplaySettingsForm" class="settings-form price-display-settings-form">
+              <label class="check-option"><input name="enabled" type="checkbox" /> Usar preco clube nas etiquetas</label>
+              <label>Desconto (%)
+                <input name="discountPercent" type="number" min="0" max="95" step="0.01" required />
+              </label>
+              <label>Texto do preco com desconto
+                <input name="discountLabel" maxlength="32" required />
+              </label>
+              <label>Texto do preco normal
+                <input name="regularLabel" maxlength="32" required />
+              </label>
+              <div class="settings-actions">
+                <button type="submit">Salvar configuracao</button>
+              </div>
+            </form>
+            <p id="priceDisplaySettingsMessage" class="message"></p>
           </section>
         </section>
 

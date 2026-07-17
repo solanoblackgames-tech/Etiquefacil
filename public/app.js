@@ -58,9 +58,11 @@ const state = {
   labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
   conferenceSettings: defaultConferenceSettings(),
+  priceDisplaySettings: defaultPriceDisplaySettings(),
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
     includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false",
+    includeClubPrice: localStorage.getItem("etiquefacil.includeClubPrice") === "true",
     suggestPrice: localStorage.getItem("etiquefacil.suggestPrice") === "true",
     includeText: localStorage.getItem("etiquefacil.includeText") === "true",
     customText: localStorage.getItem("etiquefacil.customText") || ""
@@ -118,6 +120,15 @@ function defaultConferenceSettings() {
       category: { enabled: false, required: false },
       subcategory: { enabled: false, required: false }
     }
+  };
+}
+
+function defaultPriceDisplaySettings() {
+  return {
+    enabled: false,
+    discountPercent: 30,
+    discountLabel: "CLIENTE CLUBE PAGA",
+    regularLabel: "DEMAIS CLIENTES"
   };
 }
 
@@ -270,6 +281,7 @@ function bindEvents() {
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
   $("#conferenceSettingsForm").addEventListener("submit", saveConferenceSettings);
+  $("#priceDisplaySettingsForm").addEventListener("submit", savePriceDisplaySettings);
   $("#operatorForm").addEventListener("submit", createOperator);
   $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
   $("#operatorManualToggle").addEventListener("click", toggleOperatorManualForm);
@@ -495,7 +507,8 @@ async function addDiverseItem(event) {
       const preview = await previewDiverseItem(codigoMl, codigoRz);
       if (preview.status === "preview") {
         const product = preview.product || {};
-        valorUnitOverride = await askPriceSuggestion({ codigoMl, product });
+        const suggestedPrice = await findNoSheetSuggestedPriceForProduct(product);
+        valorUnitOverride = await askPriceSuggestion({ codigoMl, product, suggestedPrice });
         if (valorUnitOverride === null) return;
       }
     }
@@ -585,8 +598,35 @@ function suggestionPriceValue(suggestion) {
   return parseMoneyInput(manualSuggestionPriceText(suggestion));
 }
 
+function normalizePriceDisplaySettings(settings = {}) {
+  const defaults = defaultPriceDisplaySettings();
+  const discountPercent = Number(settings.discountPercent ?? settings.discount_percent ?? defaults.discountPercent);
+  return {
+    enabled: Boolean(settings.enabled),
+    discountPercent: Number.isFinite(discountPercent) ? Math.min(95, Math.max(0, discountPercent)) : defaults.discountPercent,
+    discountLabel: String(settings.discountLabel || defaults.discountLabel).trim() || defaults.discountLabel,
+    regularLabel: String(settings.regularLabel || defaults.regularLabel).trim() || defaults.regularLabel
+  };
+}
+
 function manualSuggestionPriceText(suggestion) {
   return suggestion?.valorUnit ?? suggestion?.valor_unit ?? suggestion?.preco ?? suggestion?.precoSugerido ?? suggestion?.preco_sugerido ?? suggestion?.valorSugerido ?? suggestion?.valor_sugerido ?? suggestion?.price ?? suggestion?.valor ?? "";
+}
+
+async function findNoSheetSuggestedPriceForProduct(product = {}) {
+  const descricao = String(product.descricao || "").trim();
+  if (!descricao) return null;
+  const localSuggestion = findNoSheetSuggestionByDescription(descricao);
+  let price = suggestionPriceValue(localSuggestion);
+  if (Number.isFinite(price) && price > 0) return price;
+
+  const matches = await loadNoSheetSuggestionMatches(descricao).catch(() => []);
+  const key = normalizeSearchText(descricao);
+  const matchedSuggestion = matches.find((suggestion) => normalizeSearchText(suggestion.descricao) === key)
+    || matches.find((suggestion) => suggestion.source === "lista_lote" && suggestionPriceValue(suggestion) > 0)
+    || matches.find((suggestion) => suggestionPriceValue(suggestion) > 0);
+  price = suggestionPriceValue(matchedSuggestion);
+  return Number.isFinite(price) && price > 0 ? price : null;
 }
 
 function findNoSheetSuggestionByDescription(description) {
@@ -723,15 +763,22 @@ function normalizeMoneyText(value) {
   return clean;
 }
 
-function askPriceSuggestion({ codigoMl, product }) {
+function askPriceSuggestion({ codigoMl, product, suggestedPrice = null }) {
+  const defaultPrice = Number.isFinite(Number(suggestedPrice)) && Number(suggestedPrice) > 0
+    ? Number(suggestedPrice)
+    : Number(product.valorUnit || 0);
+  const rows = [
+    ["Codigo ML", codigoMl],
+    ["Produto", product.descricao || "Descricao nao encontrada"],
+    ["Preco atual do banco", money(product.valorUnit)]
+  ];
+  if (Number.isFinite(Number(suggestedPrice)) && Number(suggestedPrice) > 0) {
+    rows.push(["Preco sugerido da lista", money(suggestedPrice)]);
+  }
   return openDecisionModal({
     title: "Conferir preco",
-    rows: [
-      ["Codigo ML", codigoMl],
-      ["Produto", product.descricao || "Descricao nao encontrada"],
-      ["Preco atual do banco", money(product.valorUnit)]
-    ],
-    fields: [{ name: "valorUnit", label: "Novo preco para este lote/usuario", value: String(product.valorUnit || "").replace(".", ","), hidden: true }],
+    rows,
+    fields: [{ name: "valorUnit", label: "Novo preco para este lote/usuario", value: String(defaultPrice || "").replace(".", ","), hidden: true }],
     actions: [
       { id: "no", label: "Nao alterar", primary: true, value: { changed: false } },
       { id: "yes", label: "Alterar preco", value: { changed: true }, showFields: ["valorUnit"] },
@@ -1410,6 +1457,7 @@ function diverseLabelOptionsMarkup() {
     <div class="diverse-label-options">
       <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+      ${labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle")}
       <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
@@ -1431,6 +1479,7 @@ function bindDiverseLabelOptions() {
     state.labelOptions.includePrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
+  bindClubPriceToggle("#diverseIncludeClubPriceToggle");
   $("#diverseSuggestPriceToggle").addEventListener("change", (event) => {
     state.labelOptions.suggestPrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.suggestPrice", String(state.labelOptions.suggestPrice));
@@ -1444,6 +1493,21 @@ function bindDiverseLabelOptions() {
   $("#diverseCustomTextInput").addEventListener("input", (event) => {
     state.labelOptions.customText = event.currentTarget.value;
     localStorage.setItem("etiquefacil.customText", state.labelOptions.customText);
+  });
+}
+
+function labelClubPriceOptionMarkup(id = "includeClubPriceToggle") {
+  const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
+  if (!settings.enabled) return "";
+  return `<label class="check-option"><input id="${escapeHtml(id)}" type="checkbox" ${state.labelOptions.includeClubPrice ? "checked" : ""} /> Etiqueta com preco clube</label>`;
+}
+
+function bindClubPriceToggle(selector) {
+  const toggle = $(selector);
+  if (!toggle) return;
+  toggle.addEventListener("change", (event) => {
+    state.labelOptions.includeClubPrice = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.includeClubPrice", String(state.labelOptions.includeClubPrice));
   });
 }
 
@@ -1787,6 +1851,7 @@ async function showApp(user) {
   $("#userName").textContent = `${user.name} (${user.email})`;
   applyUserPermissions(user);
   await loadConferenceSettings();
+  await loadPriceDisplaySettings();
   const scanRequest = getScanRequest();
   if (scanRequest) {
     await showScanOnly(scanRequest);
@@ -1806,21 +1871,38 @@ async function showApp(user) {
 
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
-  document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator);
+  document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator && !canViewOperatorStats());
   document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
+  document.querySelector('[data-profile-section="entries"]')?.classList.toggle("hidden", operator);
+  document.querySelector('[data-profile-section="sync"]')?.classList.toggle("hidden", operator);
+  document.querySelector('[data-profile-section="conferenceSettings"]')?.classList.toggle("hidden", operator);
+  document.querySelector('[data-profile-section="priceDisplay"]')?.classList.toggle("hidden", operator);
+  document.querySelector('[data-profile-section="operators"]')?.classList.toggle("hidden", !canViewOperatorStats());
   document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
     document.querySelector("#profileTriageStats")?.classList.add("hidden");
   }
+  if (!canViewOperatorStats()) {
+    document.querySelector("#profileOperators")?.classList.add("hidden");
+  }
+  if (operator) {
+    document.querySelector("#profilePriceDisplay")?.classList.add("hidden");
+  }
+  document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isOwnerUser());
+  if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
 }
 
+function canViewOperatorStats() {
+  return Boolean(isOwnerUser() || state.user?.operatorStatsAccess);
+}
+
 function canViewTriageStats() {
-  return Boolean(state.user?.triageAccess);
+  return canViewOperatorStats();
 }
 
 function showAuth() {
@@ -1880,6 +1962,15 @@ async function loadConferenceSettings() {
     state.conferenceSettings = normalizeConferenceSettings(response.settings);
   } catch {
     state.conferenceSettings = defaultConferenceSettings();
+  }
+}
+
+async function loadPriceDisplaySettings() {
+  try {
+    const response = await api("/api/profile/price-display-settings");
+    state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
+  } catch {
+    state.priceDisplaySettings = defaultPriceDisplaySettings();
   }
 }
 
@@ -1972,6 +2063,49 @@ async function saveConferenceSettings(event) {
   }
 }
 
+function renderPriceDisplaySettings() {
+  const form = $("#priceDisplaySettingsForm");
+  if (!form) return;
+  const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
+  state.priceDisplaySettings = settings;
+  form.elements.enabled.checked = settings.enabled;
+  form.elements.discountPercent.value = String(settings.discountPercent);
+  form.elements.discountLabel.value = settings.discountLabel;
+  form.elements.regularLabel.value = settings.regularLabel;
+}
+
+async function savePriceDisplaySettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = $("#priceDisplaySettingsMessage");
+  const discountPercent = parseMoneyInput(form.elements.discountPercent.value);
+  if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 95) {
+    message.style.color = "";
+    message.textContent = "Informe um desconto entre 0 e 95%.";
+    form.elements.discountPercent.focus();
+    return;
+  }
+  try {
+    const response = await api("/api/profile/price-display-settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: Boolean(form.elements.enabled.checked),
+        discountPercent,
+        discountLabel: form.elements.discountLabel.value,
+        regularLabel: form.elements.regularLabel.value
+      })
+    });
+    state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
+    message.style.color = "#0f766e";
+    message.textContent = "Configuracao de preco clube salva.";
+    renderPriceDisplaySettings();
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  }
+}
+
 function getBlingCallbackMessage() {
   const params = new URLSearchParams(window.location.search);
   if (params.get("bling") === "connected") return "Integracao Bling autorizada com sucesso.";
@@ -1980,6 +2114,12 @@ function getBlingCallbackMessage() {
 }
 
 function setProfileSection(section = "entries") {
+  if (section === "operators" && !canViewOperatorStats()) section = isOwnerUser() ? "entries" : "";
+  if (section === "triageStats" && !canViewTriageStats()) section = canViewOperatorStats() ? "operators" : "";
+  if (state.user?.role === "operator" && !["operators", "triageStats"].includes(section)) {
+    section = canViewOperatorStats() ? "operators" : "";
+  }
+  if (!section) return;
   state.profileSection = section;
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.classList.toggle("active", button.dataset.profileSection === section);
@@ -1988,12 +2128,14 @@ function setProfileSection(section = "entries") {
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileConferenceSettings").classList.toggle("hidden", section !== "conferenceSettings");
+  $("#profilePriceDisplay").classList.toggle("hidden", section !== "priceDisplay");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
   $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
   if (section === "dashboard") loadOperationalDashboard();
   if (section === "sync") loadBlingIntegration();
   if (section === "conferenceSettings") renderConferenceSettings();
+  if (section === "priceDisplay") renderPriceDisplaySettings();
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
 }
@@ -2446,8 +2588,7 @@ function renderOperators() {
           <span>Dias trab.</span>
           <span>Media/dia</span>
           <span>Ultima ativ.</span>
-          <span>Triagem</span>
-          <span>Transferencia</span>
+          <span>Permissoes</span>
           <span>Senha</span>
         </div>
         ${operators
@@ -2538,6 +2679,13 @@ function handleOperatorFilterChange(event) {
 }
 
 function handleOperatorFilterClick(event) {
+  const permissionsButton = event.target.closest("[data-open-operator-permissions]");
+  if (permissionsButton) {
+    const operator = state.operators.map(operatorViewModel).find((item) => item.id === permissionsButton.dataset.openOperatorPermissions);
+    if (operator) openOperatorPermissionsModal(operator);
+    return;
+  }
+
   const transferButton = event.target.closest("[data-toggle-operator-transfer]");
   if (transferButton) {
     transferButton.disabled = true;
@@ -2594,6 +2742,34 @@ function handleOperatorFilterClick(event) {
     return;
   }
 
+  const operatorStatsButton = event.target.closest("[data-toggle-operator-stats]");
+  if (operatorStatsButton) {
+    operatorStatsButton.disabled = true;
+    $("#operatorMessage").textContent = "";
+    try {
+      api(`/api/operators/${encodeURIComponent(operatorStatsButton.dataset.toggleOperatorStats)}/operator-stats-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorStatsAccess: operatorStatsButton.dataset.operatorStatsAccess === "true" })
+      })
+        .then(async () => {
+          $("#operatorMessage").style.color = "#0f766e";
+          $("#operatorMessage").textContent = "Permissao de operadores e estatisticas atualizada.";
+          await loadOperators();
+        })
+        .catch((error) => {
+          $("#operatorMessage").style.color = "";
+          $("#operatorMessage").textContent = error.message;
+        })
+        .finally(() => {
+          operatorStatsButton.disabled = false;
+        });
+    } catch {
+      operatorStatsButton.disabled = false;
+    }
+    return;
+  }
+
   const button = event.target.closest("[data-operator-period]");
   if (!button) return;
   const days = button.dataset.operatorPeriod;
@@ -2641,6 +2817,7 @@ function operatorViewModel(operator) {
     operatorCode: operator.operatorCode || "",
     triageAccess: Boolean(operator.triageAccess),
     transferAccess: Boolean(operator.transferAccess),
+    operatorStatsAccess: Boolean(operator.operatorStatsAccess),
     logins,
     searches,
     scans,
@@ -2696,14 +2873,130 @@ function operatorTableRow(operator, index) {
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
-      ${state.user?.triageAccess ? `<button type="button" class="ghost access-toggle ${operator.triageAccess ? "is-enabled" : "is-disabled"}" data-toggle-operator-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">Triagem ${operator.triageAccess ? "liberada" : "bloqueada"}</button>` : "<span>Triagem sem acesso</span>"}
-      ${state.user?.transferAccess ? `<button type="button" class="ghost access-toggle ${operator.transferAccess ? "is-enabled" : "is-disabled"}" data-toggle-operator-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">Transferencia ${operator.transferAccess ? "liberada" : "bloqueada"}</button>` : "<span>Transferencia sem acesso</span>"}
-      <form class="operator-password-form">
+      <button type="button" class="ghost" data-open-operator-permissions="${escapeHtml(operator.id)}">Permissoes</button>
+      ${isOwnerUser() ? `<form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
-      </form>
+      </form>` : "<span>Somente leitura</span>"}
     </div>
   `;
+}
+
+function operatorPermissionConfig(kind, operator) {
+  const configs = {
+    triage: {
+      enabled: operator.triageAccess,
+      canToggle: isOwnerUser() && state.user?.triageAccess,
+      label: "Triagem",
+      route: "triage-access",
+      bodyKey: "triageAccess"
+    },
+    transfer: {
+      enabled: operator.transferAccess,
+      canToggle: isOwnerUser() && state.user?.transferAccess,
+      label: "Transferencia",
+      route: "transfer-access",
+      bodyKey: "transferAccess"
+    },
+    operatorStats: {
+      enabled: operator.operatorStatsAccess,
+      canToggle: isOwnerUser(),
+      label: "Operadores e estatisticas",
+      route: "operator-stats-access",
+      bodyKey: "operatorStatsAccess"
+    }
+  };
+  return configs[kind];
+}
+
+function openOperatorPermissionsModal(operator) {
+  const modal = $("#decisionModal");
+  const titleEl = $("#decisionTitle");
+  const bodyEl = $("#decisionBody");
+  const fieldsEl = $("#decisionFields");
+  const actionsEl = $("#decisionActions");
+  const permissions = ["triage", "transfer", "operatorStats"].map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }));
+
+  const cleanup = () => {
+    modal.classList.add("hidden");
+    modal.onkeydown = null;
+    fieldsEl.onclick = null;
+    actionsEl.onclick = null;
+    titleEl.textContent = "";
+    bodyEl.innerHTML = "";
+    fieldsEl.innerHTML = "";
+    actionsEl.innerHTML = "";
+  };
+
+  titleEl.textContent = "Permissoes";
+  bodyEl.innerHTML = `
+    <div class="decision-body-row">
+      <span>Operador</span>
+      <strong>${escapeHtml(operator.name)}</strong>
+    </div>
+    <div class="decision-body-row">
+      <span>Codigo</span>
+      <strong>${escapeHtml(operator.operatorCode || operator.email)}</strong>
+    </div>
+  `;
+  fieldsEl.innerHTML = `
+    <div class="operator-permissions-list">
+      ${permissions.map((permission) => `
+        <div class="operator-permission-row">
+          <div>
+            <strong>${escapeHtml(permission.label)}</strong>
+            <span>${permission.enabled ? "Liberada" : "Bloqueada"}</span>
+          </div>
+          ${permission.canToggle ? `<button type="button" class="ghost access-toggle ${permission.enabled ? "is-enabled" : "is-disabled"}" data-modal-operator-permission="${escapeHtml(permission.kind)}" data-permission-value="${permission.enabled ? "false" : "true"}">${permission.enabled ? "Bloquear" : "Liberar"}</button>` : `<span class="permission-status ${permission.enabled ? "is-enabled" : "is-disabled"}">${permission.enabled ? "Liberada" : "Bloqueada"}</span>`}
+        </div>
+      `).join("")}
+    </div>
+    <p class="message" data-permission-message></p>
+  `;
+  actionsEl.innerHTML = '<button type="button" class="ghost" data-close-operator-permissions>Fechar</button>';
+
+  fieldsEl.onclick = async (event) => {
+    const button = event.target.closest("[data-modal-operator-permission]");
+    if (!button) return;
+    const permission = permissions.find((item) => item.kind === button.dataset.modalOperatorPermission);
+    if (!permission) return;
+    button.disabled = true;
+    const message = fieldsEl.querySelector("[data-permission-message]");
+    message.textContent = "";
+    try {
+      await updateOperatorPermission(operator.id, permission, button.dataset.permissionValue === "true");
+      message.style.color = "#0f766e";
+      message.textContent = "Permissao atualizada.";
+      await loadOperators();
+      const updated = state.operators.map(operatorViewModel).find((item) => item.id === operator.id);
+      if (updated) openOperatorPermissionsModal(updated);
+    } catch (error) {
+      message.style.color = "";
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+  actionsEl.onclick = (event) => {
+    if (event.target.closest("[data-close-operator-permissions]")) cleanup();
+  };
+  modal.onkeydown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cleanup();
+    }
+  };
+  modal.classList.remove("hidden");
+  modal.focus();
+  fieldsEl.querySelector("button:not(:disabled)")?.focus();
+}
+
+async function updateOperatorPermission(operatorId, permission, enabled) {
+  await api(`/api/operators/${encodeURIComponent(operatorId)}/${permission.route}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ [permission.bodyKey]: enabled })
+  });
 }
 
 async function handleOperatorPasswordSubmit(event) {
@@ -2833,7 +3126,7 @@ async function recordOperatorActivity(action, metadata = {}) {
 
 async function applyRouteFromLocation({ replace = false } = {}) {
   const route = parseRoute(window.location.pathname);
-  if (state.user?.role === "operator" && route.view === "profile") {
+  if (state.user?.role === "operator" && route.view === "profile" && !canViewOperatorStats()) {
     setMainTab("lots", { push: false, resetSelection: true });
     if (replace) updateRoute("/lotes", { replace: true });
     return;
@@ -2929,7 +3222,7 @@ function updateRoute(path, { replace = false } = {}) {
 
 function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
   let target = tab || "profile";
-  if (state.user?.role === "operator" && target === "profile") target = "lots";
+  if (state.user?.role === "operator" && target === "profile" && !canViewOperatorStats()) target = "lots";
   if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "triage" && !state.user?.triageAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {
@@ -3468,6 +3761,7 @@ function adminUserRow(user) {
           </form>
           <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
           <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+          <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
       </div>
@@ -3503,6 +3797,7 @@ function adminOperatorRow(operator) {
         </form>
         <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
         <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+        <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
     </div>
@@ -3582,6 +3877,27 @@ async function handleAdminUsersClick(event) {
       $("#adminMessage").textContent = error.message;
     } finally {
       triageButton.disabled = false;
+    }
+    return;
+  }
+
+  const operatorStatsButton = event.target.closest("[data-toggle-admin-operator-stats]");
+  if (operatorStatsButton) {
+    operatorStatsButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(operatorStatsButton.dataset.toggleAdminOperatorStats)}/operator-stats-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorStatsAccess: operatorStatsButton.dataset.operatorStatsAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de operadores e estatisticas atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      operatorStatsButton.disabled = false;
     }
     return;
   }
@@ -5161,6 +5477,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
+      ${labelClubPriceOptionMarkup()}
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelTextControls()}
     </div>
@@ -5302,6 +5619,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
         <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+        ${labelClubPriceOptionMarkup()}
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelTextControls()}
       </div>
@@ -5385,6 +5703,7 @@ function bindScanControls(lotId, codigoRz, items = []) {
     state.labelOptions.includePrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
+  bindClubPriceToggle("#includeClubPriceToggle");
   bindLabelTextControls();
   $("#scanInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -5838,7 +6157,7 @@ function code39BarcodeValue(value) {
 }
 
 function labelMarkup(product, meta = null) {
-  const price = state.labelOptions.includePrice ? money(product.valorUnit) : "";
+  const priceMarkup = labelPriceMarkup(product);
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
   const stockLocation = shouldPrintConferenceField("stockLocation") ? String(product.localizacaoEstoque || "").trim() : "";
   const hasCustomText = Boolean(customText);
@@ -5846,17 +6165,44 @@ function labelMarkup(product, meta = null) {
   const hasNote = Boolean(noteText);
   const footer = labelFooterText(meta);
   const hasMeta = Boolean(footer);
+  const hasClubPrice = labelUsesClubPrice();
   const sku = code39BarcodeValue(product.sku);
   return `
-    <section class="label-print ${hasNote ? "has-note" : ""} ${hasMeta ? "has-meta" : ""}">
+    <section class="label-print ${hasNote ? "has-note" : ""} ${hasMeta ? "has-meta" : ""} ${hasClubPrice ? "has-club-price" : ""}">
       <p class="label-desc">${escapeHtml(product.descricao)}</p>
       ${code39Svg(sku)}
       <strong class="label-sku">${escapeHtml(sku)}</strong>
-      <strong class="label-price">${escapeHtml(price)}</strong>
+      ${priceMarkup}
       <strong class="label-note">${escapeHtml(noteText)}</strong>
       <span class="label-footer">${escapeHtml(footer)}</span>
     </section>
   `;
+}
+
+function labelPriceMarkup(product) {
+  if (!state.labelOptions.includePrice) return '<strong class="label-price"></strong>';
+  const regularPrice = Number(product.valorUnit || 0);
+  const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
+  if (!labelUsesClubPrice(settings)) {
+    return `<strong class="label-price">${escapeHtml(money(regularPrice))}</strong>`;
+  }
+  const clubPrice = roundMoneyValue(regularPrice * (1 - settings.discountPercent / 100));
+  return `
+    <div class="label-price-club">
+      <span class="label-price-caption">${escapeHtml(settings.discountLabel)}</span>
+      <strong class="label-price-discount">${escapeHtml(money(clubPrice))}</strong>
+      <span class="label-price-caption label-price-caption-regular">${escapeHtml(settings.regularLabel)}</span>
+      <span class="label-price-regular">${escapeHtml(money(regularPrice))}</span>
+    </div>
+  `;
+}
+
+function labelUsesClubPrice(settings = normalizePriceDisplaySettings(state.priceDisplaySettings)) {
+  return Boolean(state.labelOptions.includePrice && settings.enabled && state.labelOptions.includeClubPrice);
+}
+
+function roundMoneyValue(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function operatorLotDetailMarkup() {
