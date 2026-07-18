@@ -3713,6 +3713,12 @@ h3 {
   border-color: #9fb4c2;
 }
 
+.decision-fields input[readonly] {
+  background: #f1f5f9;
+  color: #475569;
+  cursor: default;
+}
+
 .label-print {
   background: #fff;
   border: 1px solid #cfd6dc;
