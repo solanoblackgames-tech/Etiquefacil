@@ -1527,11 +1527,12 @@ app.post("/api/labels", requireAuth, async (req, res) => {
   if (!productContext) return res.status(404).json({ error: "Produto nao encontrado." });
   const settings = await getUserConferenceSettings(userId);
   const categorySettings = settings.fields?.category || {};
-  const shouldAskCategory = categorySettings.enabled && (categorySettings.required || categorySettings.askBeforePrint);
-  if (shouldAskCategory && !String(productContext.product.categoria || "").trim()) {
+  const shouldReviewProduct = Boolean(settings.reviewBeforePrint || categorySettings.askBeforePrint);
+  const missingRequiredCategory = categorySettings.enabled && categorySettings.required && !String(productContext.product.categoria || "").trim();
+  if ((shouldReviewProduct || missingRequiredCategory) && !req.body.reviewed) {
     return res.status(409).json({
-      error: "Informe a categoria antes de imprimir esta etiqueta.",
-      code: "category_required_before_print",
+      error: "Confira os dados do produto antes de imprimir esta etiqueta.",
+      code: shouldReviewProduct ? "review_required_before_print" : "category_required_before_print",
       product: productContext.product,
       lotId: productContext.lot.id
     });

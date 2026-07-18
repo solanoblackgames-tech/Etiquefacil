@@ -128,6 +128,7 @@ function defaultConferenceSettings() {
       subcategory: { enabled: false, required: false },
       ncm: { enabled: false, required: false }
     },
+    reviewBeforePrint: false,
     ncmByCategory: []
   };
 }
@@ -152,6 +153,7 @@ function normalizeConferenceSettings(settings = {}) {
     if (field.printOption) current.printOnLabel = current.enabled ? Boolean(incoming.printOnLabel) : false;
     if (field.key === "category") current.askBeforePrint = current.enabled ? Boolean(incoming.askBeforePrint) : false;
   }
+  defaults.reviewBeforePrint = Boolean(settings.reviewBeforePrint ?? settings.review_before_print ?? defaults.fields.category.askBeforePrint);
   defaults.ncmByCategory = normalizeNcmByCategory(settings.ncmByCategory || settings.ncm_by_category || []);
   return defaults;
 }
@@ -191,9 +193,12 @@ function isConferenceFieldRequired(key) {
   return Boolean(field.enabled && field.required);
 }
 
-function shouldAskCategoryBeforePrint() {
-  const field = conferenceField("category");
-  return Boolean(field.enabled && (field.required || field.askBeforePrint));
+function shouldReviewProductBeforePrint() {
+  return Boolean(normalizeConferenceSettings(state.conferenceSettings).reviewBeforePrint);
+}
+
+function shouldRequireCategoryBeforePrint() {
+  return isConferenceFieldRequired("category");
 }
 
 function shouldPrintConferenceField(key) {
@@ -2173,11 +2178,14 @@ function renderConferenceSettings() {
       <fieldset class="conference-settings-row" data-conference-field="${escapeHtml(field.key)}">
         <label class="check-option"><input name="${escapeHtml(field.key)}Enabled" type="checkbox" ${value.enabled ? "checked" : ""} /> ${escapeHtml(field.label)}</label>
         <label class="check-option"><input name="${escapeHtml(field.key)}Required" type="checkbox" ${value.required ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Obrigatorio</label>
-        ${field.key === "category" ? `<label class="check-option"><input name="categoryAskBeforePrint" type="checkbox" ${value.askBeforePrint ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Perguntar antes de imprimir</label>` : ""}
         ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
       </fieldset>
     `;
   }).join("") + `
+    <fieldset class="conference-settings-row">
+      <label class="check-option"><input name="reviewBeforePrint" type="checkbox" ${settings.reviewBeforePrint ? "checked" : ""} /> Conferir dados antes de imprimir</label>
+      <span class="muted">Abre a edicao do produto antes de gerar a etiqueta.</span>
+    </fieldset>
     <details class="ncm-category-settings">
       <summary class="ncm-category-summary">
         <span>
@@ -2252,8 +2260,8 @@ async function saveConferenceSettings(event) {
       required: enabled ? Boolean(form.elements[`${field.key}Required`]?.checked) : false
     };
     if (field.printOption) fields[field.key].printOnLabel = enabled ? Boolean(form.elements[`${field.key}PrintOnLabel`]?.checked) : false;
-    if (field.key === "category") fields[field.key].askBeforePrint = enabled ? Boolean(form.elements.categoryAskBeforePrint?.checked) : false;
   }
+  const reviewBeforePrint = Boolean(form.elements.reviewBeforePrint?.checked);
   const ncmByCategory = [...form.querySelectorAll("[data-ncm-category-row]")]
     .map((row) => ({
       category: row.querySelector('[name="ncmCategoryName"]')?.value || "",
@@ -2265,7 +2273,7 @@ async function saveConferenceSettings(event) {
     const response = await api("/api/profile/conference-settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields, ncmByCategory })
+      body: JSON.stringify({ fields, ncmByCategory, reviewBeforePrint })
     });
     state.conferenceSettings = normalizeConferenceSettings(response.settings);
     message.style.color = "#0f766e";
@@ -6283,17 +6291,17 @@ async function searchMl(event) {
   schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
 }
 
-async function printLabel(productId) {
+async function printLabel(productId, { reviewed = false } = {}) {
   try {
     const response = await api("/api/labels", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productId })
+      body: JSON.stringify({ productId, reviewed })
     });
     showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt) });
   } catch (error) {
-    if (error.code === "category_required_before_print" && error.product && error.lotId) {
-      await requestProductCategoryBeforePrint(error.product, error.lotId);
+    if ((error.code === "review_required_before_print" || error.code === "category_required_before_print") && error.product && error.lotId) {
+      await requestProductReviewBeforePrint(error.product, error.lotId);
       return;
     }
     alert(error.message);
@@ -6301,20 +6309,21 @@ async function printLabel(productId) {
 }
 
 async function printProductLabel(product, { lotId = "", afterPrint = null, ...labelOptions } = {}) {
-  const readyProduct = await ensureProductCategoryBeforePrint(product, lotId);
+  const readyProduct = await ensureProductDataBeforePrint(product, lotId);
   if (!readyProduct) return false;
   showLabel(readyProduct, labelOptions);
   if (typeof afterPrint === "function") afterPrint(readyProduct);
   return true;
 }
 
-async function ensureProductCategoryBeforePrint(product, lotId) {
-  if (!shouldAskCategoryBeforePrint() || String(product?.categoria || "").trim()) return product;
+async function ensureProductDataBeforePrint(product, lotId) {
+  const missingRequiredCategory = shouldRequireCategoryBeforePrint() && !String(product?.categoria || "").trim();
+  if (!shouldReviewProductBeforePrint() && !missingRequiredCategory) return product;
   if (!lotId) {
-    alert("Informe a categoria antes de imprimir esta etiqueta.");
+    alert("Confira os dados do produto antes de imprimir esta etiqueta.");
     return null;
   }
-  const edited = await openProductEditModal(product, { includeLogisticsFields: false, focusField: "category" });
+  const edited = await openProductEditModal(product, { includeLogisticsFields: true, focusField: missingRequiredCategory ? "category" : "" });
   if (!edited) return null;
   const response = await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}`, {
     method: "PATCH",
@@ -6324,8 +6333,9 @@ async function ensureProductCategoryBeforePrint(product, lotId) {
   return response.product || { ...product, ...edited };
 }
 
-async function requestProductCategoryBeforePrint(product, lotId) {
-  const edited = await openProductEditModal(product, { includeLogisticsFields: false, focusField: "category" });
+async function requestProductReviewBeforePrint(product, lotId) {
+  const missingRequiredCategory = shouldRequireCategoryBeforePrint() && !String(product?.categoria || "").trim();
+  const edited = await openProductEditModal(product, { includeLogisticsFields: true, focusField: missingRequiredCategory ? "category" : "" });
   if (!edited) return;
   try {
     await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}`, {
@@ -6333,7 +6343,7 @@ async function requestProductCategoryBeforePrint(product, lotId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(edited)
     });
-    await printLabel(product.id);
+    await printLabel(product.id, { reviewed: true });
   } catch (error) {
     alert(error.message);
   }

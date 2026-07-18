@@ -7244,6 +7244,7 @@ function normalizeConferenceSettings(input = {}) {
   const hasCustomNcm = Object.prototype.hasOwnProperty.call(input, "ncmByCategory") || Object.prototype.hasOwnProperty.call(input, "ncm_by_category");
   return {
     fields,
+    reviewBeforePrint: Boolean(input.reviewBeforePrint ?? input.review_before_print ?? fields.category?.askBeforePrint),
     ncmByCategory: normalizeNcmByCategory(hasCustomNcm ? input.ncmByCategory || input.ncm_by_category || [] : DEFAULT_NCM_BY_CATEGORY)
   };
 }
