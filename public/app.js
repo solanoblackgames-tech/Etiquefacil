@@ -180,25 +180,6 @@ function ncmForCategory(category) {
   return row?.ncm || "";
 }
 
-function renderNcmCategorySelectOptions(currentCategory = "") {
-  const current = String(currentCategory || "").trim();
-  const rows = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory;
-  const seen = new Set();
-  let hasCurrentOption = false;
-  const options = ['<option value=""></option>'];
-  for (const row of rows) {
-    const key = normalizeSearchText(row.category);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    if (row.category === current) hasCurrentOption = true;
-    options.push(`<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)} - ${escapeHtml(row.ncm)}</option>`);
-  }
-  if (current && !hasCurrentOption) {
-    options.push(`<option value="${escapeHtml(current)}">${escapeHtml(current)}</option>`);
-  }
-  return options.join("");
-}
-
 function conferenceField(key) {
   return normalizeConferenceSettings(state.conferenceSettings).fields[key] || {};
 }
@@ -1676,6 +1657,7 @@ function openProductEditModal(product, options = {}) {
     const ean = $("#productEditEan");
     const categoria = $("#productEditCategoria");
     const subcategoria = $("#productEditSubcategoria");
+    const categoryOptions = $("#ncmCategoryOptions");
     const ncm = $("#productEditNcm");
     const alturaCaixa = $("#productEditAlturaCaixa");
     const larguraCaixa = $("#productEditLarguraCaixa");
@@ -1725,7 +1707,6 @@ function openProductEditModal(product, options = {}) {
     price.value = String(product.valorUnit || "").replace(".", ",");
     cost.value = String(product.precoCusto || "").replace(".", ",");
     ean.value = product.ean || "";
-    categoria.innerHTML = renderNcmCategorySelectOptions(product.categoria);
     categoria.value = product.categoria || "";
     subcategoria.value = product.subcategoria || "";
     ncm.value = product.ncm || ncmForCategory(product.categoria);
@@ -1736,6 +1717,11 @@ function openProductEditModal(product, options = {}) {
     localizacaoEstoque.value = product.localizacaoEstoque || "";
     link.value = product.link || "";
     photo.value = product.foto || "";
+    if (categoryOptions) {
+      categoryOptions.innerHTML = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory
+        .map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.ncm)}</option>`)
+        .join("");
+    }
     error.textContent = "";
     modal.classList.remove("hidden");
 
