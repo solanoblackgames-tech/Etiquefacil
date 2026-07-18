@@ -4,6 +4,7 @@ const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 
 export function buildBlingProductPayload(product) {
+  const midia = buildBlingMediaPayload(product.foto);
   return compactObject({
     nome: product.descricao || product.sku,
     codigo: product.sku || "",
@@ -17,7 +18,7 @@ export function buildBlingProductPayload(product) {
     gtinEmbalagem: product.ean || "",
     marca: product.codigoMl || "",
     linkExterno: product.link || "",
-    imagemURL: product.foto || "",
+    midia,
     descricaoCurta: product.descricao || "",
     tipoProducao: "T",
     condicao: 0,
@@ -621,6 +622,22 @@ function supplierCostFromPayload(items = []) {
 
 function compactObject(input) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+}
+
+function buildBlingMediaPayload(photoUrls) {
+  const imagensURL = splitPhotoUrls(photoUrls).map((link) => ({ link }));
+  if (!imagensURL.length) return undefined;
+  return {
+    video: { url: "" },
+    imagens: { imagensURL }
+  };
+}
+
+function splitPhotoUrls(value) {
+  return String(value || "")
+    .split(/[\n\r,;|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function buildBlingDimensionsPayload(product = {}) {
