@@ -3653,6 +3653,8 @@ h3 {
   background: rgb(0 0 0 / 0.42);
   display: grid;
   inset: 0;
+  overflow: hidden;
+  padding: 16px;
   place-items: center;
   position: fixed;
   z-index: 20;
@@ -3673,9 +3675,20 @@ h3 {
   box-shadow: 0 20px 80px rgb(0 0 0 / 0.25);
   display: grid;
   gap: 14px;
+  max-height: calc(100dvh - 32px);
   max-width: 620px;
+  overflow: hidden;
   padding: 20px;
   width: min(620px, calc(100vw - 32px));
+}
+
+#manualProductForm,
+#productEditForm {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+#productSplitForm {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .decision-stage h2 {
@@ -3701,6 +3714,9 @@ h3 {
 .decision-fields {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .decision-fields label {
@@ -4029,6 +4045,7 @@ h3 {
   display: flex;
   gap: 10px;
   justify-content: center;
+  flex-wrap: wrap;
 }
 
 #labelPrintRoot {
