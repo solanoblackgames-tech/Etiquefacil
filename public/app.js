@@ -107,6 +107,12 @@ const addDays = (date, days) => {
 };
 const routePath = (path) => `${window.location.origin}${path}`;
 const normalizeCodigoMl = (value) => String(value || "").trim().toUpperCase();
+const normalizeSearchText = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
 
 function defaultConferenceSettings() {
