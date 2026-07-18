@@ -1701,8 +1701,8 @@ function openProductEditModal(product, options = {}) {
       setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
     };
 
-    code.value = product.codigoMl || "";
-    sku.value = product.sku || "";
+    code.textContent = product.codigoMl || "";
+    sku.textContent = product.sku || "";
     description.value = product.descricao || "";
     price.value = String(product.valorUnit || "").replace(".", ",");
     cost.value = String(product.precoCusto || "").replace(".", ",");
@@ -1729,18 +1729,6 @@ function openProductEditModal(product, options = {}) {
       event.preventDefault();
       const valorUnit = parseMoneyInput(price.value);
       const precoCusto = parseMoneyInput(cost.value);
-      const codigoMl = normalizeCode(code.value);
-      const skuValue = normalizeCode(sku.value);
-      if (!codigoMl) {
-        error.textContent = "Informe o Codigo ML.";
-        code.focus();
-        return;
-      }
-      if (!skuValue) {
-        error.textContent = "Informe o SKU.";
-        sku.focus();
-        return;
-      }
       if (!description.value.trim()) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -1771,8 +1759,6 @@ function openProductEditModal(product, options = {}) {
       if (includeLogisticsFields && isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
       const mappedNcm = ncmForCategory(categoria.value);
       const result = {
-        codigoMl,
-        sku: skuValue,
         descricao: description.value.trim(),
         valorUnit,
         precoCusto,

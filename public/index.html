@@ -532,13 +532,15 @@
     <section id="productEditModal" class="label-modal hidden" aria-live="polite" tabindex="-1">
       <form id="productEditForm" class="decision-stage">
         <h2>Editar produto</h2>
+        <div class="decision-body-row">
+          <span>Codigo ML</span>
+          <strong id="productEditCode"></strong>
+        </div>
+        <div class="decision-body-row">
+          <span>SKU</span>
+          <strong id="productEditSku"></strong>
+        </div>
         <div class="decision-fields">
-          <label>Codigo ML
-            <input id="productEditCode" name="codigoMl" required />
-          </label>
-          <label>SKU
-            <input id="productEditSku" name="sku" required />
-          </label>
           <label>Nome/descricao do produto
             <input id="productEditDescription" name="descricao" required />
           </label>

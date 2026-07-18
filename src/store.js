@@ -1788,22 +1788,20 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
     const result = await query(
       `
         update products
-        set codigo_ml = $4,
-            sku = $5,
-            descricao = $6,
-            valor_unit = $7,
-            preco_custo = $8,
-            ncm = $9,
-            ean = $10,
-            link = $11,
-            foto = $12,
-            altura_caixa = $13,
-            largura_caixa = $14,
-            comprimento_caixa = $15,
-            peso_caixa = $16,
-            localizacao_estoque = $17,
-            categoria = $18,
-            subcategoria = $19
+        set descricao = $4,
+            valor_unit = $5,
+            preco_custo = $6,
+            ncm = $7,
+            ean = $8,
+            link = $9,
+            foto = $10,
+            altura_caixa = $11,
+            largura_caixa = $12,
+            comprimento_caixa = $13,
+            peso_caixa = $14,
+            localizacao_estoque = $15,
+            categoria = $16,
+            subcategoria = $17
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1813,8 +1811,6 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         productId,
         lotId,
         userId,
-        normalized.codigoMl,
-        normalized.sku,
         normalized.descricao,
         normalized.valorUnit,
         normalized.precoCusto,
@@ -5388,20 +5384,14 @@ function normalizeManualProduct(input = {}, codigoMl) {
 }
 
 function normalizeEditableProduct(input = {}) {
-  const codigoMl = normalizeCode(input.codigoMl ?? input.codigo_ml ?? input.codigo ?? input.ml);
-  const sku = normalizeCode(input.sku);
   const descricao = String(input.descricao || input.nome || "").trim();
   const valorUnit = decimalMoney(input.valorUnit ?? input.preco);
   const precoCusto = decimalMoney(input.precoCusto ?? input.custo);
   const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
-  if (!codigoMl) throw new Error("Informe o Codigo ML do produto.");
-  if (!sku) throw new Error("Informe o SKU do produto.");
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
   if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
   return {
-    codigoMl,
-    sku,
     descricao,
     valorUnit,
     precoCusto,
