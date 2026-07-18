@@ -20,6 +20,7 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
     valorUnit: 1659.17,
     precoCusto: 331.83,
     ean: "7891234567890",
+    ncm: "42010000",
     foto: "https://img.example/produto.jpg; https://img.example/produto-2.jpg",
     link: "https://example/produto"
   });
@@ -34,6 +35,7 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   assert.equal(payload.unidade, "UN");
   assert.equal(payload.gtin, "7891234567890");
   assert.equal(payload.marca, "JQQR53377");
+  assert.deepEqual(payload.tributacao, { origem: 0, ncm: "42010000" });
   assert.deepEqual(payload.midia, {
     video: { url: "" },
     imagens: {

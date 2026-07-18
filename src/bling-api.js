@@ -5,6 +5,7 @@ const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 
 export function buildBlingProductPayload(product) {
   const midia = buildBlingMediaPayload(product.foto);
+  const tributacao = buildBlingTaxPayload(product);
   return compactObject({
     nome: product.descricao || product.sku,
     codigo: product.sku || "",
@@ -27,7 +28,8 @@ export function buildBlingProductPayload(product) {
     pesoBruto: numberOrZero(product.pesoCaixa ?? product.pesoBruto ?? product.peso),
     volumes: 0,
     itensPorCaixa: 0,
-    dimensoes: buildBlingDimensionsPayload(product)
+    dimensoes: buildBlingDimensionsPayload(product),
+    tributacao
   });
 }
 
@@ -638,6 +640,19 @@ function splitPhotoUrls(value) {
     .split(/[\n\r,;|]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildBlingTaxPayload(product = {}) {
+  const ncm = normalizeNcmText(product.ncm);
+  if (!ncm) return undefined;
+  return {
+    origem: 0,
+    ncm
+  };
+}
+
+function normalizeNcmText(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
 }
 
 function buildBlingDimensionsPayload(product = {}) {
