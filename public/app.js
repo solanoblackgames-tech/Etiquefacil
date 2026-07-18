@@ -2181,14 +2181,11 @@ function renderConferenceSettings() {
       <fieldset class="conference-settings-row" data-conference-field="${escapeHtml(field.key)}">
         <label class="check-option"><input name="${escapeHtml(field.key)}Enabled" type="checkbox" ${value.enabled ? "checked" : ""} /> ${escapeHtml(field.label)}</label>
         <label class="check-option"><input name="${escapeHtml(field.key)}Required" type="checkbox" ${value.required ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Obrigatorio</label>
+        ${field.key === "category" ? `<label class="check-option"><input name="reviewBeforePrint" type="checkbox" ${settings.reviewBeforePrint ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Conferir dados antes de imprimir</label>` : ""}
         ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
       </fieldset>
     `;
   }).join("") + `
-    <fieldset class="conference-settings-row">
-      <label class="check-option"><input name="reviewBeforePrint" type="checkbox" ${settings.reviewBeforePrint ? "checked" : ""} /> Conferir dados antes de imprimir</label>
-      <span class="muted">Abre a edicao do produto antes de gerar a etiqueta.</span>
-    </fieldset>
     <details class="ncm-category-settings">
       <summary class="ncm-category-summary">
         <span>
