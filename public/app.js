@@ -1742,6 +1742,7 @@ function openProductEditModal(product, options = {}) {
     form.onsubmit = (event) => {
       event.preventDefault();
       const valorUnit = parseMoneyInput(price.value);
+      const precoCusto = parseMoneyInput(cost.value);
       if (!description.value.trim()) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -1750,6 +1751,11 @@ function openProductEditModal(product, options = {}) {
       if (!Number.isFinite(valorUnit) || valorUnit <= 0) {
         error.textContent = "Informe um preco valido.";
         price.focus();
+        return;
+      }
+      if (!Number.isFinite(precoCusto) || precoCusto < 0) {
+        error.textContent = "Informe um custo valido.";
+        cost.focus();
         return;
       }
       if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
@@ -1772,6 +1778,7 @@ function openProductEditModal(product, options = {}) {
       const result = {
         descricao: description.value.trim(),
         valorUnit,
+        precoCusto,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
         categoria: isConferenceFieldEnabled("category") ? selectedCategory : product.categoria || "",
         subcategoria: isConferenceFieldEnabled("subcategory") ? subcategoria.value.trim() : product.subcategoria || "",

@@ -1790,17 +1790,18 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         update products
         set descricao = $4,
             valor_unit = $5,
-            ncm = $6,
-            ean = $7,
-            link = $8,
-            foto = $9,
-            altura_caixa = $10,
-            largura_caixa = $11,
-            comprimento_caixa = $12,
-            peso_caixa = $13,
-            localizacao_estoque = $14,
-            categoria = $15,
-            subcategoria = $16
+            preco_custo = $6,
+            ncm = $7,
+            ean = $8,
+            link = $9,
+            foto = $10,
+            altura_caixa = $11,
+            largura_caixa = $12,
+            comprimento_caixa = $13,
+            peso_caixa = $14,
+            localizacao_estoque = $15,
+            categoria = $16,
+            subcategoria = $17
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1812,6 +1813,7 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         userId,
         normalized.descricao,
         normalized.valorUnit,
+        normalized.precoCusto,
         normalized.ncm,
         normalized.ean,
         normalized.link,
@@ -5384,12 +5386,15 @@ function normalizeManualProduct(input = {}, codigoMl) {
 function normalizeEditableProduct(input = {}) {
   const descricao = String(input.descricao || input.nome || "").trim();
   const valorUnit = decimalMoney(input.valorUnit ?? input.preco);
+  const precoCusto = decimalMoney(input.precoCusto ?? input.custo);
   const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
+  if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
   return {
     descricao,
     valorUnit,
+    precoCusto,
     categoria: String(input.categoria || "").trim(),
     subcategoria: String(input.subcategoria || "").trim(),
     ncm: normalizeNcmText(input.ncm),
