@@ -283,7 +283,6 @@ function bindEvents() {
   });
 
   $("#uploadForm").addEventListener("submit", uploadLot);
-  $("#ncmCategoryUploadForm")?.addEventListener("submit", uploadNcmCategories);
 
   window.addEventListener("popstate", () => {
     if (state.transferReceiveOnly) {
@@ -2181,11 +2180,13 @@ function renderConferenceSettings() {
       <fieldset class="conference-settings-row" data-conference-field="${escapeHtml(field.key)}">
         <label class="check-option"><input name="${escapeHtml(field.key)}Enabled" type="checkbox" ${value.enabled ? "checked" : ""} /> ${escapeHtml(field.label)}</label>
         <label class="check-option"><input name="${escapeHtml(field.key)}Required" type="checkbox" ${value.required ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Obrigatorio</label>
-        ${field.key === "category" ? `<label class="check-option"><input name="reviewBeforePrint" type="checkbox" ${settings.reviewBeforePrint ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Conferir dados antes de imprimir</label>` : ""}
         ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
       </fieldset>
     `;
   }).join("") + `
+    <fieldset class="conference-settings-row">
+      <label class="check-option"><input name="reviewBeforePrint" type="checkbox" ${settings.reviewBeforePrint ? "checked" : ""} /> Conferir dados antes de imprimir</label>
+    </fieldset>
     <details class="ncm-category-settings">
       <summary class="ncm-category-summary">
         <span>
@@ -2198,12 +2199,27 @@ function renderConferenceSettings() {
         ${renderNcmCategoryRows(settings.ncmByCategory)}
       </div>
       <button class="ghost" type="button" data-add-ncm-category>Adicionar categoria</button>
+      <div class="ncm-upload-panel" data-ncm-upload-panel>
+        <div>
+          <strong>Planilha Categoria x NCM</strong>
+          <span class="muted">Baixe a base, ajuste os NCMs e envie novamente para esta conta.</span>
+        </div>
+        <div class="settings-actions">
+          <a class="button-link" href="/api/profile/ncm-categories/template">Baixar base</a>
+          <label>Nova base
+            <input id="ncmCategoryUploadFile" name="file" type="file" accept=".xlsx,.xls" required />
+          </label>
+          <button type="button" data-upload-ncm-category>Enviar base</button>
+        </div>
+        <p id="ncmCategoryUploadMessage" class="message"></p>
+      </div>
     </details>
   `;
   fields.querySelectorAll('input[type="checkbox"]').forEach((input) => {
     input.addEventListener("change", updateConferenceSettingsControlState);
   });
   fields.querySelector("[data-add-ncm-category]")?.addEventListener("click", () => addNcmCategoryRow());
+  fields.querySelector("[data-upload-ncm-category]")?.addEventListener("click", uploadNcmCategories);
   fields.querySelector("[data-ncm-category-list]")?.addEventListener("click", (event) => {
     const removeButton = event.target.closest("[data-remove-ncm-category]");
     if (!removeButton) return;
@@ -2287,21 +2303,33 @@ async function saveConferenceSettings(event) {
 
 async function uploadNcmCategories(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  const panel = event.currentTarget.closest("[data-ncm-upload-panel]");
+  const fileInput = panel?.querySelector('input[name="file"]');
   const message = $("#ncmCategoryUploadMessage");
-  const button = form.querySelector("button");
+  const button = event.currentTarget;
   message.textContent = "";
+  if (!fileInput?.files?.length) {
+    message.style.color = "";
+    message.textContent = "Escolha uma planilha para enviar.";
+    return;
+  }
   button.disabled = true;
   try {
+    const body = new FormData();
+    body.append("file", fileInput.files[0]);
     const response = await api("/api/profile/ncm-categories", {
       method: "POST",
-      body: new FormData(form)
+      body
     });
     state.conferenceSettings = normalizeConferenceSettings(response.settings);
     renderConferenceSettings();
-    form.reset();
-    message.style.color = "#0f766e";
-    message.textContent = `Base importada com ${response.count || state.conferenceSettings.ncmByCategory.length} categorias.`;
+    const ncmSettings = document.querySelector(".ncm-category-settings");
+    if (ncmSettings) ncmSettings.open = true;
+    const updatedMessage = $("#ncmCategoryUploadMessage");
+    if (updatedMessage) {
+      updatedMessage.style.color = "#0f766e";
+      updatedMessage.textContent = `Base importada com ${response.count || state.conferenceSettings.ncmByCategory.length} categorias.`;
+    }
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
