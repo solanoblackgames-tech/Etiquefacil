@@ -2135,16 +2135,19 @@ function renderConferenceSettings() {
       </fieldset>
     `;
   }).join("") + `
-    <section class="ncm-category-settings">
-      <div class="panel-heading compact-heading">
-        <span class="muted">Tabela opcional</span>
-        <h4>NCM por categoria</h4>
-      </div>
+    <details class="ncm-category-settings">
+      <summary class="ncm-category-summary">
+        <span>
+          <span class="muted">Tabela opcional</span>
+          <strong>NCM por categoria</strong>
+        </span>
+        <span class="muted">${settings.ncmByCategory.length} categoria${settings.ncmByCategory.length === 1 ? "" : "s"}</span>
+      </summary>
       <div class="ncm-category-list" data-ncm-category-list>
         ${renderNcmCategoryRows(settings.ncmByCategory)}
       </div>
       <button class="ghost" type="button" data-add-ncm-category>Adicionar categoria</button>
-    </section>
+    </details>
   `;
   fields.querySelectorAll('input[type="checkbox"]').forEach((input) => {
     input.addEventListener("change", updateConferenceSettingsControlState);
