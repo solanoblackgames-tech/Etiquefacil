@@ -2301,8 +2301,9 @@ function readNcmCategoryRows(rows) {
 
 function hasNcmCategoryHeader(row) {
   const header = row.map((cell) => normalizeHeader(cell));
-  return header.some((name) => ["categoria", "category"].includes(name) || name.includes("categoria")) &&
-    header.some((name) => name === "ncm" || name.includes("ncm"));
+  const categoryIndex = header.findIndex((name) => ["categoria", "category"].includes(name) || name.includes("categoria"));
+  const ncmIndex = header.findIndex((name) => name === "ncm" || name.includes("ncm"));
+  return categoryIndex >= 0 && ncmIndex >= 0 && categoryIndex !== ncmIndex;
 }
 
 function normalizeNcmCategoryRows(rows = []) {
