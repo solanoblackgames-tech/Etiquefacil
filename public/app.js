@@ -1693,6 +1693,7 @@ function openProductEditModal(product, options = {}) {
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
+      categoria.oninput = null;
       categoria.onchange = null;
       categoria.onblur = null;
       ncm.oninput = null;
@@ -1757,15 +1758,18 @@ function openProductEditModal(product, options = {}) {
       }
       if (includeLogisticsFields && isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
       if (includeLogisticsFields && isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
-      const mappedNcm = ncmForCategory(categoria.value);
+      const selectedCategory = categoria.value.trim();
+      const mappedNcm = ncmForCategory(selectedCategory);
+      const categoryChanged = normalizeSearchText(selectedCategory) !== normalizeSearchText(product.categoria);
+      const ncmValue = mappedNcm && categoryChanged ? mappedNcm : ncm.value || mappedNcm;
       const result = {
         descricao: description.value.trim(),
         valorUnit,
         precoCusto,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
-        categoria: isConferenceFieldEnabled("category") ? categoria.value.trim() : product.categoria || "",
+        categoria: isConferenceFieldEnabled("category") ? selectedCategory : product.categoria || "",
         subcategoria: isConferenceFieldEnabled("subcategory") ? subcategoria.value.trim() : product.subcategoria || "",
-        ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncm.value || mappedNcm) : product.ncm || mappedNcm || "",
+        ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncmValue) : product.ncm || mappedNcm || "",
         alturaCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? alturaCaixa.value.trim() : product.alturaCaixa || "",
         larguraCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? larguraCaixa.value.trim() : product.larguraCaixa || "",
         comprimentoCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
@@ -1778,14 +1782,13 @@ function openProductEditModal(product, options = {}) {
       resolve(result);
     };
 
-    categoria.onchange = () => {
+    const applyCategoryNcm = () => {
       const mappedNcm = ncmForCategory(categoria.value);
       if (mappedNcm) ncm.value = mappedNcm;
     };
-    categoria.onblur = () => {
-      const mappedNcm = ncmForCategory(categoria.value);
-      if (mappedNcm) ncm.value = mappedNcm;
-    };
+    categoria.oninput = applyCategoryNcm;
+    categoria.onchange = applyCategoryNcm;
+    categoria.onblur = applyCategoryNcm;
     ncm.oninput = () => {
       ncm.value = normalizeNcmText(ncm.value);
     };
