@@ -124,7 +124,7 @@ function defaultConferenceSettings() {
       boxDimensions: { enabled: false, required: false },
       weight: { enabled: false, required: false },
       stockLocation: { enabled: false, required: false, printOnLabel: false },
-      category: { enabled: false, required: false },
+      category: { enabled: false, required: false, askBeforePrint: false },
       subcategory: { enabled: false, required: false },
       ncm: { enabled: false, required: false }
     },
@@ -150,6 +150,7 @@ function normalizeConferenceSettings(settings = {}) {
     current.enabled = incoming.enabled === undefined ? current.enabled : Boolean(incoming.enabled);
     current.required = current.enabled ? Boolean(incoming.required) : false;
     if (field.printOption) current.printOnLabel = current.enabled ? Boolean(incoming.printOnLabel) : false;
+    if (field.key === "category") current.askBeforePrint = current.enabled ? Boolean(incoming.askBeforePrint) : false;
   }
   defaults.ncmByCategory = normalizeNcmByCategory(settings.ncmByCategory || settings.ncm_by_category || []);
   return defaults;
@@ -188,6 +189,11 @@ function isConferenceFieldEnabled(key) {
 function isConferenceFieldRequired(key) {
   const field = conferenceField(key);
   return Boolean(field.enabled && field.required);
+}
+
+function shouldAskCategoryBeforePrint() {
+  const field = conferenceField("category");
+  return Boolean(field.enabled && (field.required || field.askBeforePrint));
 }
 
 function shouldPrintConferenceField(key) {
@@ -2167,6 +2173,7 @@ function renderConferenceSettings() {
       <fieldset class="conference-settings-row" data-conference-field="${escapeHtml(field.key)}">
         <label class="check-option"><input name="${escapeHtml(field.key)}Enabled" type="checkbox" ${value.enabled ? "checked" : ""} /> ${escapeHtml(field.label)}</label>
         <label class="check-option"><input name="${escapeHtml(field.key)}Required" type="checkbox" ${value.required ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Obrigatorio</label>
+        ${field.key === "category" ? `<label class="check-option"><input name="categoryAskBeforePrint" type="checkbox" ${value.askBeforePrint ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Perguntar antes de imprimir</label>` : ""}
         ${field.printOption ? `<label class="check-option"><input name="${escapeHtml(field.key)}PrintOnLabel" type="checkbox" ${value.printOnLabel ? "checked" : ""} ${value.enabled ? "" : "disabled"} /> Imprimir na etiqueta</label>` : ""}
       </fieldset>
     `;
@@ -2245,6 +2252,7 @@ async function saveConferenceSettings(event) {
       required: enabled ? Boolean(form.elements[`${field.key}Required`]?.checked) : false
     };
     if (field.printOption) fields[field.key].printOnLabel = enabled ? Boolean(form.elements[`${field.key}PrintOnLabel`]?.checked) : false;
+    if (field.key === "category") fields[field.key].askBeforePrint = enabled ? Boolean(form.elements.categoryAskBeforePrint?.checked) : false;
   }
   const ncmByCategory = [...form.querySelectorAll("[data-ncm-category-row]")]
     .map((row) => ({
@@ -6301,7 +6309,7 @@ async function printProductLabel(product, { lotId = "", afterPrint = null, ...la
 }
 
 async function ensureProductCategoryBeforePrint(product, lotId) {
-  if (!isConferenceFieldRequired("category") || String(product?.categoria || "").trim()) return product;
+  if (!shouldAskCategoryBeforePrint() || String(product?.categoria || "").trim()) return product;
   if (!lotId) {
     alert("Informe a categoria antes de imprimir esta etiqueta.");
     return null;

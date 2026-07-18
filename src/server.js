@@ -1526,7 +1526,9 @@ app.post("/api/labels", requireAuth, async (req, res) => {
   const productContext = await getUserProductWithLot(userId, req.body.productId);
   if (!productContext) return res.status(404).json({ error: "Produto nao encontrado." });
   const settings = await getUserConferenceSettings(userId);
-  if (settings.fields?.category?.enabled && settings.fields.category.required && !String(productContext.product.categoria || "").trim()) {
+  const categorySettings = settings.fields?.category || {};
+  const shouldAskCategory = categorySettings.enabled && (categorySettings.required || categorySettings.askBeforePrint);
+  if (shouldAskCategory && !String(productContext.product.categoria || "").trim()) {
     return res.status(409).json({
       error: "Informe a categoria antes de imprimir esta etiqueta.",
       code: "category_required_before_print",

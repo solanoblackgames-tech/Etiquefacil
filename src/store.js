@@ -65,7 +65,7 @@ const CONFERENCE_FIELD_DEFAULTS = Object.freeze({
   boxDimensions: { enabled: false, required: false },
   weight: { enabled: false, required: false },
   stockLocation: { enabled: false, required: false, printOnLabel: false },
-  category: { enabled: false, required: false },
+  category: { enabled: false, required: false, askBeforePrint: false },
   subcategory: { enabled: false, required: false },
   ncm: { enabled: false, required: false }
 });
@@ -7236,6 +7236,9 @@ function normalizeConferenceSettings(input = {}) {
     };
     if (Object.prototype.hasOwnProperty.call(defaults, "printOnLabel")) {
       fields[key].printOnLabel = enabled ? Boolean(incoming.printOnLabel) : false;
+    }
+    if (Object.prototype.hasOwnProperty.call(defaults, "askBeforePrint")) {
+      fields[key].askBeforePrint = enabled ? Boolean(incoming.askBeforePrint) : false;
     }
   }
   const hasCustomNcm = Object.prototype.hasOwnProperty.call(input, "ncmByCategory") || Object.prototype.hasOwnProperty.call(input, "ncm_by_category");
