@@ -554,7 +554,7 @@ async function addDiverseItem(event) {
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
     await refreshLotsList(response.lot.id);
     await showDiverseBlingSyncStatus(response, diverseScanStatusMessage(response, codigoRz, parent));
-    if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+    if (state.labelOptions.autoPrint) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
     schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
   } catch (error) {
     if (error.code === "manual_required" || error.status === 404) {
@@ -569,7 +569,7 @@ async function addDiverseItem(event) {
         renderDiverseLot(response.lot);
         await refreshLotsList(response.lot.id);
         await showDiverseBlingSyncStatus(response, `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`);
-        if (state.labelOptions.autoPrint) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+        if (state.labelOptions.autoPrint) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
         schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
         return;
       } catch (manualError) {
@@ -1312,7 +1312,7 @@ async function addDiverseQuantity(lotId, codigoRz, codigoMl, button) {
     renderDiverseLot(response.lot);
     $("#diverseScanMessage").style.color = "#0f766e";
     $("#diverseScanMessage").textContent = "Quantidade aumentada e etiqueta gerada.";
-    if (response.product) showLabel(response.product, { autoPrint: true, meta: labelMeta() });
+    if (response.product) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
   } catch (error) {
     if (button) button.disabled = false;
     $("#diverseScanMessage").style.color = "";
@@ -1580,7 +1580,7 @@ async function handleDiverseItemsClick(event) {
   const labelButton = event.target.closest("[data-diverse-label]");
   if (labelButton) {
     const product = findDiverseProduct(labelButton.dataset.diverseLabel);
-    if (product) showLabel(product, { autoPrint: true, meta: labelMeta() });
+    if (product) await printProductLabel(product, { lotId: state.selectedDiverseLotId, autoPrint: true, meta: labelMeta() });
     return;
   }
 
@@ -1645,6 +1645,9 @@ function openProductEditModal(product, options = {}) {
     const price = $("#productEditPrice");
     const cost = $("#productEditCost");
     const ean = $("#productEditEan");
+    const categoria = $("#productEditCategoria");
+    const subcategoria = $("#productEditSubcategoria");
+    const categoryOptions = $("#ncmCategoryOptions");
     const ncm = $("#productEditNcm");
     const alturaCaixa = $("#productEditAlturaCaixa");
     const larguraCaixa = $("#productEditLarguraCaixa");
@@ -1657,6 +1660,8 @@ function openProductEditModal(product, options = {}) {
     const cancel = $("#productEditCancel");
     const fieldVisibility = [
       [ean, isConferenceFieldEnabled("ean")],
+      [categoria, isConferenceFieldEnabled("category")],
+      [subcategoria, isConferenceFieldEnabled("subcategory")],
       [ncm, isConferenceFieldEnabled("ncm")],
       [link, isConferenceFieldEnabled("link")],
       [photo, isConferenceFieldEnabled("photo")],
@@ -1677,6 +1682,9 @@ function openProductEditModal(product, options = {}) {
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
+      categoria.onchange = null;
+      categoria.onblur = null;
+      ncm.oninput = null;
       form.reset();
       error.textContent = "";
       setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
@@ -1688,7 +1696,9 @@ function openProductEditModal(product, options = {}) {
     price.value = String(product.valorUnit || "").replace(".", ",");
     cost.value = String(product.precoCusto || "").replace(".", ",");
     ean.value = product.ean || "";
-    ncm.value = product.ncm || "";
+    categoria.value = product.categoria || "";
+    subcategoria.value = product.subcategoria || "";
+    ncm.value = product.ncm || ncmForCategory(product.categoria);
     alturaCaixa.value = product.alturaCaixa || "";
     larguraCaixa.value = product.larguraCaixa || "";
     comprimentoCaixa.value = product.comprimentoCaixa || "";
@@ -1696,6 +1706,11 @@ function openProductEditModal(product, options = {}) {
     localizacaoEstoque.value = product.localizacaoEstoque || "";
     link.value = product.link || "";
     photo.value = product.foto || "";
+    if (categoryOptions) {
+      categoryOptions.innerHTML = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory
+        .map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.ncm)}</option>`)
+        .join("");
+    }
     error.textContent = "";
     modal.classList.remove("hidden");
 
@@ -1719,6 +1734,8 @@ function openProductEditModal(product, options = {}) {
         return;
       }
       if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
+      if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
+      if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
       if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
       if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
       if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
@@ -1729,12 +1746,15 @@ function openProductEditModal(product, options = {}) {
       }
       if (includeLogisticsFields && isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
       if (includeLogisticsFields && isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
+      const mappedNcm = ncmForCategory(categoria.value);
       const result = {
         descricao: description.value.trim(),
         valorUnit,
         precoCusto,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
-        ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncm.value) : product.ncm || "",
+        categoria: isConferenceFieldEnabled("category") ? categoria.value.trim() : product.categoria || "",
+        subcategoria: isConferenceFieldEnabled("subcategory") ? subcategoria.value.trim() : product.subcategoria || "",
+        ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncm.value || mappedNcm) : product.ncm || mappedNcm || "",
         alturaCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? alturaCaixa.value.trim() : product.alturaCaixa || "",
         larguraCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? larguraCaixa.value.trim() : product.larguraCaixa || "",
         comprimentoCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",
@@ -1747,9 +1767,17 @@ function openProductEditModal(product, options = {}) {
       resolve(result);
     };
 
-    ncm.addEventListener("input", () => {
+    categoria.onchange = () => {
+      const mappedNcm = ncmForCategory(categoria.value);
+      if (mappedNcm) ncm.value = mappedNcm;
+    };
+    categoria.onblur = () => {
+      const mappedNcm = ncmForCategory(categoria.value);
+      if (mappedNcm) ncm.value = mappedNcm;
+    };
+    ncm.oninput = () => {
       ncm.value = normalizeNcmText(ncm.value);
-    });
+    };
 
     cancel.onclick = () => {
       cleanup();
@@ -1764,7 +1792,10 @@ function openProductEditModal(product, options = {}) {
       }
     };
 
-    setTimeout(() => description.focus(), 0);
+    const focusTarget = options.focusField === "category" && !categoria.closest("label")?.classList.contains("hidden")
+      ? categoria
+      : description;
+    setTimeout(() => focusTarget.focus(), 0);
   });
 }
 
@@ -1784,7 +1815,12 @@ async function splitLotProduct(product, codigoRz, { lotId = state.selectedLotId,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...split, codigoRz })
     });
-    showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt), quantity: response.labelQuantity || split.sellableQuantity });
+    await printProductLabel(response.product, {
+      lotId,
+      autoPrint: true,
+      meta: labelMeta(response.label?.createdAt),
+      quantity: response.labelQuantity || split.sellableQuantity
+    });
     if (typeof render === "function") render(response.lot);
     else renderLotRz(response.lot, codigoRz, { replace: false });
     await refreshLotsList(response.lot.id);
@@ -5995,8 +6031,12 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
       }
       $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       if (scannedProduct && state.labelOptions.autoPrint) {
-        showLabel(scannedProduct, { autoPrint: true, meta: labelMeta(response.scan.createdAt) });
-        syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+        await printProductLabel(scannedProduct, {
+          lotId,
+          autoPrint: true,
+          meta: labelMeta(response.scan.createdAt),
+          afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+        });
       }
     }
   } catch (error) {
@@ -6035,8 +6075,12 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
     renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = successMessage;
     if (response.product && state.labelOptions.autoPrint) {
-      showLabel(response.product, { autoPrint: true, meta: labelMeta() });
-      syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+      await printProductLabel(response.product, {
+        lotId,
+        autoPrint: true,
+        meta: labelMeta(),
+        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+      });
     }
   } catch (error) {
     message.textContent = error.message;
@@ -6139,8 +6183,12 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
     renderScanPage(response.lot, codigoRz);
     $("#scanMessage").textContent = "Excedente externo cadastrado.";
     if (response.product && state.labelOptions.autoPrint) {
-      showLabel(response.product, { autoPrint: true, meta: labelMeta() });
-      syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+      await printProductLabel(response.product, {
+        lotId,
+        autoPrint: true,
+        meta: labelMeta(),
+        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+      });
     }
   } catch (error) {
     $("#scanMessage").textContent = error.message;
@@ -6235,6 +6283,49 @@ async function printLabel(productId) {
       body: JSON.stringify({ productId })
     });
     showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt) });
+  } catch (error) {
+    if (error.code === "category_required_before_print" && error.product && error.lotId) {
+      await requestProductCategoryBeforePrint(error.product, error.lotId);
+      return;
+    }
+    alert(error.message);
+  }
+}
+
+async function printProductLabel(product, { lotId = "", afterPrint = null, ...labelOptions } = {}) {
+  const readyProduct = await ensureProductCategoryBeforePrint(product, lotId);
+  if (!readyProduct) return false;
+  showLabel(readyProduct, labelOptions);
+  if (typeof afterPrint === "function") afterPrint(readyProduct);
+  return true;
+}
+
+async function ensureProductCategoryBeforePrint(product, lotId) {
+  if (!isConferenceFieldRequired("category") || String(product?.categoria || "").trim()) return product;
+  if (!lotId) {
+    alert("Informe a categoria antes de imprimir esta etiqueta.");
+    return null;
+  }
+  const edited = await openProductEditModal(product, { includeLogisticsFields: false, focusField: "category" });
+  if (!edited) return null;
+  const response = await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(edited)
+  });
+  return response.product || { ...product, ...edited };
+}
+
+async function requestProductCategoryBeforePrint(product, lotId) {
+  const edited = await openProductEditModal(product, { includeLogisticsFields: false, focusField: "category" });
+  if (!edited) return;
+  try {
+    await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(edited)
+    });
+    await printLabel(product.id);
   } catch (error) {
     alert(error.message);
   }
@@ -7842,6 +7933,8 @@ async function api(url, options = {}) {
     const error = new Error(payload.error || "Erro inesperado.");
     error.code = payload.code;
     error.status = response.status;
+    error.product = payload.product;
+    error.lotId = payload.lotId;
     throw error;
   }
   return payload;

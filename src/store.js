@@ -1799,7 +1799,9 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             largura_caixa = $12,
             comprimento_caixa = $13,
             peso_caixa = $14,
-            localizacao_estoque = $15
+            localizacao_estoque = $15,
+            categoria = $16,
+            subcategoria = $17
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1820,7 +1822,9 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.larguraCaixa || null,
         normalized.comprimentoCaixa || null,
         normalized.pesoCaixa || null,
-        normalized.localizacaoEstoque
+        normalized.localizacaoEstoque,
+        normalized.categoria,
+        normalized.subcategoria
       ]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
@@ -2824,6 +2828,41 @@ export async function searchProducts(userId, codigoMl) {
       lot: lotsById.get(product.lotId),
       rzs: db.rzItems.filter((item) => item.productId === product.id).map((item) => item.codigoRz)
     }));
+}
+
+export async function getUserProductWithLot(userId, productId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select
+          p.*,
+          l.id as lot__id,
+          l.user_id as lot__user_id,
+          l.nome_arquivo as lot__nome_arquivo,
+          l.percentual_arremate as lot__percentual_arremate,
+          l.custo_medio_unitario as lot__custo_medio_unitario,
+          l.tipo_custo as lot__tipo_custo,
+          l.percentual_custo as lot__percentual_custo,
+          l.fornecedor as lot__fornecedor,
+          l.prefixo_sku as lot__prefixo_sku,
+          l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
+          l.created_at as lot__created_at
+        from products p
+        join lots l on l.id = p.lot_id
+        where p.id = $1 and l.user_id = $2
+        limit 1
+      `,
+      [productId, userId]
+    );
+    const row = result.rows[0];
+    return row ? { product: productFromRow(row), lot: lotFromPrefixedRow(row, "lot__") } : null;
+  }
+
+  const db = await readDb();
+  const product = db.products.find((item) => item.id === productId);
+  const lot = product && db.lots.find((item) => item.id === product.lotId && item.userId === userId);
+  return product && lot ? { product, lot } : null;
 }
 
 export async function createLabel(userId, productId, quantity = 1) {
@@ -5356,6 +5395,8 @@ function normalizeEditableProduct(input = {}) {
     descricao,
     valorUnit,
     precoCusto,
+    categoria: String(input.categoria || "").trim(),
+    subcategoria: String(input.subcategoria || "").trim(),
     ncm: normalizeNcmText(input.ncm),
     ean: String(input.ean || "").trim(),
     link: String(input.link || "").trim(),

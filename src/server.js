@@ -64,6 +64,7 @@ import {
   getOperationalDashboardStats,
   getTransferLotDetail,
   getPublicUserById,
+  getUserProductWithLot,
   getUserBlingCredentials,
   getUserBlingIntegration,
   getUserConferenceSettings,
@@ -1521,7 +1522,19 @@ app.post("/api/operator-activity", requireAuth, async (req, res) => {
 });
 
 app.post("/api/labels", requireAuth, async (req, res) => {
-  const result = await createLabel(workspaceUserId(req), req.body.productId, req.body.quantity);
+  const userId = workspaceUserId(req);
+  const productContext = await getUserProductWithLot(userId, req.body.productId);
+  if (!productContext) return res.status(404).json({ error: "Produto nao encontrado." });
+  const settings = await getUserConferenceSettings(userId);
+  if (settings.fields?.category?.enabled && settings.fields.category.required && !String(productContext.product.categoria || "").trim()) {
+    return res.status(409).json({
+      error: "Informe a categoria antes de imprimir esta etiqueta.",
+      code: "category_required_before_print",
+      product: productContext.product,
+      lotId: productContext.lot.id
+    });
+  }
+  const result = await createLabel(userId, req.body.productId, req.body.quantity);
   if (!result) return res.status(404).json({ error: "Produto não encontrado." });
   res.json(result);
 });
