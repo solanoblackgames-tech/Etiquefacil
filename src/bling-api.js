@@ -3,9 +3,9 @@ const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
 const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 
-export function buildBlingProductPayload(product) {
+export function buildBlingProductPayload(product, existing = {}) {
   const midia = buildBlingMediaPayload(product.foto);
-  const tributacao = buildBlingTaxPayload(product);
+  const tributacao = buildBlingTaxPayload(product, existing.tributacao);
   return compactObject({
     nome: product.descricao || product.sku,
     codigo: product.sku || "",
@@ -104,9 +104,9 @@ export async function syncBlingProducts({ integration, products, saveIntegration
   const results = [];
 
   for (const product of products) {
-    const existing = await client.findProductBySku(product.sku);
+    const existing = await client.findProductBySku(product.sku, { detail: true, supplierCost: false });
     if (existing?.id) {
-      await client.updateProduct(existing.id, buildBlingProductPayload(product));
+      await client.updateProduct(existing.id, buildBlingProductPayload(product, existing));
       await client.ensureProductSupplier(product, existing.id, supplier);
       results.push({ sku: product.sku, status: "updated", blingProductId: existing.id });
       continue;
@@ -129,13 +129,13 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
 
   const results = [];
   for (const item of items) {
-    let product = await client.findProductBySku(item.sku);
+    let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
     if (!product?.id) {
       const created = await client.createProduct(buildBlingProductPayload(item));
       product = { id: created?.data?.id, codigo: item.sku };
       if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
     } else {
-      await client.updateProduct(product.id, buildBlingProductPayload(item));
+      await client.updateProduct(product.id, buildBlingProductPayload(item, product));
       await client.ensureProductSupplier(item, product.id, supplier);
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
@@ -173,7 +173,7 @@ export async function syncBlingStockBalances({
 
   const results = [];
   for (const item of items) {
-    let product = await client.findProductBySku(item.sku);
+    let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
     if (!product?.id) {
       if (!createMissingProducts) {
         results.push({ sku: item.sku, status: "missing", current: 0, target: numberOrZero(item.qtdConferida || item.quantidade), delta: 0 });
@@ -182,7 +182,7 @@ export async function syncBlingStockBalances({
       const created = await client.createProduct(buildBlingProductPayload(item));
       product = { id: created?.data?.id, codigo: item.sku };
     } else if (updateExistingProducts) {
-      await client.updateProduct(product.id, buildBlingProductPayload(item));
+      await client.updateProduct(product.id, buildBlingProductPayload(item, product));
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
     if (syncSuppliers) await client.ensureProductSupplier(item, product.id, supplier);
@@ -229,13 +229,13 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
-  let product = await client.findProductBySku(item.sku);
+  let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
   if (!product?.id && operation === "entry") {
     const created = await client.createProduct(buildBlingProductPayload(item));
     product = { id: created?.data?.id, codigo: item.sku };
     if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
   } else if (product?.id && operation === "entry") {
-    await client.updateProduct(product.id, buildBlingProductPayload(item));
+    await client.updateProduct(product.id, buildBlingProductPayload(item, product));
     await client.ensureProductSupplier(item, product.id, supplier);
   }
   if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
@@ -375,7 +375,7 @@ class BlingApiClient {
     this.supplierContactType = null;
   }
 
-  async findProductBySku(sku, { detail = false } = {}) {
+  async findProductBySku(sku, { detail = false, supplierCost: includeSupplierCost = true } = {}) {
     const payload = await this.request("/produtos", {
       query: { "codigos[]": sku, criterio: 5, limite: 1 }
     });
@@ -383,7 +383,7 @@ class BlingApiClient {
     if (!detail || !product?.id) return product || null;
     const detailPayload = await this.request(`/produtos/${encodeURIComponent(product.id)}`);
     const detailedProduct = detailPayload?.data || product;
-    const supplierCost = await this.findProductSupplierCost(product.id);
+    const supplierCost = includeSupplierCost ? await this.findProductSupplierCost(product.id) : 0;
     return supplierCost > 0 ? { ...detailedProduct, precoCusto: supplierCost, precoCompra: supplierCost } : detailedProduct;
   }
 
@@ -642,13 +642,14 @@ function splitPhotoUrls(value) {
     .filter(Boolean);
 }
 
-function buildBlingTaxPayload(product = {}) {
+function buildBlingTaxPayload(product = {}, existingTax = {}) {
   const ncm = normalizeNcmText(product.ncm);
-  if (!ncm) return undefined;
-  return {
-    origem: 0,
+  if (!ncm) return Object.keys(existingTax || {}).length ? existingTax : undefined;
+  return compactObject({
+    ...existingTax,
+    origem: existingTax.origem ?? 0,
     ncm
-  };
+  });
 }
 
 function normalizeNcmText(value) {

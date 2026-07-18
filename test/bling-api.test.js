@@ -48,6 +48,30 @@ test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   assert.equal(payload.linkExterno, "https://example/produto");
 });
 
+test("Bling product payload keeps existing tax data while changing NCM", () => {
+  const payload = buildBlingProductPayload(
+    {
+      sku: "AMZ04L0001",
+      descricao: "Guia para pet",
+      valorUnit: 42,
+      precoCusto: 12,
+      ncm: "4201.00.00"
+    },
+    {
+      tributacao: {
+        origem: 2,
+        cest: "0100100"
+      }
+    }
+  );
+
+  assert.deepEqual(payload.tributacao, {
+    origem: 2,
+    cest: "0100100",
+    ncm: "42010000"
+  });
+});
+
 test("Bling product maps to triage lookup fields", () => {
   const product = blingProductToTriageLookup(
     {
@@ -304,6 +328,7 @@ test("Bling product sync updates existing supplier cost relationship", async () 
     { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 321, nome: "Fornecedor X" }] }) },
     { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 321, nome: "Fornecedor X", tiposContato: [{ id: 2, descricao: "Fornecedor" }] } }) },
     { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "AMZ04L0001" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, tributacao: { origem: 0, ncm: "42010000" } } }) },
     { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
     {
       ok: true,
