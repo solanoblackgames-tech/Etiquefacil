@@ -3,9 +3,11 @@ const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
 const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 
-export function buildBlingProductPayload(product, existing = {}) {
+export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [] } = {}) {
   const midia = buildBlingMediaPayload(product.foto);
-  const tributacao = buildBlingTaxPayload(product, existing.tributacao);
+  const invalidFields = new Set(zeroInvalidFields);
+  const tributacao = buildBlingTaxPayload(product, existing.tributacao, { zeroNcm: invalidFields.has("ncm") });
+  const ean = invalidFields.has("ean") ? "0" : product.ean || "";
   return compactObject({
     nome: product.descricao || product.sku,
     codigo: product.sku || "",
@@ -15,8 +17,8 @@ export function buildBlingProductPayload(product, existing = {}) {
     situacao: "A",
     formato: "S",
     unidade: "UN",
-    gtin: product.ean || "",
-    gtinEmbalagem: product.ean || "",
+    gtin: ean,
+    gtinEmbalagem: ean,
     marca: product.codigoMl || "",
     linkExterno: product.link || "",
     midia,
@@ -106,16 +108,22 @@ export async function syncBlingProducts({ integration, products, saveIntegration
   for (const product of products) {
     const existing = await client.findProductBySku(product.sku, { detail: true, supplierCost: false });
     if (existing?.id) {
-      await client.updateProduct(existing.id, buildBlingProductPayload(product, existing));
+      const update = await saveProductWithBlingFallback(client, {
+        operation: "update",
+        product,
+        existing,
+        productId: existing.id
+      });
       await client.ensureProductSupplier(product, existing.id, supplier);
-      results.push({ sku: product.sku, status: "updated", blingProductId: existing.id });
+      results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: update.alerts });
       continue;
     }
 
-    const response = await client.createProduct(buildBlingProductPayload(product));
+    const created = await saveProductWithBlingFallback(client, { operation: "create", product });
+    const response = created.response;
     const blingProductId = response?.data?.id || null;
     if (blingProductId) await client.ensureProductSupplier(product, blingProductId, supplier);
-    results.push({ sku: product.sku, status: "created", blingProductId, response });
+    results.push({ sku: product.sku, status: "created", blingProductId, response, alerts: created.alerts });
   }
 
   return summarizeSync(results);
@@ -130,12 +138,18 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
   const results = [];
   for (const item of items) {
     let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
+    let productSync = { alerts: [] };
     if (!product?.id) {
-      const created = await client.createProduct(buildBlingProductPayload(item));
-      product = { id: created?.data?.id, codigo: item.sku };
+      productSync = await saveProductWithBlingFallback(client, { operation: "create", product: item });
+      product = { id: productSync.response?.data?.id, codigo: item.sku };
       if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
     } else {
-      await client.updateProduct(product.id, buildBlingProductPayload(item, product));
+      productSync = await saveProductWithBlingFallback(client, {
+        operation: "update",
+        product: item,
+        existing: product,
+        productId: product.id
+      });
       await client.ensureProductSupplier(item, product.id, supplier);
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
@@ -147,7 +161,7 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
         observacao
       })
     );
-    results.push({ sku: item.sku, status: "entered", blingProductId: product.id, response });
+    results.push({ sku: item.sku, status: "entered", blingProductId: product.id, response, alerts: productSync.alerts });
   }
 
   return {
@@ -174,15 +188,21 @@ export async function syncBlingStockBalances({
   const results = [];
   for (const item of items) {
     let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
+    let productSync = { alerts: [] };
     if (!product?.id) {
       if (!createMissingProducts) {
         results.push({ sku: item.sku, status: "missing", current: 0, target: numberOrZero(item.qtdConferida || item.quantidade), delta: 0 });
         continue;
       }
-      const created = await client.createProduct(buildBlingProductPayload(item));
-      product = { id: created?.data?.id, codigo: item.sku };
+      productSync = await saveProductWithBlingFallback(client, { operation: "create", product: item });
+      product = { id: productSync.response?.data?.id, codigo: item.sku };
     } else if (updateExistingProducts) {
-      await client.updateProduct(product.id, buildBlingProductPayload(item, product));
+      productSync = await saveProductWithBlingFallback(client, {
+        operation: "update",
+        product: item,
+        existing: product,
+        productId: product.id
+      });
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
     if (syncSuppliers) await client.ensureProductSupplier(item, product.id, supplier);
@@ -197,7 +217,7 @@ export async function syncBlingStockBalances({
           { productId: product.id, depositoId: deposito.id, observacao }
         )
       );
-      results.push({ sku: item.sku, status: "entered", blingProductId: product.id, current, target, delta, response });
+      results.push({ sku: item.sku, status: "entered", blingProductId: product.id, current, target, delta, response, alerts: productSync.alerts });
       continue;
     }
     if (delta < 0) {
@@ -207,10 +227,10 @@ export async function syncBlingStockBalances({
           { productId: product.id, depositoId: deposito.id, observacao }
         )
       );
-      results.push({ sku: item.sku, status: "exited", blingProductId: product.id, current, target, delta, response });
+      results.push({ sku: item.sku, status: "exited", blingProductId: product.id, current, target, delta, response, alerts: productSync.alerts });
       continue;
     }
-    results.push({ sku: item.sku, status: "unchanged", blingProductId: product.id, current, target, delta: 0 });
+    results.push({ sku: item.sku, status: "unchanged", blingProductId: product.id, current, target, delta: 0, alerts: productSync.alerts });
   }
 
   return {
@@ -230,12 +250,18 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
   let product = await client.findProductBySku(item.sku, { detail: true, supplierCost: false });
+  let productSync = { alerts: [] };
   if (!product?.id && operation === "entry") {
-    const created = await client.createProduct(buildBlingProductPayload(item));
-    product = { id: created?.data?.id, codigo: item.sku };
+    productSync = await saveProductWithBlingFallback(client, { operation: "create", product: item });
+    product = { id: productSync.response?.data?.id, codigo: item.sku };
     if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
   } else if (product?.id && operation === "entry") {
-    await client.updateProduct(product.id, buildBlingProductPayload(item, product));
+    productSync = await saveProductWithBlingFallback(client, {
+      operation: "update",
+      product: item,
+      existing: product,
+      productId: product.id
+    });
     await client.ensureProductSupplier(item, product.id, supplier);
   }
   if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
@@ -258,6 +284,8 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
     sku: item.sku,
     blingProductId: product.id,
     deposito: { id: deposito.id, descricao: deposito.descricao || depositoName },
+    alerts: productSync.alerts,
+    results: [{ sku: item.sku, status: operation === "entry" ? "entered" : "exited", blingProductId: product.id, alerts: productSync.alerts }],
     response
   };
 }
@@ -546,7 +574,7 @@ class BlingApiClient {
     }
 
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(blingErrorMessage(payload, response.status));
+    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
     return payload;
   }
 
@@ -573,7 +601,7 @@ class BlingApiClient {
       })
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(blingErrorMessage(payload, response.status));
+    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
 
     this.integration = {
       ...this.integration,
@@ -602,8 +630,64 @@ function summarizeSync(results) {
     entered: results.filter((item) => item.status === "entered").length,
     exited: results.filter((item) => item.status === "exited").length,
     transferred: results.filter((item) => item.status === "transferred").length,
+    alerted: results.filter((item) => (item.alerts || []).length).length,
     results
   };
+}
+
+async function saveProductWithBlingFallback(client, { operation, product, existing = {}, productId = null }) {
+  const payload = buildBlingProductPayload(product, existing);
+  try {
+    const response = operation === "update"
+      ? await client.updateProduct(productId, payload)
+      : await client.createProduct(payload);
+    return { response, alerts: [] };
+  } catch (error) {
+    const invalidFields = invalidBlingProductFields(error);
+    if (!invalidFields.length) throw error;
+
+    const fallbackPayload = buildBlingProductPayload(product, existing, { zeroInvalidFields: invalidFields });
+    const response = operation === "update"
+      ? await client.updateProduct(productId, fallbackPayload)
+      : await client.createProduct(fallbackPayload);
+    return {
+      response,
+      alerts: invalidFields.map((field) => ({
+        field,
+        message: blingProductAlertMessage(field)
+      }))
+    };
+  }
+}
+
+function invalidBlingProductFields(error) {
+  const parts = [
+    error?.message,
+    error?.payload?.error?.description,
+    ...(Array.isArray(error?.payload?.error?.fields)
+      ? error.payload.error.fields.flatMap((field) => [field.element, field.msg, field.message])
+      : [])
+  ];
+  const text = normalizeText(parts.filter(Boolean).join(" "));
+  const fields = [];
+  if (/\b(ean|gtin|codigo de barras)\b/.test(text)) fields.push("ean");
+  if (/\bncm\b/.test(text)) fields.push("ncm");
+  return [...new Set(fields)];
+}
+
+function blingProductAlertMessage(field) {
+  if (field === "ean") return "EAN nao aceito pelo Bling. Produto cadastrado com EAN zerado; corrija o EAN ou feche este alerta para aceitar o cadastro sem EAN.";
+  if (field === "ncm") return "NCM nao aceito pelo Bling. Produto cadastrado com NCM zerado; corrija o NCM ou feche este alerta para aceitar o cadastro sem NCM.";
+  return "Dado nao aceito pelo Bling. Produto cadastrado com valor zerado; corrija o dado ou feche este alerta.";
+}
+
+class BlingApiError extends Error {
+  constructor(message, { status, payload } = {}) {
+    super(message);
+    this.name = "BlingApiError";
+    this.status = status;
+    this.payload = payload;
+  }
 }
 
 function blingErrorMessage(payload, status) {
@@ -642,8 +726,8 @@ function splitPhotoUrls(value) {
     .filter(Boolean);
 }
 
-function buildBlingTaxPayload(product = {}, existingTax = {}) {
-  const ncm = normalizeNcmText(product.ncm);
+function buildBlingTaxPayload(product = {}, existingTax = {}, { zeroNcm = false } = {}) {
+  const ncm = zeroNcm ? "00000000" : normalizeNcmText(product.ncm);
   if (!ncm) return Object.keys(existingTax || {}).length ? existingTax : undefined;
   return compactObject({
     ...existingTax,

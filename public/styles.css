@@ -2092,6 +2092,14 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.heading-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .section-title {
   color: #2a3844;
   font-size: 16px;
@@ -2551,6 +2559,34 @@ h3 {
 .badge.danger {
   background: #fee4e2;
   color: var(--danger);
+}
+
+.bling-alert-inline {
+  align-items: center;
+  background: #fff7d6;
+  border: 1px solid #f4d35e;
+  border-radius: 6px;
+  color: #7a4d00;
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 8px;
+  line-height: 1.3;
+  margin-top: 6px;
+  padding: 6px 8px;
+}
+
+.bling-alert-inline span {
+  min-width: 0;
+}
+
+.bling-alert-dismiss {
+  color: #7a4d00;
+  flex: 0 0 auto;
+  font-size: 12px;
+  height: 24px;
+  min-height: 24px;
+  width: 24px;
 }
 
 .search-bar {
@@ -4323,6 +4359,15 @@ h3 {
   .work-heading h2 {
     font-size: 22px;
     line-height: 1.18;
+  }
+
+  .heading-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .heading-actions button {
+    flex: 1 1 150px;
   }
 
   .metric {

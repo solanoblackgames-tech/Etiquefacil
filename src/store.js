@@ -1801,7 +1801,15 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             peso_caixa = $14,
             localizacao_estoque = $15,
             categoria = $16,
-            subcategoria = $17
+            subcategoria = $17,
+            bling_alert_message = case
+              when coalesce(ncm, '') <> $7 or coalesce(ean, '') <> $8 then ''
+              else bling_alert_message
+            end,
+            bling_alert_dismissed = case
+              when coalesce(ncm, '') <> $7 or coalesce(ean, '') <> $8 then false
+              else bling_alert_dismissed
+            end
         where id = $1
           and lot_id = $2
           and exists (select 1 from lots where id = $2 and user_id = $3)
@@ -1836,7 +1844,72 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
   if (!lot) throw notFound("Lote nao encontrado.");
   const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
   if (!product) throw notFound("Produto nao encontrado neste lote.");
+  const clearedAlert = product.ncm !== normalized.ncm || product.ean !== normalized.ean;
   Object.assign(product, normalized);
+  if (clearedAlert) {
+    product.blingAlertMessage = "";
+    product.blingAlertDismissed = false;
+  }
+  await writeDb(db);
+  return { product, lot: summarizeLot(db, lot, true) };
+}
+
+export async function updateLotProductBlingAlerts({ userId, lotId, syncResult }) {
+  const alertsBySku = collectBlingAlertsBySku(syncResult);
+  if (!alertsBySku.size) return null;
+
+  await ensureStore();
+  if (hasPostgres()) {
+    for (const [sku, message] of alertsBySku) {
+      await query(
+        `
+          update products
+          set bling_alert_message = $4
+          where lot_id = $1
+            and upper(trim(sku)) = upper(trim($2))
+            and exists (select 1 from lots where id = $1 and user_id = $3)
+        `,
+        [lotId, sku, userId, message]
+      );
+    }
+    return getUserLotDetail(userId, lotId);
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) return null;
+  for (const product of db.products || []) {
+    const message = alertsBySku.get(normalizeCode(product.sku));
+    if (product.lotId === lot.id && message) product.blingAlertMessage = message;
+  }
+  await writeDb(db);
+  return summarizeLot(db, lot, true);
+}
+
+export async function dismissLotProductBlingAlert({ userId, lotId, productId }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        update products
+        set bling_alert_dismissed = true
+        where id = $1
+          and lot_id = $2
+          and exists (select 1 from lots where id = $2 and user_id = $3)
+        returning *
+      `,
+      [productId, lotId, userId]
+    );
+    if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
+    return { product: productFromRow(result.rows[0]), lot: await getUserLotDetail(userId, lotId) };
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
+  if (!product) throw notFound("Produto nao encontrado neste lote.");
+  product.blingAlertDismissed = true;
   await writeDb(db);
   return { product, lot: summarizeLot(db, lot, true) };
 }
@@ -3009,6 +3082,8 @@ async function ensurePgStore() {
       comprimento_caixa numeric,
       peso_caixa numeric,
       localizacao_estoque text not null default '',
+      bling_alert_message text not null default '',
+      bling_alert_dismissed boolean not null default false,
       origem text not null default 'planilha',
       created_at timestamptz not null default now()
     );
@@ -3301,6 +3376,8 @@ async function ensurePgStore() {
     alter table products add column if not exists comprimento_caixa numeric;
     alter table products add column if not exists peso_caixa numeric;
     alter table products add column if not exists localizacao_estoque text not null default '';
+    alter table products add column if not exists bling_alert_message text not null default '';
+    alter table products add column if not exists bling_alert_dismissed boolean not null default false;
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists ncm text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
@@ -3675,7 +3752,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -3696,6 +3773,8 @@ async function writePgDb(db) {
         product.comprimentoCaixa || null,
         product.pesoCaixa || null,
         product.localizacaoEstoque || "",
+        product.blingAlertMessage || "",
+        Boolean(product.blingAlertDismissed),
         product.origem || "planilha",
         product.createdAt
       ])
@@ -3843,7 +3922,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -3866,6 +3945,8 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.comprimentoCaixa || null,
       product.pesoCaixa || null,
       product.localizacaoEstoque || "",
+      product.blingAlertMessage || "",
+      Boolean(product.blingAlertDismissed),
       product.origem || "planilha",
       product.createdAt
     ])
@@ -5476,6 +5557,17 @@ function normalizeEditableProduct(input = {}) {
   };
 }
 
+function collectBlingAlertsBySku(syncResult = {}) {
+  const alertsBySku = new Map();
+  for (const item of syncResult.results || []) {
+    const sku = normalizeCode(item.sku);
+    const alerts = Array.isArray(item.alerts) ? item.alerts : [];
+    if (!sku || !alerts.length) continue;
+    alertsBySku.set(sku, alerts.map((alert) => alert.message || "").filter(Boolean).join(" "));
+  }
+  return alertsBySku;
+}
+
 function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId = null, lot, product, type, payload }) {
   const codigoMl = normalizeCode(payload.codigoMl || product.codigoMl);
   return {
@@ -6159,6 +6251,8 @@ function productFromRow(row) {
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
     pesoCaixa: row.peso_caixa === null || row.peso_caixa === undefined ? "" : num(row.peso_caixa),
     localizacaoEstoque: row.localizacao_estoque || "",
+    blingAlertMessage: row.bling_alert_message || "",
+    blingAlertDismissed: Boolean(row.bling_alert_dismissed),
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
   };

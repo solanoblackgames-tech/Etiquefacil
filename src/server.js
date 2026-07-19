@@ -44,6 +44,7 @@ import {
   deleteUserBlingIntegration,
   deleteCatalogProductForAdmin,
   deleteLotProductRegistration,
+  dismissLotProductBlingAlert,
   deleteUser,
   deleteUserLot,
   deleteLotRzItem,
@@ -97,6 +98,7 @@ import {
   suggestNoSheetProducts,
   suggestCatalogUpdate,
   undoPublicTransferLotScan,
+  updateLotProductBlingAlerts,
   updateNoSheetSuggestions,
   updateLotProduct,
   updateOperatorTriageAccess,
@@ -1067,7 +1069,8 @@ app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner
       products: withLotSupplier(data.products, data.lot),
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
-    res.json(result);
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
+    res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
     sendError(res, error);
   }
@@ -1082,7 +1085,22 @@ app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, require
     const product = (lot.products || []).find((item) => item.id === req.params.productId);
     if (!product) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
 
-    res.json(await syncSingleLotProductToBling(userId, lot, product));
+    const result = await syncSingleLotProductToBling(userId, lot, product);
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
+    res.json(updatedLot ? { ...result, lot: updatedLot } : result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/products/:productId/bling-alert/dismiss", requireAuth, async (req, res) => {
+  try {
+    const result = await dismissLotProductBlingAlert({
+      userId: workspaceUserId(req),
+      lotId: req.params.lotId,
+      productId: req.params.productId
+    });
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -1099,6 +1117,8 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
     });
     try {
       result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
+      const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
+      if (updatedLot) result.lot = updatedLot;
     } catch (blingError) {
       result.bling = { ok: false, error: blingError.message };
     }
@@ -1147,6 +1167,8 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
     const labelQuantity = Math.max(1, Math.round(Number(req.body.sellableQuantity || 1)));
     try {
       result.bling = await syncSplitProductToBling(userId, result.lot, result.product, labelQuantity);
+      const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
+      if (updatedLot) result.lot = updatedLot;
     } catch (blingError) {
       result.bling = { ok: false, error: blingError.message };
     }
@@ -1175,7 +1197,8 @@ app.post("/api/lots/:lotId/bling/stock-balance/sync", requireAuth, requireOwner,
       observacao: `Correcao de saldo por bipagem ${data.lot.nomeArquivo}`,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
-    res.json({ ...result, lot: { id: data.lot.id, nomeArquivo: data.lot.nomeArquivo } });
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
+    res.json({ ...result, lot: updatedLot || { id: data.lot.id, nomeArquivo: data.lot.nomeArquivo } });
   } catch (error) {
     sendError(res, error);
   }
@@ -1262,7 +1285,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync", requireAuth, requireO
       observacao: `Entrada por conferencia RZ ${data.codigoRz}`,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
-    res.json(result);
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
+    res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
     sendError(res, error);
   }
@@ -1286,7 +1310,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync-one", requireAuth, asyn
       observacao: `Entrada automatica por bipagem RZ ${req.params.codigoRz}`,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
-    res.json(result);
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
+    res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
     sendError(res, error);
   }

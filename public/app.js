@@ -766,6 +766,10 @@ async function showDiverseBlingSyncStatus(response, baseMessage) {
   try {
     if (response.bling?.ok === false) throw new Error(response.bling.error || "Erro ao sincronizar produto.");
     const bling = response.bling || await syncDiverseProductToBling(response.lot.id, response.product.id);
+    if (bling.lot) {
+      state.selectedDiverseLot = bling.lot;
+      renderDiverseLot(bling.lot);
+    }
     message.style.color = "#0f766e";
     message.textContent = `${baseMessage} ${blingProductSyncMessage(bling)}`;
   } catch (error) {
@@ -786,6 +790,19 @@ function blingProductSyncMessage(result) {
   if (item?.status === "created") return "Produto criado no Bling.";
   if (item?.status === "updated") return "Produto atualizado no Bling.";
   return "Produto sincronizado no Bling.";
+}
+
+async function dismissBlingProductAlert(productId, { lotId = state.selectedLotId, render = null } = {}) {
+  if (!productId || !lotId) return;
+  const response = await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(productId)}/bling-alert/dismiss`, {
+    method: "POST"
+  });
+  if (!response.lot) return;
+  if (state.selectedLotId === lotId) state.selectedLot = response.lot;
+  if (state.selectedDiverseLotId === lotId) state.selectedDiverseLot = response.lot;
+  if (render) render(response.lot);
+  else if (state.selectedRz) renderPallet(response.lot, state.selectedRz);
+  else renderLotDetail(response.lot);
 }
 
 async function previewDiverseItem(codigoMl, codigoRz) {
@@ -1606,6 +1623,15 @@ function bindClubPriceToggle(selector) {
 }
 
 async function handleDiverseItemsClick(event) {
+  const dismissAlertButton = event.target.closest("[data-dismiss-bling-alert]");
+  if (dismissAlertButton) {
+    await dismissBlingProductAlert(dismissAlertButton.dataset.dismissBlingAlert, {
+      lotId: state.selectedDiverseLotId,
+      render: renderDiverseLot
+    });
+    return;
+  }
+
   const labelButton = event.target.closest("[data-diverse-label]");
   if (labelButton) {
     const product = findDiverseProduct(labelButton.dataset.diverseLabel);
@@ -1662,6 +1688,10 @@ async function editDiverseProduct(product) {
       message.style.color = "";
       message.textContent = `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`;
     } else {
+      if (response.lot) {
+        state.selectedDiverseLot = response.lot;
+        renderDiverseLot(response.lot);
+      }
       message.style.color = "#0f766e";
       message.textContent = `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
     }
@@ -5437,6 +5467,7 @@ async function selectLot(lotId, { push = true } = {}) {
 
 function renderLotPreview(lot) {
   const noSheetLot = isNoSheetLot(lot);
+  const canManage = state.user?.role !== "operator";
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
   const checkedRzs = lot.rzs.filter((rz) => Number(rz.qtyPercent || 0) >= 100 && Number(rz.missing || 0) === 0 && Number(rz.excess || 0) === 0).length;
@@ -5450,7 +5481,10 @@ function renderLotPreview(lot) {
           <span class="muted">Status do lote</span>
           <h2>${escapeHtml(lot.nomeArquivo)}</h2>
         </div>
-        <button type="button" id="openLotButton">Abrir lote</button>
+        <div class="heading-actions">
+          <button type="button" id="openLotButton">Abrir lote</button>
+          ${canManage ? '<button class="danger" type="button" id="deleteLotPreviewButton">Excluir lote</button>' : ""}
+        </div>
       </div>
       <div class="summary-grid">
         ${metric("Status", status)}
@@ -5473,6 +5507,7 @@ function renderLotPreview(lot) {
     </section>
   `;
   $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
+  $("#deleteLotPreviewButton")?.addEventListener("click", () => deleteLot(lot, $("#deleteLotPreviewButton")));
   bindNoSheetSuggestionUploadForms(detail);
 }
 
@@ -5558,7 +5593,7 @@ function renderLotDetail(lot) {
     detail.querySelectorAll("button[data-sync-products]").forEach((button) => {
       button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
     });
-    $("#deleteLotButton").addEventListener("click", () => deleteLot(lot));
+    $("#deleteLotButton").addEventListener("click", () => deleteLot(lot, $("#deleteLotButton")));
   }
   $("#rzSearchButton")?.addEventListener("click", () => openRzFromSearch(lot));
   $("#rzSearchInput")?.addEventListener("keydown", (event) => {
@@ -5605,11 +5640,10 @@ function emptyLotDetailMarkup() {
   `;
 }
 
-async function deleteLot(lot) {
+async function deleteLot(lot, button = $("#deleteLotButton")) {
   if (!confirm(`Excluir o lote ${lot.nomeArquivo}? Esta acao apaga tambem os produtos, RZs, bipagens e etiquetas deste lote.`)) return;
 
-  const button = $("#deleteLotButton");
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     await api(`/api/lots/${encodeURIComponent(lot.id)}`, { method: "DELETE" });
     state.selectedLotId = null;
@@ -5617,10 +5651,14 @@ async function deleteLot(lot) {
     await loadLots(null);
   } catch (error) {
     const message = $("#downloadMessage");
-    message.style.color = "";
-    message.textContent = error.message;
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    } else {
+      alert(error.message);
+    }
   } finally {
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
 
@@ -5757,8 +5795,14 @@ async function syncBlingProducts(lotId, kind, button, messageSelector = "#downlo
     const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/bling/${encodeURIComponent(kind)}/sync-products`, { method: "POST" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Nao foi possivel criar os produtos no Bling.");
-    message.style.color = "#0f766e";
-    message.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s).`;
+    let targetMessage = message;
+    if (payload.lot) {
+      if (state.selectedLotId === lotId) renderLotDetail(payload.lot);
+      if (state.selectedDiverseLotId === lotId) renderDiverseLot(payload.lot);
+      targetMessage = $(messageSelector) || message;
+    }
+    targetMessage.style.color = "#0f766e";
+    targetMessage.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s).${payload.alerted ? " Ha produto com alerta de EAN/NCM." : ""}`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -5891,6 +5935,12 @@ function renderPallet(lot, codigoRz) {
       const item = items.find((candidate) => candidate.product?.id === button.dataset.palletSplit);
       if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId: lot.id, messageSelector: "#palletMessage", render: (updatedLot) => renderPallet(updatedLot, codigoRz) });
     });
+  });
+  document.querySelectorAll("[data-dismiss-bling-alert]").forEach((button) => {
+    button.addEventListener("click", () => dismissBlingProductAlert(button.dataset.dismissBlingAlert, {
+      lotId: lot.id,
+      render: (updatedLot) => renderPallet(updatedLot, codigoRz)
+    }));
   });
   bindProductPrintButtons($("#rzDetail"));
 }
@@ -6050,6 +6100,12 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
       const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
       if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
     });
+  });
+  root.querySelectorAll("[data-dismiss-bling-alert]").forEach((button) => {
+    button.addEventListener("click", () => dismissBlingProductAlert(button.dataset.dismissBlingAlert, {
+      lotId,
+      render: (updatedLot) => renderScanPage(updatedLot, codigoRz)
+    }));
   });
   bindProductPrintButtons(root);
 }
@@ -6223,9 +6279,14 @@ async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed =
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ codigoMl })
     });
-    if (message) {
-      message.style.color = "#0f766e";
-      message.textContent = printed
+    let targetMessage = message;
+    if (response.lot) {
+      renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
+      targetMessage = $("#scanMessage") || message;
+    }
+    if (targetMessage) {
+      targetMessage.style.color = "#0f766e";
+      targetMessage.textContent = printed
         ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`
         : `Bipagem registrada e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
     }
@@ -6813,6 +6874,7 @@ function itemRow(item) {
   const product = item.product || {};
   const badge = item.tipoItem === "excedente_externo" ? '<span class="badge excess">excedente externo</span>' : `<span class="badge">${escapeHtml(item.tipoItem)}</span>`;
   const scanCode = product.codigoMl || product.sku || "";
+  const blingAlert = productBlingAlertMarkup(product);
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
@@ -6820,7 +6882,7 @@ function itemRow(item) {
   return `
     <article class="item-row">
       <strong>${escapeHtml(product.sku || "")}</strong>
-      <span>${escapeHtml(product.descricao || "")}</span>
+      <span>${escapeHtml(product.descricao || "")}${blingAlert}</span>
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span class="quantity-stepper scan-quantity-stepper">
         <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
@@ -6925,13 +6987,14 @@ function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
   const quantity = item.qtdEsperada || 0;
   const code = product.codigoMl || product.sku || "";
+  const blingAlert = productBlingAlertMarkup(product);
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Remessa ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
       <span class="diverse-remessa-cell" data-label="Remessa">${escapeHtml(item.codigoRz || "")}</span>
       <strong class="diverse-sku-cell" data-label="SKU">${escapeHtml(product.sku || "")}</strong>
       <span class="diverse-code-cell" data-label="Codigo">${escapeHtml(product.codigoMl || "")}</span>
-      <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}</span>
+      <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}</span>
       <span class="diverse-operator-cell" data-label="Operador">${escapeHtml(productOperatorLabel(product))}</span>
       <span class="quantity-stepper diverse-quantity-cell" data-label="Qtd">
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${quantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
@@ -6950,6 +7013,16 @@ function diverseItemRow(item, startsRz = false) {
   `;
 }
 
+function productBlingAlertMarkup(product = {}) {
+  if (!product.blingAlertMessage || product.blingAlertDismissed) return "";
+  return `
+    <span class="bling-alert-inline">
+      <span>${escapeHtml(product.blingAlertMessage)}</span>
+      <button type="button" class="ghost icon-button bling-alert-dismiss" data-dismiss-bling-alert="${escapeHtml(product.id || "")}" title="Aceitar cadastro sem este dado" aria-label="Aceitar cadastro sem este dado">X</button>
+    </span>
+  `;
+}
+
 function productOperatorLabel(product) {
   const user = product.operatorUser || product.createdByUser || null;
   if (!user) return "-";
@@ -6965,6 +7038,7 @@ function palletRow(item) {
   const excess = item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada);
   const value = Number(product.valorUnit || 0);
   const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
+  const blingAlert = productBlingAlertMarkup(product);
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>

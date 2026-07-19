@@ -320,6 +320,57 @@ test("Bling product sync keeps retrying while API rate limit is reached", async 
   }
 });
 
+test("Bling product sync retries with zeroed EAN when Bling rejects GTIN", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ data: [] })
+    },
+    {
+      ok: false,
+      status: 400,
+      headers: new Headers(),
+      json: async () => ({
+        error: {
+          description: "Validacao do produto",
+          fields: [{ element: "gtin", msg: "GTIN/EAN invalido" }]
+        }
+      })
+    },
+    {
+      ok: true,
+      status: 201,
+      headers: new Headers(),
+      json: async () => ({ data: { id: 987 } })
+    }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingProducts({
+      integration: { accessToken: "token" },
+      products: [{ sku: "AMZ04L0001", descricao: "Produto novo", valorUnit: 10, ean: "789INVALIDO" }]
+    });
+
+    assert.equal(result.created, 1);
+    assert.equal(result.alerted, 1);
+    assert.equal(result.results[0].alerts[0].field, "ean");
+    assert.equal(calls[1].body.gtin, "789INVALIDO");
+    assert.equal(calls[2].body.gtin, "0");
+    assert.equal(calls[2].body.gtinEmbalagem, "0");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Bling product sync updates existing supplier cost relationship", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
