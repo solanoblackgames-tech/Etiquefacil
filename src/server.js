@@ -43,6 +43,7 @@ import {
   deleteTriageItem,
   deleteUserBlingIntegration,
   deleteCatalogProductForAdmin,
+  deleteLotProductRegistration,
   deleteUser,
   deleteUserLot,
   deleteLotRzItem,
@@ -1102,6 +1103,32 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
       result.bling = { ok: false, error: blingError.message };
     }
     res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const found = await getUserProductWithLot(userId, req.params.productId);
+    if (!found || found.lot.id !== req.params.lotId) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const bling = await deleteBlingProductBySku({
+      integration,
+      sku: found.product.sku,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    await recordOperatorActivity(req.session.user, "delete_lot_product", {
+      lotId: req.params.lotId,
+      productId: req.params.productId,
+      codigoMl: found.product.codigoMl || "",
+      sku: found.product.sku || "",
+      blingStatus: bling.status
+    });
+    const result = await deleteLotProductRegistration({ userId, lotId: req.params.lotId, productId: req.params.productId });
+    res.json({ ...result, bling });
   } catch (error) {
     sendError(res, error);
   }

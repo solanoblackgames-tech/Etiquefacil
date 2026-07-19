@@ -2316,6 +2316,32 @@ export async function deleteLotRzItem({ userId, lotId, codigoRz, itemId }) {
   return { item: { ...item, product }, lot: summarizeLot(db, lot, true) };
 }
 
+export async function deleteLotProductRegistration({ userId, lotId, productId }) {
+  await ensureStore();
+  if (hasPostgres()) return deleteLotProductRegistrationPg({ userId, lotId, productId });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const product = (db.products || []).find((candidate) => candidate.id === productId && candidate.lotId === lot.id);
+  if (!product) throw notFound("Produto nao encontrado neste lote.");
+
+  const deletedItems = (db.rzItems || []).filter((candidate) => candidate.lotId === lot.id && candidate.productId === product.id);
+  db.rzItems = (db.rzItems || []).filter((candidate) => !(candidate.lotId === lot.id && candidate.productId === product.id));
+  db.products = (db.products || []).filter((candidate) => candidate.id !== product.id);
+  db.labels = (db.labels || []).filter((candidate) => candidate.productId !== product.id);
+  db.scans.push({
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz: deletedItems[0]?.codigoRz || "",
+    codigoMl: product.codigoMl || "",
+    status: "produto_excluido",
+    createdAt: new Date().toISOString()
+  });
+  await writeDb(db);
+  return { product, deletedItems, lot: summarizeLot(db, lot, true) };
+}
+
 export async function markTransferLotSynced(userId, transferLotId) {
   await ensureStore();
   const syncedAt = new Date().toISOString();
@@ -4989,6 +5015,47 @@ async function deleteLotRzItemPg({ userId, lotId, codigoRz, itemId }) {
           descricao: item.product_descricao || ""
         }
       }
+    };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getUserLotDetail(userId, lotId) };
+}
+
+async function deleteLotProductRegistrationPg({ userId, lotId, productId }) {
+  const client = await getPgPool().connect();
+  let result = {};
+  try {
+    await client.query("begin");
+    const productResult = await client.query(
+      `select p.*
+       from products p
+       join lots l on l.id = p.lot_id
+       where p.id = $1
+         and p.lot_id = $2
+         and l.user_id = $3
+       limit 1
+       for update of p`,
+      [productId, lotId, userId]
+    );
+    const productRow = productResult.rows[0];
+    if (!productRow) throw notFound("Produto nao encontrado neste lote.");
+
+    const itemResult = await client.query("select * from rz_items where lot_id = $1 and product_id = $2", [lotId, productId]);
+    await client.query("delete from products where id = $1 and lot_id = $2", [productId, lotId]);
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [randomUUID(), lotId, itemResult.rows[0]?.codigo_rz || "", productRow.codigo_ml || "", "produto_excluido", null, new Date().toISOString()]
+    );
+    result = {
+      product: productFromRow(productRow),
+      deletedItems: itemResult.rows.map(rzItemFromRow)
     };
     await client.query("commit");
   } catch (error) {

@@ -1621,9 +1621,17 @@ async function handleDiverseItemsClick(event) {
   }
 
   const editButton = event.target.closest("[data-diverse-edit]");
-  if (!editButton) return;
-  const product = findDiverseProduct(editButton.dataset.diverseEdit);
-  if (product) await editDiverseProduct(product);
+  if (editButton) {
+    const product = findDiverseProduct(editButton.dataset.diverseEdit);
+    if (product) await editDiverseProduct(product);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-diverse-delete]");
+  if (deleteButton) {
+    const item = findDiverseItem(deleteButton.dataset.diverseDelete);
+    if (item?.product) await deleteDiverseProduct(item, deleteButton);
+  }
 }
 
 function findDiverseItem(productId) {
@@ -1658,6 +1666,29 @@ async function editDiverseProduct(product) {
       message.textContent = `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
     }
   } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  }
+}
+
+async function deleteDiverseProduct(item, button) {
+  const product = item.product || {};
+  const label = product.sku || product.codigoMl || product.descricao || "produto";
+  if (!confirm(`Excluir definitivamente ${label} do Etiquefacil e do Bling?`)) return;
+
+  const message = $("#diverseScanMessage");
+  message.textContent = "";
+  try {
+    if (button) button.disabled = true;
+    const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/products/${encodeURIComponent(product.id)}`, {
+      method: "DELETE"
+    });
+    renderDiverseLot(response.lot);
+    await refreshLotsList(response.lot.id);
+    $("#diverseScanMessage").style.color = "#0f766e";
+    $("#diverseScanMessage").textContent = `Cadastro excluido do Etiquefacil e do Bling (${response.bling?.status || "ok"}).`;
+  } catch (error) {
+    if (button) button.disabled = false;
     message.style.color = "";
     message.textContent = error.message;
   }
@@ -6913,6 +6944,7 @@ function diverseItemRow(item, startsRz = false) {
         <button type="button" class="ghost icon-button" data-diverse-edit="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         <button type="button" class="ghost icon-button" data-diverse-split="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
         <button type="button" class="icon-button" data-diverse-label="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
+        <button type="button" class="danger ghost icon-button" data-diverse-delete="${escapeHtml(product.id || "")}" title="Excluir do Etiquefacil e Bling" aria-label="Excluir do Etiquefacil e Bling">${trashIcon()}</button>
       </span>
     </article>
   `;
