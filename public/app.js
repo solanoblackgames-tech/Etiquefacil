@@ -6898,15 +6898,15 @@ function diverseItemsTable(lot) {
   return `
     <div class="diverse-table">
       <div class="diverse-row diverse-row-head">
-        <span>Remessa</span>
-        <span>SKU</span>
-        <span>Codigo</span>
-        <span>Produto</span>
-        <span>Operador</span>
-        <span>Qtd</span>
-        <span>Venda</span>
-        <span>Custo</span>
-        <span>Acoes</span>
+        <span class="diverse-remessa-cell">Remessa</span>
+        <span class="diverse-sku-cell">SKU</span>
+        <span class="diverse-code-cell">Codigo</span>
+        <span class="diverse-product-cell">Produto</span>
+        <span class="diverse-operator-cell">Operador</span>
+        <span class="diverse-quantity-cell">Qtd</span>
+        <span class="diverse-sale-cell">Venda</span>
+        <span class="diverse-cost-cell">Custo</span>
+        <span class="diverse-actions-cell">Acoes</span>
       </div>
       ${sortedItems.map((item, index) => diverseItemRow(item, sortedItems[index - 1]?.codigoRz !== item.codigoRz)).join("")}
     </div>
@@ -6928,19 +6928,19 @@ function diverseItemRow(item, startsRz = false) {
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Remessa ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
-      <span>${escapeHtml(item.codigoRz || "")}</span>
-      <strong>${escapeHtml(product.sku || "")}</strong>
-      <span>${escapeHtml(product.codigoMl || "")}</span>
-      <span>${escapeHtml(product.descricao || "")}</span>
-      <span>${escapeHtml(productOperatorLabel(product))}</span>
-      <span class="quantity-stepper">
+      <span class="diverse-remessa-cell" data-label="Remessa">${escapeHtml(item.codigoRz || "")}</span>
+      <strong class="diverse-sku-cell" data-label="SKU">${escapeHtml(product.sku || "")}</strong>
+      <span class="diverse-code-cell" data-label="Codigo">${escapeHtml(product.codigoMl || "")}</span>
+      <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}</span>
+      <span class="diverse-operator-cell" data-label="Operador">${escapeHtml(productOperatorLabel(product))}</span>
+      <span class="quantity-stepper diverse-quantity-cell" data-label="Qtd">
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${quantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${quantity}</strong>
         <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
-      <span>${money(product.valorUnit)}</span>
-      <span>${money(product.precoCusto)}</span>
-      <span class="diverse-row-actions">
+      <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
+      <span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>
+      <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
         <button type="button" class="ghost icon-button" data-diverse-edit="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         <button type="button" class="ghost icon-button" data-diverse-split="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
         <button type="button" class="icon-button" data-diverse-label="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
