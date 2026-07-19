@@ -5764,7 +5764,6 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
     <div class="scan-box">
       <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
-      <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
       ${labelClubPriceOptionMarkup()}
@@ -5906,7 +5905,6 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
       <div class="scan-box">
         <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
-        <button id="decrementScanButton" type="button" class="danger">Diminuir qtd</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
         <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
         ${labelClubPriceOptionMarkup()}
@@ -5983,7 +5981,6 @@ function itemMatchesScanCode(item, normalizedCode) {
 
 function bindScanControls(lotId, codigoRz, items = []) {
   $("#scanButton").addEventListener("click", () => scanCurrent(lotId, codigoRz));
-  $("#decrementScanButton").addEventListener("click", () => decrementCurrent(lotId, codigoRz));
   bindScanItemControls(lotId, codigoRz, items);
   $("#autoPrintToggle").addEventListener("change", (event) => {
     state.labelOptions.autoPrint = event.currentTarget.checked;
@@ -6093,8 +6090,10 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
           lotId,
           autoPrint: true,
           meta: labelMeta(response.scan.createdAt),
-          afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+          afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
         });
+      } else if (scannedProduct) {
+        await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
       }
     }
   } catch (error) {
@@ -6137,7 +6136,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
         lotId,
         autoPrint: true,
         meta: labelMeta(),
-        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
       });
     }
   } catch (error) {
@@ -6157,7 +6156,9 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
 
   try {
     state.pendingDecrement = true;
-    $("#decrementScanButton").disabled = true;
+    const decrementButton = $("#decrementScanButton");
+    if (decrementButton) decrementButton.disabled = true;
+    const bling = await syncDecrementStockExit(lotId, codigoRz, codigoMl, justificativa);
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan/decrement`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6165,8 +6166,8 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
     });
     if (input && !codigoMlFromButton) input.value = "";
     renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
-    $("#scanMessage").textContent = "Quantidade bipada diminuida.";
-    await syncDecrementStockExit(lotId, codigoRz, codigoMl, justificativa);
+    $("#scanMessage").style.color = "#0f766e";
+    $("#scanMessage").textContent = `Quantidade diminuida e saida lancada no Bling (${bling.deposito?.descricao || "Geral"}).`;
   } catch (error) {
     $("#scanMessage").textContent = error.message;
   } finally {
@@ -6177,11 +6178,13 @@ async function decrementCurrent(lotId, codigoRz, codigoMlFromButton) {
   }
 }
 
-async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl) {
+async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed = false } = {}) {
   const message = $("#scanMessage");
   if (message) {
     message.style.color = "#0f766e";
-    message.textContent = "Bipagem registrada, etiqueta enviada para impressao e Bling sincronizando...";
+    message.textContent = printed
+      ? "Bipagem registrada, etiqueta enviada para impressao e Bling sincronizando..."
+      : "Bipagem registrada e Bling sincronizando...";
   }
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-entry/sync-one`, {
@@ -6191,12 +6194,16 @@ async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl) {
     });
     if (message) {
       message.style.color = "#0f766e";
-      message.textContent = `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
+      message.textContent = printed
+        ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`
+        : `Bipagem registrada e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
     }
   } catch (error) {
     if (message) {
       message.style.color = "";
-      message.textContent = `Bipagem registrada e etiqueta impressa, mas a entrada no Bling falhou: ${error.message}`;
+      message.textContent = printed
+        ? `Bipagem registrada e etiqueta impressa, mas a entrada no Bling falhou: ${error.message}`
+        : `Bipagem registrada, mas a entrada no Bling falhou: ${error.message}`;
     }
   }
 }
@@ -6213,22 +6220,16 @@ function requestDecrementJustification() {
 
 async function syncDecrementStockExit(lotId, codigoRz, codigoMl, justificativa) {
   const message = $("#scanMessage");
-  try {
-    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-exit/sync-one`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl, justificativa })
-    });
-    if (message) {
-      message.style.color = "#0f766e";
-      message.textContent = `Quantidade diminuida e saida lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
-    }
-  } catch (error) {
-    if (message) {
-      message.style.color = "";
-      message.textContent = `Quantidade diminuida, mas a saida no Bling falhou: ${error.message}`;
-    }
+  const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/stock-exit/sync-one`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigoMl, justificativa })
+  });
+  if (message) {
+    message.style.color = "#0f766e";
+    message.textContent = `Quantidade diminuida e saida lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
   }
+  return response;
 }
 
 async function createExternalExcess(lotId, codigoRz, codigoMl) {
@@ -6245,7 +6246,7 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
         lotId,
         autoPrint: true,
         meta: labelMeta(),
-        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl)
+        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
       });
     }
   } catch (error) {
@@ -6780,6 +6781,7 @@ function rzCard(rz, { canScan = true } = {}) {
 function itemRow(item) {
   const product = item.product || {};
   const badge = item.tipoItem === "excedente_externo" ? '<span class="badge excess">excedente externo</span>' : `<span class="badge">${escapeHtml(item.tipoItem)}</span>`;
+  const scanCode = product.codigoMl || product.sku || "";
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
@@ -6789,13 +6791,16 @@ function itemRow(item) {
       <strong>${escapeHtml(product.sku || "")}</strong>
       <span>${escapeHtml(product.descricao || "")}</span>
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
-      <span>${item.qtdConferida}/${item.qtdEsperada}</span>
+      <span class="quantity-stepper scan-quantity-stepper">
+        <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+        <span class="scan-quantity-label"><small>Bipado / esperado</small><strong>${item.qtdConferida}/${item.qtdEsperada}</strong></span>
+        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
+      </span>
       ${badge}
       <span class="item-actions">
         ${deleteButton}
         <button type="button" class="ghost" data-split-product="${escapeHtml(product.id || "")}">Desmembrar</button>
         <button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button>
-        <button type="button" class="danger ghost" data-decrement-ml="${escapeHtml(product.codigoMl || "")}" ${item.qtdConferida > 0 ? "" : "disabled"}>Diminuir</button>
       </span>
     </article>
   `;
