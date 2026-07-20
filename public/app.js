@@ -1727,6 +1727,7 @@ async function deleteDiverseProduct(item, button) {
 function openProductEditModal(product, options = {}) {
   return new Promise((resolve) => {
     const includeLogisticsFields = options.includeLogisticsFields !== false;
+    const canEditCost = isOwnerUser();
     const modal = $("#productEditModal");
     const form = $("#productEditForm");
     const code = $("#productEditCode");
@@ -1748,6 +1749,7 @@ function openProductEditModal(product, options = {}) {
     const error = $("#productEditError");
     const cancel = $("#productEditCancel");
     const fieldVisibility = [
+      [cost, canEditCost],
       [ean, isConferenceFieldEnabled("ean")],
       [categoria, isConferenceFieldEnabled("category")],
       [subcategoria, isConferenceFieldEnabled("subcategory")],
@@ -1803,7 +1805,7 @@ function openProductEditModal(product, options = {}) {
     form.onsubmit = (event) => {
       event.preventDefault();
       const valorUnit = parseMoneyInput(price.value);
-      const precoCusto = parseMoneyInput(cost.value);
+      const precoCusto = canEditCost ? parseMoneyInput(cost.value) : Number(product.precoCusto || 0);
       if (!description.value.trim()) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -1814,7 +1816,7 @@ function openProductEditModal(product, options = {}) {
         price.focus();
         return;
       }
-      if (!Number.isFinite(precoCusto) || precoCusto < 0) {
+      if (canEditCost && (!Number.isFinite(precoCusto) || precoCusto < 0)) {
         error.textContent = "Informe um custo valido.";
         cost.focus();
         return;
@@ -1839,7 +1841,6 @@ function openProductEditModal(product, options = {}) {
       const result = {
         descricao: description.value.trim(),
         valorUnit,
-        precoCusto,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",
         categoria: isConferenceFieldEnabled("category") ? selectedCategory : product.categoria || "",
         subcategoria: isConferenceFieldEnabled("subcategory") ? subcategoria.value.trim() : product.subcategoria || "",
@@ -1852,6 +1853,7 @@ function openProductEditModal(product, options = {}) {
         link: isConferenceFieldEnabled("link") ? link.value.trim() : product.link || "",
         foto: isConferenceFieldEnabled("photo") ? photo.value.trim() : product.foto || ""
       };
+      if (canEditCost) result.precoCusto = precoCusto;
       cleanup();
       resolve(result);
     };

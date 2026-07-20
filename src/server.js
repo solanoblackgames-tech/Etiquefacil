@@ -1109,11 +1109,14 @@ app.post("/api/lots/:lotId/products/:productId/bling-alert/dismiss", requireAuth
 app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
+    const found = await getUserProductWithLot(userId, req.params.productId);
+    if (!found || found.lot.id !== req.params.lotId) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
+    const payload = isOwnerSession(req) ? req.body : { ...req.body, precoCusto: found.product.precoCusto };
     const result = await updateLotProduct({
       userId,
       lotId: req.params.lotId,
       productId: req.params.productId,
-      payload: req.body
+      payload
     });
     try {
       result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
@@ -1676,7 +1679,8 @@ function workspaceUserId(req) {
 }
 
 function operatorUserId(req) {
-  return req.session.user?.role === "operator" ? req.session.user.id : null;
+  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  return role === "operator" ? req.session.user.id : null;
 }
 
 function isOwnerSession(req) {
