@@ -2945,7 +2945,7 @@ function renderOperators() {
           <span>Dias trab.</span>
           <span>Media/dia</span>
           <span>Ultima ativ.</span>
-          <span>Permissoes</span>
+          <span>Acoes</span>
           <span>Senha</span>
         </div>
         ${operators
@@ -3036,6 +3036,20 @@ function handleOperatorFilterChange(event) {
 }
 
 function handleOperatorFilterClick(event) {
+  const editButton = event.target.closest("[data-edit-operator]");
+  if (editButton) {
+    const operator = state.operators.map(operatorViewModel).find((item) => item.id === editButton.dataset.editOperator);
+    if (operator) openOperatorEditModal(operator);
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-operator]");
+  if (deleteButton) {
+    const operator = state.operators.map(operatorViewModel).find((item) => item.id === deleteButton.dataset.deleteOperator);
+    if (operator) deleteOperator(operator, deleteButton);
+    return;
+  }
+
   const permissionsButton = event.target.closest("[data-open-operator-permissions]");
   if (permissionsButton) {
     const operator = state.operators.map(operatorViewModel).find((item) => item.id === permissionsButton.dataset.openOperatorPermissions);
@@ -3230,7 +3244,11 @@ function operatorTableRow(operator, index) {
       <strong>${operator.activeDays}</strong>
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
-      <button type="button" class="ghost" data-open-operator-permissions="${escapeHtml(operator.id)}">Permissoes</button>
+      <div class="operator-actions">
+        ${isOwnerUser() ? `<button type="button" class="ghost" data-edit-operator="${escapeHtml(operator.id)}">Editar</button>` : ""}
+        <button type="button" class="ghost" data-open-operator-permissions="${escapeHtml(operator.id)}">Permissoes</button>
+        ${isOwnerUser() ? `<button type="button" class="ghost danger" data-delete-operator="${escapeHtml(operator.id)}">Excluir</button>` : ""}
+      </div>
       ${isOwnerUser() ? `<form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
@@ -3346,6 +3364,60 @@ function openOperatorPermissionsModal(operator) {
   modal.classList.remove("hidden");
   modal.focus();
   fieldsEl.querySelector("button:not(:disabled)")?.focus();
+}
+
+async function openOperatorEditModal(operator) {
+  const values = await openDecisionModal({
+    title: "Editar operador",
+    rows: [
+      ["Operador", operator.name],
+      ["Codigo atual", String(operator.operatorCode || "-")]
+    ],
+    fields: [
+      { name: "name", label: "Nome", value: operator.name, required: true },
+      { name: "email", label: "E-mail", value: operator.email, required: true },
+      { name: "operatorCode", label: "Codigo", value: String(operator.operatorCode || ""), required: true }
+    ],
+    actions: [
+      { id: "cancel", label: "Cancelar", value: null },
+      { id: "save", label: "Salvar", value: "save", primary: true }
+    ],
+    onSubmit: (action, formValues) => (action === "save" ? formValues : null)
+  });
+  if (!values) return;
+
+  $("#operatorMessage").textContent = "";
+  $("#operatorMessage").style.color = "";
+  try {
+    await api(`/api/operators/${encodeURIComponent(operator.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values)
+    });
+    await loadOperators();
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Operador atualizado.";
+  } catch (error) {
+    $("#operatorMessage").textContent = error.message;
+  }
+}
+
+async function deleteOperator(operator, button) {
+  const confirmed = confirm(`Excluir o operador ${operator.name}? Esta acao remove o acesso dele ao sistema.`);
+  if (!confirmed) return;
+
+  $("#operatorMessage").textContent = "";
+  $("#operatorMessage").style.color = "";
+  button.disabled = true;
+  try {
+    await api(`/api/operators/${encodeURIComponent(operator.id)}`, { method: "DELETE" });
+    await loadOperators();
+    $("#operatorMessage").style.color = "#0f766e";
+    $("#operatorMessage").textContent = "Operador excluido.";
+  } catch (error) {
+    $("#operatorMessage").textContent = error.message;
+    button.disabled = false;
+  }
 }
 
 async function updateOperatorPermission(operatorId, permission, enabled) {

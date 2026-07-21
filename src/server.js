@@ -39,6 +39,7 @@ import {
   createOperator,
   createOperatorInvite,
   createUser,
+  deleteOperatorForOwner,
   deleteExternalExcess,
   deleteTriageItem,
   deleteUserBlingIntegration,
@@ -104,6 +105,7 @@ import {
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStatsAccess,
+  updateOperatorForOwner,
   updateTriageDiagnosis,
   updateTriageItemDetails,
   updateProductRegistrationFromTriage,
@@ -340,6 +342,20 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
   }
 });
 
+app.patch("/api/operators/:operatorUserId", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorForOwner({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      name: req.body?.name,
+      email: req.body?.email,
+      operatorCode: req.body?.operatorCode
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/operators/:operatorUserId/triage-access", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
   try {
     res.json(await updateOperatorTriageAccess({
@@ -379,6 +395,14 @@ app.patch("/api/operators/:operatorUserId/operator-stats-access", requireAuth, r
 app.patch("/api/operators/:operatorId/password", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json(await updateOperatorPasswordForOwner(workspaceUserId(req), req.params.operatorId, req.body.password));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/operators/:operatorUserId", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await deleteOperatorForOwner(workspaceUserId(req), req.params.operatorUserId));
   } catch (error) {
     sendError(res, error);
   }

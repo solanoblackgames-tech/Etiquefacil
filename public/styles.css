@@ -675,8 +675,8 @@ h3 {
   border-bottom: 1px solid #c9d9ca;
   display: grid;
   gap: 10px;
-  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(11, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(150px, 0.8fr) minmax(210px, 1fr);
-  min-width: 1640px;
+  grid-template-columns: 38px minmax(180px, 1.4fr) minmax(58px, 0.45fr) repeat(11, minmax(72px, 0.6fr)) minmax(130px, 0.9fr) minmax(280px, 1.2fr) minmax(210px, 1fr);
+  min-width: 1770px;
   padding: 14px 12px;
 }
 
@@ -794,6 +794,16 @@ h3 {
 }
 
 .operator-password-form button {
+  white-space: nowrap;
+}
+
+.operator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.operator-actions button {
   white-space: nowrap;
 }
 

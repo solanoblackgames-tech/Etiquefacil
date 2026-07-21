@@ -1363,6 +1363,67 @@ export async function updateOperatorPasswordForOwner(ownerUserId, operatorUserId
   return { ok: true };
 }
 
+export async function updateOperatorForOwner({ ownerUserId, operatorUserId, name, email, operatorCode }) {
+  await ensureStore();
+  const normalizedName = String(name || "").trim();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedOperatorCode = Number(operatorCode);
+
+  if (!normalizedName || !normalizedEmail) throw new Error("Informe nome e e-mail.");
+  if (!normalizedEmail.includes("@")) throw new Error("Informe um e-mail valido.");
+  if (!Number.isInteger(normalizedOperatorCode) || normalizedOperatorCode <= 0) {
+    throw new Error("Informe um codigo de operador valido.");
+  }
+
+  if (hasPostgres()) {
+    const emailResult = await query("select id from users where email = $1 and id <> $2 limit 1", [normalizedEmail, operatorUserId]);
+    if (emailResult.rows.length) throw new Error("E-mail ja cadastrado.");
+    const codeResult = await query(
+      "select id from users where parent_user_id = $1 and operator_code = $2 and id <> $3 limit 1",
+      [ownerUserId, normalizedOperatorCode, operatorUserId]
+    );
+    if (codeResult.rows.length) throw new Error("Codigo de operador ja cadastrado.");
+    const result = await query(
+      "update users set name = $3, email = $4, operator_code = $5 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, normalizedName, normalizedEmail, normalizedOperatorCode]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const operator = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!operator) throw notFound("Operador nao encontrado.");
+  if (db.users.some((item) => item.id !== operatorUserId && item.email === normalizedEmail)) {
+    throw new Error("E-mail ja cadastrado.");
+  }
+  if (db.users.some((item) => item.id !== operatorUserId && item.parentUserId === ownerUserId && Number(item.operatorCode) === normalizedOperatorCode)) {
+    throw new Error("Codigo de operador ja cadastrado.");
+  }
+  operator.name = normalizedName;
+  operator.email = normalizedEmail;
+  operator.operatorCode = normalizedOperatorCode;
+  await writeDb(db);
+  return { user: sanitizeUser(operator) };
+}
+
+export async function deleteOperatorForOwner(ownerUserId, operatorUserId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("delete from users where id = $2 and parent_user_id = $1 returning id", [ownerUserId, operatorUserId]);
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { ok: true };
+  }
+
+  const db = await readDb();
+  const operator = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!operator) throw notFound("Operador nao encontrado.");
+  db.users = db.users.filter((item) => item.id !== operatorUserId);
+  db.operatorActivities = (db.operatorActivities || []).filter((activity) => activity.operatorUserId !== operatorUserId);
+  await writeDb(db);
+  return { ok: true };
+}
+
 export async function deleteUser(userId) {
   await ensureStore();
   if (hasPostgres()) {
