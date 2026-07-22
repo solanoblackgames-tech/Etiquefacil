@@ -7866,12 +7866,12 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
       <label>Foto do laudo
         <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" />
       </label>
+      <p class="message" id="triageDetailMessage"></p>
       <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
         ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
         <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
       </div>
       <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
-      <p class="message" id="triageDetailMessage"></p>
     </form>
   `;
 }

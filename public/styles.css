@@ -4331,6 +4331,12 @@ h3 {
     overflow: visible;
   }
 
+  .app:has(.triage-view-only:not(.hidden)) {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .transfer-form button {
     justify-self: start;
   }
@@ -4339,6 +4345,18 @@ h3 {
     height: auto;
     overflow: visible;
     padding: 16px;
+  }
+
+  .triage-view-only {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .triage-view-only .detail {
+    padding-bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .triage-view-only .triage-qr-diagnosis-form {
+    margin-bottom: 24px;
   }
 
   .triage-detail-grid {
