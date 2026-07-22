@@ -8,6 +8,7 @@ import {
   buildBlingStockExitPayload,
   buildBlingStockTransferPayload,
   blingProductToTriageLookup,
+  deleteBlingProductBySku,
   lookupBlingProductForTriage,
   syncBlingProducts
 } from "../src/bling-api.js";
@@ -136,6 +137,45 @@ test("Bling triage lookup reads supplier cost relationship", async () => {
     assert.equal(product.valorUnit, 100);
     assert.equal(product.precoCusto, 31.25);
     assert.ok(calls.some((call) => call.url.includes("/produtos/fornecedores") && call.url.includes("idProduto=123")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Bling product deletion reports validation failures without throwing", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "SKU-1" }] }) },
+    {
+      ok: false,
+      status: 400,
+      headers: new Headers(),
+      json: async () => ({
+        error: {
+          description: "O produto nao pode ser removido, pois ocorreram problemas de validacao.",
+          fields: [{ msg: "GTIN/EAN invalido" }]
+        }
+      })
+    }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET" });
+    return responses.shift();
+  };
+
+  try {
+    const result = await deleteBlingProductBySku({
+      integration: { accessToken: "token" },
+      sku: "SKU-1"
+    });
+
+    assert.equal(result.status, "delete_failed");
+    assert.equal(result.ok, false);
+    assert.equal(result.blingProductId, 123);
+    assert.match(result.error, /validacao/i);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "DELETE"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

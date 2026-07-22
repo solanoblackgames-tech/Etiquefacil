@@ -299,7 +299,12 @@ export async function deleteBlingProductBySku({ integration, sku, saveIntegratio
   const client = new BlingApiClient(integration, saveIntegration);
   const product = await client.findProductBySku(sku);
   if (!product?.id) return { status: "not_found", sku };
-  await client.deleteProduct(product.id);
+  try {
+    await client.deleteProduct(product.id);
+  } catch (error) {
+    if (error?.name !== "BlingApiError" || error.status === 401 || error.status === 403) throw error;
+    return { status: "delete_failed", ok: false, sku, blingProductId: product.id, error: error.message };
+  }
   return { status: "deleted", sku, blingProductId: product.id };
 }
 

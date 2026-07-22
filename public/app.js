@@ -1720,7 +1720,7 @@ async function deleteDiverseProduct(item, button) {
     renderDiverseLot(response.lot);
     await refreshLotsList(response.lot.id);
     $("#diverseScanMessage").style.color = "#0f766e";
-    $("#diverseScanMessage").textContent = `Cadastro excluido do Etiquefacil e do Bling (${response.bling?.status || "ok"}).`;
+    $("#diverseScanMessage").textContent = `Cadastro excluido do Etiquefacil. ${blingDeleteMessage(response.bling)}.`;
   } catch (error) {
     if (button) button.disabled = false;
     message.style.color = "";
@@ -6437,7 +6437,7 @@ async function deleteExternalExcess(lotId, codigoRz, codigoMlFromButton, button)
       body: JSON.stringify({ codigoMl })
     });
     renderScanPage(response.lot, codigoRz);
-    const blingMessage = response.bling?.status === "deleted" ? "Cadastro excluido no Bling" : "Cadastro nao existia mais no Bling";
+    const blingMessage = blingDeleteMessage(response.bling);
     $("#scanMessage").style.color = "#0f766e";
     $("#scanMessage").textContent = `${blingMessage}; SKU ${response.product?.sku || ""} liberado.`;
   } catch (error) {
@@ -6450,6 +6450,13 @@ async function deleteExternalExcess(lotId, codigoRz, codigoMlFromButton, button)
   } finally {
     schedulePrimaryInputFocus(["#scanInput"]);
   }
+}
+
+function blingDeleteMessage(bling = {}) {
+  if (bling.status === "deleted") return "Cadastro excluido no Bling";
+  if (bling.status === "not_found") return "Cadastro nao existia mais no Bling";
+  if (bling.status === "delete_failed") return `Bling nao permitiu excluir o cadastro: ${bling.error || "verifique o cadastro manualmente"}`;
+  return "Exclusao no Bling nao confirmada";
 }
 
 async function deleteLotRzItem(lotId, codigoRz, itemId, button) {
@@ -7800,7 +7807,7 @@ function renderTriageItemView(item) {
         ${item.diagnosis ? `<div class="wide-field"><dt>Descricao do diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
-      ${triageDiagnosisPhotoFormMarkup(item)}
+      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
     </section>
   `;
 }

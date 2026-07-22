@@ -1167,6 +1167,9 @@ app.delete("/api/lots/:lotId/products/:productId", requireAuth, async (req, res)
       sku: found.product.sku,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
+    if (bling.status === "delete_failed") {
+      throw new Error(`Produto nao excluido. O Bling nao permitiu remover o cadastro: ${bling.error || "verifique o cadastro no Bling e tente novamente."}`);
+    }
     await recordOperatorActivity(req.session.user, "delete_lot_product", {
       lotId: req.params.lotId,
       productId: req.params.productId,
@@ -1474,6 +1477,9 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
       sku: product.sku,
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
+    if (bling.status === "delete_failed") {
+      throw new Error(`Produto nao excluido. O Bling nao permitiu remover o cadastro: ${bling.error || "verifique o cadastro no Bling e tente novamente."}`);
+    }
     await recordOperatorActivity(req.session.user, "delete_external_excess", {
       lotId: req.params.lotId,
       codigoRz: req.params.codigoRz,
