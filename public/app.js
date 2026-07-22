@@ -7790,6 +7790,8 @@ function renderTriageItemView(item) {
         <span class="muted">Visualizacao da etiqueta</span>
         <h2>${escapeHtml(item.code)}</h2>
       </div>
+      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
+      ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
       <dl class="triage-fields">
         <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
         <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
@@ -7806,8 +7808,6 @@ function renderTriageItemView(item) {
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         ${item.diagnosis ? `<div class="wide-field"><dt>Descricao do diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
-      ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
-      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
     </section>
   `;
 }
