@@ -23,6 +23,7 @@ test("sanitizeUser exposes explicit tenant context", () => {
       workspaceUserId: "user-1",
       role: "owner",
       operatorCode: null,
+      triageAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }
@@ -44,6 +45,7 @@ test("sanitizeUser keeps legacy users compatible with tenant context", () => {
       workspaceUserId: "user-1",
       role: "owner",
       operatorCode: null,
+      triageAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }

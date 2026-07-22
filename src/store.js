@@ -412,18 +412,19 @@ export async function saveUserPriceDisplaySettings(userId, payload = {}) {
 
 export function sanitizeUser(user) {
   if (!user) return null;
+  const role = user.role || (user.parentUserId ? "operator" : "owner");
   const sanitized = {
     id: user.id,
     tenantId: user.tenantId || user.id,
     tenantName: user.tenantName || user.name,
     parentUserId: user.parentUserId || null,
     workspaceUserId: user.parentUserId || user.id,
-    role: user.role || (user.parentUserId ? "operator" : "owner"),
+    role,
     operatorCode: user.operatorCode || null,
     name: user.name,
     email: user.email
   };
-  if (user.triageAccess) sanitized.triageAccess = true;
+  if (role === "owner" || user.triageAccess) sanitized.triageAccess = true;
   if (user.transferAccess) sanitized.transferAccess = true;
   if (user.operatorStatsAccess) sanitized.operatorStatsAccess = true;
   return sanitized;
