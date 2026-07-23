@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manual de instalacao Bling - Etique Facil</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, Segoe UI, Arial, sans-serif;
+        --ink: #17212b;
+        --muted: #5f6d7a;
+        --line: #d8e1e7;
+        --soft: #f4f7f8;
+        --accent: #0f766e;
+        --accent-dark: #0b5f59;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #f2f5f7;
+        color: var(--ink);
+        line-height: 1.55;
+        margin: 0;
+      }
+
+      header {
+        background: #ffffff;
+        border-bottom: 1px solid var(--line);
+      }
+
+      main,
+      .hero {
+        margin: 0 auto;
+        max-width: 980px;
+        padding: 32px 20px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 10px;
+        padding-bottom: 26px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.2;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(30px, 4vw, 44px);
+      }
+
+      h2 {
+        border-top: 1px solid var(--line);
+        font-size: 24px;
+        margin-top: 34px;
+        padding-top: 28px;
+      }
+
+      h3 {
+        font-size: 18px;
+        margin-top: 22px;
+      }
+
+      p {
+        margin: 10px 0 0;
+      }
+
+      ol,
+      ul {
+        margin: 12px 0 0;
+        padding-left: 24px;
+      }
+
+      li + li {
+        margin-top: 8px;
+      }
+
+      a {
+        color: var(--accent-dark);
+        font-weight: 700;
+      }
+
+      code {
+        background: #e8eef1;
+        border-radius: 5px;
+        padding: 2px 5px;
+      }
+
+      .summary {
+        color: var(--muted);
+        font-size: 17px;
+        max-width: 760px;
+      }
+
+      .note {
+        background: #e5f4f1;
+        border: 1px solid #b9ddd7;
+        border-radius: 8px;
+        margin-top: 18px;
+        padding: 14px 16px;
+      }
+
+      .panel {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin-top: 18px;
+        padding: 18px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        margin-top: 16px;
+      }
+
+      .grid .panel {
+        margin-top: 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .app-link {
+        align-items: center;
+        background: var(--accent);
+        border-radius: 6px;
+        color: #ffffff;
+        display: inline-flex;
+        margin-top: 18px;
+        min-height: 42px;
+        padding: 0 16px;
+        text-decoration: none;
+      }
+
+      footer {
+        color: var(--muted);
+        margin: 26px auto 0;
+        max-width: 980px;
+        padding: 0 20px 34px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <section class="hero">
+        <p class="muted">Manual de instalacao e autorizacao no Bling API v3</p>
+        <h1>Etique Facil</h1>
+        <p class="summary">
+          Este manual orienta clientes a instalar o aplicativo Etique Facil pela Central de Extensoes do Bling,
+          autorizar a integracao OAuth e concluir as configuracoes iniciais dentro do sistema.
+        </p>
+        <a class="app-link" href="/">Acessar Etique Facil</a>
+      </section>
+    </header>
+
+    <main>
+      <section>
+        <h2>1. Sobre o aplicativo</h2>
+        <p>
+          O Etique Facil e um sistema para operacoes de estoque que importam lotes, conferem produtos por bipagem,
+          imprimem etiquetas, criam produtos no Bling, lancam entradas de estoque e enviam transferencias entre
+          depositos ou lojas.
+        </p>
+
+        <div class="grid">
+          <div class="panel">
+            <h3>Recursos usados no Bling</h3>
+            <ul>
+              <li>Produtos e cadastros relacionados.</li>
+              <li>Depositos e saldos de estoque.</li>
+              <li>Movimentacoes de entrada, saida e transferencia.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Quem deve instalar</h3>
+            <p>
+              A instalacao deve ser feita pelo usuario principal ou responsavel pela conta Bling da operacao.
+              Operadores usam o Etique Facil depois, sem informar tokens ou credenciais do Bling.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>2. Requisitos antes da instalacao</h2>
+        <ol>
+          <li>Ter uma conta ativa no Bling com permissao para instalar aplicativos na Central de Extensoes.</li>
+          <li>Ter uma conta de usuario principal no Etique Facil.</li>
+          <li>Usar a mesma empresa/conta Bling que sera movimentada pelo Etique Facil.</li>
+          <li>Permitir pop-ups e redirecionamentos do navegador durante a autorizacao, se o navegador solicitar.</li>
+        </ol>
+
+        <div class="note">
+          O cliente nao precisa copiar Client ID, Client Secret, access token ou refresh token. A autorizacao e feita
+          pelo fluxo seguro OAuth do Bling.
+        </div>
+      </section>
+
+      <section>
+        <h2>3. Passos no Bling</h2>
+        <ol>
+          <li>Acesse sua conta Bling pelo navegador.</li>
+          <li>Abra a <strong>Central de Extensoes</strong>.</li>
+          <li>Use a barra de pesquisa para buscar <strong>Etique Facil</strong>.</li>
+          <li>Ao localizar o aplicativo, clique em <strong>Instalar aplicativo</strong>.</li>
+          <li>Na tela de autorizacao, confira as permissoes solicitadas.</li>
+          <li>Clique em <strong>Autorizar</strong> para permitir que o Etique Facil acesse os recursos necessarios.</li>
+          <li>Depois da autorizacao, o Bling redireciona automaticamente para o Etique Facil.</li>
+        </ol>
+
+        <p>
+          A autorizacao permite que o Etique Facil obtenha os tokens de acesso e se comunique com a conta Bling
+          autorizada. A partir desse ponto, a etapa de instalacao no Bling esta concluida.
+        </p>
+      </section>
+
+      <section>
+        <h2>4. Passos no Etique Facil</h2>
+        <h3>Autorizar pela tela de sincronizacao</h3>
+        <ol>
+          <li>Acesse o Etique Facil pelo endereco informado pela sua operacao.</li>
+          <li>Entre com o usuario principal da conta.</li>
+          <li>Abra <strong>Perfil</strong>.</li>
+          <li>Clique em <strong>Sincronizacao</strong>.</li>
+          <li>No painel <strong>Integracao Bling API</strong>, clique em <strong>Autorizar no Bling</strong>.</li>
+          <li>Entre na conta Bling correta, se ainda nao estiver logado.</li>
+          <li>Confirme a autorizacao no Bling.</li>
+          <li>Ao retornar ao Etique Facil, confirme a mensagem de sucesso.</li>
+        </ol>
+
+        <p>
+          Quando a integracao estiver ativa, o sistema mostra a mensagem
+          <strong>Bling autorizado para este usuario</strong>.
+        </p>
+
+        <h3>Depois da autorizacao</h3>
+        <ol>
+          <li>Importe uma planilha de lote ou crie um lote avulso em <strong>Perfil &gt; Entradas</strong>.</li>
+          <li>Confira RZs ou pallets por bipagem na aba <strong>Conferencia</strong>.</li>
+          <li>Imprima etiquetas dos produtos conferidos.</li>
+          <li>Use <strong>Criar produtos no Bling</strong> para enviar novos SKUs quando necessario.</li>
+          <li>Use <strong>Entrada Estoque Bling</strong> para registrar entradas de estoque.</li>
+          <li>Use a aba <strong>Transferencias</strong> para montar remessas, conferir recebimento e enviar transferencias ao Bling.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>5. Remover ou refazer a autorizacao</h2>
+        <p>Use este processo somente quando precisar trocar a conta Bling autorizada ou corrigir uma autorizacao feita na conta errada.</p>
+        <ol>
+          <li>No Etique Facil, acesse <strong>Perfil &gt; Sincronizacao</strong>.</li>
+          <li>Clique em <strong>Remover autorizacao</strong>.</li>
+          <li>Confirme a acao.</li>
+          <li>Clique novamente em <strong>Autorizar no Bling</strong> e aprove o acesso na conta correta.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>6. Solucao de problemas</h2>
+        <div class="panel">
+          <h3>O Bling nao autoriza</h3>
+          <ul>
+            <li>Confirme se esta logado na conta Bling correta.</li>
+            <li>Verifique se o usuario Bling tem permissao para instalar aplicativos.</li>
+            <li>Tente sair do Bling e iniciar a autorizacao novamente pelo Etique Facil.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>O Etique Facil informa que o Bling nao esta autorizado</h3>
+          <ul>
+            <li>Acesse <strong>Perfil &gt; Sincronizacao</strong> e confira o status da integracao.</li>
+            <li>Se necessario, remova a autorizacao e autorize novamente.</li>
+            <li>Confirme se a conta Bling autorizada e a conta usada pela operacao.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Produtos ou estoque nao enviam ao Bling</h3>
+          <ul>
+            <li>Confira se a integracao esta autorizada.</li>
+            <li>Verifique se os produtos possuem SKU, descricao e dados obrigatorios.</li>
+            <li>Para transferencias, confirme se os depositos de origem e destino existem no Bling.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <h2>7. Suporte</h2>
+        <p>
+          Para ajuda com instalacao, autorizacao ou uso da integracao Bling, entre em contato com o suporte do
+          Etique Facil.
+        </p>
+        <ul>
+          <li>E-mail: <a href="mailto:suporte@etiquefacil.com.br">suporte@etiquefacil.com.br</a></li>
+          <li>Site: <a href="https://etiquefacil.com.br">https://etiquefacil.com.br</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <p>Etique Facil - Manual atualizado em 23/07/2026.</p>
+    </footer>
+  </body>
+</html>
