@@ -766,8 +766,6 @@ class BlingHomologationClient {
   }
 
   async waitForRequestSlot() {
-    const elapsed = Date.now() - this.lastRequestAt;
-    if (elapsed < BLING_REQUEST_DELAY_MS) await wait(BLING_REQUEST_DELAY_MS - elapsed);
     this.lastRequestAt = Date.now();
   }
 }
