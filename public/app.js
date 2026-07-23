@@ -4279,13 +4279,17 @@ function adminUserRow(user) {
 
 function adminOperatorList(operators) {
   if (!operators.length) return "";
+  const operatorLabel = operators.length === 1 ? "1 operador" : `${operators.length} operadores`;
   return `
-    <div class="admin-operators">
-      <strong>Operadores</strong>
+    <details class="admin-operators">
+      <summary>
+        <strong>Operadores</strong>
+        <span>${operatorLabel}</span>
+      </summary>
       <div class="admin-operator-list">
         ${operators.map(adminOperatorRow).join("")}
       </div>
-    </div>
+    </details>
   `;
 }
 

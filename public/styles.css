@@ -3676,15 +3676,48 @@ h3 {
 .admin-operators {
   background: #f8fafb;
   border-top: 1px solid var(--line);
-  display: grid;
-  gap: 10px;
   padding: 12px;
 }
 
-.admin-operators > strong {
+.admin-operators summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  list-style: none;
+}
+
+.admin-operators summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-operators summary::after {
+  color: var(--muted);
+  content: "+";
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.admin-operators[open] summary {
+  margin-bottom: 10px;
+}
+
+.admin-operators[open] summary::after {
+  content: "-";
+}
+
+.admin-operators summary > strong {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.admin-operators summary > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-left: auto;
 }
 
 .admin-operator-list {
