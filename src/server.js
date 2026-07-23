@@ -16,6 +16,7 @@ import {
   deleteBlingProductBySku,
   listBlingDeposits,
   lookupBlingProductForTriage,
+  revokeBlingIntegrationTokens,
   syncBlingProducts,
   syncBlingStockBalances,
   syncBlingStockEntries,
@@ -234,7 +235,7 @@ app.get("/api/admin/bling-integrations", requireAdmin, async (req, res) => {
 
 app.delete("/api/admin/bling-integrations/:userId", requireAdmin, async (req, res) => {
   try {
-    res.json(await deleteUserBlingIntegration(req.params.userId));
+    res.json(await revokeAndDeleteUserBlingIntegration(req.params.userId));
   } catch (error) {
     sendError(res, error);
   }
@@ -944,6 +945,7 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
     const token = await exchangeBlingAuthorizationCodeWithFallback(blingApp, String(req.query.code), getBlingRedirectUriCandidates(req, redirectUri));
     await saveUserBlingIntegration(workspaceUserId(req), {
       clientId: blingApp.clientId,
+      clientSecret: blingApp.clientSecret,
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       tokenExpiresAt: token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null
@@ -957,7 +959,7 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
 
 app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json(await deleteUserBlingIntegration(workspaceUserId(req)));
+    res.json(await revokeAndDeleteUserBlingIntegration(workspaceUserId(req)));
   } catch (error) {
     sendError(res, error);
   }
@@ -1851,6 +1853,28 @@ async function getBlingAppCredentials(userId) {
     return { clientId: appConfig.clientId, clientSecret: appConfig.clientSecret };
   }
   throw new Error("Configure Client ID e Client Secret do Bling antes de autorizar.");
+}
+
+async function revokeAndDeleteUserBlingIntegration(userId) {
+  const integration = await getUserBlingCredentials(userId);
+  if (!integration) {
+    await deleteUserBlingIntegration(userId);
+    return { ok: true, revoked: false };
+  }
+
+  const blingApp = await getBlingAppCredentials(userId);
+  const revocationCredentials = {
+    ...integration,
+    clientSecret: integration.clientSecret || (integration.clientId === blingApp.clientId ? blingApp.clientSecret : "")
+  };
+
+  if (!revocationCredentials.clientSecret) {
+    throw new Error("Nao foi possivel revogar no Bling porque o Client Secret desta integracao nao esta salvo. Desinstale o aplicativo em Central de Extensoes > Minhas instalacoes no Bling.");
+  }
+
+  const revocation = await revokeBlingIntegrationTokens(revocationCredentials);
+  await deleteUserBlingIntegration(userId);
+  return { ok: true, revoked: true, revokedTokens: revocation.revoked };
 }
 
 async function getRequiredBlingCredentials(userId) {

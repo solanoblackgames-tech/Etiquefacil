@@ -10,9 +10,38 @@ import {
   blingProductToTriageLookup,
   deleteBlingProductBySku,
   lookupBlingProductForTriage,
+  revokeBlingIntegrationTokens,
   runBlingHomologation,
   syncBlingProducts
 } from "../src/bling-api.js";
+
+test("Bling token revocation sends refresh and access tokens to OAuth revoke endpoint", async () => {
+  const calls = [];
+  const result = await revokeBlingIntegrationTokens(
+    {
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      accessToken: "access-token",
+      refreshToken: "refresh-token"
+    },
+    {
+      fetchImpl: async (url, options) => {
+        calls.push({
+          url,
+          auth: options.headers.Authorization,
+          body: Object.fromEntries(options.body.entries())
+        });
+        return { ok: true, json: async () => ({}) };
+      }
+    }
+  );
+
+  assert.deepEqual(result.revoked, ["access_token", "refresh_token"]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "https://www.bling.com.br/Api/v3/oauth/revoke");
+  assert.equal(calls[0].auth, `Basic ${Buffer.from("client-id:client-secret").toString("base64")}`);
+  assert.deepEqual(calls.map((call) => call.body.token), ["access-token", "refresh-token"]);
+});
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
   const payload = buildBlingProductPayload({

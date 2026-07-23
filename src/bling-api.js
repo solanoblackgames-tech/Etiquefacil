@@ -1,5 +1,6 @@
 const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
 const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
+const BLING_OAUTH_REVOKE_URL = "https://www.bling.com.br/Api/v3/oauth/revoke";
 const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
@@ -44,6 +45,25 @@ export async function runBlingHomologation({ integration, saveIntegration, fetch
     homologationHash: client.homologationHash || null,
     tokenRefreshed: client.tokenRefreshed
   };
+}
+
+export async function revokeBlingIntegrationTokens(integration, { fetchImpl = globalThis.fetch } = {}) {
+  if (!integration?.clientId || !integration?.clientSecret) throw new Error("Credenciais do aplicativo Bling indisponiveis para revogar a autorizacao.");
+  if (typeof fetchImpl !== "function") throw new Error("Runtime sem fetch disponivel para revogar a autorizacao Bling.");
+
+  const candidates = [
+    { token: integration.accessToken, hint: "access_token" },
+    { token: integration.refreshToken, hint: "refresh_token" }
+  ].filter((item, index, rows) => item.token && rows.findIndex((candidate) => candidate.token === item.token) === index);
+
+  if (!candidates.length) return { ok: true, revoked: [] };
+
+  const revoked = [];
+  for (const candidate of candidates) {
+    await revokeBlingToken(integration, candidate, fetchImpl);
+    revoked.push(candidate.hint);
+  }
+  return { ok: true, revoked };
 }
 
 export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [] } = {}) {
@@ -814,6 +834,23 @@ function blingProductAlertMessage(field) {
   if (field === "ean") return "EAN nao aceito pelo Bling. Produto cadastrado com EAN zerado; corrija o EAN ou feche este alerta para aceitar o cadastro sem EAN.";
   if (field === "ncm") return "NCM nao aceito pelo Bling. Produto cadastrado com NCM zerado; corrija o NCM ou feche este alerta para aceitar o cadastro sem NCM.";
   return "Dado nao aceito pelo Bling. Produto cadastrado com valor zerado; corrija o dado ou feche este alerta.";
+}
+
+async function revokeBlingToken(integration, { token, hint }, fetchImpl) {
+  const body = new URLSearchParams({ token });
+  if (hint) body.set("token_type_hint", hint);
+
+  const response = await fetchImpl(BLING_OAUTH_REVOKE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${integration.clientId}:${integration.clientSecret}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json"
+    },
+    body
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
 }
 
 class BlingApiError extends Error {
