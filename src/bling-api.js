@@ -66,6 +66,34 @@ export async function revokeBlingIntegrationTokens(integration, { fetchImpl = gl
   return { ok: true, revoked };
 }
 
+export async function refreshBlingIntegrationToken(integration, { fetchImpl = globalThis.fetch } = {}) {
+  if (!integration?.clientId || !integration?.clientSecret) throw new Error("Credenciais do aplicativo Bling indisponiveis para validar a autorizacao.");
+  if (!integration?.refreshToken) throw new Error("Refresh token Bling indisponivel. Autorize a integracao novamente.");
+  if (typeof fetchImpl !== "function") throw new Error("Runtime sem fetch disponivel para validar a autorizacao Bling.");
+
+  const response = await fetchImpl(BLING_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${integration.clientId}:${integration.clientSecret}`).toString("base64")}`,
+      "Content-Type": "application/json",
+      "enable-jwt": "1"
+    },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      refresh_token: integration.refreshToken
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
+
+  return {
+    ...integration,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token || integration.refreshToken,
+    tokenExpiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
+  };
+}
+
 export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [] } = {}) {
   const midia = buildBlingMediaPayload(product.foto);
   const invalidFields = new Set(zeroInvalidFields);

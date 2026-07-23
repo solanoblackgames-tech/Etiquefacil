@@ -955,6 +955,46 @@ h3 {
   color: var(--accent-strong);
 }
 
+.bling-global-alert {
+  align-items: center;
+  background: #b91c1c;
+  color: #fff;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 12px 24px;
+}
+
+.bling-global-alert div {
+  display: grid;
+  gap: 2px;
+}
+
+.bling-global-alert strong,
+.bling-global-alert span {
+  color: #fff;
+}
+
+.bling-global-alert strong {
+  font-size: 15px;
+}
+
+.bling-global-alert span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bling-global-alert button {
+  background: #fff;
+  color: #991b1b;
+  flex: 0 0 auto;
+}
+
+.bling-global-alert button:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
 .upload-band {
   background: linear-gradient(180deg, #f8fafb 0%, #eef4f6 100%);
   flex: 1 1 auto;
@@ -4310,6 +4350,7 @@ h3 {
 
   .admin-actions,
   .catalog-bulk-actions,
+  .bling-global-alert,
   .password-form,
   .admin-heading,
   .work-heading,
@@ -4318,6 +4359,11 @@ h3 {
   .pallet-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .bling-global-alert {
+    align-items: stretch;
+    padding: 12px;
   }
 
   .operator-row {

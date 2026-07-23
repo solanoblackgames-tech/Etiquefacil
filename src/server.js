@@ -16,6 +16,7 @@ import {
   deleteBlingProductBySku,
   listBlingDeposits,
   lookupBlingProductForTriage,
+  refreshBlingIntegrationToken,
   revokeBlingIntegrationTokens,
   syncBlingProducts,
   syncBlingStockBalances,
@@ -894,12 +895,17 @@ async function syncSingleReceivedTransferItem(lot, item) {
 }
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
-  const [integration, appConfig] = await Promise.all([
-    getUserBlingIntegration(workspaceUserId(req)),
-    getBlingAppConfig()
-  ]);
-  const appConfigured = hasBlingAppConfig() || Boolean(appConfig.clientId && appConfig.clientSecret);
-  res.json({ integration: { ...integration, appConfigured, authorizeUrl: appConfigured ? "/api/integrations/bling/authorize" : null } });
+  try {
+    const validate = req.query.validate === "1" || req.query.validate === "true";
+    const [integration, appConfig] = await Promise.all([
+      validateUserBlingIntegration(workspaceUserId(req), { validate }),
+      getBlingAppConfig()
+    ]);
+    const appConfigured = hasBlingAppConfig() || Boolean(appConfig.clientId && appConfig.clientSecret);
+    res.json({ integration: { ...integration, appConfigured, authorizeUrl: appConfigured ? "/api/integrations/bling/authorize" : null } });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.post("/api/integrations/bling/config", requireAuth, requireOwner, async (req, res) => {
@@ -1875,6 +1881,29 @@ async function revokeAndDeleteUserBlingIntegration(userId) {
   const revocation = await revokeBlingIntegrationTokens(revocationCredentials);
   await deleteUserBlingIntegration(userId);
   return { ok: true, revoked: true, revokedTokens: revocation.revoked };
+}
+
+async function validateUserBlingIntegration(userId, { validate = false } = {}) {
+  if (!validate) return getUserBlingIntegration(userId);
+
+  const integration = await getUserBlingCredentials(userId);
+  if (!integration?.accessToken || !integration?.refreshToken) return getUserBlingIntegration(userId);
+
+  try {
+    const blingApp = await getBlingAppCredentials(userId);
+    const refreshed = await refreshBlingIntegrationToken({
+      ...integration,
+      clientId: blingApp.clientId,
+      clientSecret: integration.clientSecret || blingApp.clientSecret
+    });
+    return saveUserBlingIntegration(userId, refreshed);
+  } catch (error) {
+    if (error.name === "BlingApiError" && [400, 401, 403].includes(Number(error.status))) {
+      await deleteUserBlingIntegration(userId);
+      return getUserBlingIntegration(userId);
+    }
+    throw error;
+  }
 }
 
 async function getRequiredBlingCredentials(userId) {

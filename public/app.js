@@ -351,6 +351,10 @@ function bindEvents() {
   $("#triageDetail").addEventListener("click", handleTriageDetailClick);
   $("#lotDetail").addEventListener("submit", handleLotDetailSubmit);
   $("#blingIntegrationDelete").addEventListener("click", deleteBlingIntegration);
+  $("#blingGlobalAlertSyncButton").addEventListener("click", () => {
+    setMainTab("profile");
+    setProfileSection("sync");
+  });
   $("#conferenceSettingsForm").addEventListener("submit", saveConferenceSettings);
   $("#priceDisplaySettingsForm").addEventListener("submit", savePriceDisplaySettings);
   $("#operatorForm").addEventListener("submit", createOperator);
@@ -2060,6 +2064,7 @@ async function showApp(user) {
   applyUserPermissions(user);
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
+  if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   const scanRequest = getScanRequest();
   if (scanRequest) {
     await showScanOnly(scanRequest);
@@ -2099,6 +2104,7 @@ function applyUserPermissions(user) {
   if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
+  updateBlingGlobalAlert();
 }
 
 function canViewOperatorStats() {
@@ -2155,13 +2161,14 @@ function showScanSessionExpired({ lotId, codigoRz }) {
   });
 }
 
-async function loadBlingIntegration() {
+async function loadBlingIntegration({ validate = false } = {}) {
   try {
-    const response = await api("/api/integrations/bling");
+    const response = await api(`/api/integrations/bling${validate ? "?validate=1" : ""}`);
     state.blingIntegration = response.integration;
     renderBlingIntegration(response.integration);
   } catch (error) {
     $("#blingIntegrationStatus").textContent = error.message;
+    updateBlingGlobalAlert();
   }
 }
 
@@ -2178,6 +2185,14 @@ function renderBlingIntegration(integration) {
   $("#blingIntegrationDelete").disabled = !connected;
   $("#blingIntegrationStatus").style.color = connected ? "#0f766e" : "";
   $("#blingIntegrationStatus").textContent = getBlingCallbackMessage() || "";
+  updateBlingGlobalAlert();
+}
+
+function updateBlingGlobalAlert() {
+  const alert = $("#blingGlobalAlert");
+  if (!alert) return;
+  const shouldShow = isOwnerUser() && !(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
+  alert.classList.toggle("hidden", !shouldShow);
 }
 
 async function deleteBlingIntegration() {
