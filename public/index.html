@@ -372,6 +372,7 @@
 
       <nav class="tabs admin-tabs">
         <button data-admin-tab="users" class="active">Usuarios</button>
+        <button data-admin-tab="bling">Bling</button>
         <button data-admin-tab="lots">Lotes</button>
         <button data-admin-tab="catalog">Banco historico</button>
       </nav>
@@ -395,6 +396,19 @@
               <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
             </div>
             <div id="adminUsers" class="admin-users"></div>
+          </section>
+        </section>
+
+        <section id="adminBlingTab" class="hidden">
+          <section class="admin-panel">
+            <div class="admin-heading">
+              <h2>Integracoes Bling autorizadas</h2>
+              <button id="adminBlingRefreshButton" class="ghost" type="button">Atualizar</button>
+            </div>
+            <p id="adminBlingMessage" class="message"></p>
+            <div id="adminBlingIntegrations" class="admin-users">
+              <p class="muted admin-empty-state">Carregando integracoes Bling...</p>
+            </div>
           </section>
         </section>
 

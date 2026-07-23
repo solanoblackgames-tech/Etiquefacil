@@ -84,6 +84,7 @@ import {
   listTriageDiagnosisHistory,
   listTriageItems,
   listRejectedCatalogRequestsForAdmin,
+  listBlingIntegrationsForAdmin,
   listUsersForAdmin,
   lookupTriageProduct,
   recordOperatorActivity,
@@ -225,6 +226,18 @@ app.post("/api/logout", (req, res) => {
 
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   res.json({ users: await listUsersForAdmin() });
+});
+
+app.get("/api/admin/bling-integrations", requireAdmin, async (req, res) => {
+  res.json({ integrations: await listBlingIntegrationsForAdmin() });
+});
+
+app.delete("/api/admin/bling-integrations/:userId", requireAdmin, async (req, res) => {
+  try {
+    res.json(await deleteUserBlingIntegration(req.params.userId));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/admin/lots", requireAdmin, async (req, res) => {

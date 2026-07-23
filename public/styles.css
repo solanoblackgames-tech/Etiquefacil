@@ -3457,6 +3457,7 @@ h3 {
 }
 
 #adminUsersTab,
+#adminBlingTab,
 #adminLotsTab,
 #adminCatalogTab {
   display: grid;
@@ -3532,6 +3533,10 @@ h3 {
 
 .admin-lot-row {
   grid-template-columns: minmax(240px, 1.4fr) minmax(220px, 1fr) minmax(70px, 0.35fr) minmax(70px, 0.35fr) minmax(150px, 0.75fr) minmax(110px, 0.55fr);
+}
+
+.admin-bling-row {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 0.9fr) minmax(220px, 1fr) minmax(140px, 0.7fr) minmax(160px, 0.7fr);
 }
 
 .catalog-request-section {
@@ -4272,6 +4277,7 @@ h3 {
   .catalog-request-filters,
   .admin-form,
   .admin-row,
+  .admin-bling-row,
   .admin-user-main,
   .admin-lot-row,
   .admin-operator-item {

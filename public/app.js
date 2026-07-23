@@ -1,6 +1,7 @@
 const state = {
   user: null,
   adminUsers: [],
+  adminBlingIntegrations: [],
   adminLots: [],
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
@@ -282,11 +283,13 @@ function bindEvents() {
   $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
 
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
+  $("#adminBlingRefreshButton").addEventListener("click", loadAdminBlingIntegrations);
   $("#adminLotsRefreshButton").addEventListener("click", loadAdminLots);
   $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogReviewLists);
   $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
+  $("#adminBlingIntegrations").addEventListener("click", handleAdminBlingIntegrationsClick);
   $("#adminCatalogRequests").addEventListener("click", handleAdminCatalogRequestsClick);
   $("#adminCatalogRequests").addEventListener("submit", handleAdminCatalogRequestsFilter);
   $("#adminCatalogRequests").addEventListener("change", handleAdminCatalogRequestsChange);
@@ -2042,6 +2045,7 @@ async function showApp(user) {
     $("#adminApp").classList.remove("hidden");
     $("#adminName").textContent = `${user.name} (${user.email})`;
     await loadAdminUsers();
+    await loadAdminBlingIntegrations();
     await loadAdminLots();
     await loadAdminCatalogReviewLists();
     await loadAdminCatalogProducts();
@@ -3746,6 +3750,12 @@ async function loadAdminUsers() {
   renderAdminUsers();
 }
 
+async function loadAdminBlingIntegrations() {
+  const response = await api("/api/admin/bling-integrations");
+  state.adminBlingIntegrations = response.integrations || [];
+  renderAdminBlingIntegrations();
+}
+
 async function loadAdminLots() {
   const response = await api("/api/admin/lots");
   state.adminLots = response.lots;
@@ -3782,6 +3792,7 @@ async function loadAdminCatalogProducts(event) {
 function setAdminTab(tab) {
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
   $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
+  $("#adminBlingTab").classList.toggle("hidden", tab !== "bling");
   $("#adminLotsTab").classList.toggle("hidden", tab !== "lots");
   $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
   schedulePrimaryInputFocus();
@@ -3834,6 +3845,32 @@ function renderAdminUsers() {
   `;
 }
 
+function renderAdminBlingIntegrations() {
+  const wrapper = $("#adminBlingIntegrations");
+  if (!state.adminBlingIntegrations.length) {
+    wrapper.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhuma conta com Bling autorizado.</strong>
+        <span>Quando um usuario principal autorizar o Bling, ele aparece aqui para acompanhamento e desativacao.</span>
+      </div>
+    `;
+    return;
+  }
+
+  wrapper.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-row admin-bling-row admin-row-head">
+        <span>Usuario</span>
+        <span>Aplicativo</span>
+        <span>Token</span>
+        <span>Atualizado em</span>
+        <span>Acoes</span>
+      </div>
+      ${state.adminBlingIntegrations.map(adminBlingIntegrationRow).join("")}
+    </div>
+  `;
+}
+
 function renderAdminLots() {
   const wrapper = $("#adminLots");
   if (!state.adminLots.length) {
@@ -3873,6 +3910,32 @@ function adminLotRow(lot) {
       <span>${(lot.rzs || []).length}</span>
       <span>${qty.checkedQty || 0}/${qty.expectedQty || 0}<small class="muted">${money(qty.checkedValue || 0)} / ${money(qty.expectedValue || 0)}</small></span>
       <span>${formatDate(lot.createdAt)}</span>
+    </article>
+  `;
+}
+
+function adminBlingIntegrationRow(entry) {
+  const user = entry.user || {};
+  const integration = entry.integration || {};
+  const connected = Boolean(integration.connected && integration.hasAccessToken);
+  return `
+    <article class="admin-row admin-bling-row" data-admin-bling-user-id="${escapeHtml(user.id || integration.userId || "")}">
+      <div>
+        <strong>${escapeHtml(user.tenantName || user.name || "Usuario")}</strong>
+        <span class="muted">${escapeHtml(user.email || "")}</span>
+      </div>
+      <div>
+        <strong>${escapeHtml(integration.clientId || "--")}</strong>
+        <span class="muted">${connected ? "Autorizado" : "Sem access token"}</span>
+      </div>
+      <div>
+        <strong>${integration.hasRefreshToken ? "Refresh token salvo" : "Sem refresh token"}</strong>
+        <span class="muted">${integration.tokenExpiresAt ? `Expira em ${formatDateTime(integration.tokenExpiresAt)}` : "Sem expiracao registrada"}</span>
+      </div>
+      <span>${formatDateTime(integration.updatedAt)}</span>
+      <div class="admin-actions">
+        <button class="danger" type="button" data-disable-bling-user="${escapeHtml(user.id || integration.userId || "")}">Desativar Bling</button>
+      </div>
     </article>
   `;
 }
@@ -4242,6 +4305,10 @@ function findAdminUser(userId) {
   return null;
 }
 
+function findAdminBlingIntegration(userId) {
+  return state.adminBlingIntegrations.find((entry) => entry.user?.id === userId || entry.integration?.userId === userId) || null;
+}
+
 async function handleAdminPasswordSubmit(event) {
   event.preventDefault();
   const form = event.target;
@@ -4262,6 +4329,29 @@ async function handleAdminPasswordSubmit(event) {
   } catch (error) {
     $("#adminMessage").style.color = "";
     $("#adminMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleAdminBlingIntegrationsClick(event) {
+  const button = event.target.closest("[data-disable-bling-user]");
+  if (!button) return;
+  const entry = findAdminBlingIntegration(button.dataset.disableBlingUser);
+  const user = entry?.user || {};
+  const label = [user.tenantName || user.name || "Usuario", user.email].filter(Boolean).join(" - ");
+  if (!confirm(`Desativar a integracao Bling de ${label || "esta conta"}? A conta permanece cadastrada no Etiquefacil.`)) return;
+
+  button.disabled = true;
+  $("#adminBlingMessage").textContent = "";
+  try {
+    await api(`/api/admin/bling-integrations/${encodeURIComponent(button.dataset.disableBlingUser)}`, { method: "DELETE" });
+    $("#adminBlingMessage").style.color = "#0f766e";
+    $("#adminBlingMessage").textContent = "Integracao Bling desativada.";
+    await loadAdminBlingIntegrations();
+  } catch (error) {
+    $("#adminBlingMessage").style.color = "";
+    $("#adminBlingMessage").textContent = error.message;
   } finally {
     button.disabled = false;
   }

@@ -753,6 +753,52 @@ export async function listUsersForAdmin() {
   return groupAdminUsersWithOperators(users);
 }
 
+export async function listBlingIntegrationsForAdmin() {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select
+          bi.user_id,
+          bi.client_id,
+          bi.access_token,
+          bi.refresh_token,
+          bi.token_expires_at,
+          bi.updated_at,
+          u.id,
+          u.tenant_id,
+          u.tenant_name,
+          u.parent_user_id,
+          u.role,
+          u.operator_code,
+          u.triage_access,
+          u.transfer_access,
+          u.operator_stats_access,
+          u.name,
+          u.email,
+          u.created_at
+        from bling_integrations bi
+        join users u on u.id = bi.user_id
+        order by bi.updated_at desc
+      `
+    );
+    return result.rows.map((row) => ({
+      user: sanitizeUser(userFromRow(row)),
+      integration: publicBlingIntegration(blingIntegrationFromRow(row))
+    }));
+  }
+
+  const db = await readDb();
+  const usersById = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
+  return (db.blingIntegrations || [])
+    .filter((integration) => usersById.has(integration.userId))
+    .map((integration) => ({
+      user: usersById.get(integration.userId),
+      integration: publicBlingIntegration(integration)
+    }))
+    .sort((a, b) => String(b.integration?.updatedAt || "").localeCompare(String(a.integration?.updatedAt || "")));
+}
+
 export async function listLotsForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
