@@ -52,17 +52,23 @@ export async function revokeBlingIntegrationTokens(integration, { fetchImpl = gl
   if (typeof fetchImpl !== "function") throw new Error("Runtime sem fetch disponivel para revogar a autorizacao Bling.");
 
   const candidates = [
-    { token: integration.accessToken, hint: "access_token" },
-    { token: integration.refreshToken, hint: "refresh_token" }
+    { token: integration.refreshToken, hint: "refresh_token" },
+    { token: integration.accessToken, hint: "access_token" }
   ].filter((item, index, rows) => item.token && rows.findIndex((candidate) => candidate.token === item.token) === index);
 
   if (!candidates.length) return { ok: true, revoked: [] };
 
   const revoked = [];
+  const failures = [];
   for (const candidate of candidates) {
-    await revokeBlingToken(integration, candidate, fetchImpl);
-    revoked.push(candidate.hint);
+    try {
+      await revokeBlingToken(integration, candidate, fetchImpl);
+      revoked.push(candidate.hint);
+    } catch (error) {
+      failures.push({ hint: candidate.hint, error });
+    }
   }
+  if (!revoked.length && failures.length) throw failures[0].error;
   return { ok: true, revoked };
 }
 

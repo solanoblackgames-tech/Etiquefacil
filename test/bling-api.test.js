@@ -36,11 +36,37 @@ test("Bling token revocation sends refresh and access tokens to OAuth revoke end
     }
   );
 
-  assert.deepEqual(result.revoked, ["access_token", "refresh_token"]);
+  assert.deepEqual(result.revoked, ["refresh_token", "access_token"]);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].url, "https://www.bling.com.br/Api/v3/oauth/revoke");
   assert.equal(calls[0].auth, `Basic ${Buffer.from("client-id:client-secret").toString("base64")}`);
-  assert.deepEqual(calls.map((call) => call.body.token), ["access-token", "refresh-token"]);
+  assert.deepEqual(calls.map((call) => call.body.token), ["refresh-token", "access-token"]);
+});
+
+test("Bling token revocation succeeds when refresh revokes and access token is already invalid", async () => {
+  const result = await revokeBlingIntegrationTokens(
+    {
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      accessToken: "invalid-access-token",
+      refreshToken: "refresh-token"
+    },
+    {
+      fetchImpl: async (url, options) => {
+        const body = Object.fromEntries(options.body.entries());
+        if (body.token === "invalid-access-token") {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ error: { description: "Invalid token parameter to revoke" } })
+          };
+        }
+        return { ok: true, json: async () => ({}) };
+      }
+    }
+  );
+
+  assert.deepEqual(result.revoked, ["refresh_token"]);
 });
 
 test("Bling product payload maps Etiquefacil product to API v3 product", () => {
