@@ -10,6 +10,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "import:catalog": "node scripts/import-hidden-catalog.js",
+    "bling:homologacao": "node scripts/run-bling-homologacao.js",
     "migrate:json-to-postgres": "node scripts/migrate-json-to-postgres.js",
     "test": "node --test"
   },

@@ -2,6 +2,49 @@ const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
 const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
 const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
+const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
+
+export async function runBlingHomologation({ integration, saveIntegration, fetchImpl = globalThis.fetch } = {}) {
+  if (!integration?.accessToken) throw new Error("Informe o access token do Bling para executar a homologacao.");
+  if (typeof fetchImpl !== "function") throw new Error("Runtime sem fetch disponivel para executar a homologacao.");
+
+  const client = new BlingHomologationClient({ integration, saveIntegration, fetchImpl });
+  const startedAt = Date.now();
+  const steps = [];
+
+  const productSeed = await client.request("/homologacao/produtos");
+  steps.push({ step: 1, method: "GET", path: "/homologacao/produtos" });
+
+  const productPayload = productSeed?.data || {};
+  const created = await client.request("/homologacao/produtos", { method: "POST", body: productPayload });
+  const product = created?.data || {};
+  const productId = product.id;
+  if (!productId) throw new Error("A homologacao nao retornou o ID do produto criado.");
+  steps.push({ step: 2, method: "POST", path: "/homologacao/produtos", productId });
+
+  const updatedProduct = { ...product, nome: "Copo" };
+  delete updatedProduct.id;
+  await client.request(`/homologacao/produtos/${encodeURIComponent(productId)}`, { method: "PUT", body: updatedProduct });
+  steps.push({ step: 3, method: "PUT", path: `/homologacao/produtos/${productId}` });
+
+  await client.request(`/homologacao/produtos/${encodeURIComponent(productId)}/situacoes`, {
+    method: "PATCH",
+    body: { situacao: "I" }
+  });
+  steps.push({ step: 4, method: "PATCH", path: `/homologacao/produtos/${productId}/situacoes` });
+
+  await client.request(`/homologacao/produtos/${encodeURIComponent(productId)}`, { method: "DELETE" });
+  steps.push({ step: 5, method: "DELETE", path: `/homologacao/produtos/${productId}` });
+
+  return {
+    ok: true,
+    elapsedMs: Date.now() - startedAt,
+    productId,
+    steps,
+    homologationHash: client.homologationHash || null,
+    tokenRefreshed: client.tokenRefreshed
+  };
+}
 
 export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [] } = {}) {
   const midia = buildBlingMediaPayload(product.foto);
@@ -638,6 +681,95 @@ function summarizeSync(results) {
     alerted: results.filter((item) => (item.alerts || []).length).length,
     results
   };
+}
+
+class BlingHomologationClient {
+  constructor({ integration, saveIntegration, fetchImpl }) {
+    this.integration = integration;
+    this.saveIntegration = saveIntegration;
+    this.fetchImpl = fetchImpl;
+    this.homologationHash = null;
+    this.lastRequestAt = 0;
+    this.tokenRefreshed = false;
+  }
+
+  async request(path, { method = "GET", body = null, retry = true } = {}) {
+    await this.refreshTokenIfNeeded();
+    await this.waitForRequestSlot();
+
+    const response = await this.fetchImpl(`${BLING_API_BASE_URL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.integration.accessToken}`,
+        Accept: "application/json",
+        ...(this.homologationHash ? { [BLING_HOMOLOGATION_HEADER]: this.homologationHash } : {}),
+        ...(body ? { "Content-Type": "application/json" } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    this.updateHomologationHash(response);
+
+    if (response.status === 401 && retry && this.integration.refreshToken) {
+      await this.refreshToken();
+      return this.request(path, { method, body, retry: false });
+    }
+
+    if (response.status === 429) {
+      await wait(retryAfterMs(response) ?? BLING_RATE_LIMIT_FALLBACK_DELAY_MS);
+      return this.request(path, { method, body, retry });
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
+    return payload;
+  }
+
+  updateHomologationHash(response) {
+    const hash = response.headers?.get?.(BLING_HOMOLOGATION_HEADER);
+    if (hash) this.homologationHash = hash;
+  }
+
+  async refreshTokenIfNeeded() {
+    if (!this.integration.refreshToken || !this.integration.tokenExpiresAt) return;
+    const expiresAt = new Date(this.integration.tokenExpiresAt).getTime();
+    if (Number.isFinite(expiresAt) && expiresAt - Date.now() > 60_000) return;
+    await this.refreshToken();
+  }
+
+  async refreshToken() {
+    if (!this.integration.refreshToken) throw new Error("Token Bling expirado. Autorize a integracao novamente.");
+
+    const response = await this.fetchImpl(BLING_OAUTH_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${this.integration.clientId}:${this.integration.clientSecret}`).toString("base64")}`,
+        "Content-Type": "application/json",
+        "enable-jwt": "1"
+      },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: this.integration.refreshToken
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
+
+    this.integration = {
+      ...this.integration,
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token || this.integration.refreshToken,
+      tokenExpiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
+    };
+    this.tokenRefreshed = true;
+    if (this.saveIntegration) await this.saveIntegration(this.integration);
+  }
+
+  async waitForRequestSlot() {
+    const elapsed = Date.now() - this.lastRequestAt;
+    if (elapsed < BLING_REQUEST_DELAY_MS) await wait(BLING_REQUEST_DELAY_MS - elapsed);
+    this.lastRequestAt = Date.now();
+  }
 }
 
 async function saveProductWithBlingFallback(client, { operation, product, existing = {}, productId = null }) {

@@ -10,6 +10,7 @@ import {
   blingProductToTriageLookup,
   deleteBlingProductBySku,
   lookupBlingProductForTriage,
+  runBlingHomologation,
   syncBlingProducts
 } from "../src/bling-api.js";
 
@@ -449,4 +450,89 @@ test("Bling product sync updates existing supplier cost relationship", async () 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Bling homologation chains hash header and refreshes invalid access token", async () => {
+  const calls = [];
+  const saved = [];
+  const hashes = ["hash-1", "hash-2", "hash-3", "hash-4", "hash-5"];
+  const responses = [
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "x-bling-homologacao": hashes[0] }),
+      json: async () => ({ data: { nome: "Copo do Bling", preco: 32.56, codigo: "COD-4587" } })
+    },
+    {
+      ok: true,
+      status: 201,
+      headers: new Headers({ "x-bling-homologacao": hashes[1] }),
+      json: async () => ({ data: { nome: "Copo do Bling", preco: 32.56, codigo: "COD-4587", id: 16842381880 } })
+    },
+    {
+      ok: false,
+      status: 401,
+      headers: new Headers({ "x-bling-homologacao": hashes[2] }),
+      json: async () => ({ error: { description: "Token invalido" } })
+    },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ access_token: "fresh-token", refresh_token: "fresh-refresh", expires_in: 3600 })
+    },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "x-bling-homologacao": hashes[3] }),
+      json: async () => ({ data: { id: 16842381880 } })
+    },
+    {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "x-bling-homologacao": hashes[4] }),
+      json: async () => ({ data: { id: 16842381880, situacao: "I" } })
+    },
+    {
+      ok: true,
+      status: 204,
+      headers: new Headers(),
+      json: async () => ({})
+    }
+  ];
+
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({
+      url: String(url),
+      method: options.method || "GET",
+      auth: options.headers.Authorization,
+      hash: options.headers["x-bling-homologacao"],
+      body: options.body ? JSON.parse(options.body) : null
+    });
+    return responses.shift();
+  };
+
+  const result = await runBlingHomologation({
+    integration: {
+      clientId: "client",
+      clientSecret: "secret",
+      accessToken: "stale-token",
+      refreshToken: "refresh-token"
+    },
+    saveIntegration: async (integration) => saved.push(integration),
+    fetchImpl
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.productId, 16842381880);
+  assert.equal(result.tokenRefreshed, true);
+  assert.equal(saved[0].accessToken, "fresh-token");
+  assert.deepEqual(calls.filter((call) => call.url.includes("/homologacao")).map((call) => call.method), ["GET", "POST", "PUT", "PUT", "PATCH", "DELETE"]);
+  assert.equal(calls[1].hash, "hash-1");
+  assert.equal(calls[2].hash, "hash-2");
+  assert.equal(calls[4].hash, "hash-3");
+  assert.equal(calls[5].hash, "hash-4");
+  assert.equal(calls[2].body.nome, "Copo");
+  assert.equal(calls[5].body.situacao, "I");
+  assert.equal(calls[4].auth, "Bearer fresh-token");
 });
