@@ -343,14 +343,15 @@ export async function saveUserConferenceSettings(userId, payload = {}) {
   const now = new Date().toISOString();
 
   if (hasPostgres()) {
-    await query(
+    const result = await query(
       `insert into user_settings (user_id, key, value, updated_at)
        values ($1, $2, $3, $4)
        on conflict (user_id, key)
-       do update set value = excluded.value, updated_at = excluded.updated_at`,
+       do update set value = excluded.value, updated_at = excluded.updated_at
+       returning value`,
       [userId, CONFERENCE_SETTINGS_KEY, settings, now]
     );
-    return settings;
+    return normalizeConferenceSettings(result.rows[0]?.value || settings);
   }
 
   const db = await readDb();
