@@ -159,7 +159,7 @@ function normalizeConferenceSettings(settings = {}) {
     if (field.printOption) current.printOnLabel = current.enabled ? Boolean(incoming.printOnLabel) : false;
     if (field.key === "category") current.askBeforePrint = current.enabled ? Boolean(incoming.askBeforePrint) : false;
   }
-  defaults.reviewBeforePrint = Boolean(settings.reviewBeforePrint ?? settings.review_before_print ?? defaults.fields.category.askBeforePrint);
+  defaults.reviewBeforePrint = Boolean(settings.reviewBeforePrint ?? settings.review_before_print);
   defaults.ncmByCategory = normalizeNcmByCategory(settings.ncmByCategory || settings.ncm_by_category || []);
   return defaults;
 }
@@ -2389,6 +2389,7 @@ async function saveConferenceSettings(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const message = $("#conferenceSettingsMessage");
+  const submitButton = form.querySelector('button[type="submit"]');
   const fields = {};
   for (const field of CONFERENCE_FIELDS) {
     const enabled = Boolean(form.elements[`${field.key}Enabled`]?.checked);
@@ -2407,6 +2408,9 @@ async function saveConferenceSettings(event) {
     }))
     .filter((row) => row.category.trim() || row.ncm.trim());
   try {
+    if (submitButton) submitButton.disabled = true;
+    message.style.color = "";
+    message.textContent = "Salvando configuracao...";
     const response = await api("/api/profile/conference-settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -2419,6 +2423,8 @@ async function saveConferenceSettings(event) {
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 }
 

@@ -1647,7 +1647,7 @@ app.post("/api/labels", requireAuth, async (req, res) => {
   if (!productContext) return res.status(404).json({ error: "Produto nao encontrado." });
   const settings = await getUserConferenceSettings(userId);
   const categorySettings = settings.fields?.category || {};
-  const shouldReviewProduct = Boolean(settings.reviewBeforePrint || categorySettings.askBeforePrint);
+  const shouldReviewProduct = Boolean(settings.reviewBeforePrint);
   const missingRequiredCategory = categorySettings.enabled && categorySettings.required && !String(productContext.product.categoria || "").trim();
   const shouldAutoReviewProduct = String(productContext.product.origem || "planilha") === "planilha";
   if (shouldAutoReviewProduct && (shouldReviewProduct || missingRequiredCategory) && !req.body.reviewed) {

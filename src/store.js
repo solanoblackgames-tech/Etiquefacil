@@ -7493,7 +7493,7 @@ function normalizeTriageDestination(value) {
   return destination;
 }
 
-function normalizeConferenceSettings(input = {}) {
+export function normalizeConferenceSettings(input = {}) {
   const sourceFields = input.fields || input.conferenceRegistration?.fields || {};
   const fields = {};
   for (const [key, defaults] of Object.entries(CONFERENCE_FIELD_DEFAULTS)) {
@@ -7513,7 +7513,7 @@ function normalizeConferenceSettings(input = {}) {
   const hasCustomNcm = Object.prototype.hasOwnProperty.call(input, "ncmByCategory") || Object.prototype.hasOwnProperty.call(input, "ncm_by_category");
   return {
     fields,
-    reviewBeforePrint: Boolean(input.reviewBeforePrint ?? input.review_before_print ?? fields.category?.askBeforePrint),
+    reviewBeforePrint: Boolean(input.reviewBeforePrint ?? input.review_before_print),
     ncmByCategory: normalizeNcmByCategory(hasCustomNcm ? input.ncmByCategory || input.ncm_by_category || [] : DEFAULT_NCM_BY_CATEGORY)
   };
 }
