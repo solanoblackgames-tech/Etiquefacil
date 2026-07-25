@@ -2328,7 +2328,7 @@ function renderConferenceSettings() {
         <div class="settings-actions">
           <a class="button-link" href="/api/profile/ncm-categories/template">Baixar base</a>
           <label>Nova base
-            <input id="ncmCategoryUploadFile" name="file" type="file" accept=".xlsx,.xls" required />
+            <input id="ncmCategoryUploadFile" name="file" type="file" accept=".xlsx,.xls" />
           </label>
           <button type="button" data-upload-ncm-category>Enviar base</button>
         </div>
