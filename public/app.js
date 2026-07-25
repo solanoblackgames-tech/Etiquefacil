@@ -6910,16 +6910,22 @@ function formatLabelDateTime(value) {
 
 function printCurrentLabel() {
   if (!$("#labelPreview")?.innerHTML || $("#labelModal").classList.contains("hidden")) return;
+  const isLargeQrLabel = currentLabelUsesLargeQr();
   cleanupLabelPrintRoot();
   const printRoot = document.createElement("div");
   printRoot.id = "labelPrintRoot";
   printRoot.innerHTML = currentLabelPreviewPrintMarkup();
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
-  document.body.classList.toggle("printing-large-qr-label", state.labelLargeQr);
-  if (state.labelLargeQr) appendLargeQrPrintStyle();
+  document.body.classList.toggle("printing-large-qr-label", isLargeQrLabel);
+  document.documentElement.classList.toggle("printing-large-qr-label", isLargeQrLabel);
+  if (isLargeQrLabel) appendLargeQrPrintStyle();
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
+}
+
+function currentLabelUsesLargeQr() {
+  return Boolean(state.labelLargeQr || $("#labelPreview .label-print-large-qr"));
 }
 
 function appendLargeQrPrintStyle() {
@@ -6962,6 +6968,7 @@ function cleanupLabelPrintRoot() {
   }
   document.body.classList.remove("printing-label");
   document.body.classList.remove("printing-large-qr-label");
+  document.documentElement.classList.remove("printing-large-qr-label");
   $("#labelPrintPageStyle")?.remove();
   $("#labelPrintRoot")?.remove();
 }
