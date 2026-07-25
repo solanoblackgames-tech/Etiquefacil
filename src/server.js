@@ -132,6 +132,7 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
+const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Geral";
 const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
@@ -177,6 +178,19 @@ app.get("/api/config", (req, res) => {
   res.json({ downloadMode: config.downloadMode });
 });
 
+app.post("/api/labels/qr", requireAuth, async (req, res) => {
+  try {
+    const user = await userWithLargeQrLabelAccess(await refreshSessionUser(req));
+    if (!user?.largeQrLabelAccess) return res.status(403).json({ error: "Etiqueta 100x150 QR nao liberada para este usuario." });
+    const value = String(req.body?.value || "").trim();
+    if (!value) throw new Error("Informe o codigo para gerar o QR Code.");
+    const dataUrl = await QRCode.toDataURL(value, { margin: 1, width: 520, errorCorrectionLevel: "M" });
+    res.json({ dataUrl });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/healthz", async (req, res) => {
   try {
     res.json(await getStoreHealth());
@@ -197,7 +211,7 @@ app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     if (!name || !email || !password) throw new Error("Informe nome, e-mail e senha.");
-    const user = await createUser({ name, email, password });
+    const user = await userWithLargeQrLabelAccess(await createUser({ name, email, password }));
     req.session.user = user;
     res.json({ user });
   } catch (error) {
@@ -212,7 +226,7 @@ app.post("/api/login", async (req, res) => {
       return res.json({ user: ADMIN_USER });
     }
 
-    const user = await verifyUser(req.body.email || "", req.body.password || "");
+    const user = await userWithLargeQrLabelAccess(await verifyUser(req.body.email || "", req.body.password || ""));
     if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
     req.session.user = user;
     await recordOperatorActivity(user, "login");
@@ -1677,8 +1691,17 @@ async function refreshSessionUser(req) {
     req.session.user = null;
     return null;
   }
-  req.session.user = freshUser;
-  return freshUser;
+  const user = await userWithLargeQrLabelAccess(freshUser);
+  req.session.user = user;
+  return user;
+}
+
+async function userWithLargeQrLabelAccess(user) {
+  if (!user || user.role === "admin") return user;
+  const ownerUserId = user.workspaceUserId || user.parentUserId || user.id;
+  const owner = ownerUserId === user.id ? user : await getPublicUserById(ownerUserId).catch(() => null);
+  const ownerEmail = String(owner?.email || "").trim().toLowerCase();
+  return { ...user, largeQrLabelAccess: ownerEmail === LARGE_QR_LABEL_EMAIL };
 }
 
 function requireAdmin(req, res, next) {

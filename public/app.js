@@ -56,6 +56,7 @@ const state = {
   labelMeta: null,
   labelPrintMarkup: "",
   labelQuantity: 1,
+  labelLargeQr: false,
   labelReturnFocusSelectors: null,
   config: { downloadMode: "local" },
   conferenceSettings: defaultConferenceSettings(),
@@ -66,12 +67,14 @@ const state = {
     includeClubPrice: localStorage.getItem("etiquefacil.includeClubPrice") === "true",
     suggestPrice: localStorage.getItem("etiquefacil.suggestPrice") === "true",
     includeText: localStorage.getItem("etiquefacil.includeText") === "true",
-    customText: localStorage.getItem("etiquefacil.customText") || ""
+    customText: localStorage.getItem("etiquefacil.customText") || "",
+    largeQrLabel: localStorage.getItem("etiquefacil.largeQrLabel") !== "false"
   }
 };
 
 const $ = (selector) => document.querySelector(selector);
 const LABEL_PRINT_FALLBACK_MS = 15000;
+const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 let labelPrintFallbackTimer = null;
 const CONFERENCE_FIELDS = [
   { key: "ean", label: "EAN", formNames: ["ean"] },
@@ -115,6 +118,8 @@ const normalizeSearchText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
+const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess || String(state.user?.email || "").trim().toLowerCase() === LARGE_QR_LABEL_EMAIL);
+const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
 function defaultConferenceSettings() {
   return {
@@ -1580,6 +1585,7 @@ function diverseLabelOptionsMarkup() {
       <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
       ${labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle")}
+      ${largeQrLabelOptionMarkup("diverseLargeQrLabelToggle")}
       <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
@@ -1602,6 +1608,7 @@ function bindDiverseLabelOptions() {
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
   bindClubPriceToggle("#diverseIncludeClubPriceToggle");
+  bindLargeQrLabelToggle("#diverseLargeQrLabelToggle");
   $("#diverseSuggestPriceToggle").addEventListener("change", (event) => {
     state.labelOptions.suggestPrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.suggestPrice", String(state.labelOptions.suggestPrice));
@@ -1622,6 +1629,20 @@ function labelClubPriceOptionMarkup(id = "includeClubPriceToggle") {
   const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
   if (!settings.enabled) return "";
   return `<label class="check-option"><input id="${escapeHtml(id)}" type="checkbox" ${state.labelOptions.includeClubPrice ? "checked" : ""} /> Etiqueta com preco clube</label>`;
+}
+
+function largeQrLabelOptionMarkup(id = "largeQrLabelToggle") {
+  if (!canUseLargeQrLabel()) return "";
+  return `<label class="check-option"><input id="${escapeHtml(id)}" type="checkbox" ${state.labelOptions.largeQrLabel ? "checked" : ""} /> Etiqueta 100x150 QR</label>`;
+}
+
+function bindLargeQrLabelToggle(selector) {
+  const toggle = $(selector);
+  if (!toggle) return;
+  toggle.addEventListener("change", (event) => {
+    state.labelOptions.largeQrLabel = event.currentTarget.checked;
+    localStorage.setItem("etiquefacil.largeQrLabel", String(state.labelOptions.largeQrLabel));
+  });
 }
 
 function bindClubPriceToggle(selector) {
@@ -6029,6 +6050,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
       <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
       ${labelClubPriceOptionMarkup()}
+      ${largeQrLabelOptionMarkup()}
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelTextControls()}
     </div>
@@ -6176,6 +6198,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
         <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
         ${labelClubPriceOptionMarkup()}
+        ${largeQrLabelOptionMarkup()}
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelTextControls()}
       </div>
@@ -6259,6 +6282,7 @@ function bindScanControls(lotId, codigoRz, items = []) {
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
   bindClubPriceToggle("#includeClubPriceToggle");
+  bindLargeQrLabelToggle("#largeQrLabelToggle");
   bindLabelTextControls();
   $("#scanInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -6627,7 +6651,7 @@ async function printLabel(productId, { reviewed = false } = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ productId, reviewed })
     });
-    showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt) });
+    await showLabel(response.product, { autoPrint: true, meta: labelMeta(response.label?.createdAt) });
   } catch (error) {
     if ((error.code === "review_required_before_print" || error.code === "category_required_before_print") && error.product && error.lotId) {
       await requestProductReviewBeforePrint(error.product, error.lotId);
@@ -6640,7 +6664,7 @@ async function printLabel(productId, { reviewed = false } = {}) {
 async function printProductLabel(product, { lotId = "", afterPrint = null, ...labelOptions } = {}) {
   const readyProduct = await ensureProductDataBeforePrint(product, lotId);
   if (!readyProduct) return false;
-  showLabel(readyProduct, labelOptions);
+  await showLabel(readyProduct, labelOptions);
   if (typeof afterPrint === "function") afterPrint(readyProduct);
   return true;
 }
@@ -6700,10 +6724,11 @@ function findScannedProduct(lot, codigoRz, codigoMl) {
   return matches[0]?.product || null;
 }
 
-function showLabel(product, { autoPrint = false, meta = null, quantity = 1, returnFocusSelectors = null } = {}) {
+async function showLabel(product, { autoPrint = false, meta = null, quantity = 1, returnFocusSelectors = null } = {}) {
   state.labelProduct = product;
   state.labelMeta = meta;
-  state.labelPrintMarkup = labelMarkup(product, meta);
+  state.labelLargeQr = labelUsesLargeQr();
+  state.labelPrintMarkup = await labelMarkup(product, meta);
   state.labelQuantity = Math.max(1, Math.round(Number(quantity || 1)));
   state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
@@ -6790,7 +6815,8 @@ function code39BarcodeValue(value) {
   return String(value || "").trim().toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "-");
 }
 
-function labelMarkup(product, meta = null) {
+async function labelMarkup(product, meta = null) {
+  if (labelUsesLargeQr()) return largeQrLabelMarkup(product, meta);
   const priceMarkup = labelPriceMarkup(product);
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
   const stockLocation = shouldPrintConferenceField("stockLocation") ? String(product.localizacaoEstoque || "").trim() : "";
@@ -6884,8 +6910,17 @@ function printCurrentLabel() {
   printRoot.innerHTML = currentLabelPreviewPrintMarkup();
   document.body.appendChild(printRoot);
   document.body.classList.add("printing-label");
+  document.body.classList.toggle("printing-large-qr-label", state.labelLargeQr);
+  if (state.labelLargeQr) appendLargeQrPrintStyle();
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
+}
+
+function appendLargeQrPrintStyle() {
+  const style = document.createElement("style");
+  style.id = "labelPrintPageStyle";
+  style.textContent = "@media print { @page { margin: 0; size: 100mm 150mm; } }";
+  document.head.appendChild(style);
 }
 
 function currentLabelPreviewPrintMarkup() {
@@ -6920,6 +6955,8 @@ function cleanupLabelPrintRoot() {
     labelPrintFallbackTimer = null;
   }
   document.body.classList.remove("printing-label");
+  document.body.classList.remove("printing-large-qr-label");
+  $("#labelPrintPageStyle")?.remove();
   $("#labelPrintRoot")?.remove();
 }
 
@@ -6929,6 +6966,7 @@ function hideLabelPreview() {
   state.labelProduct = null;
   state.labelMeta = null;
   state.labelPrintMarkup = "";
+  state.labelLargeQr = false;
   state.labelQuantity = 1;
   $("#labelPrintButton").textContent = "Imprimir etiqueta";
   const returnFocusSelectors = state.labelReturnFocusSelectors;
@@ -7215,6 +7253,48 @@ function productBlingAlertMarkup(product = {}) {
       <button type="button" class="ghost icon-button bling-alert-dismiss" data-dismiss-bling-alert="${escapeHtml(product.id || "")}" title="Aceitar cadastro sem este dado" aria-label="Aceitar cadastro sem este dado">X</button>
     </span>
   `;
+}
+
+async function largeQrLabelMarkup(product, meta = null) {
+  const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
+  const stockLocation = shouldPrintConferenceField("stockLocation") ? String(product.localizacaoEstoque || "").trim() : "";
+  const noteText = [stockLocation ? `LOC ${stockLocation}` : "", customText].filter(Boolean).join(" | ");
+  const footer = labelFooterText(meta);
+  const qrValue = labelQrValue(product);
+  const qrDataUrl = await labelQrDataUrl(qrValue);
+  return `
+    <section class="label-print label-print-large-qr ${state.labelOptions.includePrice ? "has-price" : ""} ${noteText ? "has-note" : ""} ${footer ? "has-meta" : ""}">
+      <p class="label-desc-large">${escapeHtml(product.descricao)}</p>
+      <img class="label-qr" src="${escapeHtml(qrDataUrl)}" alt="QR Code" />
+      <strong class="label-sku-large">${escapeHtml(qrValue)}</strong>
+      ${largeQrLabelDetails(product, noteText, footer)}
+    </section>
+  `;
+}
+
+function largeQrLabelDetails(product, noteText, footer) {
+  const price = state.labelOptions.includePrice ? `<div><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
+  return `
+    <div class="label-large-details">
+      <div><span>Codigo ML</span><strong>${escapeHtml(product.codigoMl || "-")}</strong></div>
+      ${price}
+      ${noteText ? `<div><span>Observacao</span><strong>${escapeHtml(noteText)}</strong></div>` : ""}
+      ${footer ? `<small>${escapeHtml(footer)}</small>` : ""}
+    </div>
+  `;
+}
+
+function labelQrValue(product) {
+  return code39BarcodeValue(product.sku || product.codigoMl || product.ean || "");
+}
+
+async function labelQrDataUrl(value) {
+  const response = await api("/api/labels/qr", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value })
+  });
+  return response.dataUrl;
 }
 
 function productOperatorLabel(product) {

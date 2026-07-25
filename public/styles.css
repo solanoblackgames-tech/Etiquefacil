@@ -4279,6 +4279,87 @@ h3 {
   display: block;
 }
 
+.label-print-large-qr {
+  gap: 3mm;
+  grid-template-rows: 20mm 72mm 13mm 1fr;
+  height: 150mm;
+  padding: 7mm 8mm 6mm;
+  text-align: center;
+  width: 100mm;
+}
+
+.label-desc-large {
+  align-self: end;
+  font-family: Arial, sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.08;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.label-qr {
+  align-self: center;
+  height: 70mm;
+  image-rendering: pixelated;
+  justify-self: center;
+  width: 70mm;
+}
+
+.label-sku-large {
+  align-self: center;
+  font-family: Arial Black, Arial, sans-serif;
+  font-size: 25px;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 82mm;
+}
+
+.label-large-details {
+  align-content: start;
+  display: grid;
+  font-family: Arial, sans-serif;
+  gap: 2.6mm;
+  text-align: left;
+}
+
+.label-large-details div {
+  border-top: 0.5mm solid #111;
+  display: grid;
+  gap: 0.9mm;
+  padding-top: 1.6mm;
+}
+
+.label-large-details span {
+  color: #333;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.label-large-details strong {
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.05;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.label-large-details small {
+  align-self: end;
+  color: #444;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: right;
+}
+
 .label-controls {
   align-items: center;
   display: flex;
@@ -4606,6 +4687,16 @@ h3 {
     width: 60mm;
   }
 
+  body.printing-large-qr-label,
+  body.printing-large-qr-label #labelPrintRoot,
+  body.printing-large-qr-label .label-modal,
+  body.printing-large-qr-label .label-stage,
+  body.printing-large-qr-label #labelPreview,
+  body.printing-large-qr-label .label-print-large-qr {
+    height: 150mm;
+    width: 100mm;
+  }
+
   #labelPreview {
     display: block;
     height: 40mm;
@@ -4632,6 +4723,19 @@ h3 {
     page-break-before: avoid;
     page-break-inside: avoid;
     width: 60mm;
+  }
+
+  body.printing-large-qr-label #labelPrintRoot,
+  body.printing-large-qr-label #labelPreview,
+  body.printing-large-qr-label .label-modal,
+  body.printing-large-qr-label .label-stage {
+    height: 150mm;
+    width: 100mm;
+  }
+
+  .label-print-large-qr {
+    height: 150mm;
+    width: 100mm;
   }
 
   #triageLabelPrintable {
