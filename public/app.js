@@ -74,7 +74,6 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const LABEL_PRINT_FALLBACK_MS = 15000;
-const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 let labelPrintFallbackTimer = null;
 const CONFERENCE_FIELDS = [
   { key: "ean", label: "EAN", formNames: ["ean"] },
@@ -118,7 +117,7 @@ const normalizeSearchText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
-const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess || String(state.user?.email || "").trim().toLowerCase() === LARGE_QR_LABEL_EMAIL);
+const canUseLargeQrLabel = () => true;
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
 function defaultConferenceSettings() {
@@ -7271,28 +7270,30 @@ function productBlingAlertMarkup(product = {}) {
 async function largeQrLabelMarkup(product, meta = null) {
   const customText = state.labelOptions.includeText ? state.labelOptions.customText.trim() : "";
   const stockLocation = shouldPrintConferenceField("stockLocation") ? String(product.localizacaoEstoque || "").trim() : "";
-  const noteText = [stockLocation ? `LOC ${stockLocation}` : "", customText].filter(Boolean).join(" | ");
-  const footer = labelFooterText(meta);
   const qrValue = labelQrValue(product);
   const qrDataUrl = await labelQrDataUrl(qrValue);
   return `
-    <section class="label-print label-print-large-qr ${state.labelOptions.includePrice ? "has-price" : ""} ${noteText ? "has-note" : ""} ${footer ? "has-meta" : ""}">
+    <section class="label-print label-print-large-qr ${state.labelOptions.includePrice ? "has-price" : ""} ${customText ? "has-note" : ""}">
+      <strong class="label-large-brand">ETIQUEFACIL</strong>
       <p class="label-desc-large">${escapeHtml(product.descricao)}</p>
       <img class="label-qr" src="${escapeHtml(qrDataUrl)}" alt="QR Code" />
+      <span class="label-large-scan">Escaneie o QR Code</span>
       <strong class="label-sku-large">${escapeHtml(qrValue)}</strong>
-      ${largeQrLabelDetails(product, noteText, footer)}
+      ${largeQrLabelDetails(product, stockLocation, customText)}
     </section>
   `;
 }
 
-function largeQrLabelDetails(product, noteText, footer) {
-  const price = state.labelOptions.includePrice ? `<div><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
+function largeQrLabelDetails(product, stockLocation, customText) {
+  const location = stockLocation ? `<div><span>Localizacao</span><strong>${escapeHtml(stockLocation)}</strong></div>` : "";
+  const price = state.labelOptions.includePrice ? `<div class="label-large-price-row"><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
+  const note = customText ? `<div><span>Obs.</span><strong>${escapeHtml(customText)}</strong></div>` : "";
   return `
     <div class="label-large-details">
       <div><span>Codigo ML</span><strong>${escapeHtml(product.codigoMl || "-")}</strong></div>
+      ${location}
       ${price}
-      ${noteText ? `<div><span>Observacao</span><strong>${escapeHtml(noteText)}</strong></div>` : ""}
-      ${footer ? `<small>${escapeHtml(footer)}</small>` : ""}
+      ${note}
     </div>
   `;
 }
