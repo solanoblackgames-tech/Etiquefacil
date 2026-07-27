@@ -425,7 +425,7 @@ export function sanitizeUser(user) {
     name: user.name,
     email: user.email
   };
-  if (role === "owner" || user.triageAccess) sanitized.triageAccess = true;
+  if (user.triageAccess) sanitized.triageAccess = true;
   if (user.transferAccess) sanitized.transferAccess = true;
   if (user.operatorStatsAccess) sanitized.operatorStatsAccess = true;
   return sanitized;

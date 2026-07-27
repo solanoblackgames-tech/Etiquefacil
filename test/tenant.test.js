@@ -23,7 +23,6 @@ test("sanitizeUser exposes explicit tenant context", () => {
       workspaceUserId: "user-1",
       role: "owner",
       operatorCode: null,
-      triageAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }
@@ -45,7 +44,62 @@ test("sanitizeUser keeps legacy users compatible with tenant context", () => {
       workspaceUserId: "user-1",
       role: "owner",
       operatorCode: null,
+      name: "Lucas",
+      email: "lucas@example.com"
+    }
+  );
+});
+
+test("sanitizeUser only exposes module access when explicitly enabled", () => {
+  assert.deepEqual(
+    sanitizeUser({
+      id: "user-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: null,
+      role: "owner",
+      operatorCode: null,
+      triageAccess: false,
+      transferAccess: false,
+      name: "Lucas",
+      email: "lucas@example.com"
+    }),
+    {
+      id: "user-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: null,
+      workspaceUserId: "user-1",
+      role: "owner",
+      operatorCode: null,
+      name: "Lucas",
+      email: "lucas@example.com"
+    }
+  );
+
+  assert.deepEqual(
+    sanitizeUser({
+      id: "user-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: null,
+      role: "owner",
+      operatorCode: null,
       triageAccess: true,
+      transferAccess: true,
+      name: "Lucas",
+      email: "lucas@example.com"
+    }),
+    {
+      id: "user-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: null,
+      workspaceUserId: "user-1",
+      role: "owner",
+      operatorCode: null,
+      triageAccess: true,
+      transferAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }
