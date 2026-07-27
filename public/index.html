@@ -102,13 +102,22 @@
             </div>
             <div class="import-template-help">
               <a class="button-link ghost-link" href="/api/lots/template">Baixar modelo XLSX</a>
-              <p>Preencha as colunas obrigatorias do modelo. A coluna <strong>Preco de custo</strong> e opcional: quando preenchida, o sistema usa esse custo no produto; quando vazia, calcula pelo % arremate.</p>
-              <dl>
-                <div><dt>Codigo ML</dt><dd>codigo usado para bipagem e identificacao do produto.</dd></div>
-                <div><dt>Codigo RZ</dt><dd>RZ/pallet onde o item sera conferido.</dd></div>
-                <div><dt>Qtd</dt><dd>quantidade esperada na RZ.</dd></div>
-                <div><dt>Valor Unit / Valor Total</dt><dd>preco de venda unitario e total da linha.</dd></div>
-              </dl>
+              <p>Use o modelo para montar sua planilha. Antes de subir o arquivo, confira quais campos precisam estar preenchidos.</p>
+              <div class="import-rules">
+                <div class="import-rule required">
+                  <strong>Obrigatorio na planilha</strong>
+                  <span>Codigo ML, Codigo RZ, Qtd, Descricao, Valor Unit e Valor Total.</span>
+                </div>
+                <div class="import-rule optional">
+                  <strong>Opcional na planilha</strong>
+                  <span>Preco de custo, Categoria, Subcategoria, NCM, EAN, Endereco WMS, Condicao, URL da imagem e Link do produto.</span>
+                </div>
+                <div class="import-rule screen-required">
+                  <strong>Obrigatorio nesta tela</strong>
+                  <span>Planilha XLSX, % arremate, Fornecedor e Prefixo SKU.</span>
+                </div>
+              </div>
+              <p class="import-note"><strong>Preco de custo:</strong> se preencher, o sistema usa esse valor como custo do produto. Se deixar vazio, o custo sera calculado pelo % arremate informado abaixo.</p>
             </div>
             <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
             <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
