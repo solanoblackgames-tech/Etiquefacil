@@ -108,6 +108,7 @@ import {
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStatsAccess,
+  updateOperatorLargeQrLabelAccess,
   updateOperatorForOwner,
   updateTriageDiagnosis,
   updateTriageItemDetails,
@@ -414,6 +415,18 @@ app.patch("/api/operators/:operatorUserId/operator-stats-access", requireAuth, r
       ownerUserId: workspaceUserId(req),
       operatorUserId: req.params.operatorUserId,
       operatorStatsAccess: Boolean(req.body?.operatorStatsAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/large-qr-label-access", requireAuth, requireOwner, requireLargeQrLabelOwnerAccess, async (req, res) => {
+  try {
+    res.json(await updateOperatorLargeQrLabelAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      largeQrLabelAccess: Boolean(req.body?.largeQrLabelAccess)
     }));
   } catch (error) {
     sendError(res, error);
@@ -1700,7 +1713,20 @@ async function userWithLargeQrLabelAccess(user) {
   const ownerUserId = user.workspaceUserId || user.parentUserId || user.id;
   const owner = ownerUserId === user.id ? user : await getPublicUserById(ownerUserId).catch(() => null);
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
-  return { ...user, largeQrLabelAccess: ownerEmail === LARGE_QR_LABEL_EMAIL };
+  const isAllowedOwner = ownerEmail === LARGE_QR_LABEL_EMAIL;
+  const isOwner = !user.parentUserId && (user.role || "owner") === "owner";
+  return { ...user, largeQrLabelAccess: Boolean(isAllowedOwner && (isOwner || user.largeQrLabelAccess)) };
+}
+
+async function requireLargeQrLabelOwnerAccess(req, res, next) {
+  try {
+    const user = await userWithLargeQrLabelAccess(await refreshSessionUser(req));
+    const role = user?.role || (user?.parentUserId ? "operator" : "owner");
+    if (role === "owner" && user?.largeQrLabelAccess) return next();
+    return res.status(403).json({ error: "Etiqueta 100x150 QR nao liberada para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
 }
 
 function requireAdmin(req, res, next) {

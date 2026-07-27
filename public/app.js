@@ -3234,6 +3234,7 @@ function operatorViewModel(operator) {
     triageAccess: Boolean(operator.triageAccess),
     transferAccess: Boolean(operator.transferAccess),
     operatorStatsAccess: Boolean(operator.operatorStatsAccess),
+    largeQrLabelAccess: Boolean(operator.largeQrLabelAccess),
     logins,
     searches,
     scans,
@@ -3324,6 +3325,13 @@ function operatorPermissionConfig(kind, operator) {
       label: "Operadores e estatisticas",
       route: "operator-stats-access",
       bodyKey: "operatorStatsAccess"
+    },
+    largeQrLabel: {
+      enabled: operator.largeQrLabelAccess,
+      canToggle: isOwnerUser() && state.user?.largeQrLabelAccess,
+      label: "Etiqueta 100x150 QR",
+      route: "large-qr-label-access",
+      bodyKey: "largeQrLabelAccess"
     }
   };
   return configs[kind];
@@ -3335,7 +3343,9 @@ function openOperatorPermissionsModal(operator) {
   const bodyEl = $("#decisionBody");
   const fieldsEl = $("#decisionFields");
   const actionsEl = $("#decisionActions");
-  const permissions = ["triage", "transfer", "operatorStats"].map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }));
+  const permissions = ["triage", "transfer", "operatorStats", "largeQrLabel"]
+    .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
+    .filter((permission) => permission.kind !== "largeQrLabel" || state.user?.largeQrLabelAccess || permission.enabled);
 
   const cleanup = () => {
     modal.classList.add("hidden");

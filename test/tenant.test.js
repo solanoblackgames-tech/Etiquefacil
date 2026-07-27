@@ -87,6 +87,7 @@ test("sanitizeUser only exposes module access when explicitly enabled", () => {
       operatorCode: null,
       triageAccess: true,
       transferAccess: true,
+      largeQrLabelAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }),
@@ -100,6 +101,7 @@ test("sanitizeUser only exposes module access when explicitly enabled", () => {
       operatorCode: null,
       triageAccess: true,
       transferAccess: true,
+      largeQrLabelAccess: true,
       name: "Lucas",
       email: "lucas@example.com"
     }
