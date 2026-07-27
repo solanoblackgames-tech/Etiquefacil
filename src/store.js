@@ -1922,26 +1922,27 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
     const result = await query(
       `
         update products
-        set descricao = $4,
-            valor_unit = $5,
-            preco_custo = $6,
-            ncm = $7,
-            ean = $8,
-            link = $9,
-            foto = $10,
-            altura_caixa = $11,
-            largura_caixa = $12,
-            comprimento_caixa = $13,
-            peso_caixa = $14,
-            localizacao_estoque = $15,
-            categoria = $16,
-            subcategoria = $17,
+        set codigo_ml = $4,
+            descricao = $5,
+            valor_unit = $6,
+            preco_custo = $7,
+            ncm = $8,
+            ean = $9,
+            link = $10,
+            foto = $11,
+            altura_caixa = $12,
+            largura_caixa = $13,
+            comprimento_caixa = $14,
+            peso_caixa = $15,
+            localizacao_estoque = $16,
+            categoria = $17,
+            subcategoria = $18,
             bling_alert_message = case
-              when coalesce(ncm, '') <> $7 or coalesce(ean, '') <> $8 then ''
+              when coalesce(ncm, '') <> $8 or coalesce(ean, '') <> $9 then ''
               else bling_alert_message
             end,
             bling_alert_dismissed = case
-              when coalesce(ncm, '') <> $7 or coalesce(ean, '') <> $8 then false
+              when coalesce(ncm, '') <> $8 or coalesce(ean, '') <> $9 then false
               else bling_alert_dismissed
             end
         where id = $1
@@ -1953,6 +1954,7 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         productId,
         lotId,
         userId,
+        normalized.codigoMl,
         normalized.descricao,
         normalized.valorUnit,
         normalized.precoCusto,
@@ -5669,14 +5671,17 @@ function normalizeManualProduct(input = {}, codigoMl) {
 }
 
 function normalizeEditableProduct(input = {}) {
+  const codigoMl = normalizeCode(input.codigoMl);
   const descricao = String(input.descricao || input.nome || "").trim();
   const valorUnit = decimalMoney(input.valorUnit ?? input.preco);
   const precoCusto = decimalMoney(input.precoCusto ?? input.custo);
   const foto = input.foto ?? input.photo ?? input.image ?? input.imagem ?? input.urlFoto ?? input.urlImagem ?? input.imageUrl ?? "";
+  if (!codigoMl) throw new Error("Informe o Codigo ML do produto.");
   if (!descricao) throw new Error("Informe o nome/descricao do produto.");
   if (!Number.isFinite(valorUnit) || valorUnit <= 0) throw new Error("Informe o preco de venda do produto.");
   if (!Number.isFinite(precoCusto) || precoCusto < 0) throw new Error("Informe um custo valido.");
   return {
+    codigoMl,
     descricao,
     valorUnit,
     precoCusto,

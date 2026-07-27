@@ -1813,7 +1813,7 @@ function openProductEditModal(product, options = {}) {
       setTimeout(() => $("#diverseScanForm input[name='codigoMl']")?.focus(), 0);
     };
 
-    code.textContent = product.codigoMl || "";
+    code.value = product.codigoMl || "";
     sku.textContent = product.sku || "";
     description.value = product.descricao || "";
     price.value = String(product.valorUnit || "").replace(".", ",");
@@ -1837,6 +1837,13 @@ function openProductEditModal(product, options = {}) {
       event.preventDefault();
       const valorUnit = parseMoneyInput(price.value);
       const precoCusto = canEditCost ? parseMoneyInput(cost.value) : Number(product.precoCusto || 0);
+      const codigoMl = normalizeCodigoMl(code.value);
+      code.value = codigoMl;
+      if (!codigoMl) {
+        error.textContent = "Informe o Codigo ML do produto.";
+        code.focus();
+        return;
+      }
       if (!description.value.trim()) {
         error.textContent = "Informe o nome/descricao do produto.";
         description.focus();
@@ -1870,6 +1877,7 @@ function openProductEditModal(product, options = {}) {
       const categoryChanged = normalizeSearchText(selectedCategory) !== normalizeSearchText(product.categoria);
       const ncmValue = mappedNcm && categoryChanged ? mappedNcm : ncm.value || mappedNcm;
       const result = {
+        codigoMl,
         descricao: description.value.trim(),
         valorUnit,
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : product.ean || "",

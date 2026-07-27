@@ -1182,7 +1182,9 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
     const userId = workspaceUserId(req);
     const found = await getUserProductWithLot(userId, req.params.productId);
     if (!found || found.lot.id !== req.params.lotId) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
-    const payload = isOwnerSession(req) ? req.body : { ...req.body, precoCusto: found.product.precoCusto };
+    const payload = isOwnerSession(req)
+      ? { ...found.product, ...req.body }
+      : { ...found.product, ...req.body, precoCusto: found.product.precoCusto };
     const result = await updateLotProduct({
       userId,
       lotId: req.params.lotId,
