@@ -117,7 +117,7 @@ const normalizeSearchText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
-const canUseLargeQrLabel = () => true;
+const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
 function defaultConferenceSettings() {

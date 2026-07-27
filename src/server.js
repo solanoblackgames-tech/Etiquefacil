@@ -132,6 +132,7 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
+const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Geral";
 const usePgSessionStore = hasPostgres() && config.cookieSecure;
 const ADMIN_USER = {
@@ -1696,7 +1697,10 @@ async function refreshSessionUser(req) {
 
 async function userWithLargeQrLabelAccess(user) {
   if (!user || user.role === "admin") return user;
-  return { ...user, largeQrLabelAccess: true };
+  const ownerUserId = user.workspaceUserId || user.parentUserId || user.id;
+  const owner = ownerUserId === user.id ? user : await getPublicUserById(ownerUserId).catch(() => null);
+  const ownerEmail = String(owner?.email || "").trim().toLowerCase();
+  return { ...user, largeQrLabelAccess: ownerEmail === LARGE_QR_LABEL_EMAIL };
 }
 
 function requireAdmin(req, res, next) {
