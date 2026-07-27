@@ -5872,7 +5872,22 @@ function emptyLotDetailMarkup() {
         <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
         <div class="wide-field suggestion-template-help">
           <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
-          <p class="muted">Preencha a planilha com as colunas <strong>Produto</strong> e <strong>Preco</strong>.</p>
+          <p class="muted">Use o lote avulso quando voce ainda nao tem uma planilha completa do lote, mas quer criar as RZs e bipar os produtos manualmente.</p>
+          <div class="suggestion-rules">
+            <div class="suggestion-rule required">
+              <strong>Obrigatorio nesta tela</strong>
+              <span>Fornecedor, Tipo de custo, Custo, Prefixo SKU e Sequencial inicial.</span>
+            </div>
+            <div class="suggestion-rule optional">
+              <strong>Opcional nesta tela</strong>
+              <span>Nome do lote e Sugestao XLSX. Se nao informar o nome, o sistema usa "Lote sem planilha".</span>
+            </div>
+            <div class="suggestion-rule">
+              <strong>Sugestao XLSX</strong>
+              <span>Serve para carregar uma lista de produtos sugeridos. Preencha somente as colunas Produto e Preco.</span>
+            </div>
+          </div>
+          <p class="suggestion-note"><strong>Tipo de custo:</strong> em Custo fixo, todos os produtos usam o mesmo custo unitario. Em Custo variavel, o custo e calculado pelo percentual do valor de venda.</p>
         </div>
         <label class="wide-field">Sugestao XLSX opcional<input name="suggestionsFile" type="file" accept=".xlsx,.xls" /></label>
         <button type="submit">Criar lote</button>

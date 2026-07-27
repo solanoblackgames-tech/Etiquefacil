@@ -2698,7 +2698,7 @@ h3 {
 }
 
 .suggestion-template-help {
-  align-items: center;
+  align-items: start;
   background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2710,6 +2710,46 @@ h3 {
 
 .suggestion-template-help p {
   margin: 0;
+}
+
+.suggestion-rules {
+  display: grid;
+  gap: 8px 14px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.suggestion-rule {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-left: 4px solid #2563eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.suggestion-rule.required {
+  border-left-color: #0f766e;
+}
+
+.suggestion-rule.optional {
+  border-left-color: #64748b;
+}
+
+.suggestion-rule strong {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.suggestion-rule span,
+.suggestion-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.suggestion-note {
+  grid-column: 1 / -1;
 }
 
 .diverse-form textarea {
@@ -4503,6 +4543,7 @@ h3 {
   .diverse-label-options,
   .diverse-form,
   .suggestion-template-help,
+  .suggestion-rules,
   .no-sheet-suggestion-panel,
   .no-sheet-suggestion-panel form,
   .diverse-row,
