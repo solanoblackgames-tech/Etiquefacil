@@ -1986,6 +1986,11 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
     product.blingAlertMessage = "";
     product.blingAlertDismissed = false;
   }
+  for (const item of db.rzItems || []) {
+    if (item.lotId === lot.id && item.productId === product.id) {
+      item.valorTotal = roundMoney(Number(item.qtdEsperada || 0) * Number(product.valorUnit || 0));
+    }
+  }
   await writeDb(db);
   return { product, lot: summarizeLot(db, lot, true) };
 }
@@ -2037,6 +2042,15 @@ export async function dismissLotProductBlingAlert({ userId, lotId, productId }) 
       [productId, lotId, userId]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
+    await query(
+      `
+        update rz_items
+        set valor_total = round((qtd_esperada * $3)::numeric, 2)
+        where lot_id = $1
+          and product_id = $2
+      `,
+      [lotId, productId, normalized.valorUnit]
+    );
     return { product: productFromRow(result.rows[0]), lot: await getUserLotDetail(userId, lotId) };
   }
 

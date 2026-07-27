@@ -36,7 +36,7 @@ test("updateLotProduct replaces spreadsheet reference with real ML code for Etiq
           createdAt: "2026-07-27T00:00:00.000Z"
         }
       ],
-      rzItems: [{ id: "item-1", lotId: "lot-1", productId: "product-1", codigoRz: "RZ-1", qtdEsperada: 1, qtdConferida: 0, tipoItem: "esperado" }],
+      rzItems: [{ id: "item-1", lotId: "lot-1", productId: "product-1", codigoRz: "RZ-1", qtdEsperada: 2, qtdConferida: 0, valorTotal: 59.8, tipoItem: "esperado" }],
       scans: [],
       labels: [],
       blingIntegrations: [],
@@ -62,7 +62,7 @@ test("updateLotProduct replaces spreadsheet reference with real ML code for Etiq
       payload: {
         codigoMl: "abcd12345",
         descricao: "Produto corrigido",
-        valorUnit: 29.9,
+        valorUnit: 39.9,
         precoCusto: 0
       }
     });
@@ -72,6 +72,7 @@ test("updateLotProduct replaces spreadsheet reference with real ML code for Etiq
     assert.equal(result.product.codigoMl, "ABCD12345");
     assert.equal(db.products[0].codigoMl, "ABCD12345");
     assert.equal(result.lot.items[0].product.codigoMl, "ABCD12345");
+    assert.equal(db.rzItems[0].valorTotal, 79.8);
     assert.equal(blingPayload.marca, "ABCD12345");
   } finally {
     process.chdir(originalCwd);
