@@ -2704,7 +2704,6 @@ h3 {
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: auto minmax(0, 1fr);
   padding: 10px 12px;
 }
 
@@ -2720,6 +2719,7 @@ h3 {
 }
 
 .suggestion-rule {
+  align-content: start;
   background: #ffffff;
   border: 1px solid var(--line);
   border-left: 4px solid #2563eb;
@@ -2746,6 +2746,11 @@ h3 {
 .suggestion-note {
   color: var(--muted);
   font-size: 13px;
+}
+
+.suggestion-rule .button-link {
+  justify-self: start;
+  margin-top: 4px;
 }
 
 .suggestion-note {
