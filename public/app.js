@@ -523,11 +523,9 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
   }
   button.disabled = true;
   try {
-    const payload = Object.fromEntries(new FormData(form));
     const response = await api("/api/diverse-lots", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: new FormData(form)
     });
     state.selectedDiverseLotId = response.lot.id;
     if (message) {
@@ -747,7 +745,7 @@ async function uploadNoSheetSuggestionsFromForm(form, status, lotId) {
     if (!response.suggestions.length) {
       if (status) {
         status.style.color = "#b42318";
-        status.textContent = "Nenhuma sugestao valida encontrada. Use colunas descricao e preco, ou linhas Produto; 129,90.";
+        status.textContent = "Nenhuma sugestao valida encontrada. Use uma planilha com as colunas Produto e Preco.";
       }
       return null;
     }
@@ -2277,11 +2275,12 @@ function noSheetSuggestionUploadMarkup(lot, { includeHelp = true } = {}) {
       <div>
         <span class="muted">Lista de sugestao</span>
         <h3>Adicionar sugestoes ao lote</h3>
-        ${includeHelp ? '<p class="muted">Suba uma planilha com colunas descricao e preco, ou um CSV/TXT no formato Produto; 129,90.</p>' : ""}
+        ${includeHelp ? '<p class="muted">Suba uma planilha com as colunas Produto e Preco.</p>' : ""}
       </div>
+      <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
       <form class="no-sheet-suggestion-upload-form" data-lot-id="${escapeHtml(lot?.id || "")}">
-        <label>Planilha/lista
-          <input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" required />
+        <label>Planilha XLSX
+          <input name="file" type="file" accept=".xlsx,.xls" required />
         </label>
         <button type="submit">Subir lista</button>
       </form>
@@ -5871,7 +5870,11 @@ function emptyLotDetailMarkup() {
         <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
         <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
         <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-        <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha. Opcional: Produto; 129,90"></textarea></label>
+        <div class="wide-field suggestion-template-help">
+          <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
+          <p class="muted">Preencha a planilha com as colunas <strong>Produto</strong> e <strong>Preco</strong>.</p>
+        </div>
+        <label class="wide-field">Sugestao XLSX opcional<input name="suggestionsFile" type="file" accept=".xlsx,.xls" /></label>
         <button type="submit">Criar lote</button>
       </form>
       <p id="noSheetLotMessage" class="message"></p>

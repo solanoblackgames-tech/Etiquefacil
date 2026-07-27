@@ -353,6 +353,14 @@ app.get("/api/lots/template", requireAuth, requireOwner, async (req, res) => {
   res.send(buffer);
 });
 
+app.get("/api/diverse-lots/suggestions-template", requireAuth, requireOwner, async (req, res) => {
+  const workbook = buildNoSheetSuggestionTemplateWorkbook();
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="modelo-sugestoes-lote-avulso.xlsx"');
+  res.send(buffer);
+});
+
 app.get("/api/operators", requireAuth, requireOperatorStatsAccess, async (req, res) => {
   res.json({
     operators: await listOperatorsForUser(workspaceUserId(req), {
@@ -1039,7 +1047,7 @@ app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   }
 });
 
-app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
+app.post("/api/diverse-lots", requireAuth, requireOwner, upload.single("suggestionsFile"), async (req, res) => {
   try {
     const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
@@ -1048,10 +1056,14 @@ app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
     const costMode = String(req.body.costMode || "fixed").trim();
     const averageCost = Number(req.body.averageCost);
     const costPercent = Number(req.body.costPercent);
-    const suggestions = parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
+    const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
     if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
+    if (req.file && !suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use uma planilha com as colunas Produto e Preco.");
+    if (req.file && !suggestions.some((suggestion) => Number(suggestion.valorUnit || 0) > 0)) {
+      throw new Error("A planilha foi lida, mas nenhum preco foi encontrado. Use a coluna Preco.");
+    }
     if (costMode === "variable") {
       if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do custo variavel.");
     } else if (!Number.isFinite(averageCost) || averageCost <= 0) {
@@ -1078,9 +1090,9 @@ app.post("/api/diverse-lots", requireAuth, requireOwner, async (req, res) => {
 app.post("/api/lots/:lotId/no-sheet-suggestions", requireAuth, upload.single("file"), async (req, res) => {
   try {
     const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
-    if (!suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use colunas descricao e preco, ou linhas Produto; 129,90.");
+    if (!suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use uma planilha com as colunas Produto e Preco.");
     if (req.file && !suggestions.some((suggestion) => Number(suggestion.valorUnit || 0) > 0)) {
-      throw new Error("A planilha foi lida, mas nenhum preco foi encontrado. Use uma coluna como Maior Preco, Preco ou Valor.");
+      throw new Error("A planilha foi lida, mas nenhum preco foi encontrado. Use a coluna Preco.");
     }
     res.json(await updateNoSheetSuggestions({ userId: workspaceUserId(req), lotId: req.params.lotId, suggestions }));
   } catch (error) {
@@ -2616,6 +2628,30 @@ function buildLotImportTemplateWorkbook() {
   instructionsSheet["!autofilter"] = { ref: "A1:C1" };
 
   XLSX.utils.book_append_sheet(workbook, productsSheet, "Produtos");
+  XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
+  return workbook;
+}
+
+function buildNoSheetSuggestionTemplateWorkbook() {
+  const rows = [
+    ["Produto", "Preco"],
+    ["Produto exemplo", 129.9],
+    ["Outro produto exemplo", 89.5]
+  ];
+  const instructions = [
+    ["Como usar"],
+    ["Preencha uma sugestao por linha na aba Sugestoes."],
+    ["A coluna Produto deve conter o nome/descricao do produto."],
+    ["A coluna Preco deve conter o preco de venda sugerido, usando numero ou formato brasileiro como 129,90."],
+    ["Mantenha os nomes das colunas Produto e Preco na primeira linha."]
+  ];
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
+  sheet["!cols"] = [{ wch: 56 }, { wch: 14 }];
+  sheet["!autofilter"] = { ref: "A1:B1" };
+  instructionsSheet["!cols"] = [{ wch: 90 }];
+  XLSX.utils.book_append_sheet(workbook, sheet, "Sugestoes");
   XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
   return workbook;
 }

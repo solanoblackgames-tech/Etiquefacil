@@ -2674,6 +2674,21 @@ h3 {
   grid-column: 1 / -2;
 }
 
+.suggestion-template-help {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 10px 12px;
+}
+
+.suggestion-template-help p {
+  margin: 0;
+}
+
 .diverse-form textarea {
   min-height: 78px;
   resize: vertical;
@@ -2719,6 +2734,7 @@ h3 {
   align-items: end;
   display: grid;
   gap: 10px;
+  grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
@@ -4463,6 +4479,7 @@ h3 {
   .diverse-rz-form,
   .diverse-label-options,
   .diverse-form,
+  .suggestion-template-help,
   .no-sheet-suggestion-panel,
   .no-sheet-suggestion-panel form,
   .diverse-row,

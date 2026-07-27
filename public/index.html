@@ -130,7 +130,11 @@
               <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
               <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
               <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-              <label class="wide-field">Lista de sugestao opcional<textarea name="suggestions" rows="3" placeholder="Um produto por linha. Opcional: Produto; 129,90"></textarea></label>
+              <div class="wide-field suggestion-template-help">
+                <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
+                <p class="muted">Preencha a planilha com as colunas <strong>Produto</strong> e <strong>Preco</strong>.</p>
+              </div>
+              <label class="wide-field">Sugestao XLSX opcional<input name="suggestionsFile" type="file" accept=".xlsx,.xls" /></label>
               <button type="submit">Subir lote sem planilha</button>
             </form>
             <p id="diverseLotMessage" class="message"></p>
@@ -152,11 +156,12 @@
                 <div>
                   <span class="muted">Lista de sugestao</span>
                   <h3>Adicionar sugestoes ao lote</h3>
-                  <p class="muted">Suba uma planilha com colunas descricao e preco, ou um CSV/TXT no formato Produto; 129,90.</p>
+                  <p class="muted">Suba uma planilha com as colunas Produto e Preco.</p>
                 </div>
+                <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
                 <form class="no-sheet-suggestion-upload-form">
-                  <label>Planilha/lista
-                    <input name="file" type="file" accept=".xlsx,.xls,.csv,.txt" required />
+                  <label>Planilha XLSX
+                    <input name="file" type="file" accept=".xlsx,.xls" required />
                   </label>
                   <button type="submit">Subir lista</button>
                 </form>
