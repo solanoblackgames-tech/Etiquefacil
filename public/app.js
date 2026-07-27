@@ -1128,7 +1128,6 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         price.focus();
         return;
       }
-      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
       if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
       if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
       if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
@@ -1141,6 +1140,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       }
       if (isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
       if (isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
+      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
       const result = {
         descricao,
         valorUnit,
@@ -5773,8 +5773,15 @@ function renderLotDetail(lot) {
       <button data-download="complete">Baixar Bling - Lote completo</button>
       <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
       <button data-sync-products="complete">Criar produtos no Bling</button>
+      <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/prices/template">Baixar precos</a>
       <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
-    </div>`}
+    </div>
+    <form class="inline-upload-form" id="lotPriceImportForm">
+      <label>Atualizar precos em massa
+        <input name="file" type="file" accept=".xlsx,.xls" required />
+      </label>
+      <button type="submit">Subir precos</button>
+    </form>`}
     ${operatorNoSheetLot ? "" : `<p id="downloadMessage" class="message"></p>`}
     ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
@@ -5824,6 +5831,7 @@ function renderLotDetail(lot) {
     detail.querySelectorAll("button[data-sync-products]").forEach((button) => {
       button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
     });
+    $("#lotPriceImportForm")?.addEventListener("submit", (event) => importLotPrices(event, lot.id));
     $("#deleteLotButton").addEventListener("click", () => deleteLot(lot, $("#deleteLotButton")));
   }
   $("#rzSearchButton")?.addEventListener("click", () => openRzFromSearch(lot));
@@ -6034,6 +6042,47 @@ async function syncBlingProducts(lotId, kind, button, messageSelector = "#downlo
     }
     targetMessage.style.color = "#0f766e";
     targetMessage.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s).${payload.alerted ? " Ha produto com alerta de EAN/NCM." : ""}`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importLotPrices(event, lotId, messageSelector = "#downloadMessage") {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = $(messageSelector);
+  const button = form.querySelector("button[type='submit']");
+  const file = form.querySelector("input[type='file']")?.files?.[0];
+  if (!file) {
+    message.style.color = "";
+    message.textContent = "Selecione a planilha de precos.";
+    return;
+  }
+  if (!confirm("Atualizar os precos deste lote e refletir no Bling para os produtos ja cadastrados?")) return;
+
+  message.textContent = "";
+  button.disabled = true;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/prices/import`, {
+      method: "POST",
+      body
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Nao foi possivel atualizar os precos.");
+    form.reset();
+    if (payload.lot) {
+      if (state.selectedLotId === lotId) renderLotDetail(payload.lot);
+      if (state.selectedDiverseLotId === lotId) renderDiverseLot(payload.lot);
+    }
+    const targetMessage = $(messageSelector) || message;
+    const bling = payload.bling || {};
+    targetMessage.style.color = bling.ok === false ? "" : "#0f766e";
+    targetMessage.textContent = `Precos atualizados: ${payload.changed || 0}. Bling: ${bling.updated || 0} atualizado(s), ${bling.missing || 0} nao encontrado(s).${bling.alerted ? " Ha produto com alerta de EAN/NCM." : ""}${bling.error ? ` ${bling.error}` : ""}`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;

@@ -23,6 +23,7 @@ import {
   syncBlingStockEntries,
   syncBlingStockMovement,
   syncBlingStockTransfers,
+  updateExistingBlingProducts,
   updateBlingProductFromTriage
 } from "./bling-api.js";
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, parseNumber, roundMoney } from "./domain.js";
@@ -1122,6 +1123,69 @@ app.post("/api/lots/:lotId/bling/:kind/save", requireAuth, requireOwner, async (
     await fs.writeFile(filePath, `\uFEFF${csv}`, "utf8");
     revealFile(filePath);
     res.json({ fileName, path: filePath, count: data.products.length });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/lots/:lotId/prices/template", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
+    if (!lot) return res.status(404).json({ error: "Lote nao encontrado." });
+
+    const workbook = buildLotPriceWorkbook(lot);
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeFileName(lot.prefixoSku || lot.nomeArquivo)}-precos.xlsx"`);
+    res.send(buffer);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/prices/import", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) throw new Error("Envie a planilha de precos do lote.");
+    const userId = workspaceUserId(req);
+    const lot = await getUserLotDetail(userId, req.params.lotId);
+    if (!lot) return res.status(404).json({ error: "Lote nao encontrado." });
+
+    const updates = parseLotPriceWorkbook(req.file, lot);
+    if (!updates.length) throw new Error("Nenhuma alteracao de preco foi encontrada na planilha.");
+
+    const updatedProducts = [];
+    let updatedLot = lot;
+    for (const update of updates) {
+      const result = await updateLotProduct({
+        userId,
+        lotId: lot.id,
+        productId: update.product.id,
+        payload: { ...update.product, valorUnit: update.valorUnit, precoCusto: update.precoCusto }
+      });
+      updatedProducts.push(result.product);
+      updatedLot = result.lot;
+    }
+
+    let bling = { ok: false, error: "Integracao Bling nao executada.", updated: 0, missing: 0, alerted: 0, results: [] };
+    try {
+      const integration = await getRequiredBlingCredentials(userId);
+      bling = await updateExistingBlingProducts({
+        integration,
+        products: withLotSupplier(updatedProducts, updatedLot),
+        saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      });
+      const alertLot = await updateLotProductBlingAlerts({ userId, lotId: lot.id, syncResult: bling });
+      if (alertLot) updatedLot = alertLot;
+    } catch (blingError) {
+      bling = { ok: false, error: blingError.message, updated: 0, missing: 0, alerted: 0, results: [] };
+    }
+
+    res.json({
+      ok: true,
+      lot: updatedLot,
+      changed: updates.length,
+      bling
+    });
   } catch (error) {
     sendError(res, error);
   }
@@ -2384,6 +2448,104 @@ function buildPalletWorkbook(pallet) {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), "Resumo");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), "Itens");
   return workbook;
+}
+
+function buildLotPriceWorkbook(lot) {
+  const products = [...(lot.products || [])].sort((a, b) => String(a.sku || "").localeCompare(String(b.sku || "")));
+  const rows = [
+    ["SKU", "Codigo ML", "Descricao", "Preco atual", "Novo preco", "Custo atual", "Novo custo"],
+    ...products.map((product) => [
+      product.sku || "",
+      product.codigoMl || "",
+      product.descricao || "",
+      Number(product.valorUnit || 0),
+      "",
+      Number(product.precoCusto || 0),
+      ""
+    ])
+  ];
+  const instructions = [
+    ["Como usar"],
+    ["Altere apenas as colunas Novo preco e Novo custo. Linhas sem novo valor serao ignoradas."],
+    ["O SKU e usado para localizar o produto no lote. Nao altere a coluna SKU."],
+    ["Ao subir a planilha, o sistema atualiza o lote e tenta atualizar no Bling somente os SKUs que ja existem la."]
+  ];
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet["!cols"] = [{ wch: 18 }, { wch: 18 }, { wch: 64 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+  sheet["!autofilter"] = { ref: `A1:G${Math.max(1, rows.length)}` };
+  XLSX.utils.book_append_sheet(workbook, sheet, "Precos");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(instructions), "Instrucoes");
+  return workbook;
+}
+
+function parseLotPriceWorkbook(file, lot) {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (ext !== ".xlsx" && ext !== ".xls") throw new Error("Envie uma planilha .xlsx ou .xls.");
+  const workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: false });
+  const sheet = workbook.Sheets[workbook.SheetNames.find((name) => normalizeHeader(name).includes("preco"))] || workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) throw new Error("A planilha esta vazia.");
+
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const usefulRows = (rows || []).filter((row) => Array.isArray(row) && row.some((cell) => String(cell ?? "").trim()));
+  const headerIndex = usefulRows.findIndex((row, index) => index < 10 && lotPriceHeaderIndex(row).sku >= 0);
+  if (headerIndex === -1) throw new Error("Nao encontrei a coluna SKU na planilha de precos.");
+
+  const indexes = lotPriceHeaderIndex(usefulRows[headerIndex]);
+  if (indexes.price < 0 && indexes.cost < 0) throw new Error("Inclua a coluna Novo preco ou Novo custo na planilha.");
+
+  const productsBySku = new Map((lot.products || []).map((product) => [normalizeServerCode(product.sku), product]));
+  const updates = [];
+  const seen = new Set();
+  const errors = [];
+
+  for (const [offset, row] of usefulRows.slice(headerIndex + 1).entries()) {
+    const rowNumber = headerIndex + offset + 2;
+    const sku = normalizeServerCode(row[indexes.sku]);
+    if (!sku) continue;
+    if (seen.has(sku)) {
+      errors.push(`Linha ${rowNumber}: SKU duplicado (${sku}).`);
+      continue;
+    }
+    seen.add(sku);
+
+    const product = productsBySku.get(sku);
+    if (!product) {
+      errors.push(`Linha ${rowNumber}: SKU nao encontrado neste lote (${sku}).`);
+      continue;
+    }
+
+    const hasPrice = indexes.price >= 0 && String(row[indexes.price] ?? "").trim() !== "";
+    const hasCost = indexes.cost >= 0 && String(row[indexes.cost] ?? "").trim() !== "";
+    if (!hasPrice && !hasCost) continue;
+
+    const valorUnit = hasPrice ? roundMoney(parseNumber(row[indexes.price])) : Number(product.valorUnit || 0);
+    const precoCusto = hasCost ? roundMoney(parseNumber(row[indexes.cost])) : Number(product.precoCusto || 0);
+    const rowErrors = [];
+    if (!Number.isFinite(valorUnit) || valorUnit <= 0) rowErrors.push(`Linha ${rowNumber}: Novo preco invalido.`);
+    if (!Number.isFinite(precoCusto) || precoCusto < 0) rowErrors.push(`Linha ${rowNumber}: Novo custo invalido.`);
+    if (rowErrors.length) {
+      errors.push(...rowErrors);
+      continue;
+    }
+
+    if (valorUnit !== Number(product.valorUnit || 0) || precoCusto !== Number(product.precoCusto || 0)) {
+      updates.push({ product, valorUnit, precoCusto });
+    }
+  }
+
+  if (errors.length) throw new Error(errors.slice(0, 8).join(" "));
+  return updates;
+}
+
+function lotPriceHeaderIndex(row) {
+  const headers = row.map((cell) => normalizeHeader(cell));
+  const index = (candidates) => headers.findIndex((name) => candidates.some((candidate) => name === candidate || name.includes(candidate)));
+  return {
+    sku: index(["sku", "codigo sku"]),
+    price: index(["novo preco", "novo valor", "preco novo", "valor novo"]),
+    cost: index(["novo custo", "custo novo", "novo preco custo", "preco custo novo"])
+  };
 }
 
 function buildLotImportTemplateWorkbook() {

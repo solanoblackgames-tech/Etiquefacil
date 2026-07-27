@@ -12,7 +12,8 @@ import {
   lookupBlingProductForTriage,
   revokeBlingIntegrationTokens,
   runBlingHomologation,
-  syncBlingProducts
+  syncBlingProducts,
+  updateExistingBlingProducts
 } from "../src/bling-api.js";
 
 test("Bling token revocation sends refresh and access tokens to OAuth revoke endpoint", async () => {
@@ -502,6 +503,40 @@ test("Bling product sync updates existing supplier cost relationship", async () 
     assert.ok(supplierUpdate);
     assert.equal(supplierUpdate.body.precoCusto, 10);
     assert.equal(supplierUpdate.body.precoCompra, 10);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Bling existing product update does not create missing products", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "SKU-1" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, codigo: "SKU-1" } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await updateExistingBlingProducts({
+      integration: { accessToken: "token" },
+      products: [
+        { sku: "SKU-1", descricao: "Produto existente", valorUnit: 12.5, precoCusto: 4 },
+        { sku: "SKU-2", descricao: "Produto ausente", valorUnit: 22.5, precoCusto: 8 }
+      ]
+    });
+
+    assert.equal(result.updated, 1);
+    assert.equal(result.missing, 1);
+    assert.equal(result.created, 0);
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+    assert.equal(calls.find((call) => call.method === "PUT")?.body.preco, 12.5);
   } finally {
     globalThis.fetch = originalFetch;
   }
