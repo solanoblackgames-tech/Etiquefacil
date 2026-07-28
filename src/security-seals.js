@@ -3,18 +3,39 @@ import QRCode from "qrcode";
 
 const MM_TO_PT = 72 / 25.4;
 const A4 = { width: 210 * MM_TO_PT, height: 297 * MM_TO_PT };
+const DEFAULT_COLUMNS = 5;
+const SECURITY_SEAL_LABEL_HEIGHT = 21 * MM_TO_PT;
 
 export function normalizeSecuritySealOptions(input = {}) {
-  const quantity = clampInteger(input.quantity, 1, 500, 65);
+  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
+  const pages = clampInteger(input.pages, 1, 50, 0);
+  const quantity = pages
+    ? pages * securitySealsPerPage({ columns })
+    : clampInteger(input.quantity, 1, 500, securitySealsPerPage({ columns }));
   const start = clampInteger(input.start, 1, 999999, 1);
-  const columns = clampInteger(input.columns, 3, 8, 5);
   const prefix = normalizeSealPrefix(input.prefix || "LCR");
-  return { quantity, start, columns, prefix };
+  return { quantity, start, columns, prefix, pages: pages || Math.ceil(quantity / securitySealsPerPage({ columns })) };
 }
 
 export function buildSecuritySealCodes(input = {}) {
   const options = normalizeSecuritySealOptions(input);
-  return Array.from({ length: options.quantity }, (_, index) => `${options.prefix}-${String(options.start + index).padStart(6, "0")}`);
+  const quantity = fullPageSealQuantity(options);
+  return Array.from({ length: quantity }, (_, index) => `${options.prefix}-${String(options.start + index).padStart(6, "0")}`);
+}
+
+export function securitySealsPerPage(input = {}) {
+  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
+  const margin = 8 * MM_TO_PT;
+  const gap = 2 * MM_TO_PT;
+  const labelHeight = SECURITY_SEAL_LABEL_HEIGHT;
+  const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
+  return columns * rows;
+}
+
+export function fullPageSealQuantity(input = {}) {
+  const options = normalizeSecuritySealOptions(input);
+  const perPage = securitySealsPerPage(options);
+  return Math.ceil(options.quantity / perPage) * perPage;
 }
 
 export async function buildSecuritySealsPdf(input = {}) {
@@ -32,49 +53,25 @@ export async function buildSecuritySealsPdf(input = {}) {
 
   const margin = 8 * MM_TO_PT;
   const gap = 2 * MM_TO_PT;
-  const headerHeight = 13 * MM_TO_PT;
-  const footerHeight = 5 * MM_TO_PT;
   const usableWidth = A4.width - margin * 2;
   const labelWidth = (usableWidth - gap * (options.columns - 1)) / options.columns;
-  const labelHeight = 22 * MM_TO_PT;
-  const rows = Math.max(1, Math.floor((A4.height - margin * 2 - headerHeight - footerHeight + gap) / (labelHeight + gap)));
+  const labelHeight = SECURITY_SEAL_LABEL_HEIGHT;
+  const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
   const perPage = options.columns * rows;
 
   for (let index = 0; index < codes.length; index += 1) {
     if (index > 0 && index % perPage === 0) doc.addPage();
     const pageIndex = index % perPage;
-    if (pageIndex === 0) drawHeader(doc, options, codes, index, perPage);
 
     const column = pageIndex % options.columns;
     const row = Math.floor(pageIndex / options.columns);
     const x = margin + column * (labelWidth + gap);
-    const y = margin + headerHeight + row * (labelHeight + gap);
+    const y = margin + row * (labelHeight + gap);
     await drawSeal(doc, codes[index], x, y, labelWidth, labelHeight);
-  }
-
-  const pageCount = doc.bufferedPageRange().count;
-  for (let page = 0; page < pageCount; page += 1) {
-    doc.switchToPage(page);
-    doc.fontSize(7).fillColor("#64748b").text(`Pagina ${page + 1}/${pageCount}`, margin, A4.height - margin + 1, {
-      width: A4.width - margin * 2,
-      align: "right"
-    });
   }
 
   doc.end();
   return output;
-}
-
-function drawHeader(doc, options, codes, startIndex, perPage) {
-  const margin = 8 * MM_TO_PT;
-  const first = codes[startIndex];
-  const last = codes[Math.min(codes.length - 1, startIndex + perPage - 1)];
-  doc.fillColor("#17212b").fontSize(13).text("Etiquefacil - Lacres de seguranca", margin, margin, {
-    width: A4.width - margin * 2
-  });
-  doc.fillColor("#64748b").fontSize(8).text(`Lacres avulsos para vinculo manual | QR contem apenas o codigo do lacre | ${first} ate ${last}`, margin, margin + 15, {
-    width: A4.width - margin * 2
-  });
 }
 
 async function drawSeal(doc, code, x, y, width, height) {

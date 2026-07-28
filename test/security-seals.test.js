@@ -1,19 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSecuritySealCodes, buildSecuritySealsPdf, normalizeSecuritySealOptions } from "../src/security-seals.js";
+import { buildSecuritySealCodes, buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions, securitySealsPerPage } from "../src/security-seals.js";
 
 test("security seal options sanitize printable sequence settings", () => {
   assert.deepEqual(normalizeSecuritySealOptions({ quantity: "700", start: "-10", columns: "9", prefix: " lacre loja! " }), {
     quantity: 500,
     start: 1,
     columns: 8,
-    prefix: "LACRE-LOJA"
+    prefix: "LACRE-LOJA",
+    pages: 6
   });
 });
 
-test("security seal codes use prefix and six digit sequence", () => {
-  assert.deepEqual(buildSecuritySealCodes({ quantity: 3, start: 42, prefix: "LCR" }), ["LCR-000042", "LCR-000043", "LCR-000044"]);
+test("security seal codes fill complete A4 pages", () => {
+  const codes = buildSecuritySealCodes({ pages: 1, start: 42, prefix: "LCR" });
+  assert.equal(codes.length, 60);
+  assert.equal(codes[0], "LCR-000042");
+  assert.equal(codes.at(-1), "LCR-000101");
+  assert.equal(securitySealsPerPage({ columns: 5 }), 60);
+  assert.equal(fullPageSealQuantity({ quantity: 65, columns: 5 }), 120);
 });
 
 test("security seal PDF is generated as a PDF buffer", async () => {
