@@ -4,7 +4,6 @@ import QRCode from "qrcode";
 const MM_TO_PT = 72 / 25.4;
 const A4 = { width: 210 * MM_TO_PT, height: 297 * MM_TO_PT };
 const DEFAULT_COLUMNS = 5;
-const SECURITY_SEAL_LABEL_HEIGHT = 21 * MM_TO_PT;
 
 export function normalizeSecuritySealOptions(input = {}) {
   const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
@@ -24,12 +23,8 @@ export function buildSecuritySealCodes(input = {}) {
 }
 
 export function securitySealsPerPage(input = {}) {
-  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
-  const margin = 8 * MM_TO_PT;
-  const gap = 2 * MM_TO_PT;
-  const labelHeight = SECURITY_SEAL_LABEL_HEIGHT;
-  const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
-  return columns * rows;
+  const layout = securitySealLayout(input);
+  return layout.columns * layout.rows;
 }
 
 export function fullPageSealQuantity(input = {}) {
@@ -51,23 +46,18 @@ export async function buildSecuritySealsPdf(input = {}) {
   doc.on("data", (chunk) => chunks.push(chunk));
   doc.font("Helvetica");
 
-  const margin = 8 * MM_TO_PT;
-  const gap = 2 * MM_TO_PT;
-  const usableWidth = A4.width - margin * 2;
-  const labelWidth = (usableWidth - gap * (options.columns - 1)) / options.columns;
-  const labelHeight = SECURITY_SEAL_LABEL_HEIGHT;
-  const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
-  const perPage = options.columns * rows;
+  const layout = securitySealLayout(options);
+  const perPage = layout.columns * layout.rows;
 
   for (let index = 0; index < codes.length; index += 1) {
     if (index > 0 && index % perPage === 0) doc.addPage();
     const pageIndex = index % perPage;
 
-    const column = pageIndex % options.columns;
-    const row = Math.floor(pageIndex / options.columns);
-    const x = margin + column * (labelWidth + gap);
-    const y = margin + row * (labelHeight + gap);
-    await drawSeal(doc, codes[index], x, y, labelWidth, labelHeight);
+    const column = pageIndex % layout.columns;
+    const row = Math.floor(pageIndex / layout.columns);
+    const x = layout.margin + column * (layout.labelWidth + layout.gap);
+    const y = layout.margin + row * (layout.labelHeight + layout.gap);
+    await drawSeal(doc, codes[index], x, y, layout.labelWidth, layout.labelHeight);
   }
 
   doc.end();
@@ -75,25 +65,50 @@ export async function buildSecuritySealsPdf(input = {}) {
 }
 
 async function drawSeal(doc, code, x, y, width, height) {
-  const padding = 3.5 * MM_TO_PT;
-  const qrSize = height - padding * 2;
+  const padding = 3 * MM_TO_PT;
+  const qrSize = Math.min(width - padding * 2, height * 0.58);
   const qrDataUrl = await QRCode.toDataURL(code, { margin: 0, width: 180, errorCorrectionLevel: "M" });
   const qrBuffer = Buffer.from(qrDataUrl.split(",")[1], "base64");
 
   doc.save();
   doc.roundedRect(x, y, width, height, 2).dash(2, { space: 1.5 }).lineWidth(0.45).strokeColor("#94a3b8").stroke();
   doc.undash();
-  doc.image(qrBuffer, x + padding, y + padding, { width: qrSize, height: qrSize });
+  doc.image(qrBuffer, x + (width - qrSize) / 2, y + padding, { width: qrSize, height: qrSize });
 
-  const textX = x + padding + qrSize + 4;
-  const textWidth = width - (textX - x) - padding;
-  doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(8.5).text(code, textX, y + padding + 1, {
+  const textX = x + padding;
+  const textWidth = width - padding * 2;
+  const codeY = y + padding + qrSize + 5;
+  doc.font("Helvetica-Bold").fontSize(fitFontSize(doc, code, textWidth, 8.8, 6.4));
+  doc.fillColor("#0f172a").text(code, textX, codeY, {
     width: textWidth,
-    ellipsis: true
+    align: "center",
+    lineBreak: false
   });
-  doc.fillColor("#334155").font("Helvetica-Bold").fontSize(7).text("LACRE", textX, y + padding + 13, { width: textWidth });
-  doc.fillColor("#64748b").font("Helvetica").fontSize(5.8).text("Triagem", textX, y + padding + 23, { width: textWidth });
+  doc.fillColor("#64748b").font("Helvetica").fontSize(6.2).text("Triagem", textX, codeY + 12, {
+    width: textWidth,
+    align: "center",
+    lineBreak: false
+  });
   doc.restore();
+}
+
+function securitySealLayout(input = {}) {
+  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
+  const margin = 8 * MM_TO_PT;
+  const gap = 2 * MM_TO_PT;
+  const usableWidth = A4.width - margin * 2;
+  const labelWidth = (usableWidth - gap * (columns - 1)) / columns;
+  const labelHeight = labelWidth;
+  const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
+  return { columns, rows, margin, gap, labelWidth, labelHeight };
+}
+
+function fitFontSize(doc, text, maxWidth, maxSize, minSize) {
+  for (let size = maxSize; size >= minSize; size -= 0.2) {
+    doc.fontSize(size);
+    if (doc.widthOfString(text) <= maxWidth) return size;
+  }
+  return minSize;
 }
 
 function normalizeSealPrefix(value) {

@@ -15,11 +15,11 @@ test("security seal options sanitize printable sequence settings", () => {
 
 test("security seal codes fill complete A4 pages", () => {
   const codes = buildSecuritySealCodes({ pages: 1, start: 42, prefix: "LCR" });
-  assert.equal(codes.length, 60);
+  assert.equal(codes.length, 35);
   assert.equal(codes[0], "LCR-000042");
-  assert.equal(codes.at(-1), "LCR-000101");
-  assert.equal(securitySealsPerPage({ columns: 5 }), 60);
-  assert.equal(fullPageSealQuantity({ quantity: 65, columns: 5 }), 120);
+  assert.equal(codes.at(-1), "LCR-000076");
+  assert.equal(securitySealsPerPage({ columns: 5 }), 35);
+  assert.equal(fullPageSealQuantity({ quantity: 65, columns: 5 }), 70);
 });
 
 test("security seal PDF is generated as a PDF buffer", async () => {
