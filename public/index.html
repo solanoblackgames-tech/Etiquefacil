@@ -376,6 +376,21 @@
           <p id="triageMessage" class="message"></p>
         </section>
 
+        <section class="entry-panel triage-seals-panel">
+          <div class="panel-heading">
+            <span class="muted">Lacres avulsos</span>
+            <h3>Gerar A4 de lacres QR</h3>
+          </div>
+          <form id="securitySealsForm" class="security-seals-form">
+            <label>Quantidade<input name="quantity" type="number" min="1" max="500" step="1" value="65" required /></label>
+            <label>Prefixo<input name="prefix" maxlength="12" value="LCR" required /></label>
+            <label>Sequencial inicial<input name="start" type="number" min="1" max="999999" step="1" value="1" required /></label>
+            <label>Colunas<select name="columns"><option value="5" selected>5 colunas</option><option value="4">4 colunas</option><option value="6">6 colunas</option></select></label>
+            <button type="submit">Gerar PDF A4</button>
+          </form>
+          <p class="muted security-seals-note">Cada QR contem somente o codigo do lacre. O vinculo com o produto continua sendo manual quando a triagem decidir usar lacre.</p>
+        </section>
+
         <section class="layout triage-layout">
           <aside class="lot-list">
             <div class="aside-heading">

@@ -341,6 +341,7 @@ function bindEvents() {
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
   $("#triageCreateForm").addEventListener("submit", createTriageItem);
+  $("#securitySealsForm").addEventListener("submit", generateSecuritySealsPdf);
   $("#triageCreateForm input[name='lookupCode']").addEventListener("change", lookupTriageCode);
   $("#triageCreateForm input[name='lookupCode']").addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
@@ -7775,6 +7776,18 @@ async function createTriageItem(event) {
     $("#triageMessage").style.color = "";
     $("#triageMessage").textContent = error.message;
   }
+}
+
+function generateSecuritySealsPdf(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const params = new URLSearchParams();
+  for (const [key, value] of new FormData(form)) {
+    const text = String(value || "").trim();
+    if (text) params.set(key, text);
+  }
+  const url = `/api/triage/security-seals.pdf?${params.toString()}`;
+  window.open(url, "_blank", "noopener");
 }
 
 async function lookupTriageCode() {

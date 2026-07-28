@@ -29,6 +29,7 @@ import {
 import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
+import { buildSecuritySealsPdf, normalizeSecuritySealOptions } from "./security-seals.js";
 import {
   addDiverseLotItem,
   canDeleteTriageItem,
@@ -518,6 +519,20 @@ app.patch("/api/profile/price-display-settings", requireAuth, requireOwner, asyn
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({ items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req))) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/security-seals.pdf", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    const options = normalizeSecuritySealOptions(req.query || {});
+    const buffer = await buildSecuritySealsPdf(options);
+    const firstCode = `${options.prefix}-${String(options.start).padStart(6, "0")}`;
+    const fileName = `lacres-seguranca-${safeFileName(firstCode)}-${options.quantity}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.send(buffer);
   } catch (error) {
     sendError(res, error);
   }
