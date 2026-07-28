@@ -1177,7 +1177,7 @@ h3 {
   align-items: end;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(110px, 0.7fr) minmax(100px, 0.7fr) minmax(140px, 0.8fr) minmax(130px, 0.7fr) auto;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(100px, 0.7fr) minmax(140px, 0.8fr) auto;
 }
 
 .security-seals-note {

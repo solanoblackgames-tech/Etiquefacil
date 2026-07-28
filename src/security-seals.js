@@ -3,17 +3,18 @@ import QRCode from "qrcode";
 
 const MM_TO_PT = 72 / 25.4;
 const A4 = { width: 210 * MM_TO_PT, height: 297 * MM_TO_PT };
-const DEFAULT_COLUMNS = 5;
+const SECURITY_SEAL_SIZE = 15 * MM_TO_PT;
+const SECURITY_SEAL_GAP = 1 * MM_TO_PT;
+const SECURITY_SEAL_MARGIN = 8 * MM_TO_PT;
 
 export function normalizeSecuritySealOptions(input = {}) {
-  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
   const pages = clampInteger(input.pages, 1, 50, 0);
   const quantity = pages
-    ? pages * securitySealsPerPage({ columns })
-    : clampInteger(input.quantity, 1, 500, securitySealsPerPage({ columns }));
+    ? pages * securitySealsPerPage()
+    : clampInteger(input.quantity, 1, 10000, securitySealsPerPage());
   const start = clampInteger(input.start, 1, 999999, 1);
   const prefix = normalizeSealPrefix(input.prefix || "LCR");
-  return { quantity, start, columns, prefix, pages: pages || Math.ceil(quantity / securitySealsPerPage({ columns })) };
+  return { quantity, start, prefix, pages: pages || Math.ceil(quantity / securitySealsPerPage()) };
 }
 
 export function buildSecuritySealCodes(input = {}) {
@@ -65,26 +66,21 @@ export async function buildSecuritySealsPdf(input = {}) {
 }
 
 async function drawSeal(doc, code, x, y, width, height) {
-  const padding = 3 * MM_TO_PT;
-  const qrSize = Math.min(width - padding * 2, height * 0.58);
+  const padding = 1 * MM_TO_PT;
+  const qrSize = 10.2 * MM_TO_PT;
   const qrDataUrl = await QRCode.toDataURL(code, { margin: 0, width: 180, errorCorrectionLevel: "M" });
   const qrBuffer = Buffer.from(qrDataUrl.split(",")[1], "base64");
 
   doc.save();
-  doc.roundedRect(x, y, width, height, 2).dash(2, { space: 1.5 }).lineWidth(0.45).strokeColor("#94a3b8").stroke();
+  doc.rect(x, y, width, height).dash(1.4, { space: 1.2 }).lineWidth(0.35).strokeColor("#94a3b8").stroke();
   doc.undash();
-  doc.image(qrBuffer, x + (width - qrSize) / 2, y + padding, { width: qrSize, height: qrSize });
+  doc.image(qrBuffer, x + (width - qrSize) / 2, y + 1.25 * MM_TO_PT, { width: qrSize, height: qrSize });
 
   const textX = x + padding;
   const textWidth = width - padding * 2;
-  const codeY = y + padding + qrSize + 5;
-  doc.font("Helvetica-Bold").fontSize(fitFontSize(doc, code, textWidth, 8.8, 6.4));
+  const codeY = y + 12.1 * MM_TO_PT;
+  doc.font("Helvetica-Bold").fontSize(fitFontSize(doc, code, textWidth, 4.1, 3.1));
   doc.fillColor("#0f172a").text(code, textX, codeY, {
-    width: textWidth,
-    align: "center",
-    lineBreak: false
-  });
-  doc.fillColor("#64748b").font("Helvetica").fontSize(6.2).text("Triagem", textX, codeY + 12, {
     width: textWidth,
     align: "center",
     lineBreak: false
@@ -92,13 +88,12 @@ async function drawSeal(doc, code, x, y, width, height) {
   doc.restore();
 }
 
-function securitySealLayout(input = {}) {
-  const columns = clampInteger(input.columns, 3, 8, DEFAULT_COLUMNS);
-  const margin = 8 * MM_TO_PT;
-  const gap = 2 * MM_TO_PT;
-  const usableWidth = A4.width - margin * 2;
-  const labelWidth = (usableWidth - gap * (columns - 1)) / columns;
-  const labelHeight = labelWidth;
+function securitySealLayout() {
+  const margin = SECURITY_SEAL_MARGIN;
+  const gap = SECURITY_SEAL_GAP;
+  const labelWidth = SECURITY_SEAL_SIZE;
+  const labelHeight = SECURITY_SEAL_SIZE;
+  const columns = Math.max(1, Math.floor((A4.width - margin * 2 + gap) / (labelWidth + gap)));
   const rows = Math.max(1, Math.floor((A4.height - margin * 2 + gap) / (labelHeight + gap)));
   return { columns, rows, margin, gap, labelWidth, labelHeight };
 }

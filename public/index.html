@@ -385,10 +385,9 @@
             <label>Folhas A4<input name="pages" type="number" min="1" max="50" step="1" value="1" required /></label>
             <label>Prefixo<input name="prefix" maxlength="12" value="LCR" required /></label>
             <label>Sequencial inicial<input name="start" type="number" min="1" max="999999" step="1" value="1" required /></label>
-            <label>Colunas<select name="columns"><option value="5" selected>5 colunas</option><option value="4">4 colunas</option><option value="6">6 colunas</option></select></label>
             <button type="submit">Gerar PDF A4</button>
           </form>
-          <p class="muted security-seals-note">Cada folha sai completa. No layout padrao, 1 A4 gera 35 lacres quase quadrados. O QR contem somente o codigo do lacre.</p>
+          <p class="muted security-seals-note">Cada folha sai completa com lacres de 15mm x 15mm. No layout padrao, 1 A4 gera 204 lacres. O QR contem somente o codigo do lacre.</p>
         </section>
 
         <section class="layout triage-layout">
