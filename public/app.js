@@ -7752,7 +7752,8 @@ async function createTriageItem(event) {
   $("#triageMessage").textContent = "";
   try {
     if (new FormData(form).get("lookupCode") && !new FormData(form).get("descricao") && !new FormData(form).get("sku") && !new FormData(form).get("ean")) {
-      await lookupTriageCode();
+      const lookup = await lookupTriageCode();
+      if (lookup?.item) return;
     }
     const response = await api("/api/triage/items", {
       method: "POST",
@@ -7794,9 +7795,24 @@ async function lookupTriageCode() {
   const form = $("#triageCreateForm");
   const code = String(new FormData(form).get("lookupCode") || "").trim();
   if (!code) return null;
+  $("#triageMessage").style.color = "";
   $("#triageMessage").textContent = "";
   try {
     const response = await api(`/api/triage/lookup?code=${encodeURIComponent(code)}`);
+    if (response.item) {
+      form.elements.namedItem("lookupCode").value = "";
+      renderTriageLookupPreview(null);
+      state.selectedTriageCode = response.item.code;
+      state.triageItems = [response.item, ...state.triageItems.filter((item) => item.code !== response.item.code)]
+        .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+      renderTriageItems();
+      renderTriageDetail(response.item);
+      updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
+      $("#triageMessage").style.color = "#0f766e";
+      $("#triageMessage").textContent = "Etiqueta de triagem encontrada.";
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
+      return { item: response.item };
+    }
     if (!response.product) {
       renderTriageLookupPreview(null, "Produto nao encontrado para esta bipagem.");
       schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);

@@ -1038,6 +1038,25 @@ export async function getTriageItem(userId, code) {
   return item;
 }
 
+export async function lookupTriageItemByScan(userId, value) {
+  await ensureStore();
+  const candidates = triageCodeCandidates(value);
+  if (!candidates.length) return null;
+
+  if (hasPostgres()) {
+    const result = await query(
+      "select * from triage_items where user_id = $1 and upper(code) = any($2::text[]) order by updated_at desc limit 1",
+      [userId, candidates]
+    );
+    return result.rows[0] ? triageItemFromRow(result.rows[0]) : null;
+  }
+
+  const db = await readDb();
+  return (db.triageItems || [])
+    .filter((item) => item.userId === userId && candidates.includes(normalizeCode(item.code)))
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
+}
+
 export async function createTriageItem({ userId, createdByUserId, operatorUserId = null, payload = {} }) {
   await ensureStore();
   const now = new Date().toISOString();
@@ -7369,6 +7388,38 @@ function optionalNum(value) {
 
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function triageCodeCandidates(value) {
+  const raw = String(value || "").trim();
+  const candidates = [];
+  const addCandidate = (candidate) => {
+    const normalized = normalizeCode(candidate);
+    if (normalized && !candidates.includes(normalized)) candidates.push(normalized);
+  };
+
+  addCandidate(raw);
+  try {
+    const url = new URL(raw);
+    const parts = url.pathname.split("/").filter(Boolean).map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+    const triageIndex = parts.findIndex((part) => normalizeCode(part) === "TRIAGEM");
+    if (triageIndex >= 0) {
+      const viewIndex = normalizeCode(parts[triageIndex + 1]) === "VISUALIZAR" ? triageIndex + 2 : triageIndex + 1;
+      addCandidate(parts[viewIndex]);
+    }
+  } catch {
+    // Leitores podem enviar apenas o codigo, sem formato de URL.
+  }
+
+  const match = raw.match(/LAB-\d{8}-\d{6}/i);
+  if (match) addCandidate(match[0]);
+  return candidates;
 }
 
 function normalizeSearchText(value) {

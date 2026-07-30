@@ -90,6 +90,7 @@ import {
   listRejectedCatalogRequestsForAdmin,
   listBlingIntegrationsForAdmin,
   listUsersForAdmin,
+  lookupTriageItemByScan,
   lookupTriageProduct,
   recordOperatorActivity,
   receivePublicTransferLotScan,
@@ -563,6 +564,13 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
   try {
     const userId = workspaceUserId(req);
     const code = req.query.code || "";
+    const triageItem = await lookupTriageItemByScan(userId, code);
+    if (triageItem) {
+      return res.json({
+        item: await withTriageQrData(req, triageItem, { includeHistory: isOwnerSession(req) })
+      });
+    }
+
     const integration = await getUserBlingCredentials(userId);
     if (integration?.accessToken && integration?.refreshToken) {
       const blingApp = await getBlingAppCredentials(userId);

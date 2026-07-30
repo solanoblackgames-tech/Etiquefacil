@@ -150,3 +150,54 @@ test("operator can delete only their last five generated triage labels", async (
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("lookupTriageItemByScan resolves triage label code and status URL", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-lookup-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-lookup`;
+    const { lookupTriageItemByScan, writeDb } = await import(storeUrl.href);
+    const db = emptyDb();
+    db.triageItems.push({
+      id: "triage-1",
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      operatorUserId: null,
+      code: "LAB-20260727-000123",
+      productCode: "SKU-123",
+      sku: "SKU-123",
+      ean: "",
+      asin: "",
+      codigoBling2: "",
+      descricao: "Produto em triagem",
+      serial: "",
+      status: "aguardando_teste",
+      destination: "",
+      diagnosis: "",
+      diagnosisPhoto: "",
+      createdAt: "2026-07-27T10:00:00.000Z",
+      updatedAt: "2026-07-27T10:00:00.000Z",
+      diagnosedAt: null
+    });
+    await writeDb(db);
+
+    const byCode = await lookupTriageItemByScan("owner-1", "lab-20260727-000123");
+    const byUrl = await lookupTriageItemByScan("owner-1", "https://etiquefacil.test/triagem/visualizar/LAB-20260727-000123");
+    const bySku = await lookupTriageItemByScan("owner-1", "SKU-123");
+
+    assert.equal(byCode.code, "LAB-20260727-000123");
+    assert.equal(byUrl.code, "LAB-20260727-000123");
+    assert.equal(bySku, null);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
