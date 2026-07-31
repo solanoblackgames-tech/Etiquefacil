@@ -62,6 +62,7 @@ const CONFERENCE_FIELD_DEFAULTS = Object.freeze({
   ean: { enabled: true, required: false },
   link: { enabled: true, required: false },
   photo: { enabled: true, required: false },
+  expirationDate: { enabled: false, required: false },
   boxDimensions: { enabled: false, required: false },
   weight: { enabled: false, required: false },
   stockLocation: { enabled: false, required: false, printOnLabel: false },
@@ -1947,15 +1948,16 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
             preco_custo = $7,
             ncm = $8,
             ean = $9,
-            link = $10,
-            foto = $11,
-            altura_caixa = $12,
-            largura_caixa = $13,
-            comprimento_caixa = $14,
-            peso_caixa = $15,
-            localizacao_estoque = $16,
-            categoria = $17,
-            subcategoria = $18,
+            data_validade = $10,
+            link = $11,
+            foto = $12,
+            altura_caixa = $13,
+            largura_caixa = $14,
+            comprimento_caixa = $15,
+            peso_caixa = $16,
+            localizacao_estoque = $17,
+            categoria = $18,
+            subcategoria = $19,
             bling_alert_message = case
               when coalesce(ncm, '') <> $8 or coalesce(ean, '') <> $9 then ''
               else bling_alert_message
@@ -1979,6 +1981,7 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
         normalized.precoCusto,
         normalized.ncm,
         normalized.ean,
+        normalized.dataValidade,
         normalized.link,
         normalized.foto,
         normalized.alturaCaixa || null,
@@ -3245,6 +3248,7 @@ async function ensurePgStore() {
       subcategoria text not null default '',
       ncm text not null default '',
       ean text not null default '',
+      data_validade text not null default '',
       link text not null default '',
       foto text not null default '',
       altura_caixa numeric,
@@ -3268,6 +3272,7 @@ async function ensurePgStore() {
       subcategoria text not null default '',
       ncm text not null default '',
       ean text not null default '',
+      data_validade text not null default '',
       link text not null default '',
       foto text not null default '',
       altura_caixa numeric,
@@ -3461,6 +3466,7 @@ async function ensurePgStore() {
       subcategoria text not null default '',
       ncm text not null default '',
       ean text not null default '',
+      data_validade text not null default '',
       link text not null default '',
       foto text not null default '',
       altura_caixa numeric,
@@ -3493,6 +3499,7 @@ async function ensurePgStore() {
       subcategoria text not null default '',
       ncm text not null default '',
       ean text not null default '',
+      data_validade text not null default '',
       link text not null default '',
       foto text not null default '',
       altura_caixa numeric,
@@ -3538,6 +3545,7 @@ async function ensurePgStore() {
     alter table lots add column if not exists no_sheet_suggestions jsonb not null default '[]'::jsonb;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists ncm text not null default '';
+    alter table products add column if not exists data_validade text not null default '';
     alter table products add column if not exists link text not null default '';
     alter table products add column if not exists foto text not null default '';
     alter table products add column if not exists created_by_user_id text references users(id) on delete set null;
@@ -3551,10 +3559,12 @@ async function ensurePgStore() {
     alter table products add column if not exists bling_alert_dismissed boolean not null default false;
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists ncm text not null default '';
+    alter table catalog_products add column if not exists data_validade text not null default '';
     alter table catalog_products add column if not exists link text not null default '';
     alter table catalog_products add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists ean text not null default '';
     alter table catalog_requests add column if not exists ncm text not null default '';
+    alter table catalog_requests add column if not exists data_validade text not null default '';
     alter table catalog_requests add column if not exists link text not null default '';
     alter table catalog_requests add column if not exists foto text not null default '';
     alter table catalog_requests add column if not exists scope text not null default 'individual';
@@ -3587,6 +3597,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists scope text not null default 'individual';
     alter table catalog_rejected_requests add column if not exists alert_message text not null default '';
     alter table catalog_rejected_requests add column if not exists ncm text not null default '';
+    alter table catalog_rejected_requests add column if not exists data_validade text not null default '';
     alter table catalog_rejected_requests add column if not exists altura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists largura_caixa numeric;
     alter table catalog_rejected_requests add column if not exists comprimento_caixa numeric;
@@ -3924,7 +3935,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -3938,6 +3949,7 @@ async function writePgDb(db) {
         product.subcategoria || "",
         product.ncm || "",
         product.ean || "",
+        product.dataValidade || "",
         product.link || "",
         product.foto || "",
         product.alturaCaixa || null,
@@ -4094,7 +4106,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -4110,6 +4122,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.subcategoria || "",
       product.ncm || "",
       product.ean || "",
+      product.dataValidade || "",
       product.link || "",
       product.foto || "",
       product.alturaCaixa || null,
@@ -4147,7 +4160,7 @@ async function insertCatalogProductRows(client, products = []) {
   await insertRows(
     client,
     "catalog_products",
-    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ncm", "ean", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "created_at", "updated_at"],
+    ["id", "codigo_ml", "descricao", "valor_unit", "preco_custo", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "created_at", "updated_at"],
     products.map((product) => [
       product.id,
       product.codigoMl,
@@ -4158,6 +4171,7 @@ async function insertCatalogProductRows(client, products = []) {
       product.subcategoria || "",
       product.ncm || "",
       product.ean || "",
+      product.dataValidade || "",
       product.link || "",
       product.foto || "",
       product.alturaCaixa || null,
@@ -4392,6 +4406,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       "subcategoria",
       "ncm",
       "ean",
+      "data_validade",
       "link",
       "foto",
       "altura_caixa",
@@ -4422,6 +4437,7 @@ async function insertCatalogRequestRows(client, requests = []) {
       request.subcategoria || "",
       request.ncm || "",
       request.ean || "",
+      request.dataValidade || "",
       request.link || "",
       request.foto || "",
       request.alturaCaixa || null,
@@ -4460,6 +4476,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       "subcategoria",
       "ncm",
       "ean",
+      "data_validade",
       "link",
       "foto",
       "altura_caixa",
@@ -4491,6 +4508,7 @@ async function insertCatalogRejectedRequestRows(client, requests = []) {
       request.subcategoria || "",
       request.ncm || "",
       request.ean || "",
+      request.dataValidade || "",
       request.link || "",
       request.foto || "",
       request.alturaCaixa || null,
@@ -5345,6 +5363,7 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
         cp.subcategoria as catalog__subcategoria,
         cp.ncm as catalog__ncm,
         cp.ean as catalog__ean,
+        cp.data_validade as catalog__data_validade,
         cp.link as catalog__link,
         cp.foto as catalog__foto
       from products p
@@ -5372,6 +5391,7 @@ async function findPgProductHistory(client, userId, currentLotId, codigoMl, limi
       subcategoria: row.catalog__subcategoria || "",
       ncm: row.catalog__ncm || "",
       ean: row.catalog__ean || "",
+      dataValidade: row.catalog__data_validade || "",
       link: row.catalog__link || "",
       foto: row.catalog__foto || "",
       lot: lotFromPrefixedRow(row, "lot__")
@@ -5491,8 +5511,8 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
       const selected = selectCatalogApprovalPayload(request, options.selectedCheckId);
       await client.query(
         `
-          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ncm, ean, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, localizacao_estoque, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
+          insert into catalog_products (id, codigo_ml, descricao, valor_unit, preco_custo, categoria, subcategoria, ncm, ean, data_validade, link, foto, altura_caixa, largura_caixa, comprimento_caixa, peso_caixa, localizacao_estoque, created_at, updated_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), now())
           on conflict (codigo_ml) do update set
             descricao = excluded.descricao,
             valor_unit = excluded.valor_unit,
@@ -5501,6 +5521,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             subcategoria = excluded.subcategoria,
             ncm = excluded.ncm,
             ean = excluded.ean,
+            data_validade = excluded.data_validade,
             link = excluded.link,
             foto = excluded.foto,
             altura_caixa = excluded.altura_caixa,
@@ -5510,7 +5531,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
             localizacao_estoque = excluded.localizacao_estoque,
             updated_at = now()
         `,
-        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ncm || "", selected.ean || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null, selected.localizacaoEstoque || ""]
+        [randomUUID(), selected.codigoMl, selected.descricao, selected.valorUnit, selected.precoCusto || 0, selected.categoria || "", selected.subcategoria || "", selected.ncm || "", selected.ean || "", selected.dataValidade || "", selected.link || "", selected.foto || "", selected.alturaCaixa || null, selected.larguraCaixa || null, selected.comprimentoCaixa || null, selected.pesoCaixa || null, selected.localizacaoEstoque || ""]
       );
       await client.query("delete from catalog_requests where id = $1", [requestId]);
     } else if (action === "reject") {
@@ -5548,6 +5569,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
     subcategoria: history.subcategoria || "",
     ncm: history.ncm || "",
     ean: history.ean || "",
+    dataValidade: history.dataValidade || "",
     link: history.link || "",
     foto: history.foto || "",
     alturaCaixa: history.alturaCaixa || "",
@@ -5591,6 +5613,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     subcategoria: history.subcategoria || "",
     ncm: history.ncm || "",
     ean: history.ean || "",
+    dataValidade: history.dataValidade || "",
     link: history.link || "",
     foto: history.foto || "",
     alturaCaixa: history.alturaCaixa || "",
@@ -5669,6 +5692,7 @@ function productSuggestionFromProduct(product) {
     categoria: product.categoria || "",
     subcategoria: product.subcategoria || "",
     ean: product.ean || "",
+    dataValidade: product.dataValidade || "",
     link: product.link || "",
     foto: product.foto || "",
     alturaCaixa: product.alturaCaixa || "",
@@ -5693,6 +5717,7 @@ function normalizeManualProduct(input = {}, codigoMl) {
     subcategoria: String(input.subcategoria || "").trim(),
     ncm: normalizeNcmText(input.ncm),
     ean: String(input.ean || "").trim(),
+    dataValidade: normalizeDateText(input.dataValidade ?? input.data_validade ?? input.validade),
     link: String(input.link || "").trim(),
     foto: String(foto || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
@@ -5722,6 +5747,7 @@ function normalizeEditableProduct(input = {}) {
     subcategoria: String(input.subcategoria || "").trim(),
     ncm: normalizeNcmText(input.ncm),
     ean: String(input.ean || "").trim(),
+    dataValidade: normalizeDateText(input.dataValidade ?? input.data_validade ?? input.validade),
     link: String(input.link || "").trim(),
     foto: String(foto || "").trim(),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
@@ -5762,6 +5788,7 @@ function buildCatalogRequest({ userId, createdByUserId = userId, operatorUserId 
     subcategoria: payload.subcategoria || product.subcategoria || "",
     ncm: normalizeNcmText(payload.ncm ?? product.ncm),
     ean: payload.ean || product.ean || "",
+    dataValidade: normalizeDateText(payload.dataValidade ?? product.dataValidade),
     link: payload.link || product.link || "",
     foto: payload.foto || product.foto || "",
     alturaCaixa: optionalNum(payload.alturaCaixa ?? product.alturaCaixa),
@@ -5916,6 +5943,7 @@ function buildCatalogDoubleCheck(request) {
     subcategoria: request.subcategoria || "",
     ncm: request.ncm || "",
     ean: request.ean || "",
+    dataValidade: request.dataValidade || "",
     link: request.link || "",
     foto: request.foto || "",
     alturaCaixa: request.alturaCaixa || "",
@@ -5955,7 +5983,9 @@ export function buildRejectedCatalogRequest(request, rejectedAt) {
     precoCusto: roundMoney(request.precoCusto || 0),
     categoria: request.categoria || "",
     subcategoria: request.subcategoria || "",
+    ncm: request.ncm || "",
     ean: request.ean || "",
+    dataValidade: request.dataValidade || "",
     link: request.link || "",
     foto: request.foto || "",
     alturaCaixa: request.alturaCaixa || "",
@@ -6035,6 +6065,7 @@ function upsertCatalogProduct(db, request) {
     subcategoria: request.subcategoria || "",
     ncm: request.ncm || "",
     ean: request.ean || "",
+    dataValidade: request.dataValidade || "",
     link: request.link || "",
     foto: request.foto || "",
     alturaCaixa: request.alturaCaixa || "",
@@ -6268,6 +6299,7 @@ function normalizeCatalogProducts(products, now) {
       categoria: String(input.categoria || "").trim(),
       subcategoria: String(input.subcategoria || "").trim(),
       ean: String(input.ean || "").trim(),
+      dataValidade: normalizeDateText(input.dataValidade ?? input.data_validade ?? input.validade),
       link: String(input.link || "").trim(),
       foto: String(input.foto || "").trim(),
       createdAt: input.createdAt || now,
@@ -6421,6 +6453,7 @@ function productFromRow(row) {
     subcategoria: row.subcategoria || "",
     ncm: row.ncm || "",
     ean: row.ean || "",
+    dataValidade: row.data_validade || "",
     link: row.link || "",
     foto: row.foto || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
@@ -6894,6 +6927,7 @@ function catalogProductFromRow(row) {
     subcategoria: row.subcategoria || "",
     ncm: row.ncm || "",
     ean: row.ean || "",
+    dataValidade: row.data_validade || "",
     link: row.link || "",
     foto: row.foto || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
@@ -6924,6 +6958,7 @@ function catalogRequestFromRow(row) {
     subcategoria: row.subcategoria || "",
     ncm: row.ncm || "",
     ean: row.ean || "",
+    dataValidade: row.data_validade || "",
     link: row.link || "",
     foto: row.foto || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
@@ -6959,6 +6994,7 @@ function catalogRejectedRequestFromRow(row) {
     subcategoria: row.subcategoria || "",
     ncm: row.ncm || "",
     ean: row.ean || "",
+    dataValidade: row.data_validade || "",
     link: row.link || "",
     foto: row.foto || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
@@ -7625,6 +7661,19 @@ export function normalizeConferenceSettings(input = {}) {
 
 function normalizeNcmText(value) {
   return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function normalizeDateText(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const text = String(value).trim();
+  if (!text) return "";
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const br = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (!br) return text;
+  const year = br[3].length === 2 ? `20${br[3]}` : br[3];
+  return `${year}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}`;
 }
 
 function normalizeNcmByCategory(rows = []) {

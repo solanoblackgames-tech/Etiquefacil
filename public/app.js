@@ -79,6 +79,7 @@ const CONFERENCE_FIELDS = [
   { key: "ean", label: "EAN", formNames: ["ean"] },
   { key: "link", label: "Link do produto", formNames: ["link"] },
   { key: "photo", label: "Foto do produto", formNames: ["foto"] },
+  { key: "expirationDate", label: "Validade", formNames: ["dataValidade"] },
   { key: "boxDimensions", label: "Dimensao da caixa", formNames: ["alturaCaixa", "larguraCaixa", "comprimentoCaixa"] },
   { key: "weight", label: "Peso", formNames: ["pesoCaixa"] },
   { key: "stockLocation", label: "Localizacao no estoque", formNames: ["localizacaoEstoque"], printOption: true },
@@ -126,6 +127,7 @@ function defaultConferenceSettings() {
       ean: { enabled: true, required: false },
       link: { enabled: true, required: false },
       photo: { enabled: true, required: false },
+      expirationDate: { enabled: false, required: false },
       boxDimensions: { enabled: false, required: false },
       weight: { enabled: false, required: false },
       stockLocation: { enabled: false, required: false, printOnLabel: false },
@@ -929,6 +931,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
               ${ncmOptions.map((row) => `<option value="${escapeHtml(row.ncm)}">${escapeHtml(row.category)}</option>`).join("")}
             </datalist>
           </label>` : ""}
+          ${isConferenceFieldEnabled("expirationDate") ? `<label>Validade
+            <input id="manualProductDataValidade" name="dataValidade" type="date" placeholder="${isConferenceFieldRequired("expirationDate") ? "Obrigatorio" : "Opcional"}" />
+          </label>` : ""}
           ${showBoxDimensions
       ? `
           <label>Altura caixa (cm)
@@ -962,6 +967,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const categoria = $("#manualProductCategoria");
     const subcategoria = $("#manualProductSubcategoria");
     const ncm = $("#manualProductNcm");
+    const dataValidade = $("#manualProductDataValidade");
     ean.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("ean"));
     link.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("link"));
     photo.closest("label")?.classList.toggle("hidden", !isConferenceFieldEnabled("photo"));
@@ -992,6 +998,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     if (categoria) categoria.value = initialValues.categoria || "";
     if (subcategoria) subcategoria.value = initialValues.subcategoria || "";
     if (ncm) ncm.value = initialValues.ncm || ncmForCategory(initialValues.categoria);
+    if (dataValidade) dataValidade.value = initialValues.dataValidade || "";
     if (alturaCaixa) alturaCaixa.value = initialValues.alturaCaixa || "";
     if (larguraCaixa) larguraCaixa.value = initialValues.larguraCaixa || "";
     if (comprimentoCaixa) comprimentoCaixa.value = initialValues.comprimentoCaixa || "";
@@ -1068,6 +1075,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         if (categoria && suggestion.categoria) categoria.value = suggestion.categoria;
         if (subcategoria && suggestion.subcategoria) subcategoria.value = suggestion.subcategoria;
         if (ncm && !ncm.value && suggestion.categoria) ncm.value = ncmForCategory(suggestion.categoria);
+        if (dataValidade && suggestion.dataValidade) dataValidade.value = suggestion.dataValidade;
         if (alturaCaixa && suggestion.alturaCaixa) alturaCaixa.value = suggestion.alturaCaixa;
         if (larguraCaixa && suggestion.larguraCaixa) larguraCaixa.value = suggestion.larguraCaixa;
         if (comprimentoCaixa && suggestion.comprimentoCaixa) comprimentoCaixa.value = suggestion.comprimentoCaixa;
@@ -1132,6 +1140,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
       if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
       if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
+      if (isConferenceFieldRequired("expirationDate") && requireTextField(dataValidade, "Informe a validade.", error)) return;
       if (isConferenceFieldRequired("boxDimensions")) {
         if (requireTextField(alturaCaixa, "Informe a altura da caixa.", error)) return;
         if (requireTextField(larguraCaixa, "Informe a largura da caixa.", error)) return;
@@ -1146,6 +1155,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
         categoria: categoria ? categoria.value.trim() : "",
         subcategoria: subcategoria ? subcategoria.value.trim() : "",
         ncm: ncm ? normalizeNcmText(ncm.value) : ncmForCategory(categoria?.value),
+        dataValidade: dataValidade ? dataValidade.value.trim() : "",
         ean: isConferenceFieldEnabled("ean") ? ean.value.trim() : "",
         alturaCaixa: alturaCaixa ? alturaCaixa.value.trim() : "",
         larguraCaixa: larguraCaixa ? larguraCaixa.value.trim() : "",
@@ -1769,6 +1779,7 @@ function openProductEditModal(product, options = {}) {
     const categoria = $("#productEditCategoria");
     const subcategoria = $("#productEditSubcategoria");
     const ncm = $("#productEditNcm");
+    const dataValidade = $("#productEditDataValidade");
     const alturaCaixa = $("#productEditAlturaCaixa");
     const larguraCaixa = $("#productEditLarguraCaixa");
     const comprimentoCaixa = $("#productEditComprimentoCaixa");
@@ -1784,6 +1795,7 @@ function openProductEditModal(product, options = {}) {
       [categoria, isConferenceFieldEnabled("category")],
       [subcategoria, isConferenceFieldEnabled("subcategory")],
       [ncm, isConferenceFieldEnabled("ncm")],
+      [dataValidade, isConferenceFieldEnabled("expirationDate")],
       [link, isConferenceFieldEnabled("link")],
       [photo, isConferenceFieldEnabled("photo")],
       [alturaCaixa, includeLogisticsFields && isConferenceFieldEnabled("boxDimensions")],
@@ -1822,6 +1834,7 @@ function openProductEditModal(product, options = {}) {
     categoria.value = product.categoria || "";
     subcategoria.value = product.subcategoria || "";
     ncm.value = product.ncm || ncmForCategory(product.categoria);
+    dataValidade.value = product.dataValidade || "";
     alturaCaixa.value = product.alturaCaixa || "";
     larguraCaixa.value = product.larguraCaixa || "";
     comprimentoCaixa.value = product.comprimentoCaixa || "";
@@ -1862,6 +1875,7 @@ function openProductEditModal(product, options = {}) {
       if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
       if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
       if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
+      if (isConferenceFieldRequired("expirationDate") && requireTextField(dataValidade, "Informe a validade.", error)) return;
       if (isConferenceFieldRequired("link") && requireTextField(link, "Informe o link do produto.", error)) return;
       if (isConferenceFieldRequired("photo") && requireTextField(photo, "Informe a URL/foto do produto.", error)) return;
       if (includeLogisticsFields && isConferenceFieldRequired("boxDimensions")) {
@@ -1883,6 +1897,7 @@ function openProductEditModal(product, options = {}) {
         categoria: isConferenceFieldEnabled("category") ? selectedCategory : product.categoria || "",
         subcategoria: isConferenceFieldEnabled("subcategory") ? subcategoria.value.trim() : product.subcategoria || "",
         ncm: isConferenceFieldEnabled("ncm") ? normalizeNcmText(ncmValue) : product.ncm || mappedNcm || "",
+        dataValidade: isConferenceFieldEnabled("expirationDate") ? dataValidade.value.trim() : product.dataValidade || "",
         alturaCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? alturaCaixa.value.trim() : product.alturaCaixa || "",
         larguraCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? larguraCaixa.value.trim() : product.larguraCaixa || "",
         comprimentoCaixa: includeLogisticsFields && isConferenceFieldEnabled("boxDimensions") ? comprimentoCaixa.value.trim() : product.comprimentoCaixa || "",

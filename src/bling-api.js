@@ -117,6 +117,7 @@ export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFi
     gtin: ean,
     gtinEmbalagem: ean,
     marca: product.codigoMl || "",
+    dataValidade: product.dataValidade || "",
     linkExterno: product.link || "",
     midia,
     descricaoCurta: product.descricao || "",
@@ -476,6 +477,7 @@ export async function updateBlingProductFromTriage({ integration, item, saveInte
     gtin: item.ean || product.gtin || "",
     gtinEmbalagem: item.ean || product.gtinEmbalagem || product.gtin || "",
     marca: item.asin || product.marca || "",
+    dataValidade: item.dataValidade || product.dataValidade || "",
     pesoLiquido: item.pesoCaixa || product.pesoLiquido || product.pesoBruto || "",
     pesoBruto: item.pesoCaixa || product.pesoBruto || product.pesoLiquido || "",
     dimensoes: buildBlingDimensionsPayload(item) || product.dimensoes

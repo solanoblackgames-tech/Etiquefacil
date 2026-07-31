@@ -10,6 +10,7 @@ const CATALOG_ALIASES = {
   subcategoria: ["Subcategoria", "Sub categoria"],
   ncm: ["NCM", "N.C.M.", "Codigo NCM", "Codigo fiscal"],
   ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
+  dataValidade: ["Data Validade", "Validade", "Data de validade"],
   foto: ["URL Imagens Externas", "URL da imagem", "URL/foto do produto", "Foto", "Imagem"],
   link: ["Link Externo", "Link do produto", "URL do produto", "Link"]
 };
@@ -46,6 +47,7 @@ export function parseCatalogRows(rows) {
       subcategoria: String(valueAt(row, index, "subcategoria") ?? "").trim(),
       ncm: String(valueAt(row, index, "ncm") ?? "").replace(/\D/g, "").slice(0, 8),
       ean: String(valueAt(row, index, "ean") ?? "").trim(),
+      dataValidade: formatDateValue(valueAt(row, index, "dataValidade")),
       foto: String(valueAt(row, index, "foto") ?? "").trim(),
       link: String(valueAt(row, index, "link") ?? "").trim()
     });
@@ -73,4 +75,16 @@ function buildCatalogColumnIndex(header) {
 function valueAt(row, index, key) {
   const position = index.get(key);
   return position === undefined ? "" : row[position];
+}
+
+function formatDateValue(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const br = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (!br) return text;
+  const year = br[3].length === 2 ? `20${br[3]}` : br[3];
+  return `${year}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}`;
 }

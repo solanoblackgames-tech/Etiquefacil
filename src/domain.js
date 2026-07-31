@@ -112,6 +112,7 @@ const COLUMN_ALIASES = {
   subcategoria: ["Subcategoria"],
   ncm: ["NCM", "N.C.M.", "Codigo NCM", "Codigo fiscal"],
   ean: ["EAN", "GTIN/EAN", "GTIN", "Codigo de barras", "CÃ³digo de barras"],
+  dataValidade: ["Data Validade", "Validade", "Data de validade"],
   foto: ["URL Imagens Externas", "URL da imagem", "URL/foto do produto", "Foto", "Imagem"],
   link: ["Link Externo", "Link do produto", "URL do produto", "Link"],
   enderecoWms: ["Endereço WMS", "Endereco WMS"],
@@ -125,6 +126,21 @@ export function normalizeKey(value) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function formatDateCell(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  if (!text) return "";
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const br = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (!br) return text;
+  const year = br[3].length === 2 ? `20${br[3]}` : br[3];
+  return `${year}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}`;
 }
 
 export function parseNumber(value) {
@@ -213,6 +229,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     const subcategoria = String(get(row, "subcategoria") ?? "").trim();
     const ncm = String(get(row, "ncm") ?? "").replace(/\D/g, "").slice(0, 8);
     const ean = String(get(row, "ean") ?? "").trim();
+    const dataValidade = formatDateCell(get(row, "dataValidade"));
     const foto = String(get(row, "foto") ?? "").trim();
     const link = String(get(row, "link") ?? "").trim();
 
@@ -230,6 +247,7 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
         subcategoria,
         ncm,
         ean,
+        dataValidade,
         foto,
         link,
         origem: "planilha",
@@ -335,6 +353,7 @@ export function buildBlingCsv(products, lot) {
     row["Marca"] = product.codigoMl;
     row["GTIN/EAN"] = product.ean || "";
     row["GTIN/EAN da Embalagem"] = product.ean || "";
+    row["Data Validade"] = product.dataValidade || "";
     row["URL Imagens Externas"] = product.foto || "";
     row["Link Externo"] = product.link || "";
     row["Estoque máximo"] = "0";

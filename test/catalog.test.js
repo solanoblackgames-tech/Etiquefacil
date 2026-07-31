@@ -18,6 +18,7 @@ test("parseCatalogRows imports Bling-like catalog using Marca as ML code", () =>
       subcategoria: "",
       ncm: "",
       ean: "",
+      dataValidade: "",
       foto: "",
       link: ""
     }
