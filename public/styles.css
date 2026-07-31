@@ -3238,12 +3238,13 @@ h3 {
 }
 
 .transfer-shell {
+  align-content: start;
   display: grid;
   flex: 1 1 auto;
   gap: 12px;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
   padding: 14px 8px 16px;
   width: 100%;
 }
