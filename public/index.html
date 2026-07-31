@@ -338,6 +338,16 @@
           </form>
           <p id="transferMessage" class="message"></p>
         </section>
+        <section class="entry-panel transfer-search-panel hidden">
+          <div class="panel-heading">
+            <span class="muted">Localizar produto</span>
+            <h3>Buscar nas remessas de transferencia</h3>
+          </div>
+          <label>Produto, SKU, Codigo ML ou EAN
+            <input id="transferProductSearch" type="search" placeholder="Ex: Lacoste, PRI2907L0280, MLPRI..." autocomplete="off" />
+          </label>
+          <div id="transferProductSearchResults" class="transfer-search-results"></div>
+        </section>
         <section class="layout transfer-layout">
           <aside class="lot-list">
             <div class="aside-heading">

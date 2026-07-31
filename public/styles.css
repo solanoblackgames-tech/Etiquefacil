@@ -2098,6 +2098,11 @@ h3 {
   border-color: #99f6e4;
 }
 
+.lot-card.transfer-search-match {
+  border-color: #f59e0b;
+  box-shadow: inset 4px 0 0 #f59e0b, 0 10px 24px rgb(245 158 11 / 0.14);
+}
+
 .muted {
   color: var(--muted);
   font-size: 13px;
@@ -2630,6 +2635,25 @@ h3 {
 
 .code-cell strong {
   display: block;
+}
+
+.item-description {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.product-transfer-refs {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  color: #9a3412;
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 6px;
+  width: fit-content;
 }
 
 .badge {
@@ -3217,7 +3241,7 @@ h3 {
   display: grid;
   flex: 1 1 auto;
   gap: 12px;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
   padding: 14px 8px 16px;
@@ -3232,6 +3256,73 @@ h3 {
 
 .transfer-create-panel .panel-heading {
   margin-bottom: 0;
+}
+
+.transfer-search-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.transfer-search-panel .panel-heading {
+  margin-bottom: 0;
+}
+
+.transfer-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-search-summary {
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.transfer-search-result {
+  align-items: start;
+  background: #f8fbfc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.transfer-search-result strong,
+.transfer-search-result span,
+.transfer-search-items span {
+  overflow-wrap: anywhere;
+}
+
+.transfer-search-result > div:first-child span {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.transfer-search-items {
+  display: grid;
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.transfer-search-items span {
+  background: #ffffff;
+  border: 1px solid #e5edf1;
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+}
+
+.transfer-search-items small,
+.transfer-search-items em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .transfer-form {

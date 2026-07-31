@@ -16,6 +16,7 @@ const state = {
   operatorDateFilter: null,
   transferLots: [],
   selectedTransferLotId: null,
+  transferSearchQuery: "",
   triageItems: [],
   triageFilters: {
     operator: "",
@@ -339,6 +340,8 @@ function bindEvents() {
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#searchForm").addEventListener("submit", searchMl);
   $("#transferLotForm").addEventListener("submit", createTransferLot);
+  $("#transferProductSearch")?.addEventListener("input", handleTransferProductSearchInput);
+  $("#transferProductSearchResults")?.addEventListener("click", handleTransferProductSearchClick);
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
@@ -2145,6 +2148,7 @@ function applyUserPermissions(user) {
   document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isOwnerUser());
   if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
+  document.querySelector(".transfer-search-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
   updateBlingGlobalAlert();
 }
@@ -5171,6 +5175,7 @@ async function loadTransferLots(selectId = state.selectedTransferLotId) {
     const response = await api("/api/transfer-lots");
     state.transferLots = response.lots || [];
     renderTransferLots();
+    renderTransferProductSearchResults();
     if (selectId && state.transferLots.some((lot) => lot.id === selectId)) {
       await selectTransferLot(selectId);
     } else if (!selectId) {
@@ -5256,8 +5261,9 @@ function renderTransferLots() {
     wrapper.innerHTML = '<p class="muted">Nenhum lote de transferencia criado.</p>';
     return;
   }
+  const matches = new Set(transferProductSearchMatches().map((match) => match.lot.id));
   wrapper.innerHTML = state.transferLots.map((lot) => `
-    <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""} ${isTransferReleasedForStore(lot.status) ? "transfer-released" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
+    <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""} ${isTransferReleasedForStore(lot.status) ? "transfer-released" : ""} ${matches.has(lot.id) ? "transfer-search-match" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
       <div class="transfer-card-title">
         <strong>${escapeHtml(lot.name)}</strong>
         ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
@@ -5269,6 +5275,99 @@ function renderTransferLots() {
       <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
     </article>
   `).join("");
+}
+
+function handleTransferProductSearchInput(event) {
+  state.transferSearchQuery = String(event.currentTarget.value || "");
+  renderTransferLots();
+  renderTransferProductSearchResults();
+}
+
+async function handleTransferProductSearchClick(event) {
+  const button = event.target.closest("[data-open-transfer-match]");
+  if (!button) return;
+  await selectTransferLot(button.dataset.openTransferMatch);
+}
+
+function renderTransferProductSearchResults() {
+  const wrapper = $("#transferProductSearchResults");
+  if (!wrapper) return;
+  const query = String(state.transferSearchQuery || "").trim();
+  if (!query) {
+    wrapper.innerHTML = '<p class="muted">Digite um produto para ver em quais remessas de transferencia ele aparece.</p>';
+    return;
+  }
+  const matches = transferProductSearchMatches();
+  if (!matches.length) {
+    wrapper.innerHTML = `<p class="muted">Nenhuma remessa encontrada para "${escapeHtml(query)}".</p>`;
+    return;
+  }
+  wrapper.innerHTML = `
+    <div class="transfer-search-summary">${matches.length} remessa${matches.length === 1 ? "" : "s"} encontrada${matches.length === 1 ? "" : "s"}</div>
+    ${matches.map(transferProductSearchResult).join("")}
+  `;
+}
+
+function transferProductSearchMatches() {
+  const normalized = normalizeSearchText(state.transferSearchQuery);
+  if (!normalized) return [];
+  return (state.transferLots || [])
+    .map((lot) => {
+      const items = (lot.items || []).filter((item) => transferSearchItemMatches(item, normalized));
+      return items.length ? { lot, items } : null;
+    })
+    .filter(Boolean);
+}
+
+function transferSearchItemMatches(item, normalizedQuery) {
+  return [item.sku, item.codigoMl, item.ean, item.descricao]
+    .some((value) => normalizeSearchText(value).includes(normalizedQuery));
+}
+
+function transferProductSearchResult(match) {
+  const lot = match.lot;
+  const items = match.items;
+  return `
+    <article class="transfer-search-result">
+      <div>
+        <strong>${escapeHtml(lot.name)}</strong>
+        <span>${escapeHtml(lot.depositoOrigem)} -> ${escapeHtml(lot.depositoDestino)} - ${transferStatusLabel(lot.status)}</span>
+      </div>
+      <button type="button" class="ghost" data-open-transfer-match="${escapeHtml(lot.id)}">Abrir</button>
+      <div class="transfer-search-items">
+        ${items.slice(0, 4).map((item) => `
+          <span>
+            <strong>${escapeHtml(item.sku || item.codigoMl || "")}</strong>
+            ${escapeHtml(item.descricao || "")}
+            <small>Qtd ${Number(item.quantidade || 0)} - Loja ${Number(item.quantidadeConferida || 0)} - Falta ${Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0)))}</small>
+          </span>
+        `).join("")}
+        ${items.length > 4 ? `<em>+${items.length - 4} item(ns)</em>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function transferLotsForProduct(product = {}) {
+  const productId = String(product.id || "");
+  const codigoMl = normalizeCode(product.codigoMl);
+  const sku = normalizeCode(product.sku);
+  const ean = normalizeCode(product.ean);
+  return (state.transferLots || []).filter((lot) => (lot.items || []).some((item) => {
+    if (productId && String(item.productId || "") === productId) return true;
+    return (
+      (codigoMl && normalizeCode(item.codigoMl) === codigoMl) ||
+      (sku && normalizeCode(item.sku) === sku) ||
+      (sku && normalizeCode(code39BarcodeValue(item.sku)) === sku) ||
+      (ean && normalizeCode(item.ean) === ean)
+    );
+  }));
+}
+
+function transferLotsForProductMarkup(product = {}) {
+  const lots = transferLotsForProduct(product);
+  if (!lots.length) return "";
+  return `<small class="product-transfer-refs">Transferencias: ${lots.map((lot) => escapeHtml(lot.name)).join(", ")}</small>`;
 }
 
 function clearTransferDetail() {
@@ -7220,6 +7319,7 @@ function itemRow(item) {
   const badge = item.tipoItem === "excedente_externo" ? '<span class="badge excess">excedente externo</span>' : `<span class="badge">${escapeHtml(item.tipoItem)}</span>`;
   const scanCode = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
+  const transferRefs = transferLotsForProductMarkup(product);
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
