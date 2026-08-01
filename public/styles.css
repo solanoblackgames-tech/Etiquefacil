@@ -1148,26 +1148,29 @@ h3 {
 .triage-shell {
   display: grid;
   flex: 1 1 auto;
-  gap: 6px;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 6px 8px;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(620px, 1.35fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   margin: 0 auto;
   min-height: 0;
   max-width: 1720px;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   padding: 8px 18px 14px;
   width: 100%;
 }
 
 .triage-create-panel {
-  align-items: end;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 190px minmax(0, 1fr);
-  padding: 8px 14px;
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  grid-column: 1;
+  padding: 6px 14px;
 }
 
 .triage-create-panel .panel-heading {
+  flex: 0 0 160px;
   margin-bottom: 0;
 }
 
@@ -1189,14 +1192,19 @@ h3 {
 }
 
 .triage-form {
-  align-items: end;
+  align-items: center;
   display: grid;
   gap: 6px;
+  flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .triage-form .wide-field {
+  align-items: center;
   grid-column: auto;
+  grid-template-columns: auto minmax(260px, 1fr);
+  min-width: 0;
 }
 
 .triage-form .triage-hidden-field {
@@ -1210,18 +1218,24 @@ h3 {
 }
 
 .triage-seals-panel {
-  align-items: end;
-  display: grid;
-  gap: 8px 12px;
-  grid-template-columns: 190px minmax(0, 1fr);
-  padding: 8px 14px;
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  grid-column: 2;
+  padding: 6px 14px;
+}
+
+.triage-seals-panel .panel-heading {
+  flex: 0 0 160px;
+  margin-bottom: 0;
 }
 
 .security-seals-form {
-  align-items: end;
+  align-items: center;
   display: grid;
+  flex: 0 0 auto;
   gap: 8px;
-  grid-template-columns: minmax(110px, 0.7fr) minmax(100px, 0.7fr) minmax(140px, 0.8fr) auto;
+  grid-template-columns: 120px 120px 160px auto;
 }
 
 .security-seals-form input,
@@ -1229,10 +1243,18 @@ h3 {
   min-height: 32px;
 }
 
+.security-seals-form button {
+  white-space: nowrap;
+}
+
 .security-seals-note {
+  flex: 1 1 auto;
   font-size: 10px;
-  grid-column: 2;
   margin: 0;
+  min-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .triage-lookup-preview {
@@ -1250,25 +1272,40 @@ h3 {
 }
 
 .triage-layout {
+  grid-column: 1 / -1;
   grid-template-columns: minmax(300px, 0.28fr) minmax(760px, 1fr);
   height: 100%;
   max-width: none;
-  min-height: 560px;
+  min-height: 0;
+  overflow: hidden;
   padding: 0;
 }
 
 .triage-layout .lot-list {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
+  padding: 12px;
 }
 
 #triageItems {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-gutter: stable;
+}
+
+.triage-layout .aside-heading {
+  margin: 0 0 8px;
+  padding-bottom: 8px;
+}
+
+.triage-layout .aside-heading h2 {
+  font-size: 17px;
+  margin-top: 1px;
 }
 
 .triage-card small {
@@ -1278,27 +1315,119 @@ h3 {
 .triage-filter-form {
   border-bottom: 1px solid var(--line);
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: -4px 0 14px;
-  padding-bottom: 14px;
+  gap: 6px;
+  grid-template-columns: repeat(6, minmax(104px, 1fr));
+  margin: 0 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  scrollbar-gutter: stable;
 }
 
 .triage-filter-form label {
   color: var(--muted);
   display: grid;
-  font-size: 12px;
-  gap: 5px;
+  font-size: 10px;
+  gap: 3px;
 }
 
 .triage-filter-form select,
 .triage-filter-form input {
-  min-height: 36px;
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .triage-filter-form button {
-  grid-column: 1 / -1;
-  justify-self: start;
+  align-self: end;
+  grid-column: auto;
+  min-height: 30px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+@media (max-height: 820px) and (min-width: 901px) {
+  .app:has(#triageTab:not(.hidden)) .topbar {
+    padding: 6px 16px;
+  }
+
+  .app:has(#triageTab:not(.hidden)) .tabs {
+    padding: 4px 16px;
+  }
+
+  .app:has(#triageTab:not(.hidden)) .tabs button {
+    min-height: 30px;
+  }
+
+  .triage-shell {
+    gap: 4px 8px;
+    padding: 6px 12px 10px;
+  }
+
+  .triage-create-panel,
+  .triage-seals-panel {
+    min-height: 44px;
+    padding: 4px 10px;
+  }
+
+  .triage-create-panel .panel-heading,
+  .triage-seals-panel .panel-heading {
+    flex-basis: 132px;
+  }
+
+  .triage-create-panel .panel-heading h3,
+  .triage-seals-panel .panel-heading h3 {
+    font-size: 13px;
+  }
+
+  .triage-form input[name="lookupCode"],
+  .security-seals-form input,
+  .security-seals-form button {
+    min-height: 28px;
+  }
+
+  .security-seals-note {
+    display: none;
+  }
+
+  .triage-layout .lot-list {
+    padding: 8px;
+  }
+
+  .triage-layout .aside-heading {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+  }
+
+  .triage-layout .aside-heading h2 {
+    font-size: 16px;
+  }
+
+  .triage-filter-form {
+    gap: 5px;
+    grid-template-columns: repeat(6, minmax(92px, 1fr));
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+  }
+
+  .triage-filter-form label {
+    font-size: 9px;
+  }
+
+  .triage-filter-form select,
+  .triage-filter-form input,
+  .triage-filter-form button {
+    min-height: 26px;
+    padding: 0 8px;
+  }
+
+  .lot-card {
+    gap: 4px;
+    margin-bottom: 6px;
+    padding: 8px;
+  }
 }
 
 .triage-stats-panel {
@@ -4866,7 +4995,7 @@ h3 {
   }
 
   .triage-filter-form {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(6, minmax(104px, 1fr));
   }
 
   .triage-filter-form button {
