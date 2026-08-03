@@ -33,6 +33,7 @@ import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptio
 import {
   addDiverseLotItem,
   canDeleteTriageItem,
+  confirmPublicTransferLotTotal,
   createExternalExcess,
   createDiverseLot,
   createLabel,
@@ -815,6 +816,30 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, re
     res.json({ ...result, transfer: transferResult });
   } catch (error) {
     if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);
+    sendError(res, error);
+  }
+});
+
+app.post("/api/public/transfer-lots/:transferLotId/confirm-total", async (req, res) => {
+  let result = null;
+  try {
+    result = await confirmPublicTransferLotTotal({
+      transferLotId: req.params.transferLotId,
+      receivedTotal: req.body.receivedTotal ?? req.body.totalRecebido,
+      reporterName: req.body.reporterName
+    });
+    const transferResult = await syncBlingStockTransfers({
+      integration: await getRequiredBlingCredentials(result.lot.userId),
+      items: transferItemsForBling(result.lot),
+      depositoOrigemName: result.lot.depositoOrigem,
+      depositoDestinoName: result.lot.depositoDestino,
+      observacao: `Transferencia Etiquefacil ${result.lot.name} - conferencia total loja (${result.lot.totalReceived}/${result.lot.totalPlanned})`,
+      saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
+    });
+    await markTransferLotSynced(result.lot.userId, result.lot.id);
+    const syncedLot = await getPublicTransferLotDetail(req.params.transferLotId);
+    res.json({ ...result, lot: syncedLot, transfer: transferResult });
+  } catch (error) {
     sendError(res, error);
   }
 });

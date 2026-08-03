@@ -4686,13 +4686,12 @@ function transferReceiveApiBase(transferLotId) {
 
 function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
   const detail = $("#transferDetail");
-  const pending = state.pendingTransferConfirmation?.transferLotId === lot.id ? state.pendingTransferConfirmation : null;
-  const cameraActive = Boolean(state.transferCameraStream) || suppressInputFocus;
-  if (!pending && isTransferReceiveComplete(lot)) {
+  if (isTransferReceiveComplete(lot)) {
     stopTransferCamera();
     renderTransferReceiveCompletePage(lot);
     return;
   }
+  const expected = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -4709,56 +4708,44 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
       </div>
       <div class="summary-grid">
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
-        ${metric("Conferido", lot.totalReceived || 0)}
-        ${metric("Falta", lot.totalPending ?? 0)}
+        ${metric("Recebido", lot.totalReceived || 0)}
+        ${metric("Diferenca", transferTotalDifferenceLabel(lot))}
       </div>
-      <div class="camera-panel">
-        <video id="transferCameraVideo" playsinline muted></video>
-        ${pending ? `<div class="camera-confirmation">${transferPendingConfirmation(pending)}</div>` : ""}
-        <div class="actions">
-          <button type="button" id="transferCameraButton">Ler com camera</button>
-          <button type="button" id="transferCameraStopButton" class="ghost">Parar camera</button>
-        </div>
-      </div>
-      <form id="transferReceiveForm" class="scan-box">
-        <input id="transferReceiveInput" name="code" placeholder="Bipe ou digite Codigo ML, SKU ou EAN" autocomplete="off" ${cameraActive ? "" : "autofocus"} ${pending ? "disabled" : ""} />
-        <button type="submit" ${pending ? "disabled" : ""}>Ler etiqueta</button>
+      <form id="transferTotalReceiveForm" class="transfer-total-form">
+        <label>Total recebido
+          <input id="transferTotalReceivedInput" name="receivedTotal" type="number" min="0" step="1" inputmode="numeric" value="${expected}" autocomplete="off" ${suppressInputFocus ? "" : "autofocus"} required />
+        </label>
+        <label>Operador
+          <input name="reporterName" maxlength="120" autocomplete="name" placeholder="Nome de quem recebeu" />
+        </label>
+        <button type="submit">Finalizar transferencia</button>
       </form>
       <div id="transferReceiveMessage" class="message"></div>
       ${transferDivergenceReportPanel(lot)}
-      <details class="transfer-items-panel">
+      <details class="transfer-items-panel" open>
         <summary>
-          <span>Ver itens da remessa</span>
-          <strong>${lot.totalPending ?? 0} faltando</strong>
+          <span>Itens da remessa</span>
+          <strong>${lot.totalSkus || 0} SKUs - ${lot.totalPlanned ?? lot.totalQty} unidades</strong>
         </summary>
-        <div class="diverse-table transfer-table">
+        <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
             <span>Codigo</span>
             <span>Produto</span>
-            <span>CD</span>
-            <span>Loja</span>
-            <span>Falta</span>
-            <span>Status</span>
+            <span>Qtd</span>
           </div>
-          ${transferReceiveRows(lot)}
+          ${transferReceiveAllRows(lot)}
         </div>
       </details>
     </section>
   `;
-  $("#transferReceiveForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    prepareTransferReceiveConfirmation(lot);
-  });
-  detail.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
-  detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
+  $("#transferTotalReceiveForm").addEventListener("submit", (event) => submitTransferTotalReceive(event, lot.id));
   detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
-  $("#transferCameraButton").addEventListener("click", () => startTransferCamera(lot.id, lot));
-  $("#transferCameraStopButton").addEventListener("click", stopTransferCamera);
-  if (!pending && !cameraActive) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+  if (!suppressInputFocus) schedulePrimaryInputFocus(["#transferTotalReceivedInput"]);
 }
 
 function isTransferReceiveComplete(lot) {
+  if (lot.status === "synced") return true;
   const planned = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
   const pending = Number(lot.totalPending ?? planned - Number(lot.totalReceived || 0));
   return planned > 0 && pending <= 0;
@@ -4783,25 +4770,22 @@ function renderTransferReceiveCompletePage(lot) {
       </div>
       <div class="summary-grid">
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
-        ${metric("Conferido", lot.totalReceived || 0)}
-        ${metric("Falta", lot.totalPending ?? 0)}
+        ${metric("Recebido", lot.totalReceived || 0)}
+        ${metric("Diferenca", transferTotalDifferenceLabel(lot))}
       </div>
       <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
       ${transferDivergenceReportPanel(lot)}
-      <details class="transfer-items-panel">
+      <details class="transfer-items-panel" ${Number(lot.totalDifference || 0) ? "open" : ""}>
         <summary>
-          <span>Itens conferidos</span>
-          <strong>${lot.totalSkus || 0} SKUs</strong>
+          <span>Itens da remessa</span>
+          <strong>${lot.totalSkus || 0} SKUs - ${lot.totalPlanned ?? lot.totalQty} unidades</strong>
         </summary>
-        <div class="diverse-table transfer-table">
+        <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
             <span>Codigo</span>
             <span>Produto</span>
-            <span>CD</span>
-            <span>Loja</span>
-            <span>Falta</span>
-            <span>Status</span>
+            <span>Qtd</span>
           </div>
           ${transferReceiveAllRows(lot)}
         </div>
@@ -4812,7 +4796,7 @@ function renderTransferReceiveCompletePage(lot) {
 }
 
 function transferDivergenceReportPanel(lot) {
-  const disabled = lot.status === "synced";
+  const disabled = false;
   return `
     <details class="transfer-divergence-panel">
       <summary>
@@ -4842,6 +4826,50 @@ function transferDivergenceReportPanel(lot) {
       </form>
     </details>
   `;
+}
+
+function transferTotalDifferenceLabel(lot) {
+  const difference = Number(lot.totalDifference ?? (Number(lot.totalReceived || 0) - Number(lot.totalPlanned ?? lot.totalQty ?? 0)));
+  if (!difference) return "0";
+  return difference > 0 ? `+${difference}` : String(difference);
+}
+
+async function submitTransferTotalReceive(event, transferLotId) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const message = $("#transferReceiveMessage");
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const receivedTotal = Number(payload.receivedTotal);
+  if (!Number.isInteger(receivedTotal) || receivedTotal < 0) {
+    message.style.color = "";
+    message.textContent = "Informe o total recebido sem casas decimais.";
+    return;
+  }
+  button.disabled = true;
+  message.style.color = "";
+  message.textContent = "Finalizando transferencia...";
+  try {
+    const response = await api(`${transferReceiveApiBase(transferLotId)}/confirm-total`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        receivedTotal,
+        reporterName: payload.reporterName
+      })
+    });
+    renderTransferReceiveCompletePage(response.lot);
+    const updatedMessage = $("#transferReceiveMessage");
+    updatedMessage.style.color = "#0f766e";
+    updatedMessage.textContent = Number(response.lot.totalDifference || 0)
+      ? "Transferencia finalizada. Divergencia de quantidade registrada."
+      : "Transferencia finalizada sem divergencia.";
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function submitTransferDivergenceReport(event, transferLotId) {
@@ -4921,17 +4949,12 @@ function transferReceiveAllRows(lot) {
 }
 
 function transferReceiveItemRow(item) {
-  const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
-  const status = item.forceReason ? "Sobra forcada" : receiveStatusLabel(item.statusConferencia);
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
       <span>${escapeHtml(item.codigoMl)}</span>
       <span>${escapeHtml(item.descricao)}</span>
       <span>${item.quantidade}</span>
-      <span>${item.quantidadeConferida || 0}</span>
-      <span>${falta}</span>
-      <span>${escapeHtml(status)}</span>
     </article>
   `;
 }

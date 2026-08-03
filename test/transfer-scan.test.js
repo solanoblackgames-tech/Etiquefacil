@@ -435,3 +435,83 @@ test("receiveTransferLotScan uses a pending duplicate SKU occurrence", async () 
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("confirmPublicTransferLotTotal records total divergence without item scans", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-transfer-total-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-total`;
+    const { confirmPublicTransferLotTotal, getPublicTransferLotDetail, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [
+        {
+          id: "transfer-1",
+          userId: "user-1",
+          name: "TRF-1",
+          descricao: "",
+          depositoOrigem: "CD",
+          depositoDestino: "Loja",
+          status: "waiting_store",
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      transferItems: [
+        {
+          id: "transfer-item-1",
+          transferLotId: "transfer-1",
+          sourceLotId: null,
+          productId: "product-1",
+          codigoMl: "ML1",
+          sku: "SKU1",
+          descricao: "Produto 1",
+          ean: "",
+          quantidade: 5,
+          quantidadeConferida: 0,
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await confirmPublicTransferLotTotal({ transferLotId: "transfer-1", receivedTotal: 4, reporterName: "Loja" });
+    const lot = await getPublicTransferLotDetail("transfer-1");
+    const db = await readDb();
+
+    assert.equal(result.status, "divergent");
+    assert.equal(lot.totalPlanned, 5);
+    assert.equal(lot.totalReceived, 4);
+    assert.equal(lot.totalPending, 1);
+    assert.equal(lot.divergenceCount, 1);
+    assert.equal(db.transferItems[0].quantidadeConferida, 0);
+    assert.match(db.transferDivergenceReports[0].description, /Esperado: 5\. Recebido informado: 4/);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

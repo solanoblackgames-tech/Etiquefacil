@@ -3643,6 +3643,10 @@ h3 {
   grid-template-columns: 1fr 1fr 2.2fr 0.45fr 0.55fr 0.55fr 0.8fr;
 }
 
+.transfer-receive-table .transfer-row {
+  grid-template-columns: 1fr 1fr 2.4fr 0.45fr;
+}
+
 .transfer-row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3667,6 +3671,25 @@ h3 {
 
 .transfer-receive-page .summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.transfer-total-form {
+  align-items: end;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  padding: 14px;
+}
+
+.transfer-total-form label {
+  color: var(--text);
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
 }
 
 .transfer-complete-page {
@@ -5113,6 +5136,7 @@ h3 {
   }
 
   .transfer-receive-page .summary-grid,
+  .transfer-total-form,
   .transfer-divergence-form,
   .transfer-confirm-actions {
     grid-template-columns: 1fr;

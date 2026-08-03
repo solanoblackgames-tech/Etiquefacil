@@ -27,6 +27,7 @@ const OPERATOR_DASHBOARD_ACTIONS = [
   "search_ml",
   "scan_ml",
   "scan_transfer",
+  "confirm_transfer_total",
   "create_manual_product",
   "create_external_excess",
   "view_lot",
@@ -2217,10 +2218,9 @@ export async function reportTransferLotDivergence({ userId = null, transferLotId
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && (!userId || item.userId === userId));
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
-  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   db.transferDivergenceReports = db.transferDivergenceReports || [];
   db.transferDivergenceReports.push(report);
-  lot.status = "divergent";
+  if (lot.status !== "synced") lot.status = "divergent";
   await writeDb(db);
   return { report, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
@@ -2275,7 +2275,10 @@ function buildTransferLotRecord({ userId, descricao = "", depositoOrigem, deposi
     status: "open",
     createdByUserId,
     createdAt,
-    syncedAt: null
+    syncedAt: null,
+    receivedTotal: null,
+    receivedAt: null,
+    receivedByName: ""
   };
 }
 
@@ -2559,6 +2562,28 @@ export async function deleteLotRzItem({ userId, lotId, codigoRz, itemId }) {
   });
   await writeDb(db);
   return { item: { ...item, product }, lot: summarizeLot(db, lot, true) };
+}
+
+export async function confirmPublicTransferLotTotal({ transferLotId, receivedTotal, reporterName = "" }) {
+  await ensureStore();
+  const quantity = normalizeTransferReceivedTotal(receivedTotal);
+  if (hasPostgres()) return confirmTransferLotTotalPg({ transferLotId, receivedTotal: quantity, reporterName });
+
+  const db = await readDb();
+  const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
+  if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+  if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+  if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+
+  applyTransferLotTotalConfirmation(lot, db.transferItems || [], db.transferDivergenceReports || [], {
+    receivedTotal: quantity,
+    reporterName
+  });
+  await writeDb(db);
+  return {
+    status: transferLotTotalConfirmationStatus(lot, db.transferItems || []),
+    lot: summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || [])
+  };
 }
 
 export async function deleteLotProductRegistration({ userId, lotId, productId }) {
@@ -3414,7 +3439,10 @@ async function ensurePgStore() {
       status text not null default 'open',
       created_by_user_id text references users(id) on delete set null,
       created_at timestamptz not null default now(),
-      synced_at timestamptz
+      synced_at timestamptz,
+      received_total integer,
+      received_at timestamptz,
+      received_by_name text not null default ''
     );
 
     create table if not exists transfer_items (
@@ -3671,6 +3699,9 @@ async function ensurePgStore() {
     alter table transfer_items add column if not exists force_code text not null default '';
     alter table transfer_items add column if not exists force_at timestamptz;
     alter table transfer_lots add column if not exists descricao text not null default '';
+    alter table transfer_lots add column if not exists received_total integer;
+    alter table transfer_lots add column if not exists received_at timestamptz;
+    alter table transfer_lots add column if not exists received_by_name text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
@@ -4270,7 +4301,7 @@ async function insertTransferLotRows(client, lots = []) {
   await insertRows(
     target,
     "transfer_lots",
-    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at"],
+    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
@@ -4281,7 +4312,10 @@ async function insertTransferLotRows(client, lots = []) {
       lot.status || "open",
       lot.createdByUserId || null,
       lot.createdAt,
-      lot.syncedAt || null
+      lot.syncedAt || null,
+      lot.receivedTotal ?? null,
+      lot.receivedAt || null,
+      lot.receivedByName || ""
     ])
   );
 }
@@ -5175,6 +5209,37 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
   return { ...result, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
 
+async function confirmTransferLotTotalPg({ transferLotId, receivedTotal, reporterName = "" }) {
+  const client = await getPgPool().connect();
+  let result;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from transfer_lots where id = $1 limit 1 for update", [transferLotId]);
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
+    if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
+    if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+
+    const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
+    const reports = [];
+    applyTransferLotTotalConfirmation(lot, itemsResult.rows.map(transferItemFromRow), reports, { receivedTotal, reporterName });
+    await client.query(
+      "update transfer_lots set status = $2, received_total = $3, received_at = $4, received_by_name = $5 where id = $1",
+      [lot.id, lot.status, lot.receivedTotal, lot.receivedAt, lot.receivedByName]
+    );
+    if (reports.length) await insertTransferDivergenceReportRows(client, reports);
+    result = { status: transferLotTotalConfirmationStatus(lot, itemsResult.rows.map(transferItemFromRow)) };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { ...result, lot: await getPublicTransferLotDetail(transferLotId) };
+}
+
 async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
   const client = await getPgPool().connect();
   let result;
@@ -5242,9 +5307,8 @@ async function reportTransferLotDivergencePg({ userId = null, report }) {
       : await client.query("select * from transfer_lots where id = $1 limit 1 for update", [report.transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
-    if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
     await insertTransferDivergenceReportRows(client, [report]);
-    await client.query("update transfer_lots set status = 'divergent' where id = $1", [lot.id]);
+    if (lot.status !== "synced") await client.query("update transfer_lots set status = 'divergent' where id = $1", [lot.id]);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -6154,14 +6218,18 @@ function summarizeTransferLot(lot, items, reports = []) {
   const lotItems = (items || []).filter((item) => item.transferLotId === lot.id);
   const lotReports = (reports || []).filter((report) => report.transferLotId === lot.id);
   const totalQty = lotItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
-  const totalReceived = lotItems.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
+  const itemReceived = lotItems.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
+  const hasManualTotal = lot.receivedTotal !== null && lot.receivedTotal !== undefined;
+  const totalReceived = hasManualTotal ? Number(lot.receivedTotal || 0) : itemReceived;
   return {
     ...lot,
     totalSkus: lotItems.length,
     totalQty,
     totalPlanned: totalQty,
     totalReceived,
+    totalDifference: totalReceived - totalQty,
     totalPending: Math.max(0, totalQty - totalReceived),
+    totalExcess: Math.max(0, totalReceived - totalQty),
     divergenceCount: lotReports.length,
     divergenceReports: lotReports.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     items: lotItems.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || a.sku.localeCompare(b.sku)).map((item) => ({
@@ -6654,12 +6722,21 @@ function buildOperationalDashboardStats(db, userId) {
   let transferReceivedValue = 0;
   let transferReceivedCost = 0;
   const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
+  const plannedQtyByTransfer = new Map();
+  for (const item of transferItems) {
+    plannedQtyByTransfer.set(item.transferLotId, Number(plannedQtyByTransfer.get(item.transferLotId) || 0) + Number(item.quantidade || 0));
+  }
   for (const item of transferItems) {
     const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
     const unitValue = Number(product?.valorUnit || 0);
     const unitCost = Number(product?.precoCusto || 0);
     const qty = Number(item.quantidade || 0);
-    const received = Number(item.quantidadeConferida || 0);
+    const transfer = transfersById.get(item.transferLotId);
+    const plannedForTransfer = Number(plannedQtyByTransfer.get(item.transferLotId) || 0);
+    const hasManualTotal = transfer?.receivedTotal !== null && transfer?.receivedTotal !== undefined;
+    const received = hasManualTotal && plannedForTransfer > 0
+      ? qty * (Number(transfer.receivedTotal || 0) / plannedForTransfer)
+      : Number(item.quantidadeConferida || 0);
     const value = roundMoney(qty * unitValue);
     const cost = roundMoney(qty * unitCost);
     const receivedValue = roundMoney(Math.min(qty, received) * unitValue);
@@ -6670,8 +6747,6 @@ function buildOperationalDashboardStats(db, userId) {
     transferCost += cost;
     transferReceivedValue += receivedValue;
     transferReceivedCost += receivedCost;
-
-    const transfer = transfersById.get(item.transferLotId);
     const row = operatorFor(transfer?.createdByUserId || userId);
     row.transferQty += qty;
     row.transferReceived += received;
@@ -6738,7 +6813,8 @@ function buildOperationalDashboardStats(db, userId) {
     .map((transfer) => {
       const items = transferItems.filter((item) => item.transferLotId === transfer.id);
       const planned = items.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
-      const received = items.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
+      const hasManualTotal = transfer.receivedTotal !== null && transfer.receivedTotal !== undefined;
+      const received = hasManualTotal ? Number(transfer.receivedTotal || 0) : items.reduce((sum, item) => sum + Number(item.quantidadeConferida || 0), 0);
       const value = items.reduce((sum, item) => {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         return sum + Number(item.quantidade || 0) * Number(product?.valorUnit || 0);
@@ -6750,13 +6826,13 @@ function buildOperationalDashboardStats(db, userId) {
       const receivedValue = items.reduce((sum, item) => {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         const qty = Number(item.quantidade || 0);
-        const receivedQty = Number(item.quantidadeConferida || 0);
+        const receivedQty = hasManualTotal && planned > 0 ? qty * (received / planned) : Number(item.quantidadeConferida || 0);
         return sum + Math.min(qty, receivedQty) * Number(product?.valorUnit || 0);
       }, 0);
       const receivedCost = items.reduce((sum, item) => {
         const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
         const qty = Number(item.quantidade || 0);
-        const receivedQty = Number(item.quantidadeConferida || 0);
+        const receivedQty = hasManualTotal && planned > 0 ? qty * (received / planned) : Number(item.quantidadeConferida || 0);
         return sum + Math.min(qty, receivedQty) * Number(product?.precoCusto || 0);
       }, 0);
       const user = userMap.get(transfer.createdByUserId || userId);
@@ -7207,7 +7283,10 @@ function transferLotFromRow(row) {
     status: row.status || "open",
     createdByUserId: row.created_by_user_id || null,
     createdAt: iso(row.created_at),
-    syncedAt: row.synced_at ? iso(row.synced_at) : null
+    syncedAt: row.synced_at ? iso(row.synced_at) : null,
+    receivedTotal: row.received_total === null || row.received_total === undefined ? null : Number(row.received_total),
+    receivedAt: row.received_at ? iso(row.received_at) : null,
+    receivedByName: row.received_by_name || ""
   };
 }
 
@@ -7487,6 +7566,38 @@ function optionalNum(value) {
 
 function normalizeCode(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeTransferReceivedTotal(value) {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity)) throw new Error("Informe o total recebido da remessa.");
+  const rounded = Math.round(quantity);
+  if (rounded !== quantity) throw new Error("Informe o total recebido sem casas decimais.");
+  if (rounded < 0) throw new Error("O total recebido nao pode ser negativo.");
+  return rounded;
+}
+
+function transferLotTotalConfirmationStatus(lot, items) {
+  const expected = (items || []).filter((item) => item.transferLotId === lot.id).reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+  return Number(lot.receivedTotal || 0) === expected ? "matched" : "divergent";
+}
+
+function applyTransferLotTotalConfirmation(lot, items, reports, { receivedTotal, reporterName = "" }) {
+  const now = new Date().toISOString();
+  const expected = (items || []).filter((item) => item.transferLotId === lot.id).reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+  lot.receivedTotal = receivedTotal;
+  lot.receivedAt = now;
+  lot.receivedByName = String(reporterName || "").trim().slice(0, 120);
+  lot.status = receivedTotal === expected ? "ready_sync" : "divergent";
+  if (receivedTotal !== expected) {
+    const difference = receivedTotal - expected;
+    reports.push(buildTransferDivergenceReport({
+      transferLotId: lot.id,
+      type: difference < 0 ? "falta" : "sobra",
+      description: `Total da remessa divergente. Esperado: ${expected}. Recebido informado: ${receivedTotal}. Diferenca: ${difference}.`,
+      reporterName: lot.receivedByName
+    }));
+  }
 }
 
 function triageCodeCandidates(value) {
