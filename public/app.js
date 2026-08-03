@@ -7458,10 +7458,10 @@ function editIcon() {
 function splitIcon() {
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M4 7h7"></path>
-      <path d="M4 17h7"></path>
-      <path d="M14 5l5 5-5 5"></path>
-      <path d="M11 12h8"></path>
+      <path d="M10 10 10 4a6 6 0 0 0-6 6z"></path>
+      <path d="M14 10 20 10a6 6 0 0 0-6-6z"></path>
+      <path d="M14 14 14 20a6 6 0 0 0 6-6z"></path>
+      <path d="M10 14 4 14a6 6 0 0 0 6 6z"></path>
     </svg>
   `;
 }
