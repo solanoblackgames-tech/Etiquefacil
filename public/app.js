@@ -39,6 +39,7 @@ const state = {
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
   selectedDiverseRz: null,
+  searchResults: [],
   lotSelectionToken: 0,
   noSheetSuggestionTimer: null,
   selectedRz: null,
@@ -6824,29 +6825,118 @@ async function deleteLotRzItem(lotId, codigoRz, itemId, button) {
 async function searchMl(event) {
   event.preventDefault();
   const input = event.currentTarget.querySelector("input[name='codigoMl']");
-  const codigoMl = normalizeCodigoMl(input?.value);
-  if (input) input.value = codigoMl;
-  const response = await api(`/api/search?codigoMl=${encodeURIComponent(codigoMl)}`);
+  const search = String(input?.value || "").trim();
+  if (input) input.value = search;
+  const response = await api(`/api/search?q=${encodeURIComponent(search)}`);
   const wrapper = $("#searchResults");
-  if (!response.results.length) {
+  state.searchResults = response.results || [];
+  if (!state.searchResults.length) {
     schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
-    wrapper.innerHTML = '<p class="muted">Produto não encontrado.</p>';
+    wrapper.innerHTML = '<p class="muted">Nenhum produto encontrado para esta busca.</p>';
     return;
   }
-  wrapper.innerHTML = response.results.map((product) => `
+  wrapper.innerHTML = state.searchResults.map((product) => `
     <article class="result-card">
-      <div>
-        <strong>${escapeHtml(product.sku)} · ${escapeHtml(product.codigoMl)}</strong>
-        <p>${escapeHtml(product.descricao)}</p>
-        <span class="muted">${escapeHtml(product.lot.nomeArquivo)} · RZ ${escapeHtml(product.rzs.join(", "))} · ${money(product.valorUnit)}</span>
+      <div class="search-product-summary">
+        ${product.foto ? `<span class="search-product-photo"><img src="${escapeHtml(product.foto)}" alt="Foto do produto" loading="lazy" /></span>` : '<span class="search-product-photo is-empty">Sem foto</span>'}
+        <div>
+          <strong>${escapeHtml(product.descricao || product.codigoMl || product.sku)}</strong>
+          <p>${escapeHtml(product.sku || "-")} &middot; ML ${escapeHtml(product.codigoMl || "-")} &middot; EAN ${escapeHtml(product.ean || "-")}</p>
+          <span class="muted">${escapeHtml(product.lot?.nomeArquivo || "Lote anterior")} &middot; RZ ${escapeHtml((product.rzs || []).join(", ") || "-")} &middot; ${money(product.valorUnit)}</span>
+        </div>
       </div>
-      <button data-product="${product.id}">Imprimir etiqueta</button>
+      <div class="result-card-actions">
+        <button type="button" data-product="${escapeHtml(product.id)}">Imprimir etiqueta</button>
+        <button type="button" class="ghost" data-use-search-product="${escapeHtml(product.id)}" ${canUseSearchProductAsBase() ? "" : "disabled"}>Usar como base</button>
+      </div>
     </article>
   `).join("");
   wrapper.querySelectorAll("button[data-product]").forEach((button) => {
     button.addEventListener("click", () => printLabel(button.dataset.product));
   });
+  wrapper.querySelectorAll("button[data-use-search-product]").forEach((button) => {
+    button.addEventListener("click", () => useSearchProductAsDiverseBase(button.dataset.useSearchProduct, button));
+  });
   schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
+}
+
+function canUseSearchProductAsBase() {
+  return Boolean(state.selectedDiverseLotId && state.selectedDiverseRz);
+}
+
+async function askCodigoMlForSearchProduct(product) {
+  return openDecisionModal({
+    title: "Usar produto como base",
+    rows: [
+      ["Produto encontrado", product.descricao || "-"],
+      ["Codigo atual", product.codigoMl || "-"],
+      ["SKU", product.sku || "-"],
+      ["Lote", product.lot?.nomeArquivo || "-"]
+    ],
+    fields: [{ name: "codigoMl", label: "Bipe ou informe o Codigo ML correto", value: "", required: true }],
+    actions: [
+      { id: "confirm", label: "Adicionar ao lote", primary: true, value: true },
+      { id: "cancel", label: "Cancelar", value: null }
+    ],
+    onSubmit: (action, values) => {
+      if (!action) return null;
+      const codigoMl = normalizeCodigoMl(values.codigoMl);
+      if (!codigoMl) throw new Error("Informe o Codigo ML correto.");
+      return codigoMl;
+    }
+  });
+}
+
+function manualProductFromSearchResult(product = {}) {
+  return {
+    descricao: product.descricao || "",
+    valorUnit: product.valorUnit || "",
+    categoria: product.categoria || "",
+    subcategoria: product.subcategoria || "",
+    ncm: product.ncm || "",
+    dataValidade: product.dataValidade || "",
+    ean: product.ean || "",
+    alturaCaixa: product.alturaCaixa || "",
+    larguraCaixa: product.larguraCaixa || "",
+    comprimentoCaixa: product.comprimentoCaixa || "",
+    pesoCaixa: product.pesoCaixa || "",
+    localizacaoEstoque: product.localizacaoEstoque || "",
+    link: product.link || "",
+    foto: product.foto || ""
+  };
+}
+
+async function useSearchProductAsDiverseBase(productId, button) {
+  const product = state.searchResults.find((item) => item.id === productId);
+  if (!product) return;
+  if (!canUseSearchProductAsBase()) {
+    alert("Abra um lote sem planilha e deixe uma remessa ativa antes de usar como base.");
+    return;
+  }
+  const codigoMl = await askCodigoMlForSearchProduct(product);
+  if (!codigoMl) return;
+  try {
+    if (button) button.disabled = true;
+    const response = await createDiverseItem({
+      codigoMl,
+      codigoRz: state.selectedDiverseRz,
+      manualProduct: manualProductFromSearchResult(product)
+    });
+    const activeRz = state.selectedDiverseRz;
+    state.selectedLotId = response.lot.id;
+    setMainTab("lots", { push: false });
+    renderLotDetail(response.lot);
+    openNoSheetRz(response.lot, activeRz);
+    await refreshLotsList(response.lot.id);
+    updateRoute(lotRzPath(response.lot.id, activeRz));
+    await showDiverseBlingSyncStatus(response, `SKU ${response.product.sku} gerado a partir da busca de produtos.`);
+    if (state.labelOptions.autoPrint) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    if (button) button.disabled = false;
+    schedulePrimaryInputFocus(["#searchForm input[name='codigoMl']"]);
+  }
 }
 
 async function printLabel(productId, { reviewed = false } = {}) {

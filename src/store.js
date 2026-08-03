@@ -3054,10 +3054,18 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
   return { ok: true };
 }
 
-export async function searchProducts(userId, codigoMl) {
+export async function searchProducts(userId, search) {
   await ensureStore();
-  const normalizedMl = normalizeCode(codigoMl);
+  const queryText = String(search || "").trim();
+  const normalizedQuery = normalizeCode(queryText);
+  const terms = normalizeSearchTerms(queryText);
+  if (!normalizedQuery || !terms.length) return [];
   if (hasPostgres()) {
+    const params = [userId];
+    const haystack = "lower(concat_ws(' ', p.codigo_ml, p.sku, p.descricao, p.ean, p.link, p.foto, l.nome_arquivo))";
+    const termWhere = sqlAllTermsCondition(haystack, queryText, params);
+    params.push(normalizedQuery);
+    const exactParam = params.length;
     const result = await query(
       `
         select
@@ -3077,11 +3085,31 @@ export async function searchProducts(userId, codigoMl) {
         from products p
         join lots l on l.id = p.lot_id
         left join rz_items ri on ri.product_id = p.id
-        where l.user_id = $1 and p.codigo_ml = $2
+        where l.user_id = $1
+          and (
+            ${termWhere}
+            or upper(trim(p.codigo_ml)) = $${exactParam}
+            or upper(trim(p.sku)) = $${exactParam}
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = $${exactParam}
+            or upper(trim(p.ean)) = $${exactParam}
+            or exists (
+              select 1 from rz_items ri_match
+              where ri_match.product_id = p.id
+                and upper(trim(ri_match.codigo_rz)) = $${exactParam}
+            )
+          )
         group by p.id, l.id
-        order by p.created_at desc
+        order by
+          case
+            when upper(trim(p.codigo_ml)) = $${exactParam} then 0
+            when upper(trim(p.ean)) = $${exactParam} then 1
+            when upper(trim(p.sku)) = $${exactParam} then 2
+            else 3
+          end,
+          p.created_at desc
+        limit 80
       `,
-      [userId, normalizedMl]
+      params
     );
     return result.rows.map((row) => ({
       ...productFromRow(row),
@@ -3092,13 +3120,48 @@ export async function searchProducts(userId, codigoMl) {
 
   const db = await readDb();
   const lotsById = new Map(db.lots.filter((lot) => lot.userId === userId).map((lot) => [lot.id, lot]));
-  return db.products
-    .filter((product) => product.codigoMl === normalizedMl && lotsById.has(product.lotId))
+  return (db.products || [])
+    .filter((product) => lotsById.has(product.lotId) && productMatchesProductSearch(product, queryText, db, lotsById))
+    .sort((a, b) => productSearchRank(a, normalizedQuery) - productSearchRank(b, normalizedQuery) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 80)
     .map((product) => ({
       ...product,
       lot: lotsById.get(product.lotId),
       rzs: db.rzItems.filter((item) => item.productId === product.id).map((item) => item.codigoRz)
     }));
+}
+
+function productMatchesProductSearch(product, search, db, lotsById) {
+  const normalized = normalizeCode(search);
+  const rzText = (db.rzItems || [])
+    .filter((item) => item.productId === product.id)
+    .map((item) => item.codigoRz)
+    .join(" ");
+  const lot = lotsById.get(product.lotId);
+  return [
+    product.codigoMl,
+    product.sku,
+    product.ean
+  ].some((value) => normalizeCode(value) === normalized)
+    || normalizeCode((product.sku || "").replace(/[^0-9A-Z .$/+%-]/gi, "-")) === normalized
+    || searchTermsMatch([
+      product.codigoMl,
+      product.sku,
+      product.descricao,
+      product.ean,
+      product.link,
+      product.foto,
+      lot?.nomeArquivo,
+      rzText
+    ].join(" "), search);
+}
+
+function productSearchRank(product, normalizedQuery) {
+  if (normalizeCode(product.codigoMl) === normalizedQuery) return 0;
+  if (normalizeCode(product.ean) === normalizedQuery) return 1;
+  if (normalizeCode(product.sku) === normalizedQuery) return 2;
+  if (normalizeCode((product.sku || "").replace(/[^0-9A-Z .$/+%-]/gi, "-")) === normalizedQuery) return 2;
+  return 3;
 }
 
 export async function getUserProductWithLot(userId, productId) {

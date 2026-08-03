@@ -1740,9 +1740,9 @@ app.get("/api/lots/:lotId/rz/:codigoRz/pallet/:format", requireAuth, requireOwne
 });
 
 app.get("/api/search", requireAuth, async (req, res) => {
-  const codigoMl = String(req.query.codigoMl || "").trim().toUpperCase();
-  if (codigoMl) await recordOperatorActivity(req.session.user, "search_ml", { codigoMl });
-  res.json({ results: await searchProducts(workspaceUserId(req), codigoMl) });
+  const search = String(req.query.q || req.query.codigoMl || "").trim();
+  if (search) await recordOperatorActivity(req.session.user, "search_ml", { codigoMl: search.toUpperCase(), query: search });
+  res.json({ results: await searchProducts(workspaceUserId(req), search) });
 });
 
 app.post("/api/operator-activity", requireAuth, async (req, res) => {
