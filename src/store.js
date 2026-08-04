@@ -43,6 +43,7 @@ const emptyDb = () => ({
   scans: [],
   labels: [],
   blingIntegrations: [],
+  blingSyncJobs: [],
   appSettings: {},
   userSettings: [],
   transferLots: [],
@@ -1047,7 +1048,15 @@ export async function lookupTriageItemByScan(userId, value) {
 
   if (hasPostgres()) {
     const result = await query(
-      "select * from triage_items where user_id = $1 and upper(code) = any($2::text[]) order by updated_at desc limit 1",
+      `select *
+       from triage_items
+       where user_id = $1
+         and (
+           upper(code) = any($2::text[])
+           or upper(security_seal_code) = any($2::text[])
+         )
+       order by updated_at desc
+       limit 1`,
       [userId, candidates]
     );
     return result.rows[0] ? triageItemFromRow(result.rows[0]) : null;
@@ -1055,7 +1064,7 @@ export async function lookupTriageItemByScan(userId, value) {
 
   const db = await readDb();
   return (db.triageItems || [])
-    .filter((item) => item.userId === userId && candidates.includes(normalizeCode(item.code)))
+    .filter((item) => item.userId === userId && (candidates.includes(normalizeCode(item.code)) || candidates.includes(normalizeCode(item.securitySealCode))))
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))[0] || null;
 }
 
@@ -1077,6 +1086,8 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
     updatedAt: now,
     diagnosedAt: null
   });
+
+  await ensureTriageSecuritySealAvailable({ userId, securitySealCode: item.securitySealCode });
 
   if (hasPostgres()) {
     await insertTriageItemRows(null, [item]);
@@ -1207,6 +1218,34 @@ export async function listTriageDiagnosisHistory({ userId, code }) {
   return history;
 }
 
+async function ensureTriageSecuritySealAvailable({ userId, securitySealCode, ignoreCode = "" }) {
+  const normalizedSeal = normalizeCode(securitySealCode);
+  if (!normalizedSeal) return;
+  const ignored = normalizeCode(ignoreCode);
+
+  if (hasPostgres()) {
+    const result = await query(
+      `select code
+       from triage_items
+       where user_id = $1
+         and upper(trim(security_seal_code)) = $2
+         and ($3 = '' or upper(code) <> upper($3))
+       limit 1`,
+      [userId, normalizedSeal, ignored]
+    );
+    if (result.rows.length) throw new Error("Este lacre de seguranca ja esta vinculado a outro item de triagem.");
+    return;
+  }
+
+  const db = await readDb();
+  const duplicate = (db.triageItems || []).find((item) =>
+    item.userId === userId &&
+    normalizeCode(item.securitySealCode) === normalizedSeal &&
+    (!ignored || normalizeCode(item.code) !== ignored)
+  );
+  if (duplicate) throw new Error("Este lacre de seguranca ja esta vinculado a outro item de triagem.");
+}
+
 export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   await ensureStore();
   const currentCode = normalizeCode(code);
@@ -1225,6 +1264,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     valorUnit: hasValorUnit ? decimalMoney(payload.valorUnit ?? payload.valor_unit ?? payload.preco) : null,
     precoCusto: hasPrecoCusto ? decimalMoney(payload.precoCusto ?? payload.preco_custo ?? payload.custo) : null,
     serial: String(payload.serial || "").trim(),
+    securitySealCode: normalizeCode(payload.securitySealCode ?? payload.security_seal_code ?? payload.lacreSeguranca ?? payload.lacre),
     alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
     comprimentoCaixa: optionalNum(payload.comprimentoCaixa ?? payload.comprimento_caixa ?? payload.comprimento ?? payload.profundidade),
@@ -1234,6 +1274,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     throw new Error("Informe pelo menos uma identificacao do produto.");
   }
   const now = new Date().toISOString();
+  await ensureTriageSecuritySealAvailable({ userId, securitySealCode: details.securitySealCode, ignoreCode: currentCode });
 
   if (hasPostgres()) {
     if (nextCode !== currentCode) {
@@ -1256,11 +1297,12 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            valor_unit = case when $10::numeric is not null and $10::numeric > 0 then $10::numeric else valor_unit end,
            preco_custo = case when $11::numeric is not null and $11::numeric > 0 then $11::numeric else preco_custo end,
            serial = $12,
-           altura_caixa = $13,
-           largura_caixa = $14,
-           comprimento_caixa = $15,
-           peso_caixa = $16,
-           updated_at = $17
+           security_seal_code = $13,
+           altura_caixa = $14,
+           largura_caixa = $15,
+           comprimento_caixa = $16,
+           peso_caixa = $17,
+           updated_at = $18
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
       [
@@ -1276,6 +1318,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
         details.valorUnit,
         details.precoCusto,
         details.serial,
+        details.securitySealCode,
         details.alturaCaixa || null,
         details.larguraCaixa || null,
         details.comprimentoCaixa || null,
@@ -1538,6 +1581,7 @@ export async function deleteUser(userId) {
   db.scans = db.scans.filter((scan) => !lotIds.has(scan.lotId));
   db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
+  db.blingSyncJobs = (db.blingSyncJobs || []).filter((job) => job.userId !== userId);
   db.operatorInvites = (db.operatorInvites || []).filter((invite) => invite.ownerUserId !== userId);
   db.userSettings = (db.userSettings || []).filter((setting) => setting.userId !== userId);
   await writeDb(db);
@@ -1646,6 +1690,178 @@ export async function deleteUserBlingIntegration(userId) {
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   await writeDb(db);
   return { ok: true };
+}
+
+export async function enqueueBlingSyncJob({
+  userId,
+  lotId,
+  productId,
+  sku,
+  type = "product",
+  payload = {},
+  errorMessage = "",
+  nextRunAt = new Date().toISOString()
+}) {
+  await ensureStore();
+  const normalized = normalizeBlingSyncJob({ userId, lotId, productId, sku, type, payload, errorMessage, nextRunAt });
+  if (!normalized.userId || !normalized.productId || !normalized.sku) throw new Error("Produto sem dados suficientes para entrar na fila do Bling.");
+
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        insert into bling_sync_jobs (
+          id, user_id, lot_id, product_id, sku, type, status, payload, error_message, attempts, next_run_at, created_at, updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, 0, $9, $10, $10)
+        on conflict (product_id, type) do update set
+          user_id = excluded.user_id,
+          lot_id = excluded.lot_id,
+          sku = excluded.sku,
+          status = 'pending',
+          payload = excluded.payload,
+          error_message = excluded.error_message,
+          next_run_at = excluded.next_run_at,
+          updated_at = excluded.updated_at
+        returning *
+      `,
+      [
+        normalized.id,
+        normalized.userId,
+        normalized.lotId,
+        normalized.productId,
+        normalized.sku,
+        normalized.type,
+        normalized.payload,
+        normalized.errorMessage,
+        normalized.nextRunAt,
+        normalized.createdAt
+      ]
+    );
+    await setProductBlingAlert(normalized.userId, normalized.lotId, normalized.productId, blingQueueAlertMessage(normalized));
+    return blingSyncJobFromRow(result.rows[0]);
+  }
+
+  const db = await readDb();
+  db.blingSyncJobs = db.blingSyncJobs || [];
+  const index = db.blingSyncJobs.findIndex((job) => job.productId === normalized.productId && job.type === normalized.type);
+  if (index >= 0) {
+    db.blingSyncJobs[index] = {
+      ...db.blingSyncJobs[index],
+      ...normalized,
+      id: db.blingSyncJobs[index].id,
+      attempts: db.blingSyncJobs[index].attempts || 0,
+      status: "pending",
+      updatedAt: normalized.updatedAt
+    };
+  } else {
+    db.blingSyncJobs.push(normalized);
+  }
+  const product = db.products.find((item) => item.id === normalized.productId && item.lotId === normalized.lotId);
+  if (product) {
+    product.blingAlertMessage = blingQueueAlertMessage(normalized);
+    product.blingAlertDismissed = false;
+  }
+  await writeDb(db);
+  return db.blingSyncJobs.find((job) => job.productId === normalized.productId && job.type === normalized.type);
+}
+
+export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
+  await ensureStore();
+  const now = new Date().toISOString();
+  if (hasPostgres()) {
+    const result = await query(
+      `
+        select *
+        from bling_sync_jobs
+        where status in ('pending', 'failed')
+          and next_run_at <= $1
+        order by next_run_at asc, created_at asc
+        limit $2
+      `,
+      [now, limit]
+    );
+    return result.rows.map(blingSyncJobFromRow);
+  }
+
+  const db = await readDb();
+  return (db.blingSyncJobs || [])
+    .filter((job) => ["pending", "failed"].includes(job.status) && String(job.nextRunAt || "") <= now)
+    .sort((a, b) => String(a.nextRunAt || "").localeCompare(String(b.nextRunAt || "")) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+    .slice(0, limit);
+}
+
+export async function markBlingSyncJobSucceeded(jobId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("delete from bling_sync_jobs where id = $1 returning *", [jobId]);
+    const job = result.rows[0] && blingSyncJobFromRow(result.rows[0]);
+    if (job) {
+      const remaining = await query(
+        "select 1 from bling_sync_jobs where product_id = $1 and status in ('pending', 'failed') limit 1",
+        [job.productId]
+      );
+      if (!remaining.rows.length) await clearProductBlingQueueAlert(job.userId, job.lotId, job.productId);
+    }
+    return { ok: true, job };
+  }
+
+  const db = await readDb();
+  const job = (db.blingSyncJobs || []).find((item) => item.id === jobId) || null;
+  db.blingSyncJobs = (db.blingSyncJobs || []).filter((item) => item.id !== jobId);
+  if (job) {
+    const hasRemaining = (db.blingSyncJobs || []).some((item) => item.productId === job.productId && ["pending", "failed"].includes(item.status));
+    const product = db.products.find((item) => item.id === job.productId && item.lotId === job.lotId);
+    if (!hasRemaining && product && isBlingQueueAlert(product.blingAlertMessage)) {
+      product.blingAlertMessage = "";
+      product.blingAlertDismissed = false;
+    }
+  }
+  await writeDb(db);
+  return { ok: true, job };
+}
+
+export async function markBlingSyncJobFailed(jobId, errorMessage = "") {
+  await ensureStore();
+  const now = new Date();
+  if (hasPostgres()) {
+    const current = await query("select * from bling_sync_jobs where id = $1 limit 1", [jobId]);
+    const job = current.rows[0] && blingSyncJobFromRow(current.rows[0]);
+    if (!job) return { ok: false };
+    const attempts = Number(job.attempts || 0) + 1;
+    const nextRunAt = new Date(now.getTime() + blingRetryDelayMs(attempts)).toISOString();
+    const result = await query(
+      `
+        update bling_sync_jobs
+        set status = 'failed',
+            attempts = $2,
+            error_message = $3,
+            next_run_at = $4,
+            updated_at = $5
+        where id = $1
+        returning *
+      `,
+      [jobId, attempts, String(errorMessage || "").slice(0, 500), nextRunAt, now.toISOString()]
+    );
+    const updated = blingSyncJobFromRow(result.rows[0]);
+    await setProductBlingAlert(updated.userId, updated.lotId, updated.productId, blingQueueAlertMessage(updated));
+    return { ok: true, job: updated };
+  }
+
+  const db = await readDb();
+  const job = (db.blingSyncJobs || []).find((item) => item.id === jobId);
+  if (!job) return { ok: false };
+  job.status = "failed";
+  job.attempts = Number(job.attempts || 0) + 1;
+  job.errorMessage = String(errorMessage || "").slice(0, 500);
+  job.nextRunAt = new Date(now.getTime() + blingRetryDelayMs(job.attempts)).toISOString();
+  job.updatedAt = now.toISOString();
+  const product = db.products.find((item) => item.id === job.productId && item.lotId === job.lotId);
+  if (product) {
+    product.blingAlertMessage = blingQueueAlertMessage(job);
+    product.blingAlertDismissed = false;
+  }
+  await writeDb(db);
+  return { ok: true, job };
 }
 
 export async function getBlingAppConfig() {
@@ -2091,34 +2307,54 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   await ensureStore();
   const kitQuantity = Math.round(Number(payload?.kitQuantity || 0));
   const sellableQuantity = Math.round(Number(payload?.sellableQuantity || 0));
+  const codigoMl = normalizeCode(payload?.codigoMl);
   const descricao = String(payload?.descricao || "").trim();
+  if (!codigoMl) throw new Error("Informe o novo Codigo ML do produto desmembrado.");
   if (!Number.isFinite(kitQuantity) || kitQuantity < 2) throw new Error("Informe a quantidade original do kit.");
   if (!Number.isFinite(sellableQuantity) || sellableQuantity < 1) throw new Error("Informe quantas unidades ficaram vendaveis.");
   if (sellableQuantity > kitQuantity) throw new Error("A quantidade vendavel nao pode ser maior que o kit original.");
   if (!descricao) throw new Error("Informe o titulo do produto unitario.");
 
-  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao });
+  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl, kitQuantity, sellableQuantity, descricao });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nao encontrado.");
   const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
   if (!product) throw notFound("Produto nao encontrado neste lote.");
+  if (normalizeCode(product.codigoMl) === codigoMl) throw new Error("Informe um Codigo ML diferente do produto original.");
+  const existing = db.products.find((item) => item.lotId === lot.id && normalizeCode(item.codigoMl) === codigoMl);
+  if (existing) throw new Error("Este Codigo ML ja existe no lote atual.");
   const item = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === product.id && candidate.codigoRz === codigoRz);
   if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
   const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
-  product.valorUnit = split.valorUnit;
-  product.precoCusto = split.precoCusto;
-  product.qtdTotal = split.qtdTotal;
-  product.descricao = split.descricao;
+  const originalProduct = { ...product, qtdTotal: 0 };
+  const newProduct = {
+    ...product,
+    id: randomUUID(),
+    codigoMl,
+    sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
+    descricao: split.descricao,
+    valorUnit: split.valorUnit,
+    precoCusto: split.precoCusto,
+    qtdTotal: sellableQuantity,
+    origem: product.origem || "planilha",
+    createdAt: new Date().toISOString(),
+    blingAlertMessage: "",
+    blingAlertDismissed: false
+  };
+  product.qtdTotal = 0;
+  db.products.push(newProduct);
+  item.productId = newProduct.id;
   item.qtdEsperada = sellableQuantity;
   item.qtdConferida = Math.min(Number(item.qtdConferida || 0), sellableQuantity);
   item.valorTotal = split.valorTotal;
   item.tipoItem = splitItemType(item.tipoItem);
+  lot.proximoSequencialSku += 1;
 
   await writeDb(db);
-  return { product, lot: summarizeLot(db, lot, true) };
+  return { product: newProduct, originalProduct, lot: summarizeLot(db, lot, true) };
 }
 
 export function calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao = "" }) {
@@ -3414,6 +3650,23 @@ async function ensurePgStore() {
       updated_at timestamptz not null default now()
     );
 
+    create table if not exists bling_sync_jobs (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      lot_id text not null references lots(id) on delete cascade,
+      product_id text not null references products(id) on delete cascade,
+      sku text not null,
+      type text not null,
+      status text not null default 'pending',
+      payload jsonb not null default '{}'::jsonb,
+      error_message text not null default '',
+      attempts integer not null default 0,
+      next_run_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (product_id, type)
+    );
+
     create table if not exists app_settings (
       key text primary key,
       value jsonb not null default '{}'::jsonb,
@@ -3513,6 +3766,7 @@ async function ensurePgStore() {
       valor_unit numeric not null default 0,
       preco_custo numeric not null default 0,
       serial text not null default '',
+      security_seal_code text not null default '',
       altura_caixa numeric,
       largura_caixa numeric,
       comprimento_caixa numeric,
@@ -3648,6 +3902,11 @@ async function ensurePgStore() {
     alter table products add column if not exists localizacao_estoque text not null default '';
     alter table products add column if not exists bling_alert_message text not null default '';
     alter table products add column if not exists bling_alert_dismissed boolean not null default false;
+    alter table bling_sync_jobs add column if not exists payload jsonb not null default '{}'::jsonb;
+    alter table bling_sync_jobs add column if not exists error_message text not null default '';
+    alter table bling_sync_jobs add column if not exists attempts integer not null default 0;
+    alter table bling_sync_jobs add column if not exists next_run_at timestamptz not null default now();
+    create unique index if not exists bling_sync_jobs_product_type_idx on bling_sync_jobs(product_id, type);
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists ncm text not null default '';
     alter table catalog_products add column if not exists data_validade text not null default '';
@@ -3682,6 +3941,7 @@ async function ensurePgStore() {
     alter table triage_items add column if not exists peso_caixa numeric;
     alter table triage_items add column if not exists valor_unit numeric not null default 0;
     alter table triage_items add column if not exists preco_custo numeric not null default 0;
+    alter table triage_items add column if not exists security_seal_code text not null default '';
     create index if not exists triage_events_item_created_idx on triage_events(triage_item_id, created_at desc);
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
     alter table catalog_rejected_requests add column if not exists operator_user_id text;
@@ -3768,6 +4028,7 @@ async function ensurePgStore() {
     create index if not exists operator_invites_owner_user_id_idx on operator_invites(owner_user_id);
     create index if not exists operator_invites_expires_at_idx on operator_invites(expires_at);
     create unique index if not exists triage_items_user_code_idx on triage_items(user_id, code);
+    create index if not exists triage_items_user_security_seal_norm_idx on triage_items(user_id, upper(trim(security_seal_code))) where security_seal_code <> '';
     create index if not exists triage_items_user_status_idx on triage_items(user_id, status);
     create index if not exists triage_items_user_destination_idx on triage_items(user_id, destination);
     create index if not exists triage_items_user_diagnosis_condition_idx on triage_items(user_id, diagnosis_condition);
@@ -3909,7 +4170,7 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, blingIntegrations, blingSyncJobs, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -3917,6 +4178,7 @@ async function readPgDb() {
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
     query("select * from bling_integrations order by updated_at asc"),
+    query("select * from bling_sync_jobs order by next_run_at asc, created_at asc"),
     query("select * from user_settings order by updated_at asc"),
     query("select * from transfer_lots order by created_at asc"),
     query("select * from transfer_items order by created_at asc"),
@@ -3938,6 +4200,7 @@ async function readPgDb() {
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
     blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
+    blingSyncJobs: blingSyncJobs.rows.map(blingSyncJobFromRow),
     userSettings: userSettings.rows.map(userSettingFromRow),
     transferLots: transferLots.rows.map(transferLotFromRow),
     transferItems: transferItems.rows.map(transferItemFromRow),
@@ -3965,6 +4228,7 @@ async function writePgDb(db) {
     await client.query("delete from transfer_forced_occurrences");
     await client.query("delete from transfer_items");
     await client.query("delete from transfer_lots");
+    await client.query("delete from bling_sync_jobs");
     await client.query("delete from bling_integrations");
     await client.query("delete from user_settings");
     await client.query("delete from labels");
@@ -4096,6 +4360,7 @@ async function writePgDb(db) {
       (db.labels || []).map((label) => [label.id, label.productId, label.lotId, label.userId, label.createdAt])
     );
     await insertBlingIntegrationRows(client, db.blingIntegrations || []);
+    await insertBlingSyncJobRows(client, db.blingSyncJobs || []);
     await insertTransferLotRows(client, db.transferLots || []);
     await insertTransferItemRows(client, db.transferItems || []);
     await insertTransferForcedOccurrenceRows(client, db.transferForcedOccurrences || []);
@@ -4296,6 +4561,29 @@ async function insertBlingIntegrationRows(client, integrations = []) {
   );
 }
 
+async function insertBlingSyncJobRows(client, jobs = []) {
+  await insertRows(
+    client,
+    "bling_sync_jobs",
+    ["id", "user_id", "lot_id", "product_id", "sku", "type", "status", "payload", "error_message", "attempts", "next_run_at", "created_at", "updated_at"],
+    jobs.map((job) => [
+      job.id,
+      job.userId,
+      job.lotId,
+      job.productId,
+      job.sku,
+      job.type || "product",
+      job.status || "pending",
+      JSON.stringify(job.payload || {}),
+      job.errorMessage || "",
+      Number(job.attempts || 0),
+      job.nextRunAt || new Date().toISOString(),
+      job.createdAt || new Date().toISOString(),
+      job.updatedAt || job.createdAt || new Date().toISOString()
+    ])
+  );
+}
+
 async function insertTransferLotRows(client, lots = []) {
   const target = client || { query };
   await insertRows(
@@ -4417,6 +4705,7 @@ async function insertTriageItemRows(client, items = []) {
       "valor_unit",
       "preco_custo",
       "serial",
+      "security_seal_code",
       "altura_caixa",
       "largura_caixa",
       "comprimento_caixa",
@@ -4445,6 +4734,7 @@ async function insertTriageItemRows(client, items = []) {
       item.valorUnit || 0,
       item.precoCusto || 0,
       item.serial || "",
+      item.securitySealCode || "",
       item.alturaCaixa || null,
       item.larguraCaixa || null,
       item.comprimentoCaixa || null,
@@ -4713,18 +5003,23 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
 }
 
-async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {
+async function splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl, kitQuantity, sellableQuantity, descricao }) {
   const client = await getPgPool().connect();
   let product;
+  let originalProduct;
   try {
     await client.query("begin");
-    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Lote nao encontrado.");
 
     const productResult = await client.query("select * from products where id = $1 and lot_id = $2 for update", [productId, lot.id]);
     const current = productResult.rows[0] && productFromRow(productResult.rows[0]);
     if (!current) throw notFound("Produto nao encontrado neste lote.");
+    if (normalizeCode(current.codigoMl) === codigoMl) throw new Error("Informe um Codigo ML diferente do produto original.");
+
+    const existing = await client.query("select id from products where lot_id = $1 and upper(trim(codigo_ml)) = upper(trim($2)) limit 1", [lot.id, codigoMl]);
+    if (existing.rows.length) throw new Error("Este Codigo ML ja existe no lote atual.");
 
     const itemResult = await client.query(
       "select * from rz_items where lot_id = $1 and product_id = $2 and codigo_rz = $3 for update",
@@ -4734,27 +5029,70 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
     const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
-    const updatedProduct = await client.query(
+    const zeroedOriginal = await client.query(
       `update products
-       set descricao = $3,
-           valor_unit = $4,
-           preco_custo = $5,
-           qtd_total = $6
+       set qtd_total = 0
        where id = $1 and lot_id = $2
        returning *`,
-      [current.id, lot.id, split.descricao, split.valorUnit, split.precoCusto, split.qtdTotal]
+      [current.id, lot.id]
     );
-    product = productFromRow(updatedProduct.rows[0]);
+    originalProduct = productFromRow(zeroedOriginal.rows[0]);
+
+    const now = new Date().toISOString();
+    const newProductResult = await client.query(
+      `insert into products (
+         id, lot_id, created_by_user_id, operator_user_id, codigo_ml, sku, descricao,
+         valor_unit, preco_custo, qtd_total, categoria, subcategoria, ncm, ean,
+         data_validade, link, foto, altura_caixa, largura_caixa, comprimento_caixa,
+         peso_caixa, localizacao_estoque, origem, created_at
+       )
+       values (
+         $1, $2, $3, $4, $5, $6, $7,
+         $8, $9, $10, $11, $12, $13, $14,
+         $15, $16, $17, $18, $19, $20,
+         $21, $22, $23, $24
+       )
+       returning *`,
+      [
+        randomUUID(),
+        lot.id,
+        current.createdByUserId || null,
+        current.operatorUserId || null,
+        codigoMl,
+        formatSku(lot.prefixoSku, lot.proximoSequencialSku),
+        split.descricao,
+        split.valorUnit,
+        split.precoCusto,
+        sellableQuantity,
+        current.categoria || "",
+        current.subcategoria || "",
+        current.ncm || "",
+        current.ean || "",
+        current.dataValidade || "",
+        current.link || "",
+        current.foto || "",
+        current.alturaCaixa || null,
+        current.larguraCaixa || null,
+        current.comprimentoCaixa || null,
+        current.pesoCaixa || null,
+        current.localizacaoEstoque || "",
+        current.origem || "planilha",
+        now
+      ]
+    );
+    product = productFromRow(newProductResult.rows[0]);
 
     await client.query(
       `update rz_items
-       set qtd_esperada = $4,
-           qtd_conferida = least(qtd_conferida, $4),
-           valor_total = $5,
-           tipo_item = $6
+       set product_id = $4,
+           qtd_esperada = $5,
+           qtd_conferida = least(qtd_conferida, $5),
+           valor_total = $6,
+           tipo_item = $7
        where lot_id = $1 and product_id = $2 and codigo_rz = $3`,
-      [lot.id, current.id, codigoRz, sellableQuantity, split.valorTotal, splitItemType(item.tipo_item)]
+      [lot.id, current.id, codigoRz, product.id, sellableQuantity, split.valorTotal, splitItemType(item.tipo_item)]
     );
+    await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -4763,7 +5101,7 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
     client.release();
   }
 
-  return { product, lot: await getUserLotDetail(userId, lotId) };
+  return { product, originalProduct, lot: await getUserLotDetail(userId, lotId) };
 }
 
 async function decrementLotRzScanPg({ userId, lotId, codigoRz, codigoMl }) {
@@ -5885,13 +6223,82 @@ function normalizeEditableProduct(input = {}) {
   };
 }
 
+function normalizeBlingSyncJob(input = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: input.id || randomUUID(),
+    userId: String(input.userId || "").trim(),
+    lotId: String(input.lotId || "").trim(),
+    productId: String(input.productId || "").trim(),
+    sku: normalizeCode(input.sku),
+    type: String(input.type || "product").trim() || "product",
+    status: input.status || "pending",
+    payload: input.payload && typeof input.payload === "object" ? input.payload : {},
+    errorMessage: String(input.errorMessage || "").slice(0, 500),
+    attempts: Number(input.attempts || 0),
+    nextRunAt: input.nextRunAt || now,
+    createdAt: input.createdAt || now,
+    updatedAt: input.updatedAt || now
+  };
+}
+
+function blingQueueAlertMessage(job = {}) {
+  const base =
+    job.type === "stock_entry"
+      ? "Entrada de estoque pendente no Bling"
+      : job.type === "stock_exit"
+        ? "Saida de estoque pendente no Bling"
+        : "Produto pendente de envio ao Bling";
+  return [base, job.errorMessage].filter(Boolean).join(": ");
+}
+
+function isBlingQueueAlert(message = "") {
+  return /pendente no Bling|pendente de envio ao Bling/i.test(String(message || ""));
+}
+
+function blingRetryDelayMs(attempts) {
+  const minutes = Math.min(60, Math.max(1, 2 ** Math.min(Number(attempts || 1) - 1, 5)));
+  return minutes * 60 * 1000;
+}
+
+async function setProductBlingAlert(userId, lotId, productId, message) {
+  await query(
+    `
+      update products
+      set bling_alert_message = $4,
+          bling_alert_dismissed = false
+      where id = $1
+        and lot_id = $2
+        and exists (select 1 from lots where id = $2 and user_id = $3)
+    `,
+    [productId, lotId, userId, message]
+  );
+}
+
+async function clearProductBlingQueueAlert(userId, lotId, productId) {
+  await query(
+    `
+      update products
+      set bling_alert_message = '',
+          bling_alert_dismissed = false
+      where id = $1
+        and lot_id = $2
+        and bling_alert_message ilike '%pendente%'
+        and exists (select 1 from lots where id = $2 and user_id = $3)
+    `,
+    [productId, lotId, userId]
+  );
+}
+
 function collectBlingAlertsBySku(syncResult = {}) {
   const alertsBySku = new Map();
   for (const item of syncResult.results || []) {
     const sku = normalizeCode(item.sku);
     const alerts = Array.isArray(item.alerts) ? item.alerts : [];
-    if (!sku || !alerts.length) continue;
-    alertsBySku.set(sku, alerts.map((alert) => alert.message || "").filter(Boolean).join(" "));
+    const messages = alerts.map((alert) => alert.message || "").filter(Boolean);
+    if (item.status === "error" && item.error) messages.push(`Produto pendente de envio ao Bling: ${item.error}`);
+    if (!sku || !messages.length) continue;
+    alertsBySku.set(sku, messages.join(" "));
   }
   return alertsBySku;
 }
@@ -6485,6 +6892,7 @@ function triageItemFromRow(row) {
     valorUnit: num(row.valor_unit),
     precoCusto: num(row.preco_custo),
     serial: row.serial || "",
+    securitySealCode: row.security_seal_code || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
     comprimentoCaixa: row.comprimento_caixa === null || row.comprimento_caixa === undefined ? "" : num(row.comprimento_caixa),
@@ -6596,6 +7004,24 @@ function productFromRow(row) {
     blingAlertDismissed: Boolean(row.bling_alert_dismissed),
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
+  };
+}
+
+function blingSyncJobFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    lotId: row.lot_id,
+    productId: row.product_id,
+    sku: row.sku,
+    type: row.type || "product",
+    status: row.status || "pending",
+    payload: row.payload || {},
+    errorMessage: row.error_message || "",
+    attempts: Number(row.attempts || 0),
+    nextRunAt: iso(row.next_run_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
   };
 }
 
@@ -7787,6 +8213,7 @@ function normalizeTriageInput(input = {}) {
     valorUnit: decimalMoney(input.valorUnit ?? input.valor_unit ?? input.preco),
     precoCusto: decimalMoney(input.precoCusto ?? input.preco_custo ?? input.custo),
     serial: String(input.serial || "").trim(),
+    securitySealCode: normalizeCode(input.securitySealCode ?? input.security_seal_code ?? input.lacreSeguranca ?? input.lacre),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),
     comprimentoCaixa: optionalNum(input.comprimentoCaixa ?? input.comprimento_caixa ?? input.comprimento ?? input.profundidade),

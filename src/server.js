@@ -59,6 +59,7 @@ import {
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
+  enqueueBlingSyncJob,
   forceReceivePublicTransferLotScan,
   getBlingAppConfig,
   getLotBlingData,
@@ -80,7 +81,10 @@ import {
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
+  listDueBlingSyncJobs,
   listTransferLots,
+  markBlingSyncJobFailed,
+  markBlingSyncJobSucceeded,
   markTransferLotSynced,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
@@ -1237,6 +1241,8 @@ app.post("/api/lots/:lotId/prices/import", requireAuth, requireOwner, upload.sin
       const alertLot = await updateLotProductBlingAlerts({ userId, lotId: lot.id, syncResult: bling });
       if (alertLot) updatedLot = alertLot;
     } catch (blingError) {
+      await enqueueProductSyncs({ userId, lot: updatedLot, products: updatedProducts, errorMessage: blingError.message });
+      updatedLot = await getUserLotDetail(userId, lot.id);
       bling = { ok: false, error: blingError.message, updated: 0, missing: 0, alerted: 0, results: [] };
     }
 
@@ -1264,9 +1270,26 @@ app.post("/api/lots/:lotId/bling/:kind/sync-products", requireAuth, requireOwner
       products: withLotSupplier(data.products, data.lot),
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
+    await enqueueFailedProductSyncs({ userId, lot: data.lot, products: data.products, syncResult: result });
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
     res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const data = await getLotBlingData(userId, req.params.lotId, req.params.kind);
+      if (data?.products?.length) {
+        await enqueueProductSyncs({ userId, lot: data.lot, products: data.products, errorMessage: error.message });
+        const lot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: data.products.length,
+          error: `Bling indisponivel. Produtos ficaram na fila para envio automatico: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar produtos Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1320,6 +1343,7 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
       const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
       if (updatedLot) result.lot = updatedLot;
     } catch (blingError) {
+      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
       result.bling = { ok: false, error: blingError.message };
     }
     res.json(result);
@@ -1369,10 +1393,11 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
     });
     const labelQuantity = Math.max(1, Math.round(Number(req.body.sellableQuantity || 1)));
     try {
-      result.bling = await syncSplitProductToBling(userId, result.lot, result.product, labelQuantity);
+      result.bling = await syncSplitProductToBling(userId, result.lot, result.originalProduct, result.product, labelQuantity);
       const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
       if (updatedLot) result.lot = updatedLot;
     } catch (blingError) {
+      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
       result.bling = { ok: false, error: blingError.message };
     }
     const labelResult = await createLabel(userId, result.product.id, labelQuantity);
@@ -1516,6 +1541,30 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync-one", requireAuth, asyn
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
     res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+      const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
+      if (item) {
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz: req.params.codigoRz,
+          item,
+          operation: "entry",
+          errorMessage: error.message
+        });
+        const lot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: true,
+          error: `Entrada no Bling ficou na fila para tentar novamente: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar entrada Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1629,6 +1678,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
     try {
       result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
     } catch (blingError) {
+      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
+      result.lot = await getUserLotDetail(userId, req.params.lotId);
       result.bling = { ok: false, error: blingError.message };
     }
     res.json(result);
@@ -1706,6 +1757,16 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
       try {
         result.bling = await syncSingleNoSheetProductStockEntry(userId, result.lot, result.product, codigoRz);
       } catch (blingError) {
+        await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz,
+          item: stockMovementItemFromProduct(result.lot, result.product),
+          operation: "entry",
+          errorMessage: blingError.message
+        });
+        result.lot = await getUserLotDetail(userId, req.params.lotId);
         result.bling = { ok: false, error: blingError.message };
       }
     }
@@ -2317,6 +2378,8 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
   if (!item?.product) return null;
 
   return {
+    productId: item.product.id || "",
+    lotId: lot.id,
     sku: item.product.sku || "",
     codigoMl: item.product.codigoMl || "",
     ean: item.product.ean || "",
@@ -2343,6 +2406,82 @@ function buildStockEntryCsvForRz(data) {
 
 function withLotSupplier(items, lot) {
   return (items || []).map((item) => ({ ...item, fornecedor: item.fornecedor || lot?.fornecedor || "" }));
+}
+
+async function enqueueProductSyncs({ userId, lot, products, errorMessage }) {
+  await Promise.all(
+    (products || []).map((product) =>
+      enqueueBlingSyncJob({
+        userId,
+        lotId: lot.id,
+        productId: product.id,
+        sku: product.sku,
+        type: "product",
+        payload: { product: withLotSupplier([product], lot)[0] },
+        errorMessage
+      })
+    )
+  );
+}
+
+async function enqueueFailedProductSyncs({ userId, lot, products, syncResult }) {
+  const productsBySku = new Map((products || []).map((product) => [normalizeServerCode(product.sku), product]));
+  const failed = (syncResult?.results || []).filter((item) => item.status === "error");
+  await Promise.all(
+    failed.map((item) => {
+      const product = productsBySku.get(normalizeServerCode(item.sku));
+      if (!product) return null;
+      return enqueueBlingSyncJob({
+        userId,
+        lotId: lot.id,
+        productId: product.id,
+        sku: product.sku,
+        type: "product",
+        payload: { product: withLotSupplier([product], lot)[0] },
+        errorMessage: item.error || "Falha ao enviar produto ao Bling."
+      });
+    })
+  );
+}
+
+async function enqueueStockMovementSync({ userId, lotId, codigoRz, item, operation, errorMessage }) {
+  return enqueueBlingSyncJob({
+    userId,
+    lotId,
+    productId: item.productId,
+    sku: item.sku,
+    type: operation === "exit" ? "stock_exit" : "stock_entry",
+    payload: {
+      item,
+      depositoName: BLING_STOCK_DEPOSIT,
+      operation,
+      observacao: operation === "exit"
+        ? `Saida automatica pendente RZ ${codigoRz}`
+        : `Entrada automatica pendente por bipagem RZ ${codigoRz}`
+    },
+    errorMessage
+  });
+}
+
+function stockMovementItemFromProduct(lot, product, quantity = 1) {
+  return {
+    productId: product.id || "",
+    lotId: lot.id || product.lotId || "",
+    sku: product.sku || "",
+    codigoMl: product.codigoMl || "",
+    ean: product.ean || "",
+    categoria: product.categoria || "",
+    subcategoria: product.subcategoria || "",
+    ncm: product.ncm || "",
+    descricao: product.descricao || "",
+    valorUnit: Number(product.valorUnit || 0),
+    precoCusto: Number(product.precoCusto || 0),
+    fornecedor: lot.fornecedor || "",
+    link: product.link || "",
+    foto: product.foto || "",
+    quantidade: Number(quantity || 1),
+    qtdConferida: Number(quantity || 1)
+  };
 }
 
 function normalizeServerCode(value) {
@@ -2375,27 +2514,29 @@ async function syncSingleLotProductToBling(userId, lot, product) {
   });
 }
 
-async function syncSplitProductToBling(userId, lot, product, quantity) {
+async function syncSplitProductToBling(userId, lot, originalProduct, product, quantity) {
   const integration = await getRequiredBlingCredentials(userId);
-  const item = {
-    sku: product.sku || "",
-    codigoMl: product.codigoMl || "",
-    ean: product.ean || "",
-    categoria: product.categoria || "",
-    subcategoria: product.subcategoria || "",
-    ncm: product.ncm || "",
-    descricao: product.descricao || "",
-    valorUnit: Number(product.valorUnit || 0),
-    precoCusto: Number(product.precoCusto || 0),
+  const splitItem = (source, targetQuantity) => ({
+    sku: source.sku || "",
+    codigoMl: source.codigoMl || "",
+    ean: source.ean || "",
+    categoria: source.categoria || "",
+    subcategoria: source.subcategoria || "",
+    ncm: source.ncm || "",
+    descricao: source.descricao || "",
+    valorUnit: Number(source.valorUnit || 0),
+    precoCusto: Number(source.precoCusto || 0),
     fornecedor: lot.fornecedor || "",
-    link: product.link || "",
-    foto: product.foto || "",
-    quantidade: Number(quantity || 0),
-    qtdConferida: Number(quantity || 0)
-  };
+    link: source.link || "",
+    foto: source.foto || "",
+    quantidade: Number(targetQuantity || 0),
+    qtdConferida: Number(targetQuantity || 0)
+  });
+  const items = [splitItem(product, quantity)];
+  if (originalProduct?.sku && originalProduct.sku !== product.sku) items.unshift(splitItem(originalProduct, 0));
   return syncBlingStockBalances({
     integration,
-    items: [item],
+    items,
     depositoName: BLING_STOCK_DEPOSIT,
     observacao: `Desmembramento de produto ${product.sku || ""}`.trim(),
     saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
@@ -2406,22 +2547,7 @@ async function syncSingleNoSheetProductStockEntry(userId, lot, product, codigoRz
   const integration = await getRequiredBlingCredentials(userId);
   return syncBlingStockMovement({
     integration,
-    item: {
-      sku: product.sku || "",
-      codigoMl: product.codigoMl || "",
-      ean: product.ean || "",
-      categoria: product.categoria || "",
-      subcategoria: product.subcategoria || "",
-      ncm: product.ncm || "",
-      descricao: product.descricao || "",
-      valorUnit: Number(product.valorUnit || 0),
-      precoCusto: Number(product.precoCusto || 0),
-      fornecedor: lot.fornecedor || "",
-      link: product.link || "",
-      foto: product.foto || "",
-      quantidade: 1,
-      qtdConferida: 1
-    },
+    item: stockMovementItemFromProduct(lot, product),
     depositoName: BLING_STOCK_DEPOSIT,
     operation: "entry",
     observacao: `Entrada automatica lote sem planilha RZ ${codigoRz}`,
@@ -2952,8 +3078,63 @@ async function seedBlingAppConfigFromEnv() {
   }
 }
 
+let blingSyncQueueRunning = false;
+
+async function processBlingSyncQueue() {
+  if (blingSyncQueueRunning) return;
+  blingSyncQueueRunning = true;
+  try {
+    const jobs = await listDueBlingSyncJobs({ limit: 10 });
+    for (const job of jobs) {
+      try {
+        const integration = await getUserBlingCredentials(job.userId);
+        if (!integration?.accessToken || !integration?.refreshToken) throw new Error("Bling nao autorizado para este usuario.");
+
+        if (job.type === "product") {
+          const found = await getUserProductWithLot(job.userId, job.productId);
+          if (!found?.product || !found?.lot) {
+            await markBlingSyncJobSucceeded(job.id);
+            continue;
+          }
+          const result = await syncBlingProducts({
+            integration,
+            products: withLotSupplier([found.product], found.lot),
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
+          if (result.failed) throw new Error(result.results.find((item) => item.status === "error")?.error || "Falha ao enviar produto ao Bling.");
+          await updateLotProductBlingAlerts({ userId: job.userId, lotId: job.lotId, syncResult: result });
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        if (job.type === "stock_entry" || job.type === "stock_exit") {
+          await syncBlingStockMovement({
+            integration,
+            item: job.payload?.item,
+            depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
+            operation: job.payload?.operation || (job.type === "stock_exit" ? "exit" : "entry"),
+            observacao: job.payload?.observacao || "Movimento pendente da fila Etiquefacil",
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        await markBlingSyncJobSucceeded(job.id);
+      } catch (error) {
+        await markBlingSyncJobFailed(job.id, error.message);
+      }
+    }
+  } catch (error) {
+    console.error("Falha ao processar fila Bling:", error);
+  } finally {
+    blingSyncQueueRunning = false;
+  }
+}
+
 ensureStore()
   .then(seedBlingAppConfigFromEnv)
+  .then(processBlingSyncQueue)
   .catch((error) => {
     console.error("Falha ao inicializar o banco:", error);
   });
@@ -2965,3 +3146,5 @@ app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bl
 app.listen(config.port, () => {
   console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
 });
+
+setInterval(processBlingSyncQueue, 60_000).unref();

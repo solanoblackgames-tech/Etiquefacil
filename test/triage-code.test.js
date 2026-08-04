@@ -177,6 +177,7 @@ test("lookupTriageItemByScan resolves triage label code and status URL", async (
       codigoBling2: "",
       descricao: "Produto em triagem",
       serial: "",
+      securitySealCode: "LCR-000321",
       status: "aguardando_teste",
       destination: "",
       diagnosis: "",
@@ -190,10 +191,51 @@ test("lookupTriageItemByScan resolves triage label code and status URL", async (
     const byCode = await lookupTriageItemByScan("owner-1", "lab-20260727-000123");
     const byUrl = await lookupTriageItemByScan("owner-1", "https://etiquefacil.test/triagem/visualizar/LAB-20260727-000123");
     const bySku = await lookupTriageItemByScan("owner-1", "SKU-123");
+    const bySeal = await lookupTriageItemByScan("owner-1", "lcr-000321");
 
     assert.equal(byCode.code, "LAB-20260727-000123");
     assert.equal(byUrl.code, "LAB-20260727-000123");
+    assert.equal(bySeal.code, "LAB-20260727-000123");
     assert.equal(bySku, null);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("createTriageItem stores security seal and prevents reuse", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-seal-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-seal`;
+    const { createTriageItem, lookupTriageItemByScan, writeDb } = await import(storeUrl.href);
+
+    await writeDb(emptyDb());
+
+    const item = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      payload: { descricao: "Produto lacrado", sku: "SKU-LACRE", securitySealCode: " lcr-000777 " }
+    });
+
+    assert.equal(item.securitySealCode, "LCR-000777");
+    assert.equal((await lookupTriageItemByScan("owner-1", "LCR-000777")).code, item.code);
+    await assert.rejects(
+      () => createTriageItem({
+        userId: "owner-1",
+        createdByUserId: "owner-1",
+        payload: { descricao: "Outro produto", sku: "SKU-OUTRO", securitySealCode: "lcr-000777" }
+      }),
+      /lacre de seguranca ja esta vinculado/
+    );
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

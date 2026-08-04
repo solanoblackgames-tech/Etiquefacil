@@ -367,7 +367,8 @@
             <h3>Entrada de triagem</h3>
           </div>
           <form id="triageCreateForm" class="triage-form">
-            <label class="wide-field">Bipagem principal<input name="lookupCode" placeholder="Bipe o SKU do lote ou a etiqueta de triagem" autocomplete="off" /></label>
+            <label class="wide-field">Bipagem principal<input name="lookupCode" placeholder="Bipe o SKU do lote, etiqueta de triagem ou lacre" autocomplete="off" /></label>
+            <label class="wide-field">Lacre de seguranca<input name="securitySealCode" placeholder="Bipe o lacre quando for utilizado" autocomplete="off" /></label>
             <label class="triage-hidden-field">Descricao<input name="descricao" placeholder="Ex: Monitor LG 24" /></label>
             <label class="triage-hidden-field">SKU<input name="sku" placeholder="SKU interno" /></label>
             <label class="triage-hidden-field">EAN<input name="ean" placeholder="Codigo de barras" /></label>
@@ -661,6 +662,9 @@
           <strong id="productSplitName"></strong>
         </div>
         <div class="decision-fields">
+          <label>Novo Codigo ML
+            <input id="productSplitCodigoMl" name="codigoMl" autocomplete="off" required />
+          </label>
           <label>Quantidade original do kit
             <input id="productSplitKitQuantity" name="kitQuantity" type="number" min="2" step="1" required />
           </label>

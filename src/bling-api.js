@@ -204,24 +204,28 @@ export async function syncBlingProducts({ integration, products, saveIntegration
   const results = [];
 
   for (const product of products) {
-    const existing = await client.findProductBySku(product.sku, { detail: true, supplierCost: false });
-    if (existing?.id) {
-      const update = await saveProductWithBlingFallback(client, {
-        operation: "update",
-        product,
-        existing,
-        productId: existing.id
-      });
-      await client.ensureProductSupplier(product, existing.id, supplier);
-      results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: update.alerts });
-      continue;
-    }
+    try {
+      const existing = await client.findProductBySku(product.sku, { detail: true, supplierCost: false });
+      if (existing?.id) {
+        const update = await saveProductWithBlingFallback(client, {
+          operation: "update",
+          product,
+          existing,
+          productId: existing.id
+        });
+        await client.ensureProductSupplier(product, existing.id, supplier);
+        results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: update.alerts });
+        continue;
+      }
 
-    const created = await createProductAndResolveId(client, product);
-    const response = created.response;
-    const blingProductId = created.productId;
-    if (blingProductId) await client.ensureProductSupplier(product, blingProductId, supplier);
-    results.push({ sku: product.sku, status: "created", blingProductId, response, alerts: created.alerts });
+      const created = await createProductAndResolveId(client, product);
+      const response = created.response;
+      const blingProductId = created.productId;
+      if (blingProductId) await client.ensureProductSupplier(product, blingProductId, supplier);
+      results.push({ sku: product.sku, status: "created", blingProductId, response, alerts: created.alerts });
+    } catch (error) {
+      results.push({ sku: product.sku, status: "error", error: error.message });
+    }
   }
 
   return summarizeSync(results);
@@ -756,6 +760,7 @@ function summarizeSync(results) {
     updated: results.filter((item) => item.status === "updated").length,
     skipped: results.filter((item) => item.status === "skipped").length,
     missing: results.filter((item) => item.status === "missing").length,
+    failed: results.filter((item) => item.status === "error").length,
     entered: results.filter((item) => item.status === "entered").length,
     exited: results.filter((item) => item.status === "exited").length,
     transferred: results.filter((item) => item.status === "transferred").length,

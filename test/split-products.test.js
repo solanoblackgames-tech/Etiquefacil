@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { calculateSplitProductValues } from "../src/store.js";
 
@@ -34,4 +38,110 @@ test("calculateSplitProductValues adjusts only the current RZ quantity from tota
   );
 
   assert.equal(split.qtdTotal, 8);
+});
+
+test("splitLotProduct creates a new product and zeroes the original product", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-split-product-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-split-product`;
+    const { readDb, splitLotProduct, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [
+        {
+          id: "lot-1",
+          userId: "user-1",
+          nomeArquivo: "Lote",
+          percentualArremate: 50,
+          fornecedor: "Fornecedor",
+          prefixoSku: "ABC",
+          proximoSequencialSku: 7,
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      products: [
+        {
+          id: "product-original",
+          lotId: "lot-1",
+          codigoMl: "ABCD12345",
+          sku: "ABC0001",
+          descricao: "KIT COM 5 PECAS",
+          valorUnit: 100,
+          precoCusto: 50,
+          qtdTotal: 5,
+          origem: "planilha",
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      rzItems: [
+        {
+          id: "item-1",
+          lotId: "lot-1",
+          productId: "product-original",
+          codigoRz: "RZ-1",
+          qtdEsperada: 5,
+          qtdConferida: 5,
+          valorTotal: 100,
+          tipoItem: "esperado",
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await splitLotProduct({
+      userId: "user-1",
+      lotId: "lot-1",
+      productId: "product-original",
+      codigoRz: "RZ-1",
+      payload: {
+        codigoMl: "WXYZ67890",
+        kitQuantity: 5,
+        sellableQuantity: 4,
+        descricao: "PECA UNITARIA"
+      }
+    });
+    const db = await readDb();
+    const original = db.products.find((product) => product.id === "product-original");
+    const created = db.products.find((product) => product.id === result.product.id);
+
+    assert.equal(original.qtdTotal, 0);
+    assert.equal(created.codigoMl, "WXYZ67890");
+    assert.equal(created.sku, "ABC0007");
+    assert.equal(created.qtdTotal, 4);
+    assert.equal(created.valorUnit, 20);
+    assert.equal(db.rzItems[0].productId, created.id);
+    assert.equal(db.rzItems[0].qtdEsperada, 4);
+    assert.equal(db.lots[0].proximoSequencialSku, 8);
+    assert.equal(result.originalProduct.codigoMl, "ABCD12345");
+    assert.equal(result.originalProduct.qtdTotal, 0);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
 });

@@ -608,7 +608,7 @@ async function addDiverseItem(event) {
   } catch (error) {
     if (error.code === "manual_required" || error.status === 404) {
       try {
-        const manualProduct = await promptManualProduct(codigoMl);
+        const manualProduct = await promptManualProduct(codigoMl, undefined, await findManualProductInitialValues(codigoMl));
         if (!manualProduct) {
           input.select();
           return;
@@ -843,6 +843,22 @@ async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitO
 
 function promptManualProduct(codigoMl, focusSelector, initialValues = {}, options = {}) {
   return askManualProduct(codigoMl, focusSelector, initialValues, options);
+}
+
+async function findManualProductInitialValues(codigoMl) {
+  const normalized = normalizeCodigoMl(codigoMl);
+  if (!normalized) return {};
+  try {
+    const response = await api(`/api/search?q=${encodeURIComponent(normalized)}`);
+    const results = response.results || [];
+    const exact = results.find((product) => normalizeCodigoMl(product.codigoMl) === normalized)
+      || results.find((product) => normalizeCodigoMl(product.ean) === normalized)
+      || results.find((product) => normalizeCodigoMl(product.sku) === normalized)
+      || results[0];
+    return exact ? manualProductFromSearchResult(exact) : {};
+  } catch {
+    return {};
+  }
 }
 
 function parseMoneyInput(value) {
@@ -1991,6 +2007,7 @@ function openProductSplitModal(product) {
     const modal = $("#productSplitModal");
     const form = $("#productSplitForm");
     const name = $("#productSplitName");
+    const code = $("#productSplitCodigoMl");
     const kitQuantity = $("#productSplitKitQuantity");
     const sellableQuantity = $("#productSplitSellableQuantity");
     const description = $("#productSplitDescription");
@@ -2013,6 +2030,7 @@ function openProductSplitModal(product) {
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
+      code.oninput = null;
       kitQuantity.oninput = null;
       sellableQuantity.oninput = null;
       form.reset();
@@ -2021,6 +2039,7 @@ function openProductSplitModal(product) {
     };
 
     name.textContent = `${product.sku || ""} ${product.descricao || ""}`.trim();
+    code.value = "";
     kitQuantity.value = "6";
     sellableQuantity.value = "5";
     description.value = unitTitleSuggestion(product.descricao || "");
@@ -2028,6 +2047,9 @@ function openProductSplitModal(product) {
     updatePreview();
     modal.classList.remove("hidden");
 
+    code.oninput = () => {
+      code.value = normalizeCodigoMl(code.value);
+    };
     kitQuantity.oninput = updatePreview;
     sellableQuantity.oninput = updatePreview;
 
@@ -2035,7 +2057,19 @@ function openProductSplitModal(product) {
       event.preventDefault();
       const kit = Math.round(Number(kitQuantity.value || 0));
       const sellable = Math.round(Number(sellableQuantity.value || 0));
+      const codigoMl = normalizeCodigoMl(code.value);
       const descricao = description.value.trim();
+      code.value = codigoMl;
+      if (!codigoMl) {
+        error.textContent = "Informe o novo Codigo ML.";
+        code.focus();
+        return;
+      }
+      if (codigoMl === normalizeCodigoMl(product.codigoMl)) {
+        error.textContent = "Informe um Codigo ML diferente do produto original.";
+        code.focus();
+        return;
+      }
       if (!Number.isFinite(kit) || kit < 2) {
         error.textContent = "Informe a quantidade original do kit.";
         kitQuantity.focus();
@@ -2052,7 +2086,7 @@ function openProductSplitModal(product) {
         return;
       }
       cleanup();
-      resolve({ kitQuantity: kit, sellableQuantity: sellable, descricao });
+      resolve({ codigoMl, kitQuantity: kit, sellableQuantity: sellable, descricao });
     };
 
     cancel.onclick = () => {
@@ -2068,7 +2102,7 @@ function openProductSplitModal(product) {
       }
     };
 
-    setTimeout(() => description.focus(), 0);
+    setTimeout(() => code.focus(), 0);
   });
 }
 
@@ -6198,7 +6232,9 @@ async function syncBlingProducts(lotId, kind, button, messageSelector = "#downlo
       targetMessage = $(messageSelector) || message;
     }
     targetMessage.style.color = "#0f766e";
-    targetMessage.textContent = `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s).${payload.alerted ? " Ha produto com alerta de EAN/NCM." : ""}`;
+    targetMessage.textContent = payload.queued
+      ? `${payload.queued} produto(s) ficaram na fila para envio ao Bling. O sistema tentara novamente automaticamente.`
+      : `Produtos no Bling: ${payload.created} criado(s), ${payload.updated || 0} atualizado(s), ${payload.skipped} ja existente(s), ${payload.failed || 0} pendente(s).${payload.alerted ? " Ha produto com alerta de EAN/NCM." : ""}`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -6639,7 +6675,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
   const message = $("#scanMessage");
   const input = $("#scanInput");
   try {
-    const manualProduct = await promptManualProduct(codigoMl, "#scanInput", {}, { includeLogisticsFields: false });
+    const manualProduct = await promptManualProduct(codigoMl, "#scanInput", await findManualProductInitialValues(codigoMl), { includeLogisticsFields: false });
     if (!manualProduct) {
       message.textContent = "ML nao encontrado neste lote nem no historico do usuario.";
       input?.select();
@@ -6725,10 +6761,14 @@ async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed =
       targetMessage = $("#scanMessage") || message;
     }
     if (targetMessage) {
-      targetMessage.style.color = "#0f766e";
-      targetMessage.textContent = printed
-        ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`
-        : `Bipagem registrada e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
+      targetMessage.style.color = response.queued ? "" : "#0f766e";
+      targetMessage.textContent = response.queued
+        ? printed
+          ? `Bipagem registrada e etiqueta impressa, mas a entrada no Bling ficou na fila: ${response.error || "o sistema tentara novamente."}`
+          : `Bipagem registrada, mas a entrada no Bling ficou na fila: ${response.error || "o sistema tentara novamente."}`
+        : printed
+          ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`
+          : `Bipagem registrada e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
     }
   } catch (error) {
     if (message) {
@@ -7440,7 +7480,7 @@ function itemRow(item) {
   return `
     <article class="item-row">
       <strong>${escapeHtml(product.sku || "")}</strong>
-      <span>${escapeHtml(product.descricao || "")}${blingAlert}</span>
+      <span class="item-description">${escapeHtml(product.descricao || "")}${blingAlert}${transferRefs}</span>
       <span class="code-cell"><small>Codigo ML</small><strong>${escapeHtml(product.codigoMl || "")}</strong></span>
       <span class="quantity-stepper scan-quantity-stepper">
         <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
@@ -7573,10 +7613,12 @@ function diverseItemRow(item, startsRz = false) {
 
 function productBlingAlertMarkup(product = {}) {
   if (!product.blingAlertMessage || product.blingAlertDismissed) return "";
+  const isQueueAlert = /pendente no Bling|pendente de envio ao Bling/i.test(product.blingAlertMessage);
+  const title = "Aceitar cadastro sem este dado";
   return `
     <span class="bling-alert-inline">
       <span>${escapeHtml(product.blingAlertMessage)}</span>
-      <button type="button" class="ghost icon-button bling-alert-dismiss" data-dismiss-bling-alert="${escapeHtml(product.id || "")}" title="Aceitar cadastro sem este dado" aria-label="Aceitar cadastro sem este dado">X</button>
+      ${isQueueAlert ? "" : `<button type="button" class="ghost icon-button bling-alert-dismiss" data-dismiss-bling-alert="${escapeHtml(product.id || "")}" title="${title}" aria-label="${title}">X</button>`}
     </span>
   `;
 }
@@ -8248,11 +8290,25 @@ function clearTriageDetail() {
   detail.textContent = "Selecione um produto da triagem.";
 }
 
+function canPrintTriageLabel(item = {}) {
+  return item.status === "diagnosticado";
+}
+
+function printTriageLabel() {
+  if (!$("#triageLabelPrintable")) return;
+  document.body.classList.add("printing-triage-label");
+  window.print();
+  setTimeout(() => document.body.classList.remove("printing-triage-label"), 1000);
+}
+
 function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
   const detail = $("#triageDetail");
   const footer = labelFooterText(labelMeta(item.createdAt));
   const deleteButton = item.canDelete
     ? `<button type="button" class="danger ghost" data-delete-triage-item>Excluir etiqueta</button>`
+    : "";
+  const printButton = canPrintTriageLabel(item)
+    ? `<button type="button" data-print-triage-label>Imprimir etiqueta</button>`
     : "";
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -8278,6 +8334,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
           <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+          <div><dt>Lacre de seguranca</dt><dd>${escapeHtml(item.securitySealCode || "-")}</dd></div>
           <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
           <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
           <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
@@ -8286,7 +8343,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
         </dl>
         <div class="settings-actions">
           <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
-          <button type="button" data-print-triage-label>Imprimir etiqueta</button>
+          ${printButton}
           ${deleteButton}
         </div>
       </div>
@@ -8307,6 +8364,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
       <label>Codigo Bling 2<input name="codigoBling2" value="${escapeHtml(item.codigoBling2 || "")}" /></label>
       <label>Serial<input name="serial" value="${escapeHtml(item.serial || "")}" /></label>
+      <label>Lacre de seguranca<input name="securitySealCode" value="${escapeHtml(item.securitySealCode || "")}" /></label>
       <label>Altura caixa (cm)<input name="alturaCaixa" inputmode="decimal" value="${escapeHtml(item.alturaCaixa || "")}" /></label>
       <label>Largura caixa (cm)<input name="larguraCaixa" inputmode="decimal" value="${escapeHtml(item.larguraCaixa || "")}" /></label>
       <label>Comprimento caixa (cm)<input name="comprimentoCaixa" inputmode="decimal" value="${escapeHtml(item.comprimentoCaixa || "")}" /></label>
@@ -8345,6 +8403,7 @@ function renderTriageItemView(item) {
         <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
         <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
         <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
+        <div><dt>Lacre de seguranca</dt><dd>${escapeHtml(item.securitySealCode || "-")}</dd></div>
         <div><dt>Dimensao caixa</dt><dd>${escapeHtml(boxDimensionsLabel(item))}</dd></div>
         <div><dt>Peso caixa</dt><dd>${escapeHtml(boxWeightLabel(item))}</dd></div>
         <div><dt>Entrada</dt><dd>${formatDateTime(item.createdAt)}</dd></div>
@@ -8564,6 +8623,7 @@ async function handleTriageDetailSubmit(event) {
   const message = $("#triageDetailMessage");
   try {
     const form = event.target;
+    const shouldPrintAfterSave = !form.classList.contains("triage-photo-only-form");
     if (form.classList.contains("triage-photo-only-form")) {
       const condition = form.elements?.diagnosisCondition?.value;
       const destination = form.elements?.destination?.value;
@@ -8587,6 +8647,9 @@ async function handleTriageDetailSubmit(event) {
     refreshTriageStatsIfVisible();
     $("#triageDetailMessage").style.color = "#0f766e";
     $("#triageDetailMessage").textContent = form.classList.contains("triage-photo-only-form") ? "Foto salva no laudo." : "Diagnostico salvo.";
+    if (shouldPrintAfterSave && !$("#triageTab")?.classList.contains("triage-view-only")) {
+      setTimeout(printTriageLabel, 0);
+    }
   } catch (error) {
     message.textContent = error.message;
   }
@@ -8682,9 +8745,7 @@ function handleTriageDetailClick(event) {
   }
 
   if (!event.target.closest("[data-print-triage-label]")) return;
-  document.body.classList.add("printing-triage-label");
-  window.print();
-  setTimeout(() => document.body.classList.remove("printing-triage-label"), 1000);
+  printTriageLabel();
 }
 
 function triageStatusLabel(item) {
