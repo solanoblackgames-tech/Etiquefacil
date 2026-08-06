@@ -3092,6 +3092,10 @@ function formatDecimal(value) {
   return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
 }
 
+function operatorManualDailyAverage(creates, activeDays) {
+  return activeDays ? (Number(creates || 0) * 4) / activeDays : 0;
+}
+
 function formatShortDate(value) {
   if (!value) return "--";
   const date = new Date(`${value}T00:00:00`);
@@ -3307,7 +3311,7 @@ function operatorViewModel(operator) {
     palletViews,
     productionErrors,
     activeDays,
-    averagePerDay: activeDays ? activity / activeDays : 0,
+    averagePerDay: operatorManualDailyAverage(creates, activeDays),
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
     bippedItems: entryItems,
@@ -3326,7 +3330,8 @@ function operatorPodiumCard(operator, index) {
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.bippedItems}</b>
       <small>${operator.registrationScans} bipados encontrados / ${operator.creates} cadastrados</small>
-      <em>${operator.creates} cad. manuais</em>
+      <em>${formatDecimal(operator.averagePerDay)} media/dia</em>
+      <small>${operator.creates} cad. manuais x 4 / ${operator.activeDays || 0} dias</small>
     </article>
   `;
 }
