@@ -2007,7 +2007,6 @@ function openProductSplitModal(product) {
     const modal = $("#productSplitModal");
     const form = $("#productSplitForm");
     const name = $("#productSplitName");
-    const code = $("#productSplitCodigoMl");
     const kitQuantity = $("#productSplitKitQuantity");
     const sellableQuantity = $("#productSplitSellableQuantity");
     const description = $("#productSplitDescription");
@@ -2030,7 +2029,6 @@ function openProductSplitModal(product) {
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
-      code.oninput = null;
       kitQuantity.oninput = null;
       sellableQuantity.oninput = null;
       form.reset();
@@ -2039,7 +2037,6 @@ function openProductSplitModal(product) {
     };
 
     name.textContent = `${product.sku || ""} ${product.descricao || ""}`.trim();
-    code.value = "";
     kitQuantity.value = "6";
     sellableQuantity.value = "5";
     description.value = unitTitleSuggestion(product.descricao || "");
@@ -2047,9 +2044,6 @@ function openProductSplitModal(product) {
     updatePreview();
     modal.classList.remove("hidden");
 
-    code.oninput = () => {
-      code.value = normalizeCodigoMl(code.value);
-    };
     kitQuantity.oninput = updatePreview;
     sellableQuantity.oninput = updatePreview;
 
@@ -2057,19 +2051,7 @@ function openProductSplitModal(product) {
       event.preventDefault();
       const kit = Math.round(Number(kitQuantity.value || 0));
       const sellable = Math.round(Number(sellableQuantity.value || 0));
-      const codigoMl = normalizeCodigoMl(code.value);
       const descricao = description.value.trim();
-      code.value = codigoMl;
-      if (!codigoMl) {
-        error.textContent = "Informe o novo Codigo ML.";
-        code.focus();
-        return;
-      }
-      if (codigoMl === normalizeCodigoMl(product.codigoMl)) {
-        error.textContent = "Informe um Codigo ML diferente do produto original.";
-        code.focus();
-        return;
-      }
       if (!Number.isFinite(kit) || kit < 2) {
         error.textContent = "Informe a quantidade original do kit.";
         kitQuantity.focus();
@@ -2086,7 +2068,7 @@ function openProductSplitModal(product) {
         return;
       }
       cleanup();
-      resolve({ codigoMl, kitQuantity: kit, sellableQuantity: sellable, descricao });
+      resolve({ kitQuantity: kit, sellableQuantity: sellable, descricao });
     };
 
     cancel.onclick = () => {
@@ -2102,7 +2084,7 @@ function openProductSplitModal(product) {
       }
     };
 
-    setTimeout(() => code.focus(), 0);
+    setTimeout(() => description.focus(), 0);
   });
 }
 

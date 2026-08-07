@@ -40,7 +40,7 @@ test("calculateSplitProductValues adjusts only the current RZ quantity from tota
   assert.equal(split.qtdTotal, 8);
 });
 
-test("splitLotProduct creates a new product and zeroes the original product", async () => {
+test("splitLotProduct generates a new product code and zeroes the original product", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-split-product-"));
@@ -118,7 +118,6 @@ test("splitLotProduct creates a new product and zeroes the original product", as
       productId: "product-original",
       codigoRz: "RZ-1",
       payload: {
-        codigoMl: "WXYZ67890",
         kitQuantity: 5,
         sellableQuantity: 4,
         descricao: "PECA UNITARIA"
@@ -129,7 +128,7 @@ test("splitLotProduct creates a new product and zeroes the original product", as
     const created = db.products.find((product) => product.id === result.product.id);
 
     assert.equal(original.qtdTotal, 0);
-    assert.equal(created.codigoMl, "WXYZ67890");
+    assert.equal(created.codigoMl, "ABCX00007");
     assert.equal(created.sku, "ABC0007");
     assert.equal(created.qtdTotal, 4);
     assert.equal(created.valorUnit, 20);

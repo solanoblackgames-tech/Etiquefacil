@@ -2307,28 +2307,24 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   await ensureStore();
   const kitQuantity = Math.round(Number(payload?.kitQuantity || 0));
   const sellableQuantity = Math.round(Number(payload?.sellableQuantity || 0));
-  const codigoMl = normalizeCode(payload?.codigoMl);
   const descricao = String(payload?.descricao || "").trim();
-  if (!codigoMl) throw new Error("Informe o novo Codigo ML do produto desmembrado.");
   if (!Number.isFinite(kitQuantity) || kitQuantity < 2) throw new Error("Informe a quantidade original do kit.");
   if (!Number.isFinite(sellableQuantity) || sellableQuantity < 1) throw new Error("Informe quantas unidades ficaram vendaveis.");
   if (sellableQuantity > kitQuantity) throw new Error("A quantidade vendavel nao pode ser maior que o kit original.");
   if (!descricao) throw new Error("Informe o titulo do produto unitario.");
 
-  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl, kitQuantity, sellableQuantity, descricao });
+  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nao encontrado.");
   const product = db.products.find((item) => item.id === productId && item.lotId === lot.id);
   if (!product) throw notFound("Produto nao encontrado neste lote.");
-  if (normalizeCode(product.codigoMl) === codigoMl) throw new Error("Informe um Codigo ML diferente do produto original.");
-  const existing = db.products.find((item) => item.lotId === lot.id && normalizeCode(item.codigoMl) === codigoMl);
-  if (existing) throw new Error("Este Codigo ML ja existe no lote atual.");
   const item = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === product.id && candidate.codigoRz === codigoRz);
   if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
   const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
+  const codigoMl = generateSplitCodigoMl(lot, new Set((db.products || []).map((item) => normalizeCode(item.codigoMl))));
   const originalProduct = { ...product, qtdTotal: 0 };
   const newProduct = {
     ...product,
@@ -5003,7 +4999,7 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
 }
 
-async function splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl, kitQuantity, sellableQuantity, descricao }) {
+async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {
   const client = await getPgPool().connect();
   let product;
   let originalProduct;
@@ -5016,10 +5012,6 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl,
     const productResult = await client.query("select * from products where id = $1 and lot_id = $2 for update", [productId, lot.id]);
     const current = productResult.rows[0] && productFromRow(productResult.rows[0]);
     if (!current) throw notFound("Produto nao encontrado neste lote.");
-    if (normalizeCode(current.codigoMl) === codigoMl) throw new Error("Informe um Codigo ML diferente do produto original.");
-
-    const existing = await client.query("select id from products where lot_id = $1 and upper(trim(codigo_ml)) = upper(trim($2)) limit 1", [lot.id, codigoMl]);
-    if (existing.rows.length) throw new Error("Este Codigo ML ja existe no lote atual.");
 
     const itemResult = await client.query(
       "select * from rz_items where lot_id = $1 and product_id = $2 and codigo_rz = $3 for update",
@@ -5029,6 +5021,8 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, codigoMl,
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
     const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
+    const usedCodes = await client.query("select codigo_ml from products where lot_id = $1", [lot.id]);
+    const codigoMl = generateSplitCodigoMl(lot, new Set(usedCodes.rows.map((row) => normalizeCode(row.codigo_ml))));
     const zeroedOriginal = await client.query(
       `update products
        set qtd_total = 0
@@ -6578,6 +6572,20 @@ function splitProductDescription(description, kitQuantity, sellableQuantity) {
   if (!base) return suffix;
   if (base.toLowerCase().includes("unitario do kit")) return base;
   return `${base} - ${suffix}`;
+}
+
+function generateSplitCodigoMl(lot = {}, usedCodes = new Set()) {
+  const prefixLetters = normalizeCode(lot.prefixoSku || "").replace(/[^A-Z]/g, "");
+  const fallbackLetters = normalizeCode(`${lot.nomeArquivo || ""}${lot.fornecedor || ""}`).replace(/[^A-Z]/g, "");
+  const source = prefixLetters || fallbackLetters;
+  const letters = `${source}XXXX`.slice(0, 4);
+  const seed = Math.max(1, Math.round(Number(lot.proximoSequencialSku || 1)));
+  for (let attempt = 0; attempt < 99999; attempt += 1) {
+    const sequence = ((seed + attempt - 1) % 99999) + 1;
+    const candidate = `${letters}${String(sequence).padStart(5, "0")}`;
+    if (!usedCodes.has(candidate)) return candidate;
+  }
+  throw new Error("Nao foi possivel gerar um Codigo ML disponivel para o desmembramento.");
 }
 
 function splitItemType(type) {
