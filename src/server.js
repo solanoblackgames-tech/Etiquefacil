@@ -526,7 +526,11 @@ app.patch("/api/profile/price-display-settings", requireAuth, requireOwner, asyn
 
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
-    res.json({ items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req))) });
+    res.json({
+      items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req), {
+        lotId: req.query.lotId
+      }))
+    });
   } catch (error) {
     sendError(res, error);
   }

@@ -23,6 +23,7 @@ const state = {
     status: "",
     diagnosisCondition: "",
     destination: "",
+    lotId: "",
     date: ""
   },
   selectedTriageCode: null,
@@ -3739,8 +3740,8 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
-  setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
   if (route.view === "triage") applyTriageFiltersFromQuery();
+  setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
   if (route.view === "triage" && route.triageCode) {
     await loadTriageItems(route.triageCode);
     await selectTriageItem(route.triageCode, { push: false });
@@ -7727,7 +7728,9 @@ function palletRow(item) {
 async function loadTriageItems(selectCode = null) {
   if (!state.user?.triageAccess) return;
   try {
-    const response = await api("/api/triage/items");
+    const params = new URLSearchParams();
+    if (state.triageFilters?.lotId) params.set("lotId", state.triageFilters.lotId);
+    const response = await api(`/api/triage/items${params.toString() ? `?${params.toString()}` : ""}`);
     state.triageItems = response.items || [];
     renderTriageItems();
     refreshTriageStatsIfVisible();
@@ -7937,10 +7940,12 @@ function handleTriageStatsFilterClick(event) {
 }
 
 function openTriageWithFilters({ status = "", destination = "", diagnosisCondition = "" } = {}) {
+  const filter = normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter());
   const url = new URL(routePath("/triagem"));
   if (status) url.searchParams.set("status", status);
   if (destination) url.searchParams.set("destination", destination);
   if (diagnosisCondition) url.searchParams.set("diagnosisCondition", diagnosisCondition);
+  if (filter.lotId) url.searchParams.set("lotId", filter.lotId);
   window.open(url.toString(), "_blank", "noopener");
 }
 
@@ -7951,6 +7956,7 @@ function applyTriageFiltersFromQuery() {
     status: params.get("status") || "",
     diagnosisCondition: params.get("diagnosisCondition") || "",
     destination: params.get("destination") || "",
+    lotId: params.get("lotId") || "",
     date: ""
   };
   state.selectedTriageCode = null;
@@ -8255,12 +8261,14 @@ function filteredTriageItems() {
   const status = state.triageFilters.status;
   const diagnosisCondition = state.triageFilters.diagnosisCondition;
   const destination = state.triageFilters.destination;
+  const lotId = state.triageFilters.lotId;
   const date = state.triageFilters.date;
   return state.triageItems.filter((item) => {
     if (operator && triageOperatorId(item) !== operator) return false;
     if (status && item.status !== status) return false;
     if (diagnosisCondition && item.diagnosisCondition !== diagnosisCondition) return false;
     if (destination && item.destination !== destination) return false;
+    if (lotId && item.lotId !== lotId) return false;
     if (date && triageItemDateKey(item) !== date) return false;
     return true;
   });
@@ -8272,8 +8280,9 @@ function renderTriageFilterOptions() {
   const statusSelect = form?.elements.namedItem("status");
   const diagnosisConditionSelect = form?.elements.namedItem("diagnosisCondition");
   const destinationSelect = form?.elements.namedItem("destination");
+  const lotSelect = form?.elements.namedItem("lotId");
   const dateInput = form?.elements.namedItem("date");
-  if (!select || !statusSelect || !diagnosisConditionSelect || !destinationSelect || !dateInput) return;
+  if (!select || !statusSelect || !diagnosisConditionSelect || !destinationSelect || !lotSelect || !dateInput) return;
   const current = state.triageFilters.operator;
   const operators = new Map();
   state.triageItems.forEach((item) => {
@@ -8290,26 +8299,40 @@ function renderTriageFilterOptions() {
   statusSelect.value = state.triageFilters.status || "";
   diagnosisConditionSelect.value = state.triageFilters.diagnosisCondition || "";
   destinationSelect.value = state.triageFilters.destination || "";
+  const currentLotId = state.triageFilters.lotId || "";
+  lotSelect.innerHTML = `<option value="">Todos</option>${state.lots
+    .map((lot) => `<option value="${escapeHtml(lot.id)}">${escapeHtml(lot.nomeArquivo || lot.prefixoSku || "Lote")}</option>`)
+    .join("")}`;
+  lotSelect.value = state.lots.some((lot) => lot.id === currentLotId) ? currentLotId : "";
+  if (lotSelect.value !== state.triageFilters.lotId) state.triageFilters.lotId = lotSelect.value;
   dateInput.value = state.triageFilters.date;
 }
 
 function handleTriageFilterChange(event) {
   if (!event.target.matches("#triageFilterForm select, #triageFilterForm input")) return;
   const form = event.currentTarget;
+  const previousLotId = state.triageFilters.lotId || "";
   state.triageFilters = {
     operator: String(form.elements.namedItem("operator")?.value || ""),
     status: String(form.elements.namedItem("status")?.value || ""),
     diagnosisCondition: String(form.elements.namedItem("diagnosisCondition")?.value || ""),
     destination: String(form.elements.namedItem("destination")?.value || ""),
+    lotId: String(form.elements.namedItem("lotId")?.value || ""),
     date: String(form.elements.namedItem("date")?.value || "")
   };
+  if (state.triageFilters.lotId !== previousLotId) {
+    loadTriageItems();
+    return;
+  }
   renderTriageItems();
 }
 
 function handleTriageFilterClick(event) {
   if (!event.target.matches("[data-clear-triage-filters]")) return;
-  state.triageFilters = { operator: "", status: "", diagnosisCondition: "", destination: "", date: "" };
-  renderTriageItems();
+  const hadLotFilter = Boolean(state.triageFilters.lotId);
+  state.triageFilters = { operator: "", status: "", diagnosisCondition: "", destination: "", lotId: "", date: "" };
+  if (hadLotFilter) loadTriageItems();
+  else renderTriageItems();
 }
 
 function handleTriageItemsClick(event) {

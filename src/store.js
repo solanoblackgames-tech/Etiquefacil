@@ -893,16 +893,65 @@ export async function updateUserPassword(userId, password) {
   return { ok: true };
 }
 
-export async function listTriageItems(userId) {
+export async function listTriageItems(userId, filters = {}) {
   await ensureStore();
+  const lotId = String(filters.lotId || "").trim();
   if (hasPostgres()) {
-    const result = await query("select * from triage_items where user_id = $1 order by updated_at desc", [userId]);
-    return result.rows.map(triageItemFromRow);
+    const result = await query(
+      `
+        select
+          t.*,
+          p.lot_id as matched_lot_id,
+          l.nome_arquivo as matched_lot_name,
+          l.prefixo_sku as matched_lot_sku_prefix
+        from triage_items t
+        left join lateral (
+          select pr.*
+          from products pr
+          join lots lot on lot.id = pr.lot_id
+          where lot.user_id = t.user_id
+            and ($2::text = '' or lot.id = $2::text)
+            and (
+              (t.sku <> '' and upper(trim(pr.sku)) = upper(trim(t.sku)))
+              or (t.product_code <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.product_code)))
+              or (t.codigo_bling2 <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.codigo_bling2)))
+              or (t.asin <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.asin)))
+            )
+          order by pr.created_at desc
+          limit 1
+        ) p on true
+        left join lots l on l.id = p.lot_id
+        where t.user_id = $1
+          and ($2::text = '' or p.id is not null)
+        order by t.updated_at desc
+      `,
+      [userId, lotId]
+    );
+    return result.rows.map((row) => ({
+      ...triageItemFromRow(row),
+      lotId: row.matched_lot_id || "",
+      lotName: row.matched_lot_name || "",
+      lotSkuPrefix: row.matched_lot_sku_prefix || ""
+    }));
   }
 
   const db = await readDb();
+  const userLots = (db.lots || []).filter((lot) => lot.userId === userId);
+  const lotIds = new Set(userLots.map((lot) => lot.id));
+  const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   return (db.triageItems || [])
     .filter((item) => item.userId === userId)
+    .map((item) => {
+      const product = findTriageStatsProduct(db.products || [], lotId ? new Set([lotId]) : lotIds, item);
+      const lot = product?.lotId ? lotsById.get(product.lotId) : null;
+      return {
+        ...item,
+        lotId: product?.lotId || "",
+        lotName: lot?.nomeArquivo || "",
+        lotSkuPrefix: lot?.prefixoSku || ""
+      };
+    })
+    .filter((item) => !lotId || item.lotId === lotId)
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
 }
 
