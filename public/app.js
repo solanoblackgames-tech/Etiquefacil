@@ -511,12 +511,45 @@ async function createDiverseLot(event) {
 }
 
 async function handleLotDetailSubmit(event) {
+  if (event.target.id === "lotDescriptionForm") {
+    await updateLotDescription(event);
+    return;
+  }
   if (event.target.id !== "noSheetLotForm") return;
   event.preventDefault();
   await createNoSheetLotFromForm(event.target, {
     messageSelector: "#noSheetLotMessage",
     successMessage: "Lote sem planilha criado. Pode comecar a bipar."
   });
+}
+
+async function updateLotDescription(event) {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector("button[type='submit']");
+  const message = $("#lotDescriptionMessage");
+  if (message) {
+    message.textContent = "";
+    message.style.color = "";
+  }
+  if (button) button.disabled = true;
+  try {
+    const payload = Object.fromEntries(new FormData(form));
+    const response = await api(`/api/lots/${encodeURIComponent(state.selectedLotId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    state.lots = state.lots.map((lot) => lot.id === response.lot.id ? response.lot : lot);
+    renderLots();
+    renderLotDetail(response.lot);
+    $("#lotDescriptionMessage").style.color = "#0f766e";
+    $("#lotDescriptionMessage").textContent = "Descricao do lote atualizada.";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function createNoSheetLotFromForm(form, { messageSelector, successMessage }) {
@@ -5919,6 +5952,15 @@ function renderLotDetail(lot) {
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>`}
     ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
+    ${canManage && !operatorNoSheetLot ? `
+      <form id="lotDescriptionForm" class="inline-upload-form">
+        <label>Descricao do lote
+          <input name="descricao" maxlength="140" value="${escapeHtml(lot.nomeArquivo)}" required />
+        </label>
+        <button type="submit">Salvar descricao</button>
+        <p id="lotDescriptionMessage" class="message"></p>
+      </form>
+    ` : ""}
     ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
         ${operatorNoSheetLot ? "" : `<span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>`}

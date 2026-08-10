@@ -1609,6 +1609,28 @@ export async function deleteUserLot(userId, lotId) {
   return { ok: true };
 }
 
+export async function updateUserLotDescription(userId, lotId, description) {
+  await ensureStore();
+  const nomeArquivo = String(description || "").trim().slice(0, 140);
+  if (!nomeArquivo) throw new Error("Informe a descricao do lote.");
+
+  if (hasPostgres()) {
+    const result = await query(
+      "update lots set nome_arquivo = $3 where id = $1 and user_id = $2 returning id",
+      [lotId, userId, nomeArquivo]
+    );
+    if (!result.rows.length) throw notFound("Lote nao encontrado.");
+    return { lot: await getUserLotDetail(userId, lotId) };
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  lot.nomeArquivo = nomeArquivo;
+  await writeDb(db);
+  return { lot: summarizeLot(db, lot, true) };
+}
+
 export async function getStoreHealth() {
   await ensureStore();
   if (!hasPostgres()) return { ok: true, storage: "json" };

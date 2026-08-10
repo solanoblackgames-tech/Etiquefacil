@@ -113,6 +113,7 @@ import {
   updateLotProductBlingAlerts,
   updateNoSheetSuggestions,
   updateLotProduct,
+  updateUserLotDescription,
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStatsAccess,
@@ -1089,6 +1090,14 @@ app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
   const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
   if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
   res.json({ lot });
+});
+
+app.patch("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateUserLotDescription(workspaceUserId(req), req.params.lotId, req.body?.descricao || req.body?.nomeArquivo));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {

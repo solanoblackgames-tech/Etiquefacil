@@ -331,6 +331,59 @@ test("admin lot summaries can include lots from different users with owner data"
   ]);
 });
 
+test("owner can update description for an existing lot", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-lot-description-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-lot-description`;
+    const { updateUserLotDescription, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [{ id: "lot-1", userId: "user-1", nomeArquivo: "Descricao antiga", fornecedor: "FORN", prefixoSku: "SKU", percentualArremate: 0, proximoSequencialSku: 1, createdAt: "2026-07-03T00:00:00.000Z" }],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await updateUserLotDescription("user-1", "lot-1", "  Descricao nova  ");
+    const db = await readDb();
+
+    assert.equal(result.lot.nomeArquivo, "Descricao nova");
+    assert.equal(db.lots[0].nomeArquivo, "Descricao nova");
+    await assert.rejects(
+      () => updateUserLotDescription("other-user", "lot-1", "Nao pode"),
+      /Lote nao encontrado/
+    );
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
