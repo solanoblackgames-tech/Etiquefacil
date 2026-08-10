@@ -907,20 +907,54 @@ export async function listTriageItems(userId) {
 }
 
 export async function getTriageStats(userId, period = {}) {
+  const rows = await listTriageStatsRows(userId, period);
+  return buildTriageStatsFromRows(rows);
+}
+
+export async function listTriageStatsRows(userId, period = {}) {
   await ensureStore();
   const range = normalizeOperatorActivityRange(period);
+  const lotId = String(period.lotId || "").trim();
   if (hasPostgres()) {
     const result = await query(
       `
         select
           t.id,
+          t.code,
           t.created_by_user_id,
           t.operator_user_id,
+          t.sku,
+          t.descricao,
           t.status,
           t.destination,
           t.diagnosis_condition,
+          t.diagnosis,
+          t.created_at,
+          t.updated_at,
+          t.diagnosed_at,
           coalesce(nullif(t.valor_unit, 0), nullif(p.valor_unit, 0), 0) as valor_unit,
           coalesce(nullif(t.preco_custo, 0), nullif(p.preco_custo, 0), 0) as preco_custo,
+          p.id as product__id,
+          p.lot_id as product__lot_id,
+          p.codigo_ml as product__codigo_ml,
+          p.sku as product__sku,
+          p.descricao as product__descricao,
+          p.valor_unit as product__valor_unit,
+          p.preco_custo as product__preco_custo,
+          p.qtd_total as product__qtd_total,
+          p.created_at as product__created_at,
+          l.id as lot__id,
+          l.user_id as lot__user_id,
+          l.nome_arquivo as lot__nome_arquivo,
+          l.percentual_arremate as lot__percentual_arremate,
+          l.custo_medio_unitario as lot__custo_medio_unitario,
+          l.tipo_custo as lot__tipo_custo,
+          l.percentual_custo as lot__percentual_custo,
+          l.fornecedor as lot__fornecedor,
+          l.prefixo_sku as lot__prefixo_sku,
+          l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
+          l.no_sheet_suggestions as lot__no_sheet_suggestions,
+          l.created_at as lot__created_at,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -937,10 +971,11 @@ export async function getTriageStats(userId, period = {}) {
           u.created_at as user__created_at
         from triage_items t
         left join lateral (
-          select pr.valor_unit, pr.preco_custo
+          select pr.*
           from products pr
           join lots l on l.id = pr.lot_id
           where l.user_id = t.user_id
+            and ($4::text = '' or l.id = $4::text)
             and (
               (t.sku <> '' and upper(trim(pr.sku)) = upper(trim(t.sku)))
               or (t.product_code <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.product_code)))
@@ -950,46 +985,62 @@ export async function getTriageStats(userId, period = {}) {
           order by pr.created_at desc
           limit 1
         ) p on true
+        left join lots l on l.id = p.lot_id
         left join users u on u.id = coalesce(t.operator_user_id, t.created_by_user_id, t.user_id)
         where t.user_id = $1
           and ($2::timestamptz is null or t.created_at >= $2::timestamptz)
           and ($3::timestamptz is null or t.created_at <= $3::timestamptz)
+          and ($4::text = '' or p.id is not null)
         order by t.updated_at desc
       `,
-      [userId, range.startAt, range.endAt]
+      [userId, range.startAt, range.endAt, lotId]
     );
-    return buildTriageStatsFromRows(result.rows.map((row) => ({
+    return result.rows.map((row) => ({
       item: {
         id: row.id,
+        code: row.code || "",
         createdByUserId: row.created_by_user_id || userId,
         operatorUserId: row.operator_user_id || null,
+        sku: row.sku || "",
+        descricao: row.descricao || "",
         status: row.status || "aguardando_teste",
         destination: row.destination || "",
-        diagnosisCondition: row.diagnosis_condition || ""
+        diagnosisCondition: row.diagnosis_condition || "",
+        diagnosis: row.diagnosis || "",
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at || row.created_at),
+        diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
       },
       salePrice: num(row.valor_unit),
       costPrice: num(row.preco_custo),
+      product: row.product__id ? productFromPrefixedStatsRow(row, "product__") : null,
+      lot: row.lot__id ? lotFromPrefixedRow(row, "lot__") : null,
       user: row.user__id ? sanitizeUser(userFromPrefixedRow(row, "user__")) : null
-    })));
+    }));
   }
 
   const db = await readDb();
-  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const userLots = (db.lots || []).filter((lot) => lot.userId === userId);
+  const lotIds = new Set(userLots.map((lot) => lot.id));
+  const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
-  const rows = (db.triageItems || [])
+  return (db.triageItems || [])
     .filter((item) => item.userId === userId)
     .filter((item) => isWithinDateRange(item.createdAt, range))
     .map((item) => {
-      const product = findTriageStatsProduct(db.products || [], lotIds, item);
+      const scopedLotIds = lotId ? new Set([lotId]) : lotIds;
+      const product = findTriageStatsProduct(db.products || [], scopedLotIds, item);
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
         item,
         salePrice: triageStatMoney(item.valorUnit, product?.valorUnit),
         costPrice: triageStatMoney(item.precoCusto, product?.precoCusto),
+        product,
+        lot: product?.lotId ? lotsById.get(product.lotId) || null : null,
         user: userMap.get(responsibleUserId) || null
       };
-    });
-  return buildTriageStatsFromRows(rows);
+    })
+    .filter((row) => !lotId || row.product?.lotId === lotId);
 }
 
 export async function getOperationalDashboardStats(userId) {
@@ -7034,6 +7085,20 @@ function productFromRow(row) {
     blingAlertDismissed: Boolean(row.bling_alert_dismissed),
     origem: row.origem || "planilha",
     createdAt: iso(row.created_at)
+  };
+}
+
+function productFromPrefixedStatsRow(row, prefix) {
+  return {
+    id: row[`${prefix}id`],
+    lotId: row[`${prefix}lot_id`],
+    codigoMl: row[`${prefix}codigo_ml`] || "",
+    sku: row[`${prefix}sku`] || "",
+    descricao: row[`${prefix}descricao`] || "",
+    valorUnit: num(row[`${prefix}valor_unit`]),
+    precoCusto: num(row[`${prefix}preco_custo`]),
+    qtdTotal: Number(row[`${prefix}qtd_total`] || 0),
+    createdAt: iso(row[`${prefix}created_at`])
   };
 }
 

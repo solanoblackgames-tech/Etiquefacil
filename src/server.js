@@ -70,6 +70,7 @@ import {
   getStoreHealth,
   getTriageItem,
   getTriageStats,
+  listTriageStatsRows,
   getOperationalDashboardStats,
   getTransferLotDetail,
   getPublicUserById,
@@ -550,9 +551,29 @@ app.get("/api/triage/stats", requireAuth, requireTriageAccess, requireOperatorSt
     res.json({
       stats: await getTriageStats(workspaceUserId(req), {
         startDate: req.query.startDate,
-        endDate: req.query.endDate
+        endDate: req.query.endDate,
+        lotId: req.query.lotId
       })
     });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/stats/export.xlsx", requireAuth, requireTriageAccess, requireOperatorStatsAccess, async (req, res) => {
+  try {
+    const rows = await listTriageStatsRows(workspaceUserId(req), {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      lotId: req.query.lotId
+    });
+    const workbook = buildTriageStatsExportWorkbook(rows);
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    const lotName = rows.find((row) => row.lot)?.lot?.nomeArquivo || (req.query.lotId ? "lote" : "todos-lotes");
+    const fileName = `${safeFileName(lotName)}-triagem-laudos.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(buffer);
   } catch (error) {
     sendError(res, error);
   }
@@ -2252,6 +2273,91 @@ async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
 
 function safeFileName(value) {
   return String(value || "etiquefacil").replace(/[^\w.-]+/g, "_");
+}
+
+function buildTriageStatsExportWorkbook(rows = []) {
+  const data = rows.map((row) => {
+    const item = row.item || {};
+    const product = row.product || {};
+    const lot = row.lot || {};
+    const diagnosis = String(item.diagnosis || "").trim();
+    const condition = formatTriageDiagnosisCondition(item.diagnosisCondition);
+    return {
+      LOTE: lot.nomeArquivo || "",
+      SKU: product.sku || item.sku || "",
+      QTD: 1,
+      "PRECO DE VENDA VAREJO": roundMoney(row.salePrice || 0),
+      "RESULTADO DO LAUDO": diagnosis || condition,
+      "CONDICAO DO LAUDO": condition,
+      DESTINO: formatTriageDestination(item.destination),
+      STATUS: item.status === "diagnosticado" ? "Diagnosticado" : "Aguardando teste",
+      "CODIGO TRIAGEM": item.code || "",
+      DESCRICAO: item.descricao || product.descricao || "",
+      OPERADOR: row.user?.name || row.user?.email || "",
+      "DATA TRIAGEM": item.createdAt ? new Date(item.createdAt) : "",
+      "DATA LAUDO": item.diagnosedAt ? new Date(item.diagnosedAt) : ""
+    };
+  });
+  const worksheet = XLSX.utils.json_to_sheet(data, {
+    header: [
+      "LOTE",
+      "SKU",
+      "QTD",
+      "PRECO DE VENDA VAREJO",
+      "RESULTADO DO LAUDO",
+      "CONDICAO DO LAUDO",
+      "DESTINO",
+      "STATUS",
+      "CODIGO TRIAGEM",
+      "DESCRICAO",
+      "OPERADOR",
+      "DATA TRIAGEM",
+      "DATA LAUDO"
+    ]
+  });
+  worksheet["!cols"] = [
+    { wch: 28 },
+    { wch: 18 },
+    { wch: 8 },
+    { wch: 22 },
+    { wch: 42 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 38 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 18 }
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Triagem");
+  return workbook;
+}
+
+function formatTriageDiagnosisCondition(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  const labels = {
+    OK_FUNCIONANDO: "OK funcionando",
+    FUNCIONANDO_COM_DETALHES: "Funcionando com detalhes",
+    NAO_LIGA: "Nao liga",
+    SEM_TESTE: "Sem teste",
+    INCOMPLETO: "Incompleto",
+    AVARIADO: "Avariado"
+  };
+  return labels[normalized] || normalized.replace(/_/g, " ");
+}
+
+function formatTriageDestination(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  const labels = {
+    LOJA: "Loja",
+    VENDA_DIRETA: "Venda direta",
+    ASSISTENCIA: "Assistencia",
+    DESCARTE: "Descarte",
+    DEVOLUCAO: "Devolucao"
+  };
+  return labels[normalized] || normalized.replace(/_/g, " ");
 }
 
 function blingFileName(lot, kind) {

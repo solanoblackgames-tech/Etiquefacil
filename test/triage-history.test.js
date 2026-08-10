@@ -156,3 +156,72 @@ test("triage stats prefer Bling-filled item cost over zero local product cost", 
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("triage stats rows can be filtered by lot for export", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-lot-export-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-lot-export`;
+    const { createTriageItem, getTriageStats, listTriageStatsRows, updateTriageDiagnosis, writeDb } = await import(storeUrl.href);
+    const now = new Date().toISOString();
+
+    await writeDb({
+      users: [{ id: "owner-1", name: "Usuario", email: "user@example.com" }],
+      lots: [
+        { id: "lot-1", userId: "owner-1", nomeArquivo: "Lote 1", createdAt: now },
+        { id: "lot-2", userId: "owner-1", nomeArquivo: "Lote 2", createdAt: now }
+      ],
+      products: [
+        { id: "product-1", lotId: "lot-1", codigoMl: "ML1", sku: "SKU-1", descricao: "Produto 1", valorUnit: 120.5, precoCusto: 40, qtdTotal: 3, createdAt: now },
+        { id: "product-2", lotId: "lot-2", codigoMl: "ML2", sku: "SKU-2", descricao: "Produto 2", valorUnit: 220.5, precoCusto: 80, qtdTotal: 2, createdAt: now }
+      ],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "owner-1", payload: { sku: "SKU-1", descricao: "Triagem 1" } });
+    await createTriageItem({ userId: "owner-1", createdByUserId: "owner-1", payload: { sku: "SKU-2", descricao: "Triagem 2" } });
+    await updateTriageDiagnosis({
+      userId: "owner-1",
+      code: first.code,
+      operatorUserId: "owner-1",
+      payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Laudo aprovado", destination: "LOJA" }
+    });
+
+    const stats = await getTriageStats("owner-1", { lotId: "lot-1" });
+    const rows = await listTriageStatsRows("owner-1", { lotId: "lot-1" });
+
+    assert.equal(stats.total, 1);
+    assert.equal(stats.totalValue, 120.5);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].product.sku, "SKU-1");
+    assert.equal(rows[0].lot.nomeArquivo, "Lote 1");
+    assert.equal(rows[0].item.diagnosis, "Laudo aprovado");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

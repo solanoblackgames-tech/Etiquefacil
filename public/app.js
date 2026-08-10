@@ -7744,10 +7744,15 @@ async function loadTriageStats() {
   panel.innerHTML = '<p class="muted">Carregando estatisticas...</p>';
   try {
     if (!state.triageStatsFilter) state.triageStatsFilter = defaultTriageStatsFilter();
+    if (!state.lots.length) {
+      const lotsResponse = await api("/api/lots");
+      state.lots = lotsResponse.lots || [];
+    }
     const filter = normalizeTriageStatsFilter(state.triageStatsFilter);
     const params = new URLSearchParams();
     if (filter.startDate) params.set("startDate", filter.startDate);
     if (filter.endDate) params.set("endDate", filter.endDate);
+    if (filter.lotId) params.set("lotId", filter.lotId);
     const response = await api(`/api/triage/stats?${params.toString()}`);
     state.triageStats = response.stats || null;
     renderTriageStats();
@@ -7839,28 +7844,42 @@ function defaultTriageStatsFilter() {
 function normalizeTriageStatsFilter(filter = {}) {
   let startDate = filter.startDate || "";
   let endDate = filter.endDate || "";
+  const lotId = String(filter.lotId || "").trim();
   if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
-  state.triageStatsFilter = { startDate, endDate };
+  state.triageStatsFilter = { startDate, endDate, lotId };
   return state.triageStatsFilter;
 }
 
 function triageStatsFilterMarkup(filter) {
+  const lotOptions = [
+    '<option value="">Todos os lotes</option>',
+    ...state.lots.map((lot) => `<option value="${escapeHtml(lot.id)}" ${lot.id === filter.lotId ? "selected" : ""}>${escapeHtml(lot.nomeArquivo || lot.prefixoSku || "Lote")}</option>`)
+  ].join("");
   return `
     <form class="triage-stats-filter" id="triageStatsFilter">
       <div class="triage-stats-filter-title">
-        <strong>Periodo</strong>
-        <span class="muted">${escapeHtml(triageStatsPeriodLabel(filter))}</span>
+        <strong>Filtros</strong>
+        <span class="muted">${escapeHtml(triageStatsFilterLabel(filter))}</span>
       </div>
       <div class="triage-stats-filter-fields">
         <button type="button" class="ghost" data-triage-stats-period="today">Hoje</button>
         <button type="button" class="ghost" data-triage-stats-period="7">7 dias</button>
         <button type="button" class="ghost" data-triage-stats-period="30">30 dias</button>
+        <label class="triage-stats-lot-field">Lote<select name="lotId">${lotOptions}</select></label>
         <label>Inicio<input type="date" name="startDate" value="${escapeHtml(filter.startDate)}" /></label>
         <label>Fim<input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" /></label>
         <button type="submit">Aplicar</button>
+        <button type="button" class="secondary" data-download-triage-stats>Baixar lista XLSX</button>
       </div>
+      <p class="message" id="triageStatsDownloadMessage"></p>
     </form>
   `;
+}
+
+function triageStatsFilterLabel(filter) {
+  const period = triageStatsPeriodLabel(filter);
+  const lot = state.lots.find((item) => item.id === filter.lotId);
+  return lot ? `${period} - ${lot.nomeArquivo}` : period;
 }
 
 function triageStatsPeriodLabel(filter) {
@@ -7876,7 +7895,7 @@ function handleTriageStatsFilterSubmit(event) {
 }
 
 function handleTriageStatsFilterChange(event) {
-  if (!event.target.closest("#triageStatsFilter") || !event.target.matches('input[type="date"]')) return;
+  if (!event.target.closest("#triageStatsFilter") || !event.target.matches('input[type="date"], select[name="lotId"]')) return;
   applyTriageStatsFilterFromForm(event.target.form);
 }
 
@@ -7899,13 +7918,20 @@ function handleTriageStatsFilterClick(event) {
     return;
   }
 
+  const downloadButton = event.target.closest("[data-download-triage-stats]");
+  if (downloadButton) {
+    downloadTriageStatsList();
+    return;
+  }
+
   const button = event.target.closest("[data-triage-stats-period]");
   if (!button) return;
   const days = button.dataset.triageStatsPeriod;
   const today = new Date();
   state.triageStatsFilter = {
     startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
-    endDate: formatInputDate(today)
+    endDate: formatInputDate(today),
+    lotId: normalizeTriageStatsFilter(state.triageStatsFilter || {}).lotId
   };
   loadTriageStats();
 }
@@ -7935,9 +7961,24 @@ function applyTriageStatsFilterFromForm(form) {
   const data = new FormData(form);
   state.triageStatsFilter = normalizeTriageStatsFilter({
     startDate: data.get("startDate") || "",
-    endDate: data.get("endDate") || ""
+    endDate: data.get("endDate") || "",
+    lotId: data.get("lotId") || ""
   });
   loadTriageStats();
+}
+
+function downloadTriageStatsList() {
+  const message = $("#triageStatsDownloadMessage");
+  const filter = normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter());
+  const params = new URLSearchParams();
+  if (filter.startDate) params.set("startDate", filter.startDate);
+  if (filter.endDate) params.set("endDate", filter.endDate);
+  if (filter.lotId) params.set("lotId", filter.lotId);
+  if (message) {
+    message.style.color = "#0f766e";
+    message.textContent = "Download enviado para o navegador.";
+  }
+  window.location.href = `/api/triage/stats/export.xlsx?${params.toString()}`;
 }
 
 function triageStatsOperatorsMarkup(operators = []) {

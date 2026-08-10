@@ -1563,13 +1563,22 @@ h3 {
 }
 
 .triage-stats-filter-fields input,
+.triage-stats-filter-fields select,
 .triage-stats-filter-fields button {
   min-height: 38px;
   width: 100%;
 }
 
+.triage-stats-filter-fields select {
+  background: #fff;
+}
+
 .triage-stats-filter-fields button {
   white-space: nowrap;
+}
+
+.triage-stats-lot-field {
+  min-width: min(100%, 180px);
 }
 
 .triage-stats-summary {
