@@ -225,7 +225,7 @@ app.post("/api/register", async (req, res) => {
     req.session.user = user;
     res.json({ user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
@@ -305,7 +305,7 @@ app.post("/api/admin/users", requireAdmin, async (req, res) => {
     const user = await createUser({ name, email, password });
     res.json({ user });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendError(res, error);
   }
 });
 
@@ -838,10 +838,24 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, re
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code });
-    const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
-    if (Number(result.lot?.totalPending || 0) === 0 && !Number(result.lot?.divergenceCount || 0)) {
-      await markTransferLotSynced(result.lot.userId, result.lot.id);
-      result.lot.status = "synced";
+    let transferResult;
+    try {
+      transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+      if (Number(result.lot?.totalPending || 0) === 0 && !Number(result.lot?.divergenceCount || 0)) {
+        await markTransferLotSynced(result.lot.userId, result.lot.id);
+        result.lot.status = "synced";
+      }
+    } catch (blingError) {
+      const items = [{ ...result.item, quantidade: 1 }];
+      await enqueueStockTransferSync({
+        userId: result.lot.userId,
+        lot: result.lot,
+        items,
+        observacao: `Transferencia Etiquefacil ${result.lot.name} - conferencia QR`,
+        errorMessage: blingError.message,
+        markLotSynced: Number(result.lot?.totalPending || 0) === 0 && !Number(result.lot?.divergenceCount || 0)
+      });
+      transferResult = { ok: false, queued: true, error: blingError.message };
     }
     res.json({ ...result, transfer: transferResult });
   } catch (error) {
@@ -858,17 +872,25 @@ app.post("/api/public/transfer-lots/:transferLotId/confirm-total", async (req, r
       receivedTotal: req.body.receivedTotal ?? req.body.totalRecebido,
       reporterName: req.body.reporterName
     });
-    const transferResult = await syncBlingStockTransfers({
-      integration: await getRequiredBlingCredentials(result.lot.userId),
-      items: transferItemsForBling(result.lot),
-      depositoOrigemName: result.lot.depositoOrigem,
-      depositoDestinoName: result.lot.depositoDestino,
-      observacao: `Transferencia Etiquefacil ${result.lot.name} - conferencia total loja (${result.lot.totalReceived}/${result.lot.totalPlanned})`,
-      saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
-    });
-    await markTransferLotSynced(result.lot.userId, result.lot.id);
-    const syncedLot = await getPublicTransferLotDetail(req.params.transferLotId);
-    res.json({ ...result, lot: syncedLot, transfer: transferResult });
+    const items = transferItemsForBling(result.lot);
+    const observacao = `Transferencia Etiquefacil ${result.lot.name} - conferencia total loja (${result.lot.totalReceived}/${result.lot.totalPlanned})`;
+    let transferResult;
+    try {
+      transferResult = await syncBlingStockTransfers({
+        integration: await getRequiredBlingCredentials(result.lot.userId),
+        items,
+        depositoOrigemName: result.lot.depositoOrigem,
+        depositoDestinoName: result.lot.depositoDestino,
+        observacao,
+        saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
+      });
+      await markTransferLotSynced(result.lot.userId, result.lot.id);
+    } catch (blingError) {
+      await enqueueStockTransferSync({ userId: result.lot.userId, lot: result.lot, items, observacao, errorMessage: blingError.message, markLotSynced: true });
+      transferResult = { ok: false, queued: true, error: blingError.message };
+    }
+    const currentLot = await getPublicTransferLotDetail(req.params.transferLotId);
+    res.json({ ...result, lot: currentLot, transfer: transferResult });
   } catch (error) {
     sendError(res, error);
   }
@@ -880,7 +902,20 @@ app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", async (r
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const reason = String(req.body.reason || req.body.descricao || "").trim();
     result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason });
-    const transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+    let transferResult;
+    try {
+      transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+    } catch (blingError) {
+      const items = [{ ...result.item, quantidade: 1 }];
+      await enqueueStockTransferSync({
+        userId: result.lot.userId,
+        lot: result.lot,
+        items,
+        observacao: `Transferencia Etiquefacil ${result.lot.name} - conferencia QR`,
+        errorMessage: blingError.message
+      });
+      transferResult = { ok: false, queued: true, error: blingError.message };
+    }
     res.json({ ...result, transfer: transferResult });
   } catch (error) {
     if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);
@@ -980,6 +1015,29 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, requireTra
     await markTransferLotSynced(userId, lot.id);
     res.json(result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const lot = await getTransferLotDetail(userId, req.params.transferLotId);
+      const items = lot ? transferItemsForBling(lot, { requireReceived: true }) : [];
+      if (lot && items.length) {
+        await enqueueStockTransferSync({
+          userId,
+          lot,
+          items,
+          observacao: `Transferencia Etiquefacil ${lot.name}`,
+          errorMessage: error.message,
+          markLotSynced: true
+        });
+        return res.status(202).json({
+          ok: false,
+          queued: true,
+          error: `Transferencia no Bling ficou na fila para tentar novamente: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar transferencia Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1341,6 +1399,23 @@ app.post("/api/lots/:lotId/products/:productId/bling/sync", requireAuth, require
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
     res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const lot = await getUserLotDetail(userId, req.params.lotId);
+      const product = (lot?.products || []).find((item) => item.id === req.params.productId);
+      if (lot && product) {
+        await enqueueProductSyncs({ userId, lot, products: [product], errorMessage: error.message });
+        const updatedLot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: true,
+          error: `Produto ficou na fila para envio automatico ao Bling: ${error.message}`,
+          lot: updatedLot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar produto Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1392,23 +1467,29 @@ app.delete("/api/lots/:lotId/products/:productId", requireAuth, async (req, res)
     const found = await getUserProductWithLot(userId, req.params.productId);
     if (!found || found.lot.id !== req.params.lotId) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
 
-    const integration = await getRequiredBlingCredentials(userId);
-    const bling = await deleteBlingProductBySku({
-      integration,
-      sku: found.product.sku,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
-    if (bling.status === "delete_failed") {
-      throw new Error(`Produto nao excluido. O Bling nao permitiu remover o cadastro: ${bling.error || "verifique o cadastro no Bling e tente novamente."}`);
+    const product = found.product;
+    const lot = found.lot;
+    const result = await deleteLotProductRegistration({ userId, lotId: req.params.lotId, productId: req.params.productId });
+    let bling = { ok: true, status: "skipped", sku: product.sku };
+    try {
+      const integration = await getRequiredBlingCredentials(userId);
+      bling = await deleteBlingProductBySku({
+        integration,
+        sku: product.sku,
+        saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      });
+      if (bling.status === "delete_failed") throw new Error(bling.error || "Bling nao permitiu remover o cadastro.");
+    } catch (blingError) {
+      await enqueueProductDeleteSync({ userId, lot, product, errorMessage: blingError.message });
+      bling = { ok: false, queued: true, status: "queued", sku: product.sku, error: blingError.message };
     }
     await recordOperatorActivity(req.session.user, "delete_lot_product", {
       lotId: req.params.lotId,
       productId: req.params.productId,
-      codigoMl: found.product.codigoMl || "",
-      sku: found.product.sku || "",
+      codigoMl: product.codigoMl || "",
+      sku: product.sku || "",
       blingStatus: bling.status
     });
-    const result = await deleteLotProductRegistration({ userId, lotId: req.params.lotId, productId: req.params.productId });
     res.json({ ...result, bling });
   } catch (error) {
     sendError(res, error);
@@ -1432,6 +1513,17 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
       if (updatedLot) result.lot = updatedLot;
     } catch (blingError) {
       await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
+      const balanceItems = [stockMovementItemFromProduct(result.lot, result.product, labelQuantity)];
+      if (result.originalProduct?.sku && result.originalProduct.sku !== result.product.sku) {
+        balanceItems.unshift(stockMovementItemFromProduct(result.lot, result.originalProduct, 0));
+      }
+      await enqueueStockBalanceSync({
+        userId,
+        lot: result.lot,
+        items: balanceItems,
+        observacao: `Desmembramento de produto ${result.product.sku || ""}`.trim(),
+        errorMessage: blingError.message
+      });
       result.bling = { ok: false, error: blingError.message };
     }
     const labelResult = await createLabel(userId, result.product.id, labelQuantity);
@@ -1462,6 +1554,28 @@ app.post("/api/lots/:lotId/bling/stock-balance/sync", requireAuth, requireOwner,
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
     res.json({ ...result, lot: updatedLot || { id: data.lot.id, nomeArquivo: data.lot.nomeArquivo } });
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const data = await getLotStockBalanceData(userId, req.params.lotId);
+      if (data?.items?.length) {
+        await enqueueStockBalanceSync({
+          userId,
+          lot: data.lot,
+          items: data.items,
+          observacao: `Correcao de saldo por bipagem ${data.lot.nomeArquivo}`,
+          errorMessage: error.message
+        });
+        const lot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: data.items.length,
+          error: `Correcao de saldo no Bling ficou na fila para tentar novamente: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar saldo Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1550,6 +1664,33 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-entry/sync", requireAuth, requireO
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result });
     res.json(updatedLot ? { ...result, lot: updatedLot } : result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const data = await getRzStockEntryData(userId, req.params.lotId, req.params.codigoRz);
+      if (data?.items?.length) {
+        await Promise.all(
+          data.items.map((item) =>
+            enqueueStockMovementSync({
+              userId,
+              lotId: req.params.lotId,
+              codigoRz: req.params.codigoRz,
+              item,
+              operation: "entry",
+              errorMessage: error.message
+            })
+          )
+        );
+        const lot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: data.items.length,
+          error: `Entradas no Bling ficaram na fila para tentar novamente: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar entradas Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1625,6 +1766,30 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
     });
     res.json(result);
   } catch (error) {
+    try {
+      const userId = workspaceUserId(req);
+      const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
+      const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl);
+      if (item) {
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz: req.params.codigoRz,
+          item,
+          operation: "exit",
+          errorMessage: error.message
+        });
+        const lot = await getUserLotDetail(userId, req.params.lotId);
+        return res.status(202).json({
+          ok: false,
+          queued: true,
+          error: `Saida no Bling ficou na fila para tentar novamente: ${error.message}`,
+          lot
+        });
+      }
+    } catch (queueError) {
+      console.error("Falha ao enfileirar saida Bling:", queueError);
+    }
     sendError(res, error);
   }
 });
@@ -1729,14 +1894,20 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
     if (!codigoMl) throw new Error("Informe o Codigo ML.");
 
     const product = await getExternalExcessProduct({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    const integration = await getRequiredBlingCredentials(userId);
-    const bling = await deleteBlingProductBySku({
-      integration,
-      sku: product.sku,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
-    if (bling.status === "delete_failed") {
-      throw new Error(`Produto nao excluido. O Bling nao permitiu remover o cadastro: ${bling.error || "verifique o cadastro no Bling e tente novamente."}`);
+    const lot = await getUserLotDetail(userId, req.params.lotId);
+    const result = await deleteExternalExcess({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    let bling = { ok: true, status: "skipped", sku: product.sku };
+    try {
+      const integration = await getRequiredBlingCredentials(userId);
+      bling = await deleteBlingProductBySku({
+        integration,
+        sku: product.sku,
+        saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      });
+      if (bling.status === "delete_failed") throw new Error(bling.error || "Bling nao permitiu remover o cadastro.");
+    } catch (blingError) {
+      await enqueueProductDeleteSync({ userId, lot, product, errorMessage: blingError.message });
+      bling = { ok: false, queued: true, status: "queued", sku: product.sku, error: blingError.message };
     }
     await recordOperatorActivity(req.session.user, "delete_external_excess", {
       lotId: req.params.lotId,
@@ -1745,7 +1916,6 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
       sku: product.sku,
       blingStatus: bling.status
     });
-    const result = await deleteExternalExcess({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     res.json({ ...result, bling });
   } catch (error) {
     sendError(res, error);
@@ -2112,7 +2282,45 @@ function hashInviteToken(token) {
 }
 
 function sendError(res, error) {
-  res.status(error.status || 400).json({ error: error.message, code: error.code });
+  const { status, message } = publicErrorDetails(error);
+  if (status >= 500 || isDatabaseOperationalError(error)) {
+    console.error("Erro interno da API:", error);
+  }
+  res.status(status).json({ error: message, code: error.code });
+}
+
+function publicErrorDetails(error) {
+  if (isDatabaseOperationalError(error)) {
+    return {
+      status: 503,
+      message: "Banco de dados ocupado no momento. Tente novamente em alguns segundos."
+    };
+  }
+
+  const status = Number(error.status || 400);
+  if (status >= 500) {
+    return { status, message: "Erro interno do servidor. Tente novamente em alguns instantes." };
+  }
+
+  return { status, message: error.message || "Erro inesperado." };
+}
+
+function isDatabaseOperationalError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.code === "55P03" ||
+    error?.code === "57014" ||
+    message.includes("lock timeout") ||
+    message.includes("canceling statement due to lock timeout") ||
+    message.includes("query read timeout") ||
+    message.includes("statement timeout") ||
+    message.includes("timeout exceeded when trying to connect") ||
+    message.includes("connection terminated") ||
+    message.includes("terminating connection") ||
+    message.includes("enetunreach") ||
+    message.includes("etimedout") ||
+    message.includes("econnreset")
+  );
 }
 
 function hasBlingAppConfig() {
@@ -2578,6 +2786,55 @@ async function enqueueStockMovementSync({ userId, lotId, codigoRz, item, operati
         ? `Saida automatica pendente RZ ${codigoRz}`
         : `Entrada automatica pendente por bipagem RZ ${codigoRz}`
     },
+    errorMessage
+  });
+}
+
+async function enqueueStockBalanceSync({ userId, lot, items, observacao, errorMessage }) {
+  const key = items.map((item) => item.productId || item.sku).filter(Boolean).join("-") || "lot";
+  return enqueueBlingSyncJob({
+    userId,
+    lotId: lot.id,
+    productId: `stock-balance:${lot.id}:${key}`,
+    sku: `STOCK-BALANCE-${lot.id}`,
+    type: "stock_balance",
+    payload: {
+      items,
+      depositoName: BLING_STOCK_DEPOSIT,
+      observacao
+    },
+    errorMessage
+  });
+}
+
+async function enqueueStockTransferSync({ userId, lot, items, observacao, errorMessage, markLotSynced = false }) {
+  const transferKey = items.length === 1 && items[0]?.id ? items[0].id : "all";
+  return enqueueBlingSyncJob({
+    userId,
+    lotId: lot.id,
+    productId: `transfer:${lot.id}:${transferKey}`,
+    sku: `TRANSFER-${lot.id}-${transferKey}`,
+    type: "stock_transfer",
+    payload: {
+      transferLotId: lot.id,
+      items,
+      depositoOrigemName: lot.depositoOrigem,
+      depositoDestinoName: lot.depositoDestino,
+      observacao,
+      markLotSynced
+    },
+    errorMessage
+  });
+}
+
+async function enqueueProductDeleteSync({ userId, lot, product, errorMessage }) {
+  return enqueueBlingSyncJob({
+    userId,
+    lotId: lot.id,
+    productId: product.id,
+    sku: product.sku,
+    type: "product_delete",
+    payload: { sku: product.sku },
     errorMessage
   });
 }
@@ -3222,6 +3479,43 @@ async function processBlingSyncQueue() {
           });
           if (result.failed) throw new Error(result.results.find((item) => item.status === "error")?.error || "Falha ao enviar produto ao Bling.");
           await updateLotProductBlingAlerts({ userId: job.userId, lotId: job.lotId, syncResult: result });
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        if (job.type === "product_delete") {
+          const result = await deleteBlingProductBySku({
+            integration,
+            sku: job.payload?.sku || job.sku,
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
+          if (result.status === "delete_failed") throw new Error(result.error || "Bling nao permitiu remover o cadastro.");
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        if (job.type === "stock_transfer") {
+          await syncBlingStockTransfers({
+            integration,
+            items: job.payload?.items || [],
+            depositoOrigemName: job.payload?.depositoOrigemName,
+            depositoDestinoName: job.payload?.depositoDestinoName,
+            observacao: job.payload?.observacao || "Transferencia pendente da fila Etiquefacil",
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
+          if (job.payload?.transferLotId && job.payload?.markLotSynced) await markTransferLotSynced(job.userId, job.payload.transferLotId);
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        if (job.type === "stock_balance") {
+          await syncBlingStockBalances({
+            integration,
+            items: job.payload?.items || [],
+            depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
+            observacao: job.payload?.observacao || "Correcao de saldo pendente da fila Etiquefacil",
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
           await markBlingSyncJobSucceeded(job.id);
           continue;
         }

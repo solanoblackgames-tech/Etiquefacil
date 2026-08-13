@@ -12,6 +12,10 @@ const { Pool } = pg;
 
 const DATA_DIR = path.resolve("data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
+const DEFAULT_PG_QUERY_TIMEOUT_MS = 30_000;
+const DEFAULT_PG_STATEMENT_TIMEOUT_MS = 30_000;
+const DEFAULT_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS = 30_000;
+const DEFAULT_PG_POOL_MAX = 10;
 
 let pool;
 let storeReady;
@@ -84,6 +88,11 @@ export function hasPostgres() {
   return Boolean(process.env.DATABASE_URL);
 }
 
+function envInt(name, fallback) {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export function isStandardMlCode(codigoMl) {
   return STANDARD_ML_CODE_PATTERN.test(normalizeCode(codigoMl));
 }
@@ -94,8 +103,11 @@ export function getPgPool() {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       connectionTimeoutMillis: 7000,
+      query_timeout: envInt("PG_QUERY_TIMEOUT_MS", DEFAULT_PG_QUERY_TIMEOUT_MS),
+      statement_timeout: envInt("PG_STATEMENT_TIMEOUT_MS", DEFAULT_PG_STATEMENT_TIMEOUT_MS),
+      idle_in_transaction_session_timeout: envInt("PG_IDLE_IN_TRANSACTION_TIMEOUT_MS", DEFAULT_PG_IDLE_IN_TRANSACTION_TIMEOUT_MS),
       idleTimeoutMillis: 10000,
-      max: 5,
+      max: envInt("PG_POOL_MAX", DEFAULT_PG_POOL_MAX),
       ssl: process.env.PGSSL === "false" ? false : process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
     });
   }
@@ -2053,10 +2065,7 @@ export async function replaceCatalogProducts(products) {
 export async function getUserLotSummaries(userId) {
   await ensureStore();
   if (hasPostgres()) {
-    const db = await readPgUserLotsDb(userId);
-    return db.lots
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((lot) => summarizeLot(db, lot));
+    return getUserLotSummariesPg(userId);
   }
 
   const db = await readDb();
@@ -2064,6 +2073,111 @@ export async function getUserLotSummaries(userId) {
     .filter((lot) => lot.userId === userId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((lot) => summarizeLot(db, lot));
+}
+
+async function getUserLotSummariesPg(userId) {
+  const [lotsResult, rzResult] = await Promise.all([
+    query(
+      `
+        select
+          l.*,
+          count(distinct p.id)::int as total_products,
+          count(distinct p.id) filter (where p.origem = any($2::text[]))::int as total_excess_external
+        from lots l
+        left join products p on p.lot_id = l.id
+        where l.user_id = $1
+        group by l.id
+        order by l.created_at desc
+      `,
+      [userId, EXCESS_EXPORT_ORIGINS]
+    ),
+    query(
+      `
+        with item_totals as (
+          select
+            ri.lot_id,
+            ri.codigo_rz,
+            ri.product_id,
+            bool_or(ri.tipo_item = 'excedente_externo') as is_external_excess,
+            sum(ri.qtd_esperada)::numeric as expected,
+            sum(ri.qtd_conferida)::numeric as checked
+          from rz_items ri
+          join lots l on l.id = ri.lot_id
+          where l.user_id = $1
+          group by ri.lot_id, ri.codigo_rz, ri.product_id
+        )
+        select
+          it.lot_id,
+          it.codigo_rz,
+          coalesce(sum(it.expected), 0)::numeric as expected,
+          coalesce(sum(it.checked), 0)::numeric as checked,
+          coalesce(sum(it.expected * coalesce(p.valor_unit, 0)), 0)::numeric as expected_value,
+          coalesce(sum(case when it.is_external_excess then 0 else least(it.checked, it.expected) * coalesce(p.valor_unit, 0) end), 0)::numeric as checked_value,
+          coalesce(sum(greatest(0, it.expected - it.checked)), 0)::numeric as missing,
+          coalesce(sum(case when it.is_external_excess then it.checked else greatest(0, it.checked - it.expected) end), 0)::numeric as excess,
+          coalesce(sum(greatest(0, it.expected - it.checked) * coalesce(p.valor_unit, 0)), 0)::numeric as missing_value,
+          coalesce(sum((case when it.is_external_excess then it.checked else greatest(0, it.checked - it.expected) end) * coalesce(p.valor_unit, 0)), 0)::numeric as excess_value
+        from item_totals it
+        left join products p on p.id = it.product_id
+        group by it.lot_id, it.codigo_rz
+        order by it.codigo_rz asc
+      `,
+      [userId]
+    )
+  ]);
+
+  const rzsByLot = new Map();
+  for (const row of rzResult.rows) {
+    const expected = num(row.expected);
+    const checked = num(row.checked);
+    const expectedValue = num(row.expected_value);
+    const checkedValue = num(row.checked_value);
+    const rz = {
+      codigoRz: row.codigo_rz,
+      expected,
+      checked,
+      qtyPercent: percent(checked, expected),
+      expectedValue: roundMoney(expectedValue),
+      checkedValue: roundMoney(checkedValue),
+      valuePercent: percent(checkedValue, expectedValue),
+      missing: num(row.missing),
+      excess: num(row.excess),
+      missingValue: roundMoney(num(row.missing_value)),
+      excessValue: roundMoney(num(row.excess_value))
+    };
+    const rzs = rzsByLot.get(row.lot_id) || [];
+    rzs.push(rz);
+    rzsByLot.set(row.lot_id, rzs);
+  }
+
+  return lotsResult.rows.map((row) => {
+    const lot = lotFromRow(row);
+    const rzs = rzsByLot.get(lot.id) || [];
+    const expectedQty = rzs.reduce((sum, rz) => sum + rz.expected, 0);
+    const checkedQty = rzs.reduce((sum, rz) => sum + rz.checked, 0);
+    const expectedValue = rzs.reduce((sum, rz) => sum + rz.expectedValue, 0);
+    const checkedValue = rzs.reduce((sum, rz) => sum + rz.checkedValue, 0);
+    return {
+      ...lot,
+      totalProducts: Number(row.total_products || 0),
+      totalItems: expectedQty,
+      totalExcessExternal: Number(row.total_excess_external || 0),
+      progress: {
+        expectedQty,
+        checkedQty,
+        qtyPercent: percent(checkedQty, expectedQty),
+        expectedValue: roundMoney(expectedValue),
+        checkedValue: roundMoney(checkedValue),
+        valuePercent: percent(checkedValue, expectedValue)
+      },
+      rzs
+    };
+  });
+}
+
+function percent(value, total) {
+  if (!total) return 0;
+  return Math.round((Number(value || 0) / Number(total || 0)) * 100);
 }
 
 export async function createLotFromImport({ userId, originalName, auctionPercent, fornecedor, skuPrefix, imported }) {
@@ -3642,6 +3756,11 @@ export async function createLabel(userId, productId, quantity = 1) {
 }
 
 async function ensurePgStore() {
+  if (shouldSkipPgMigrations()) {
+    await assertPgSchemaReady();
+    return;
+  }
+
   await query(`
     create table if not exists users (
       id text primary key,
@@ -4227,6 +4346,48 @@ async function ensurePgStore() {
   `);
   await query("delete from catalog_requests where status = 'rejected'");
   await backfillPgCatalogLotSuggestions();
+}
+
+function shouldSkipPgMigrations() {
+  return process.env.NODE_ENV === "production" && process.env.PG_AUTO_MIGRATE !== "true";
+}
+
+async function assertPgSchemaReady() {
+  const requiredTables = [
+    "users",
+    "lots",
+    "products",
+    "rz_items",
+    "scans",
+    "labels",
+    "bling_integrations",
+    "bling_sync_jobs",
+    "app_settings",
+    "user_settings",
+    "transfer_lots",
+    "transfer_items",
+    "operator_activities",
+    "operator_invites",
+    "triage_items",
+    "triage_events",
+    "catalog_products",
+    "catalog_requests",
+    "catalog_rejected_requests"
+  ];
+  const result = await query(
+    `
+      select table_name
+      from information_schema.tables
+      where table_schema = 'public'
+        and table_name = any($1::text[])
+    `,
+    [requiredTables]
+  );
+  const found = new Set(result.rows.map((row) => row.table_name));
+  const missing = requiredTables.filter((table) => !found.has(table));
+  if (missing.length) {
+    throw new Error(`Schema PostgreSQL incompleto. Execute com PG_AUTO_MIGRATE=true uma vez. Tabelas ausentes: ${missing.join(", ")}.`);
+  }
 }
 
 async function backfillPgCatalogLotSuggestions() {
@@ -6364,7 +6525,13 @@ function blingQueueAlertMessage(job = {}) {
       ? "Entrada de estoque pendente no Bling"
       : job.type === "stock_exit"
         ? "Saida de estoque pendente no Bling"
-        : "Produto pendente de envio ao Bling";
+        : job.type === "stock_balance"
+          ? "Correcao de saldo pendente no Bling"
+          : job.type === "stock_transfer"
+            ? "Transferencia de estoque pendente no Bling"
+            : job.type === "product_delete"
+              ? "Exclusao de produto pendente no Bling"
+              : "Produto pendente de envio ao Bling";
   return [base, job.errorMessage].filter(Boolean).join(": ");
 }
 
