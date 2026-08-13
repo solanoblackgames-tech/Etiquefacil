@@ -4,6 +4,7 @@ const BLING_OAUTH_REVOKE_URL = "https://www.bling.com.br/Api/v3/oauth/revoke";
 const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
+const BLING_FETCH_TIMEOUT_MS = 12_000;
 
 export async function runBlingHomologation({ integration, saveIntegration, fetchImpl = globalThis.fetch } = {}) {
   if (!integration?.accessToken) throw new Error("Informe o access token do Bling para executar a homologacao.");
@@ -686,7 +687,7 @@ class BlingApiClient {
 
     await this.waitForRequestSlot();
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method,
       headers: {
         Authorization: `Bearer ${this.integration.accessToken}`,
@@ -721,7 +722,7 @@ class BlingApiClient {
   async refreshToken() {
     if (!this.integration.refreshToken) throw new Error("Token Bling expirado. Autorize a integracao novamente.");
 
-    const response = await fetch(BLING_OAUTH_TOKEN_URL, {
+    const response = await fetchWithTimeout(BLING_OAUTH_TOKEN_URL, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${this.integration.clientId}:${this.integration.clientSecret}`).toString("base64")}`,
@@ -1063,6 +1064,19 @@ function retryAfterMs(response) {
 
   const date = new Date(header).getTime();
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = BLING_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Bling demorou para responder. A sincronizacao foi enviada para a fila.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function wait(ms) {
