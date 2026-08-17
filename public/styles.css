@@ -3510,37 +3510,89 @@ h3 {
   align-content: start;
   display: grid;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 8px;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
   overflow: auto;
-  padding: 14px 8px 16px;
+  padding: 8px;
   width: 100%;
 }
 
 .transfer-create-panel {
+  align-items: end;
   display: grid;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 6px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: 8px 12px 10px;
 }
 
 .transfer-create-panel .panel-heading {
+  align-self: center;
+  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin-bottom: 0;
+  min-width: 210px;
+}
+
+.transfer-create-panel .panel-heading h3,
+.transfer-search-panel .panel-heading h3 {
+  font-size: 17px;
+}
+
+.transfer-search-panel .panel-heading h3 {
+  margin-right: auto;
+}
+
+.transfer-create-panel .panel-heading .muted,
+.transfer-search-panel .panel-heading .muted {
+  font-size: 12px;
 }
 
 .transfer-search-panel {
   display: grid;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: 0;
+  padding: 0;
 }
 
 .transfer-search-panel .panel-heading {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  list-style: none;
   margin-bottom: 0;
+  padding: 9px 12px;
+  user-select: none;
+}
+
+.transfer-search-panel .panel-heading::-webkit-details-marker {
+  display: none;
+}
+
+.transfer-search-panel .panel-heading::after {
+  color: var(--accent);
+  content: "Mostrar busca";
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.transfer-search-panel[open] .panel-heading::after {
+  content: "Ocultar";
+}
+
+.transfer-search-body {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
 }
 
 .transfer-search-results {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .transfer-search-summary {
@@ -3598,8 +3650,38 @@ h3 {
 .transfer-form {
   align-items: end;
   display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(260px, 1.2fr) minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 8px;
+  grid-column: 2;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.8fr) minmax(190px, 0.8fr) auto;
+}
+
+.transfer-form label,
+.transfer-search-body label {
+  font-size: 12px;
+  gap: 4px;
+}
+
+.transfer-form input,
+.transfer-form select,
+.transfer-form button,
+.transfer-search-body input {
+  min-height: 34px;
+  padding-bottom: 6px;
+  padding-top: 6px;
+}
+
+.transfer-form button {
+  padding: 0 18px;
+}
+
+.transfer-create-panel .message:empty {
+  display: none;
+}
+
+.transfer-create-panel .message:not(:empty) {
+  grid-column: 2;
+  margin: 2px 0 0;
+  min-height: 0;
 }
 
 .transfer-layout {
@@ -3612,11 +3694,11 @@ h3 {
 }
 
 .transfer-layout .lot-list {
-  padding: 14px;
+  padding: 10px;
 }
 
 .transfer-layout .detail {
-  padding: 18px 20px;
+  padding: 14px 18px;
 }
 
 .transfer-panel {
@@ -3879,6 +3961,10 @@ h3 {
 
 .transfer-divergence-description {
   grid-column: 1 / -1;
+}
+
+.transfer-divergence-product {
+  grid-column: span 2;
 }
 
 .transfer-divergence-description textarea {
@@ -5022,6 +5108,22 @@ h3 {
     padding: 12px;
   }
 
+  .transfer-create-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .transfer-create-panel .panel-heading {
+    min-width: 0;
+  }
+
+  .transfer-form {
+    grid-column: auto;
+  }
+
+  .transfer-create-panel .message:not(:empty) {
+    grid-column: auto;
+  }
+
   .transfer-layout,
   .triage-layout {
     height: auto;
@@ -5150,11 +5252,26 @@ h3 {
     max-width: none;
   }
 
+  .scan-only .upload-band,
+  .scan-only .layout,
+  .scan-only .detail {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .scan-only .detail {
+    height: auto;
+  }
+
   .transfer-receive-page .summary-grid,
   .transfer-total-form,
   .transfer-divergence-form,
   .transfer-confirm-actions {
     grid-template-columns: 1fr;
+  }
+
+  .transfer-divergence-product {
+    grid-column: auto;
   }
 
   #diverseScanForm.search-bar {
