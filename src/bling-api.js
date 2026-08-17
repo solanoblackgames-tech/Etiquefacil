@@ -120,6 +120,7 @@ export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFi
     marca: product.codigoMl || "",
     dataValidade: product.dataValidade || "",
     linkExterno: product.link || "",
+    localizacao: product.localizacaoEstoque || product.localizacao || "",
     midia,
     descricaoCurta: product.descricao || "",
     tipoProducao: "T",
