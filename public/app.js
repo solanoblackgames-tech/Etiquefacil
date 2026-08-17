@@ -5283,7 +5283,7 @@ async function loadBlingDeposits({ force = false } = {}) {
     state.blingDepositsLoaded = false;
     renderDepositSelects({ error: error.message });
     $("#transferMessage").style.color = "";
-    $("#transferMessage").textContent = `${error.message} Autorize o Bling em Perfil > Sincronizacao para selecionar os depositos.`;
+    $("#transferMessage").textContent = `${error.message} Autorize o Bling em Perfil > Integre ao Bling para selecionar os depositos.`;
   }
 }
 
