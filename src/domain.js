@@ -105,7 +105,7 @@ const COLUMN_ALIASES = {
   saldo3: ["Saldo 3", "Saldo3", "Saldo_3"],
   saldo4: ["Saldo 4", "Saldo4", "Saldo_4"],
   descricao: ["Descrição do Item", "Descricao do Item", "Descrição", "Descricao"],
-  valorUnit: ["Valor Unit", "Valor Unitário", "Valor Unitario"],
+  valorUnit: ["Valor Unit", "Valor Unitário", "Valor Unitario", "Preco de venda", "Preço de venda", "Preco venda", "Preço venda", "Preco", "Preço"],
   valorTotal: ["Valor Total"],
   precoCusto: ["Preco de custo", "Preço de custo", "Custo", "Valor Custo", "Custo especifico", "Custo específico"],
   categoria: ["Categoria"],
@@ -282,6 +282,141 @@ export async function importSpecialistWorkbook(buffer, lotInput) {
     items,
     nextSequence: sequence
   };
+}
+
+export async function importUnifiedLotWorkbook(buffer, lotInput) {
+  const rows = await readWorkbookRows(buffer);
+  const headerIndex = rows.findIndex((row) => Array.isArray(row) && hasUnifiedMinimumColumns(row));
+  if (headerIndex === -1) {
+    throw new Error("Nao foi possivel encontrar as colunas minimas: Descricao e Preco de venda.");
+  }
+
+  const header = rows[headerIndex].map((cell) => String(cell).trim());
+  const indexByColumn = buildColumnIndex(header);
+  const get = (row, column) => indexByColumn.has(column) ? row[indexByColumn.get(column)] : "";
+  const byMl = new Map();
+  const items = [];
+  const suggestions = [];
+  let sequence = Math.max(1, Number.parseInt(lotInput.startSequence, 10) || 1);
+  const percentage = parseNumber(lotInput.auctionPercent) / 100;
+  const defaultRz = String(lotInput.defaultCodigoRz || "RZ-001").trim().toUpperCase();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    if (!Array.isArray(row) || !row.some((cell) => String(cell ?? "").trim())) continue;
+    const descricao = String(get(row, "descricao") ?? "").trim();
+    const valorUnit = parseNumber(get(row, "valorUnit"));
+    if (!descricao || !Number.isFinite(valorUnit) || valorUnit <= 0) continue;
+
+    const qtd = hasQuantityColumn(indexByColumn) ? readQuantity(row, indexByColumn, get) : 0;
+    if (!qtd) {
+      suggestions.push({ descricao, valorUnit: roundMoney(valorUnit) });
+      continue;
+    }
+
+    const sku = formatSku(lotInput.skuPrefix, sequence++);
+    const codigoMl = String(get(row, "codigoMl") || sku).trim().toUpperCase();
+    const codigoRz = String(get(row, "codigoRz") || defaultRz).trim().toUpperCase();
+    const valorTotal = indexByColumn.has("valorTotal") ? parseNumber(get(row, "valorTotal")) : roundMoney(qtd * valorUnit);
+    const explicitCost = indexByColumn.has("precoCusto") ? roundMoney(parseNumber(get(row, "precoCusto"))) : 0;
+    const categoria = String(get(row, "categoria") ?? "").trim();
+    const subcategoria = String(get(row, "subcategoria") ?? "").trim();
+    const ncm = String(get(row, "ncm") ?? "").replace(/\D/g, "").slice(0, 8);
+    const ean = String(get(row, "ean") ?? "").trim();
+    const dataValidade = formatDateCell(get(row, "dataValidade"));
+    const foto = String(get(row, "foto") ?? "").trim();
+    const link = String(get(row, "link") ?? "").trim();
+
+    if (!byMl.has(codigoMl)) {
+      byMl.set(codigoMl, {
+        id: randomUUID(),
+        codigoMl,
+        sku,
+        descricao,
+        valorUnit: roundMoney(valorUnit),
+        precoCusto: unifiedProductCost(lotInput, valorUnit, explicitCost, percentage),
+        hasExplicitCost: explicitCost > 0,
+        qtdTotal: 0,
+        categoria,
+        subcategoria,
+        ncm,
+        ean,
+        dataValidade,
+        foto,
+        link,
+        origem: "planilha",
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    const product = byMl.get(codigoMl);
+    if (!product.hasExplicitCost && explicitCost > 0) {
+      product.precoCusto = explicitCost;
+      product.hasExplicitCost = true;
+    }
+    product.qtdTotal += qtd;
+    items.push({
+      id: randomUUID(),
+      productTempId: product.id,
+      codigoRz,
+      enderecoWms: String(get(row, "enderecoWms") ?? "").trim(),
+      qtdEsperada: qtd,
+      qtdConferida: 0,
+      condicaoGrade: String(get(row, "condicaoGrade") || "").trim(),
+      valorTotal,
+      tipoItem: "esperado",
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  return {
+    products: [...byMl.values()].map(({ hasExplicitCost, ...product }) => product),
+    items,
+    suggestions,
+    nextSequence: sequence
+  };
+}
+
+async function readWorkbookRows(buffer) {
+  try {
+    const result = await readXlsxFile(buffer, { getSheets: true });
+    if (Array.isArray(result) && result.some((sheet) => sheet?.data || sheet?.name || sheet?.sheet)) {
+      const sheetRows = [];
+      for (const sheet of result) {
+        if (Array.isArray(sheet.data)) {
+          sheetRows.push({ sheet: sheet.name || sheet.sheet, data: sheet.data });
+          continue;
+        }
+
+        const sheetName = sheet.name || sheet.sheet;
+        const candidate = await readXlsxFile(buffer, { sheet: sheetName });
+        sheetRows.push({ sheet: sheetName, data: Array.isArray(candidate?.[0]?.data) ? candidate[0].data : candidate });
+      }
+      return findUnifiedImportableSheet(sheetRows)?.data || sheetRows[0]?.data || [];
+    }
+
+    const candidate = await readXlsxFile(buffer);
+    return Array.isArray(candidate?.[0]?.data) ? candidate[0].data : candidate;
+  } catch {
+    throw new Error("Nao foi possivel ler a planilha.");
+  }
+}
+
+function findUnifiedImportableSheet(sheets) {
+  return sheets.find((sheet) => {
+    const rows = sheet.data || [];
+    return rows.some((row) => Array.isArray(row) && hasUnifiedMinimumColumns(row));
+  });
+}
+
+function hasUnifiedMinimumColumns(row) {
+  const index = buildColumnIndex(row.map((cell) => String(cell ?? "").trim()));
+  return index.has("descricao") && index.has("valorUnit");
+}
+
+function unifiedProductCost(lotInput, valorUnit, explicitCost, percentage) {
+  if (explicitCost > 0) return explicitCost;
+  if (!Number.isFinite(percentage) || percentage <= 0) return 0;
+  return roundMoney(valorUnit * percentage);
 }
 
 function findImportableSheet(sheets) {

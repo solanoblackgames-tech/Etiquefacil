@@ -2180,17 +2180,21 @@ function percent(value, total) {
   return Math.round((Number(value || 0) / Number(total || 0)) * 100);
 }
 
-export async function createLotFromImport({ userId, originalName, auctionPercent, fornecedor, skuPrefix, imported }) {
+export async function createLotFromImport({ userId, originalName, auctionPercent, fornecedor, skuPrefix, imported, averageCost = 0, costMode = "fixed", costPercent = 0 }) {
   await ensureStore();
+  const tipoCusto = costMode === "variable" ? "variable" : "fixed";
   const lot = {
     id: randomUUID(),
     userId,
     nomeArquivo: originalName,
     percentualArremate: auctionPercent,
-    custoMedioUnitario: 0,
+    custoMedioUnitario: tipoCusto === "fixed" ? roundMoney(Number(averageCost || 0)) : 0,
+    tipoCusto,
+    percentualCusto: tipoCusto === "variable" ? roundMoney(Number(costPercent || 0)) : 0,
     fornecedor,
     prefixoSku: skuPrefix,
     proximoSequencialSku: imported.nextSequence,
+    noSheetSuggestions: normalizeNoSheetSuggestions(imported.suggestions || []),
     createdAt: new Date().toISOString()
   };
 

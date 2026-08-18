@@ -482,17 +482,19 @@ async function acceptOperatorInvite(event) {
 
 async function uploadLot(event) {
   event.preventDefault();
+  updateUnifiedCostFields(event.currentTarget);
   $("#uploadMessage").textContent = "";
   const form = event.currentTarget;
   const button = form.querySelector("button");
   button.disabled = true;
   try {
-    const response = await api("/api/lots", {
+    const response = await api("/api/lots/unified", {
       method: "POST",
       body: new FormData(form)
     });
     form.reset();
-    $("#uploadMessage").textContent = `Lote importado: ${response.lot.nomeArquivo}`;
+    updateUnifiedCostFields(form);
+    $("#uploadMessage").textContent = unifiedLotSuccessMessage(response);
     await loadLots(response.lot.id);
   } catch (error) {
     $("#uploadMessage").textContent = error.message;
@@ -500,6 +502,17 @@ async function uploadLot(event) {
     button.disabled = false;
     schedulePrimaryInputFocus(["#uploadForm input[name='file']"]);
   }
+}
+
+function unifiedLotSuccessMessage(response) {
+  if (response.mode === "empty") return `Lote vazio criado: ${response.lot.nomeArquivo}`;
+  if (response.mode === "suggestions") return `Lote criado com lista de sugestao: ${response.lot.nomeArquivo}`;
+  if (response.mode === "mixed") return `Lote criado com previsao e sugestoes: ${response.lot.nomeArquivo}`;
+  return `Lote criado para conferencia: ${response.lot.nomeArquivo}`;
+}
+
+function updateUnifiedCostFields(form) {
+  form?.querySelector('[name="costPercent"]')?.setAttribute("required", "");
 }
 
 async function createDiverseLot(event) {
@@ -527,6 +540,7 @@ async function handleLotDetailSubmit(event) {
 async function updateLotDescription(event) {
   event.preventDefault();
   const form = event.target;
+  const lotId = form.dataset.lotId || state.selectedLotId || state.previewLotId;
   const button = form.querySelector("button[type='submit']");
   const message = $("#lotDescriptionMessage");
   if (message) {
@@ -536,14 +550,15 @@ async function updateLotDescription(event) {
   if (button) button.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form));
-    const response = await api(`/api/lots/${encodeURIComponent(state.selectedLotId)}`, {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     state.lots = state.lots.map((lot) => lot.id === response.lot.id ? response.lot : lot);
     renderLots();
-    renderLotDetail(response.lot);
+    if (state.previewLotId === response.lot.id) renderLotPreview(response.lot);
+    else renderLotDetail(response.lot);
     $("#lotDescriptionMessage").style.color = "#0f766e";
     $("#lotDescriptionMessage").textContent = "Descricao do lote atualizada.";
   } catch (error) {
@@ -1365,14 +1380,69 @@ function openDecisionModal({ title, rows = [], fields = [], actions = [], onSubm
   });
 }
 
-function createDiverseRz(event) {
+async function createDiverseRz(event) {
   event.preventDefault();
   const codigoRz = nextNoSheetRzCode(state.selectedDiverseLot);
   if (!codigoRz) return;
+  const name = await askRzName(codigoRz);
+  if (name === null) return;
+  saveRzDisplayName(state.selectedDiverseLot?.id, codigoRz, name || codigoRz);
   setDiverseRz(codigoRz);
+  showRzQrLabel(state.selectedDiverseLot, codigoRz, name || codigoRz, { autoPrint: true });
   $("#diverseScanMessage").style.color = "#0f766e";
-  $("#diverseScanMessage").textContent = `Remessa ${codigoRz} ativa.`;
+  $("#diverseScanMessage").textContent = `Remessa ${name || codigoRz} ativa e etiqueta enviada para impressao.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
+}
+
+async function askRzName(codigoRz) {
+  return openDecisionModal({
+    title: "Gerar RZ",
+    rows: [["Codigo da RZ", codigoRz]],
+    fields: [{ name: "name", label: "Nome da RZ", value: codigoRz }],
+    actions: [
+      { id: "confirm", label: "Gerar RZ", primary: true, value: true },
+      { id: "cancel", label: "Cancelar", value: null }
+    ],
+    onSubmit: (action, values) => {
+      if (!action) return null;
+      return String(values.name || "").trim();
+    }
+  });
+}
+
+function rzDisplayNameStorageKey(lotId, codigoRz) {
+  return `etiquefacil.rzName.${lotId || ""}.${normalizeCode(codigoRz)}`;
+}
+
+function saveRzDisplayName(lotId, codigoRz, name) {
+  if (!lotId || !codigoRz) return;
+  localStorage.setItem(rzDisplayNameStorageKey(lotId, codigoRz), name || codigoRz);
+}
+
+function rzDisplayName(lotId, codigoRz) {
+  return localStorage.getItem(rzDisplayNameStorageKey(lotId, codigoRz)) || codigoRz;
+}
+
+function showRzQrLabel(lot, codigoRz, name = codigoRz, { autoPrint = false } = {}) {
+  const value = `${window.location.origin}${lotRzPath(lot.id, codigoRz)}`;
+  const qrSrc = `/api/qr.svg?value=${encodeURIComponent(value)}`;
+  state.labelProduct = null;
+  state.labelMeta = null;
+  state.labelQuantity = 1;
+  state.labelLargeQr = false;
+  state.labelReturnFocusSelectors = currentLabelReturnFocusSelectors();
+  state.labelPrintMarkup = `
+    <section class="rz-qr-label">
+      <img src="${qrSrc}" alt="QR Code da RZ" />
+      <strong>${escapeHtml(name || codigoRz)}</strong>
+      <span>${escapeHtml(codigoRz)}</span>
+    </section>
+  `;
+  $("#labelPreview").innerHTML = state.labelPrintMarkup;
+  $("#labelPrintButton").textContent = "Imprimir RZ";
+  $("#labelModal").classList.remove("hidden");
+  $("#labelModal").focus();
+  if (autoPrint) setTimeout(printCurrentLabel, 180);
 }
 
 function handleDiverseRzClick(event) {
@@ -1518,7 +1588,7 @@ function renderDiverseRzControls(lot) {
   $("#diverseRzList").innerHTML = diverseRzsWithActive(lot)
     .map((rz) => `
       <button type="button" class="${rz.codigoRz === active ? "active" : ""}" data-diverse-rz="${escapeHtml(rz.codigoRz)}">
-        ${escapeHtml(rz.codigoRz)} <span>${rz.items}</span>
+        ${escapeHtml(rzDisplayName(lot.id, rz.codigoRz))} <span>${rz.items}</span>
       </button>
     `)
     .join("");
@@ -3702,8 +3772,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   if (route.view === "lotRz") {
     const lot = await selectLot(route.lotId, { push: false });
     if (lot) {
-      if (isNoSheetLot(lot)) openNoSheetRz(lot, route.codigoRz);
-      else renderRz(lot, route.codigoRz, { push: false });
+      renderUnifiedRzWorkPage(lot, route.codigoRz, { push: false });
     }
     if (replace) updateRoute(lot ? lotRzPath(route.lotId, route.codigoRz) : "/lotes", { replace: true });
     return;
@@ -5812,6 +5881,11 @@ function clearLotDetail() {
   state.previewLotId = null;
   $("#lotDetail").classList.add("empty");
   $("#lotDetail").innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
+  $("#openProfileEntriesButton")?.addEventListener("click", () => {
+    setMainTab("profile");
+    setProfileSection("entries");
+    updateRoute("/perfil");
+  });
   hideNoSheetPanel();
 }
 
@@ -5907,9 +5981,10 @@ function renderLotPreview(lot) {
         </div>
         <div class="heading-actions">
           <button type="button" id="openLotButton">Abrir lote</button>
-          ${canManage ? '<button class="danger" type="button" id="deleteLotPreviewButton">Excluir lote</button>' : ""}
         </div>
       </div>
+      ${canManage ? bulkLotEditorMarkup(lot, { includeDescription: true }) : ""}
+      <p id="downloadMessage" class="message"></p>
       <div class="summary-grid">
         ${metric("Status", status)}
         ${metric("SKUs", lot.totalProducts)}
@@ -5923,7 +5998,6 @@ function renderLotPreview(lot) {
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
       </div>
-      ${noSheetLot ? noSheetSuggestionUploadMarkup(lot) : ""}
       <h3 class="section-title">Resumo das RZs</h3>
       <div class="preview-rz-list">
         ${lot.rzs.length ? lot.rzs.map(previewRzRow).join("") : '<p class="muted">Nenhuma RZ encontrada neste lote.</p>'}
@@ -5931,8 +6005,50 @@ function renderLotPreview(lot) {
     </section>
   `;
   $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
-  $("#deleteLotPreviewButton")?.addEventListener("click", () => deleteLot(lot, $("#deleteLotPreviewButton")));
-  bindNoSheetSuggestionUploadForms(detail);
+  bindBulkLotEditor(lot, detail);
+}
+
+function bulkLotEditorMarkup(lot, { includeDescription = false } = {}) {
+  return `
+    <details class="bulk-lot-editor">
+      <summary>Editar lote em massa</summary>
+      <div class="bulk-lot-editor-panel">
+        ${includeDescription ? `
+          <form id="lotDescriptionForm" class="inline-upload-form bulk-description-form" data-lot-id="${escapeHtml(lot.id)}">
+            <label>Descricao do lote
+              <input name="descricao" maxlength="140" value="${escapeHtml(lot.nomeArquivo)}" required />
+            </label>
+            <button type="submit">Salvar descricao</button>
+            <p id="lotDescriptionMessage" class="message"></p>
+          </form>
+        ` : ""}
+        <div class="bulk-lot-actions">
+          <button data-download="complete">Baixar Bling - Lote completo</button>
+          <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
+          <button data-sync-products="complete">Criar produtos no Bling</button>
+          <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/prices/template">Baixar precos</a>
+          <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
+        </div>
+        <form class="inline-upload-form bulk-price-form" id="lotPriceImportForm">
+          <label>Atualizar precos em massa
+            <input name="file" type="file" accept=".xlsx,.xls" required />
+          </label>
+          <button type="submit">Subir precos</button>
+        </form>
+      </div>
+    </details>
+  `;
+}
+
+function bindBulkLotEditor(lot, root = document) {
+  root.querySelectorAll("button[data-download]").forEach((button) => {
+    button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
+  });
+  root.querySelectorAll("button[data-sync-products]").forEach((button) => {
+    button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
+  });
+  root.querySelector("#lotPriceImportForm")?.addEventListener("submit", (event) => importLotPrices(event, lot.id));
+  root.querySelector("#deleteLotButton")?.addEventListener("click", () => deleteLot(lot, root.querySelector("#deleteLotButton")));
 }
 
 function renderLotDetail(lot) {
@@ -5953,15 +6069,6 @@ function renderLotDetail(lot) {
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>`}
     ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    ${canManage && !operatorNoSheetLot ? `
-      <form id="lotDescriptionForm" class="inline-upload-form">
-        <label>Descricao do lote
-          <input name="descricao" maxlength="140" value="${escapeHtml(lot.nomeArquivo)}" required />
-        </label>
-        <button type="submit">Salvar descricao</button>
-        <p id="lotDescriptionMessage" class="message"></p>
-      </form>
-    ` : ""}
     ${noSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
         ${operatorNoSheetLot ? "" : `<span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>`}
@@ -5970,21 +6077,6 @@ function renderLotDetail(lot) {
         <span></span>
       </form>
     ` : ""}
-    ${noSheetLot && !operatorNoSheetLot ? noSheetSuggestionUploadMarkup(lot) : ""}
-    ${operatorNoSheetLot ? "" : `<div class="actions ${canManage ? "" : "hidden"}">
-      <button data-download="complete">Baixar Bling - Lote completo</button>
-      <button data-download="excess" ${lot.totalExcessExternal ? "" : "disabled"}>Baixar Bling - Somente excedentes</button>
-      <button data-sync-products="complete">Criar produtos no Bling</button>
-      <a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/prices/template">Baixar precos</a>
-      <button class="danger" type="button" id="deleteLotButton">Excluir lote</button>
-    </div>
-    <form class="inline-upload-form" id="lotPriceImportForm">
-      <label>Atualizar precos em massa
-        <input name="file" type="file" accept=".xlsx,.xls" required />
-      </label>
-      <button type="submit">Subir precos</button>
-    </form>`}
-    ${operatorNoSheetLot ? "" : `<p id="downloadMessage" class="message"></p>`}
     ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
         ${metric("Quantidade bipada", lot.progress.checkedQty)}
@@ -6026,26 +6118,14 @@ function renderLotDetail(lot) {
     clearLotDetail();
     updateRoute("/lotes");
   });
-  if (canManage) {
-    detail.querySelectorAll("button[data-download]").forEach((button) => {
-      button.addEventListener("click", () => downloadBling(lot.id, button.dataset.download));
-    });
-    detail.querySelectorAll("button[data-sync-products]").forEach((button) => {
-      button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
-    });
-    $("#lotPriceImportForm")?.addEventListener("submit", (event) => importLotPrices(event, lot.id));
-    $("#deleteLotButton").addEventListener("click", () => deleteLot(lot, $("#deleteLotButton")));
-  }
   $("#rzSearchButton")?.addEventListener("click", () => openRzFromSearch(lot));
   $("#rzSearchInput")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") openRzFromSearch(lot);
   });
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
-  bindNoSheetSuggestionUploadForms(detail);
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (noSheetLot) openNoSheetScanTab(lot, button.dataset.scanRz);
-      else renderRz(lot, button.dataset.scanRz);
+      renderUnifiedRzWorkPage(lot, button.dataset.scanRz);
     });
   });
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
@@ -6062,40 +6142,11 @@ function emptyLotDetailMarkup() {
   return `
     <section class="empty-lot-start">
       <div>
-        <span class="muted">Novo lote</span>
-        <h2>Criar lote sem planilha</h2>
+        <span class="muted">Conferencia</span>
+        <h2>Selecione um lote</h2>
       </div>
-      <form id="noSheetLotForm" class="diverse-form">
-        <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
-        <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-        <label>Tipo de custo<select name="costMode"><option value="fixed">Custo fixo</option><option value="variable">Custo variavel</option></select></label>
-        <label data-cost-field="fixed">Custo fixo unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
-        <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
-        <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
-        <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-        <div class="wide-field suggestion-template-help">
-          <p class="muted">Use o lote avulso quando voce ainda nao tem uma planilha completa do lote, mas quer criar as RZs e bipar os produtos manualmente.</p>
-          <div class="suggestion-rules">
-            <div class="suggestion-rule required">
-              <strong>Obrigatorio nesta tela</strong>
-              <span>Fornecedor, Tipo de custo, Custo, Prefixo SKU e Sequencial inicial.</span>
-            </div>
-            <div class="suggestion-rule optional">
-              <strong>Opcional nesta tela</strong>
-              <span>Nome do lote e Sugestao XLSX. Se nao informar o nome, o sistema usa "Lote sem planilha".</span>
-            </div>
-            <div class="suggestion-rule">
-              <strong>Sugestao XLSX</strong>
-              <span>Serve para carregar uma lista de produtos sugeridos. Preencha somente as colunas Produto e Preco.</span>
-              <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
-            </div>
-          </div>
-          <p class="suggestion-note"><strong>Tipo de custo:</strong> em Custo fixo, todos os produtos usam o mesmo custo unitario. Em Custo variavel, o custo e calculado pelo percentual do valor de venda.</p>
-        </div>
-        <label class="wide-field">Sugestao XLSX opcional<input name="suggestionsFile" type="file" accept=".xlsx,.xls" /></label>
-        <button type="submit">Criar lote</button>
-      </form>
-      <p id="noSheetLotMessage" class="message"></p>
+      <p class="muted">Crie novos lotes em Perfil usando a entrada unica. Depois selecione um lote nesta lista para conferir.</p>
+      <button type="button" id="openProfileEntriesButton">Ir para Perfil</button>
     </section>
   `;
 }
@@ -6141,8 +6192,7 @@ function openRzFromSearch(lot) {
   }
   message.textContent = "";
   input.value = "";
-  if (isNoSheetLot(lot)) openNoSheetRz(lot, rz.codigoRz);
-  else renderRz(lot, rz.codigoRz);
+  renderUnifiedRzWorkPage(lot, rz.codigoRz);
 }
 
 function createLotDetailNoSheetRz(event, lot) {
@@ -6219,6 +6269,15 @@ function openNoSheetRz(lot, codigoRz) {
     scanMessage.textContent = `Remessa ${normalizedRz} ativa.`;
   }
   $("#diverseScanForm input[name='codigoMl']")?.focus();
+}
+
+function renderUnifiedRzWorkPage(lot, codigoRz, { push = true } = {}) {
+  if (isNoSheetLot(lot)) {
+    renderNoSheetScanPage(lot, codigoRz);
+  } else {
+    renderScanPage(lot, codigoRz);
+  }
+  if (push) updateRoute(lotRzPath(lot.id, codigoRz));
 }
 
 async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") {
@@ -6431,8 +6490,7 @@ function renderPallet(lot, codigoRz) {
     </section>
   `;
   $("#rzDetail [data-scan-rz]").addEventListener("click", () => {
-    if (isNoSheetLot(lot)) openNoSheetScanTab(lot, codigoRz);
-    else renderRz(lot, codigoRz);
+    renderUnifiedRzWorkPage(lot, codigoRz);
   });
   document.querySelectorAll("[data-pallet-split]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -6480,11 +6538,11 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   document.title = `Bipagem ${codigoRz}`;
   $("#lotDetail").classList.remove("empty");
   $("#lotDetail").innerHTML = `
-    <section class="scan-page">
+    <section class="scan-page unified-rz-work">
       <div class="scan-heading">
         <div>
           <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
-          <h2>${escapeHtml(codigoRz)}</h2>
+          <h2>Trabalho da RZ ${escapeHtml(codigoRz)}</h2>
         </div>
       </div>
       <div class="scan-box">

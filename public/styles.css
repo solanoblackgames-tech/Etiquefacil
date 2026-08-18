@@ -1079,6 +1079,14 @@ h3 {
   grid-template-columns: 2fr 1fr 1fr 1fr auto;
 }
 
+.unified-entry-panel {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+}
+
+.unified-entry-panel button[type="submit"] {
+  justify-self: end;
+}
+
 .import-template-help {
   align-items: start;
   background: #f8fafc;
@@ -2392,6 +2400,47 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
   margin: 14px 0;
+}
+
+.bulk-lot-editor {
+  margin: 14px 0;
+}
+
+.bulk-lot-editor summary {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 800;
+  min-height: 40px;
+  padding: 0 14px;
+  user-select: none;
+}
+
+.bulk-lot-editor summary::marker {
+  color: #fff;
+}
+
+.bulk-lot-editor-panel {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.bulk-lot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bulk-price-form {
+  margin: 0;
 }
 
 .work-heading,
@@ -4602,6 +4651,50 @@ h3 {
   width: 25.5mm;
 }
 
+.rz-qr-label {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #cfd6dc;
+  box-sizing: border-box;
+  color: #111;
+  display: grid;
+  font-family: Arial, sans-serif;
+  gap: 1mm;
+  grid-template-rows: 25mm 6.5mm 3.5mm;
+  height: 40mm;
+  justify-items: center;
+  overflow: hidden;
+  padding: 2.2mm 3mm 1.8mm;
+  text-align: center;
+  width: 60mm;
+}
+
+.rz-qr-label img {
+  height: 25mm;
+  image-rendering: pixelated;
+  width: 25mm;
+}
+
+.rz-qr-label strong {
+  font-size: 13px;
+  line-height: 1;
+  max-width: 54mm;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rz-qr-label span {
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  max-width: 54mm;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .transfer-label-info {
   align-content: start;
   display: grid;
@@ -5400,6 +5493,7 @@ h3 {
 
   .label-print,
   .transfer-qr-label,
+  .rz-qr-label,
   #triageLabelPrintable {
     border: 0;
     height: 40mm;
@@ -5469,7 +5563,8 @@ h3 {
   }
 
   .label-print:not(:last-of-type),
-  .transfer-qr-label:not(:last-of-type) {
+  .transfer-qr-label:not(:last-of-type),
+  .rz-qr-label:not(:last-of-type) {
     break-after: page;
     page-break-after: always;
   }

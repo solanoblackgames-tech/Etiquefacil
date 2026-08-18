@@ -26,7 +26,7 @@ import {
   updateExistingBlingProducts,
   updateBlingProductFromTriage
 } from "./bling-api.js";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, parseNumber, roundMoney } from "./domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
@@ -350,8 +350,12 @@ app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
 });
 
 app.get("/api/lots", requireAuth, async (req, res) => {
-  await recordOperatorActivity(req.session.user, "view_lots");
-  res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
+  try {
+    await recordOperatorActivity(req.session.user, "view_lots");
+    res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/lots/template", requireAuth, requireOwner, async (req, res) => {
@@ -368,6 +372,18 @@ app.get("/api/diverse-lots/suggestions-template", requireAuth, requireOwner, asy
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", 'attachment; filename="modelo-sugestoes-lote-avulso.xlsx"');
   res.send(buffer);
+});
+
+app.get("/api/qr.svg", requireAuth, async (req, res) => {
+  try {
+    const value = String(req.query.value || "").trim();
+    if (!value) throw new Error("Informe o valor do QR.");
+    const svg = await QRCode.toString(value, { type: "svg", margin: 1, width: 260, errorCorrectionLevel: "M" });
+    res.setHeader("Content-Type", "image/svg+xml");
+    res.send(svg);
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/operators", requireAuth, requireOperatorStatsAccess, async (req, res) => {
@@ -1142,6 +1158,85 @@ app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res
   }
 });
 
+app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim() || `Lote de entrada ${new Date().toLocaleDateString("pt-BR")}`;
+    const fornecedor = String(req.body.fornecedor || "").trim();
+    const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
+    const startSequence = Number(req.body.startSequence);
+    const costMode = "variable";
+    const averageCost = 0;
+    const costPercent = Number(req.body.costPercent);
+    const auctionPercent = costPercent;
+    if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
+    if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
+    if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
+
+    if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do valor de mercado.");
+
+    if (!req.file) {
+      const lot = await createDiverseLot({
+        userId: workspaceUserId(req),
+        name,
+        fornecedor,
+        skuPrefix,
+        startSequence,
+        averageCost,
+        costMode,
+        costPercent
+      });
+      return res.json({ lot, mode: "empty" });
+    }
+
+    const imported = await importUnifiedLotWorkbook(req.file.buffer, {
+      auctionPercent,
+      averageCost,
+      costMode,
+      costPercent,
+      fornecedor,
+      skuPrefix,
+      startSequence
+    });
+    if (!imported.products.length && !imported.suggestions.length) {
+      throw new Error("Nenhum item valido foi encontrado. Use pelo menos Descricao e Preco de venda.");
+    }
+    if (imported.products.some((product) => !Number.isFinite(Number(product.precoCusto)) || Number(product.precoCusto) <= 0)) {
+      throw new Error("Informe o % do valor de mercado ou preencha Preco de custo nos produtos com quantidade.");
+    }
+
+    if (!imported.products.length) {
+      const lot = await createDiverseLot({
+        userId: workspaceUserId(req),
+        name,
+        fornecedor,
+        skuPrefix,
+        startSequence,
+        averageCost,
+        costMode,
+        costPercent,
+        suggestions: imported.suggestions
+      });
+      return res.json({ lot, mode: "suggestions" });
+    }
+
+    applyNcmByCategory(imported, await getUserConferenceSettings(workspaceUserId(req)));
+    const lot = await createLotFromImport({
+      userId: workspaceUserId(req),
+      originalName: name || req.file.originalname,
+      auctionPercent,
+      fornecedor,
+      skuPrefix,
+      imported,
+      averageCost,
+      costMode,
+      costPercent
+    });
+    res.json({ lot, mode: imported.suggestions.length ? "mixed" : "planned" });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) throw new Error("Envie uma planilha .xlsx com as colunas obrigatórias.");
@@ -1169,10 +1264,14 @@ app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (r
 });
 
 app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
-  await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
-  const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
-  if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
-  res.json({ lot });
+  try {
+    await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
+    const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
+    if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
+    res.json({ lot });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.patch("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
@@ -3112,11 +3211,11 @@ function lotPriceHeaderIndex(row) {
 
 function buildLotImportTemplateWorkbook() {
   const headers = [
+    "Descricao",
+    "Preco de venda",
+    "Qtd",
     "Codigo ML",
     "Codigo RZ",
-    "Qtd",
-    "Descricao",
-    "Valor Unit",
     "Valor Total",
     "Preco de custo",
     "Categoria",
@@ -3130,17 +3229,18 @@ function buildLotImportTemplateWorkbook() {
   ];
   const rows = [
     headers,
-    ["ML123456", "RZ-001", 2, "Produto exemplo", 149.9, 299.8, 45.5, "Eletronicos", "Acessorios", "85171231", "7891234567890", "A1-01", "Novo", "https://exemplo.com/foto.jpg", "https://exemplo.com/produto"],
-    ["ML987654", "RZ-001", 1, "Produto sem custo especifico", 89.9, 89.9, "", "Casa", "Decoracao", "", "", "A1-02", "Usado", "", ""]
+    ["Produto apenas sugerido", 49.9, "", "", "", "", "", "Eletronicos", "Acessorios", "", "", "", "", "", ""],
+    ["Produto para conferencia sem RZ", 89.9, 2, "ML123456", "", 179.8, "", "Casa", "Decoracao", "", "", "A1-02", "Usado", "", ""],
+    ["Produto para conferencia com RZ", 149.9, 1, "ML987654", "RZ-001", 149.9, 45.5, "Eletronicos", "Acessorios", "85171231", "7891234567890", "A1-01", "Novo", "https://exemplo.com/foto.jpg", "https://exemplo.com/produto"]
   ];
   const instructions = [
     ["Coluna", "Obrigatoria?", "Como preencher"],
-    ["Codigo ML", "Sim", "Codigo usado para identificar/bipar o produto. Pode ser o codigo do Mercado Livre ou codigo interno."],
-    ["Codigo RZ", "Sim", "RZ/pallet/destino onde o item deve ser conferido."],
-    ["Qtd", "Sim", "Quantidade esperada deste produto nesta RZ. Tambem pode usar Saldo 1 a Saldo 4 no lugar de Qtd."],
     ["Descricao", "Sim", "Nome do produto que sera usado no lote, etiqueta e Bling."],
-    ["Valor Unit", "Sim", "Preco de venda unitario do produto."],
-    ["Valor Total", "Sim", "Valor total da linha. Normalmente Qtd x Valor Unit."],
+    ["Preco de venda", "Sim", "Preco de venda unitario do produto. Com apenas Descricao + Preco de venda, a linha vira sugestao."],
+    ["Qtd", "Nao", "Se preencher, a linha vira item previsto para conferencia. Se deixar vazio, vira sugestao."],
+    ["Codigo ML", "Nao", "Codigo usado para identificar/bipar o produto. Se deixar vazio em linha com Qtd, o sistema gera a partir do SKU."],
+    ["Codigo RZ", "Nao", "RZ/pallet onde o item deve ser conferido. Se deixar vazio em linha com Qtd, o sistema usa RZ-001."],
+    ["Valor Total", "Nao", "Valor total da linha. Se deixar vazio, o sistema calcula Qtd x Preco de venda."],
     ["Preco de custo", "Nao", "Se preencher, o sistema usa este custo direto no produto. Se deixar vazio, calcula pelo percentual de arremate informado na tela."],
     ["Categoria", "Nao", "Categoria do produto."],
     ["Subcategoria", "Nao", "Subcategoria do produto."],

@@ -92,41 +92,44 @@
           <div class="view-heading">
             <span class="muted">Perfil</span>
             <h2>Entradas de lotes</h2>
-            <p>Cadastre uma planilha ou crie um lote avulso para iniciar o trabalho.</p>
+            <p>Crie um lote e, se quiser, envie uma planilha unica para sugestao, cadastro ou conferencia.</p>
           </div>
         <div class="lot-entry-grid">
-          <form id="uploadForm" class="upload-grid entry-panel">
+          <form id="uploadForm" class="upload-grid entry-panel unified-entry-panel">
             <div class="panel-heading">
-              <span class="muted">Com planilha</span>
-              <h3>Importar XLSX</h3>
+              <span class="muted">Entrada unica</span>
+              <h3>Criar lote</h3>
             </div>
             <div class="import-template-help">
               <a class="button-link ghost-link" href="/api/lots/template">Baixar modelo XLSX</a>
-              <p>Use o modelo para montar sua planilha. Antes de subir o arquivo, confira quais campos precisam estar preenchidos.</p>
+              <p>A planilha e opcional. Se preencher apenas descricao e preco, ela vira lista de sugestao. Se preencher quantidade, ja vira previsao para conferencia.</p>
               <div class="import-rules">
                 <div class="import-rule required">
-                  <strong>Obrigatorio na planilha</strong>
-                  <span>Codigo ML, Codigo RZ, Qtd, Descricao, Valor Unit e Valor Total.</span>
+                  <strong>Minimo na planilha</strong>
+                  <span>Descricao e Preco de venda.</span>
                 </div>
                 <div class="import-rule optional">
                   <strong>Opcional na planilha</strong>
-                  <span>Preco de custo, Categoria, Subcategoria, NCM, EAN, Endereco WMS, Condicao, URL da imagem e Link do produto.</span>
+                  <span>Codigo ML, Codigo RZ, Qtd, Preco de custo, Categoria, Subcategoria, NCM, EAN, Endereco WMS, Condicao, URL da imagem e Link do produto.</span>
                 </div>
                 <div class="import-rule screen-required">
                   <strong>Obrigatorio nesta tela</strong>
-                  <span>Planilha XLSX, % arremate, Fornecedor e Prefixo SKU.</span>
+                  <span>Fornecedor, Prefixo SKU, Sequencial inicial e % do valor de mercado.</span>
                 </div>
               </div>
-              <p class="import-note"><strong>Preco de custo:</strong> se preencher, o sistema usa esse valor como custo do produto. Se deixar vazio, o custo sera calculado pelo % arremate informado abaixo.</p>
+              <p class="import-note"><strong>% do valor de mercado:</strong> usado para calcular o custo quando o produto nao trouxer Preco de custo na planilha ou for cadastrado manualmente.</p>
             </div>
-            <label>Planilha XLSX<input name="file" type="file" accept=".xlsx" required /></label>
-            <label>% arremate<input name="auctionPercent" type="number" min="0.01" step="0.01" placeholder="20" required /></label>
+            <label>Nome do lote<input name="name" placeholder="Lote de entrada" /></label>
             <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
+            <input type="hidden" name="costMode" value="variable" />
+            <label>% do valor de mercado<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" required /></label>
             <label>Prefixo SKU<input name="skuPrefix" placeholder="AMZ04L" required /></label>
-            <button type="submit">Subir planilha</button>
+            <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
+            <label class="wide-field">Planilha base do Lote<input name="file" type="file" accept=".xlsx,.xls" /></label>
+            <button type="submit">Criar lote</button>
           </form>
 
-          <section class="diverse-shell entry-panel">
+          <section class="diverse-shell entry-panel hidden">
             <div class="panel-heading">
               <span class="muted">Sem planilha</span>
               <h3>Lote avulso</h3>
@@ -176,21 +179,6 @@
                 <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
               </form>
               <div id="diverseRzList" class="diverse-rz-list"></div>
-              <section class="no-sheet-suggestion-panel">
-                <div>
-                  <span class="muted">Lista de sugestao</span>
-                  <h3>Adicionar sugestoes ao lote</h3>
-                  <p class="muted">Suba uma planilha com as colunas Produto e Preco.</p>
-                </div>
-                <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
-                <form class="no-sheet-suggestion-upload-form">
-                  <label>Planilha XLSX
-                    <input name="file" type="file" accept=".xlsx,.xls" required />
-                  </label>
-                  <button type="submit">Subir lista</button>
-                </form>
-                <p id="noSheetSuggestionUploadStatus" class="message" data-no-sheet-suggestion-status></p>
-              </section>
               <form id="diverseScanForm" class="search-bar">
                 <input name="codigoMl" placeholder="Bipe ou digite o Codigo ML" autocomplete="off" required />
                 <button type="button" id="generateCodigoMlButton" class="ghost">Gerar Codigo ML</button>
