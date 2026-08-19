@@ -279,6 +279,10 @@ function bindEvents() {
     await submitAuth("/api/register", event.currentTarget);
   });
 
+  document.querySelectorAll("[data-toggle-password]").forEach((button) => {
+    button.addEventListener("click", () => togglePasswordVisibility(button));
+  });
+
   $("#operatorInviteForm").addEventListener("submit", acceptOperatorInvite);
 
   $("#logoutButton").addEventListener("click", async () => {
@@ -432,6 +436,15 @@ async function submitAuth(url, form) {
   } catch (error) {
     $("#authMessage").textContent = error.message;
   }
+}
+
+function togglePasswordVisibility(button) {
+  const input = button.closest(".password-input")?.querySelector("input");
+  if (!input) return;
+  const shouldShow = input.type === "password";
+  input.type = shouldShow ? "text" : "password";
+  button.setAttribute("aria-label", shouldShow ? "Ocultar senha" : "Mostrar senha");
+  button.setAttribute("title", shouldShow ? "Ocultar senha" : "Mostrar senha");
 }
 
 function getOperatorInviteRequest() {

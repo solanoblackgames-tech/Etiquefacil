@@ -9,24 +9,92 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260719-diverse-responsive" />
+    <link rel="stylesheet" href="/styles.css?v=20260819-login-polish" />
   </head>
   <body>
-    <main id="auth" class="auth">
-      <section class="auth-panel">
-        <h1>Etiquefácil</h1>
-        <form id="loginForm" class="form" autocomplete="on">
-          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
-          <label>Senha<input name="password" type="password" autocomplete="current-password" required /></label>
-          <button type="submit">Entrar</button>
-        </form>
-        <form id="registerForm" class="form secondary">
-          <label>Nome<input name="name" autocomplete="name" required /></label>
-          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
-          <label>Senha<input name="password" type="password" autocomplete="new-password" required /></label>
-          <button type="submit">Criar conta</button>
-        </form>
-        <p id="authMessage" class="message"></p>
+    <main id="auth" class="auth auth-login">
+      <section class="auth-shell" aria-label="Acesso ao Etiquefácil">
+        <aside class="auth-brand-panel">
+          <div class="auth-brand-mark">
+            <span class="auth-brand-icon">E</span>
+            <div>
+              <strong>Etiquefácil</strong>
+              <span>Gestão de lotes e etiquetas</span>
+            </div>
+          </div>
+
+          <div class="auth-brand-copy">
+            <h1>Entre para organizar sua operação.</h1>
+            <p>Controle entradas, conferências, triagens e etiquetas em um ambiente limpo para uso diário.</p>
+            <div class="auth-workflow-card" aria-label="Resumo operacional">
+              <div class="auth-workflow-row">
+                <i>1</i>
+                <span>Lotes de entrada</span>
+                <b>ativo</b>
+              </div>
+              <div class="auth-workflow-row">
+                <i>2</i>
+                <span>Conferência e triagem</span>
+                <b>rápido</b>
+              </div>
+              <div class="auth-workflow-row">
+                <i>3</i>
+                <span>Etiquetas prontas</span>
+                <b>preciso</b>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="auth-panel auth-login-panel">
+          <div class="auth-login-card">
+            <header class="auth-heading">
+              <span>Acesso seguro</span>
+              <h2>Acesse sua conta</h2>
+              <p>Use seu e-mail cadastrado para continuar no painel do Etiquefácil.</p>
+            </header>
+
+            <form id="loginForm" class="form auth-form" autocomplete="on">
+              <label>E-mail<input name="email" type="email" autocomplete="username" placeholder="seuemail@empresa.com" required /></label>
+              <label>Senha
+                <span class="password-input">
+                  <input name="password" type="password" autocomplete="current-password" placeholder="Insira sua senha" required />
+                  <button class="password-toggle" type="button" data-toggle-password aria-label="Mostrar senha" title="Mostrar senha">
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                </span>
+              </label>
+              <button type="submit">Entrar</button>
+            </form>
+
+            <div class="auth-divider">ou</div>
+
+            <form id="registerForm" class="form secondary auth-register-form">
+              <div class="auth-register-heading">
+                <span>Novo por aqui?</span>
+                <strong>Crie sua conta em poucos passos.</strong>
+              </div>
+              <label>Nome<input name="name" autocomplete="name" placeholder="Nome completo" required /></label>
+              <label>E-mail<input name="email" type="email" autocomplete="username" placeholder="seuemail@empresa.com" required /></label>
+              <label>Senha
+                <span class="password-input">
+                  <input name="password" type="password" autocomplete="new-password" placeholder="Crie uma senha" required />
+                  <button class="password-toggle" type="button" data-toggle-password aria-label="Mostrar senha" title="Mostrar senha">
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                </span>
+              </label>
+              <button type="submit">Criar conta</button>
+            </form>
+            <p id="authMessage" class="message"></p>
+          </div>
+        </section>
       </section>
     </main>
 
