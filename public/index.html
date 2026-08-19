@@ -182,15 +182,16 @@
                 </div>
                 <div class="import-rule screen-required">
                   <strong>Obrigatorio nesta tela</strong>
-                  <span>Fornecedor, Prefixo SKU, Sequencial inicial e % do valor de mercado.</span>
+                  <span>Fornecedor, Prefixo SKU, Sequencial inicial e tipo de custo.</span>
                 </div>
               </div>
-              <p class="import-note"><strong>% do valor de mercado:</strong> usado para calcular o custo quando o produto nao trouxer Preco de custo na planilha ou for cadastrado manualmente.</p>
+              <p class="import-note"><strong>Tipo de custo:</strong> escolha % do valor de mercado ou custo fixo quando o produto nao trouxer Preco de custo na planilha ou for cadastrado manualmente.</p>
             </div>
             <label>Nome do lote<input name="name" placeholder="Lote de entrada" /></label>
             <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-            <input type="hidden" name="costMode" value="variable" />
-            <label>% do valor de mercado<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" required /></label>
+            <label>Tipo de custo<select name="costMode"><option value="variable">Valor de mercado (%)</option><option value="fixed">Custo fixo</option></select></label>
+            <label data-cost-field="variable">% do valor de mercado<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" required /></label>
+            <label data-cost-field="fixed" class="hidden">Custo fixo unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" /></label>
             <label>Prefixo SKU<input name="skuPrefix" placeholder="AMZ04L" required /></label>
             <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
             <label class="wide-field">Planilha base do Lote<input name="file" type="file" accept=".xlsx,.xls" /></label>

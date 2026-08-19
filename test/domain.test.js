@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import XLSX from "xlsx";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, parseNumber, roundMoney } from "../src/domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
@@ -97,6 +97,48 @@ test("specialist import uses explicit product cost when provided", async () => {
 
   assert.equal(result.products.find((product) => product.codigoMl === "ML-COST").precoCusto, 37.45);
   assert.equal(result.products.find((product) => product.codigoMl === "ML-PERCENT").precoCusto, 40);
+});
+
+test("unified import uses fixed cost when product cost is absent", async () => {
+  const rows = [
+    ["Descricao", "Preco de venda", "Qtd"],
+    ["Produto com custo fixo", 100, 2]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  const result = await importUnifiedLotWorkbook(buffer, {
+    skuPrefix: "fix",
+    startSequence: 1,
+    costMode: "fixed",
+    averageCost: 12.5,
+    auctionPercent: 0
+  });
+
+  assert.equal(result.products[0].precoCusto, 12.5);
+});
+
+test("unified import keeps explicit product cost above fixed default", async () => {
+  const rows = [
+    ["Descricao", "Preco de venda", "Qtd", "Preco de custo"],
+    ["Produto com custo informado", 100, 2, 37.45]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  const result = await importUnifiedLotWorkbook(buffer, {
+    skuPrefix: "fix",
+    startSequence: 1,
+    costMode: "fixed",
+    averageCost: 12.5,
+    auctionPercent: 0
+  });
+
+  assert.equal(result.products[0].precoCusto, 37.45);
 });
 
 test("Bling CSV maps SKU, ML brand and total stock", () => {

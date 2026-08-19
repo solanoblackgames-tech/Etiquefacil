@@ -525,7 +525,7 @@ function unifiedLotSuccessMessage(response) {
 }
 
 function updateUnifiedCostFields(form) {
-  form?.querySelector('[name="costPercent"]')?.setAttribute("required", "");
+  updateLotCostFields(form, "variable");
 }
 
 async function createDiverseLot(event) {
@@ -623,15 +623,21 @@ function handleNoSheetCostModeChange(event) {
 }
 
 function updateNoSheetCostFields(form) {
-  const mode = form.querySelector('[name="costMode"]')?.value === "variable" ? "variable" : "fixed";
+  updateLotCostFields(form, "fixed");
+}
+
+function updateLotCostFields(form, defaultMode) {
+  if (!form) return;
+  const mode = form?.querySelector('[name="costMode"]')?.value === "variable" ? "variable" : "fixed";
+  const activeMode = form?.querySelector('[name="costMode"]') ? mode : defaultMode;
   const fixed = form.querySelector('[data-cost-field="fixed"]');
   const variable = form.querySelector('[data-cost-field="variable"]');
   const averageCost = form.querySelector('[name="averageCost"]');
   const costPercent = form.querySelector('[name="costPercent"]');
-  fixed?.classList.toggle("hidden", mode !== "fixed");
-  variable?.classList.toggle("hidden", mode !== "variable");
-  if (averageCost) averageCost.required = mode === "fixed";
-  if (costPercent) costPercent.required = mode === "variable";
+  fixed?.classList.toggle("hidden", activeMode !== "fixed");
+  variable?.classList.toggle("hidden", activeMode !== "variable");
+  if (averageCost) averageCost.required = activeMode === "fixed";
+  if (costPercent) costPercent.required = activeMode === "variable";
 }
 
 async function addDiverseItem(event) {

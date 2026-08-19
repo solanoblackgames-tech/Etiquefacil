@@ -415,6 +415,10 @@ function hasUnifiedMinimumColumns(row) {
 
 function unifiedProductCost(lotInput, valorUnit, explicitCost, percentage) {
   if (explicitCost > 0) return explicitCost;
+  if (lotInput.costMode === "fixed") {
+    const averageCost = roundMoney(parseNumber(lotInput.averageCost));
+    return averageCost > 0 ? averageCost : 0;
+  }
   if (!Number.isFinite(percentage) || percentage <= 0) return 0;
   return roundMoney(valorUnit * percentage);
 }

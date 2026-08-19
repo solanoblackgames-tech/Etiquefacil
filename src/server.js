@@ -1164,15 +1164,19 @@ app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), 
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
     const startSequence = Number(req.body.startSequence);
-    const costMode = "variable";
-    const averageCost = 0;
+    const costMode = String(req.body.costMode || "variable").trim() === "fixed" ? "fixed" : "variable";
+    const averageCost = Number(req.body.averageCost);
     const costPercent = Number(req.body.costPercent);
-    const auctionPercent = costPercent;
+    const auctionPercent = costMode === "variable" ? costPercent : 0;
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
     if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
 
-    if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do valor de mercado.");
+    if (costMode === "variable") {
+      if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do valor de mercado.");
+    } else if (!Number.isFinite(averageCost) || averageCost <= 0) {
+      throw new Error("Informe o custo fixo unitario.");
+    }
 
     if (!req.file) {
       const lot = await createDiverseLot({
@@ -1201,7 +1205,7 @@ app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), 
       throw new Error("Nenhum item valido foi encontrado. Use pelo menos Descricao e Preco de venda.");
     }
     if (imported.products.some((product) => !Number.isFinite(Number(product.precoCusto)) || Number(product.precoCusto) <= 0)) {
-      throw new Error("Informe o % do valor de mercado ou preencha Preco de custo nos produtos com quantidade.");
+      throw new Error("Informe o % do valor de mercado, custo fixo ou preencha Preco de custo nos produtos com quantidade.");
     }
 
     if (!imported.products.length) {
