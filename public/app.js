@@ -76,6 +76,14 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const toggleClass = (selector, className, force) => {
+  const element = $(selector);
+  if (!element) return null;
+  element.classList.toggle(className, force);
+  return element;
+};
+const addClass = (selector, className) => toggleClass(selector, className, true);
+const removeClass = (selector, className) => toggleClass(selector, className, false);
 const LABEL_PRINT_FALLBACK_MS = 15000;
 let labelPrintFallbackTimer = null;
 const CONFERENCE_FIELDS = [
@@ -1407,7 +1415,7 @@ async function createDiverseRz(event) {
   if (name === null) return;
   saveRzDisplayName(state.selectedDiverseLot?.id, codigoRz, name || codigoRz);
   setDiverseRz(codigoRz);
-  showRzQrLabel(state.selectedDiverseLot, codigoRz, name || codigoRz, { autoPrint: true });
+  await showRzQrLabel(state.selectedDiverseLot, codigoRz, name || codigoRz, { autoPrint: true });
   $("#diverseScanMessage").style.color = "#0f766e";
   $("#diverseScanMessage").textContent = `Remessa ${name || codigoRz} ativa e etiqueta enviada para impressao.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
@@ -1442,9 +1450,9 @@ function rzDisplayName(lotId, codigoRz) {
   return localStorage.getItem(rzDisplayNameStorageKey(lotId, codigoRz)) || codigoRz;
 }
 
-function showRzQrLabel(lot, codigoRz, name = codigoRz, { autoPrint = false } = {}) {
+async function showRzQrLabel(lot, codigoRz, name = codigoRz, { autoPrint = false } = {}) {
   const value = `${window.location.origin}${lotRzPath(lot.id, codigoRz)}`;
-  const qrSrc = `/api/qr.svg?value=${encodeURIComponent(value)}`;
+  const qrSrc = await labelQrDataUrl(value);
   state.labelProduct = null;
   state.labelMeta = null;
   state.labelQuantity = 1;
@@ -3896,13 +3904,13 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   document.querySelectorAll("#app [data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === target);
   });
-  $(".upload-band").classList.toggle("hidden", target !== "profile");
-  $("#lotsTab").classList.toggle("hidden", target !== "lots");
-  $("#searchTab").classList.toggle("hidden", target !== "search");
-  $("#transfersTab").classList.toggle("hidden", target !== "transfers");
-  $("#triageTab").classList.toggle("hidden", target !== "triage");
-  $("#triageTab").classList.toggle("triage-view-only", target === "triage" && triageViewOnly);
-  $("#profileTab").classList.toggle("hidden", target !== "profile");
+  toggleClass(".upload-band", "hidden", target !== "profile");
+  toggleClass("#lotsTab", "hidden", target !== "lots");
+  toggleClass("#searchTab", "hidden", target !== "search");
+  toggleClass("#transfersTab", "hidden", target !== "transfers");
+  toggleClass("#triageTab", "hidden", target !== "triage");
+  toggleClass("#triageTab", "triage-view-only", target === "triage" && triageViewOnly);
+  toggleClass("#profileTab", "hidden", target !== "profile");
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
   if (target === "profile") setProfileSection(state.profileSection || "entries");
@@ -5898,8 +5906,9 @@ async function refreshLotsList(activeLotId = state.selectedLotId) {
 function clearLotDetail() {
   document.body.classList.remove("lot-focus");
   state.previewLotId = null;
-  $("#lotDetail").classList.add("empty");
-  $("#lotDetail").innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
+  const detail = addClass("#lotDetail", "empty");
+  if (!detail) return;
+  detail.innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
   $("#openProfileEntriesButton")?.addEventListener("click", () => {
     setMainTab("profile");
     setProfileSection("entries");
@@ -5940,15 +5949,16 @@ async function previewLot(lotId) {
   state.selectedRz = null;
   setMainTab("lots", { push: false });
   renderLots();
-  $("#lotDetail").classList.remove("empty");
-  $("#lotDetail").innerHTML = '<p class="muted">Carregando status do lote...</p>';
+  const detail = removeClass("#lotDetail", "empty");
+  if (!detail) return;
+  detail.innerHTML = '<p class="muted">Carregando status do lote...</p>';
 
   try {
     const response = await api(`/api/lots/${lotId}`);
     renderLotPreview(response.lot);
   } catch (error) {
-    $("#lotDetail").classList.add("empty");
-    $("#lotDetail").textContent = error.message;
+    addClass("#lotDetail", "empty");
+    if (detail) detail.textContent = error.message;
   }
 }
 
@@ -5959,8 +5969,9 @@ async function selectLot(lotId, { push = true } = {}) {
   state.selectedRz = null;
   setMainTab("lots", { push: false });
   renderLots();
-  $("#lotDetail").classList.remove("empty");
-  $("#lotDetail").innerHTML = '<p class="muted">Carregando lote...</p>';
+  const detail = removeClass("#lotDetail", "empty");
+  if (!detail) return null;
+  detail.innerHTML = '<p class="muted">Carregando lote...</p>';
 
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
@@ -5976,8 +5987,8 @@ async function selectLot(lotId, { push = true } = {}) {
     state.selectedLotId = null;
     state.selectedRz = null;
     renderLots();
-    $("#lotDetail").classList.add("empty");
-    $("#lotDetail").textContent = error.message;
+    addClass("#lotDetail", "empty");
+    if (detail) detail.textContent = error.message;
     return null;
   }
 }
@@ -6214,15 +6225,20 @@ function openRzFromSearch(lot) {
   renderUnifiedRzWorkPage(lot, rz.codigoRz);
 }
 
-function createLotDetailNoSheetRz(event, lot) {
+async function createLotDetailNoSheetRz(event, lot) {
   event.preventDefault();
   const codigoRz = nextNoSheetRzCode(lot);
   const normalizedRz = normalizeCode(codigoRz);
+  if (!normalizedRz) return;
+  const name = await askRzName(normalizedRz);
+  if (name === null) return;
   state.selectedDiverseRz = normalizedRz;
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
+  saveRzDisplayName(lot.id, normalizedRz, name || normalizedRz);
   const activeRz = $("#lotDiverseActiveRz");
   if (activeRz) activeRz.textContent = `Remessa ativa: ${normalizedRz}`;
+  await showRzQrLabel(lot, normalizedRz, name || normalizedRz, { autoPrint: true });
   openNoSheetScanTab(lot, codigoRz);
 }
 
@@ -6410,7 +6426,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
         <button type="button" id="reopenScanButton">Reabrir bipagem</button>
       </div>
     `;
-    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, codigoRz));
+    $("#reopenScanButton")?.addEventListener("click", () => openScanWindow(lot.id, codigoRz));
   }
   if (push) updateRoute(lotPath(lot.id));
   return;
@@ -6456,11 +6472,13 @@ function renderPallet(lot, codigoRz) {
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   if (!rz) return;
+  const rzDetail = $("#rzDetail");
+  if (!rzDetail) return;
 
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   const status = rz.missing === 0 && rz.excess === 0 ? "Concluido" : rz.checked > 0 ? "Em andamento" : "Pendente";
   const baseUrl = `/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/pallet`;
-  $("#rzDetail").innerHTML = `
+  rzDetail.innerHTML = `
     <section class="pallet-panel">
       <div class="pallet-heading">
         <div>
@@ -6508,7 +6526,7 @@ function renderPallet(lot, codigoRz) {
       </div>
     </section>
   `;
-  $("#rzDetail [data-scan-rz]").addEventListener("click", () => {
+  $("#rzDetail [data-scan-rz]")?.addEventListener("click", () => {
     renderUnifiedRzWorkPage(lot, codigoRz);
   });
   document.querySelectorAll("[data-pallet-split]").forEach((button) => {
@@ -6523,7 +6541,7 @@ function renderPallet(lot, codigoRz) {
       render: (updatedLot) => renderPallet(updatedLot, codigoRz)
     }));
   });
-  bindProductPrintButtons($("#rzDetail"));
+  bindProductPrintButtons(rzDetail);
 }
 
 function openScanWindow(lotId, codigoRz) {
@@ -6537,8 +6555,9 @@ function renderNoSheetScanPage(lot, codigoRz) {
   state.selectedLotId = lot.id;
   state.selectedRz = null;
   document.title = `Bipagem ${codigoRz}`;
-  $("#lotDetail").classList.remove("empty");
-  $("#lotDetail").innerHTML = '<div id="diversePanelMount"></div>';
+  const detail = removeClass("#lotDetail", "empty");
+  if (!detail) return;
+  detail.innerHTML = '<div id="diversePanelMount"></div>';
   openNoSheetRz(lot, codigoRz);
 }
 
@@ -6546,17 +6565,19 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   state.selectedLotId = lot.id;
   state.selectedRz = codigoRz;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
+  const detail = $("#lotDetail");
+  if (!detail) return;
   if (!rz) {
-    $("#lotDetail").classList.add("empty");
-    $("#lotDetail").textContent = "RZ nao encontrado neste lote.";
+    detail.classList.add("empty");
+    detail.textContent = "RZ nao encontrado neste lote.";
     return;
   }
 
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   const displayItems = prioritizeScannedItems(items, lastCodigoMl);
   document.title = `Bipagem ${codigoRz}`;
-  $("#lotDetail").classList.remove("empty");
-  $("#lotDetail").innerHTML = `
+  detail.classList.remove("empty");
+  detail.innerHTML = `
     <section class="scan-page unified-rz-work">
       <div class="scan-heading">
         <div>
@@ -6578,8 +6599,8 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
       <h3 class="section-title">Progresso do RZ</h3>
       <div class="summary-grid" id="scanProgress">${scanProgressMarkup(rz)}</div>
       <div id="scanMessage" class="message"></div>
-      <div class="items" id="scanItems">
-        ${displayItems.map(itemRow).join("")}
+      <div id="scanItems">
+        ${scanItemsTable(displayItems)}
       </div>
     </section>
   `;
@@ -6618,7 +6639,7 @@ function updateRenderedScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
 
   summary.innerHTML = scanSummaryMarkup(rz);
   progress.innerHTML = scanProgressMarkup(rz);
-  itemsWrapper.innerHTML = displayItems.map(itemRow).join("");
+  itemsWrapper.innerHTML = scanItemsTable(displayItems);
   bindScanItemControls(lot.id, codigoRz, items, itemsWrapper);
   return true;
 }
@@ -7367,7 +7388,7 @@ function formatLabelDateTime(value) {
   });
 }
 
-function printCurrentLabel() {
+async function printCurrentLabel() {
   if (!$("#labelPreview")?.innerHTML || $("#labelModal").classList.contains("hidden")) return;
   const isLargeQrLabel = currentLabelUsesLargeQr();
   cleanupLabelPrintRoot();
@@ -7379,8 +7400,20 @@ function printCurrentLabel() {
   document.body.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   document.documentElement.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   if (isLargeQrLabel) appendLargeQrPrintStyle();
+  await waitForPrintableImages(printRoot);
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
+}
+
+function waitForPrintableImages(root, timeoutMs = 1500) {
+  const images = [...root.querySelectorAll("img")].filter((image) => !image.complete);
+  if (!images.length) return Promise.resolve();
+  const loaded = Promise.all(images.map((image) => new Promise((resolve) => {
+    image.addEventListener("load", resolve, { once: true });
+    image.addEventListener("error", resolve, { once: true });
+  })));
+  const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  return Promise.race([loaded, timeout]);
 }
 
 function currentLabelUsesLargeQr() {
@@ -7599,6 +7632,59 @@ function itemRow(item) {
         ${deleteButton}
         <button type="button" class="ghost" data-split-product="${escapeHtml(product.id || "")}">Desmembrar</button>
         <button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button>
+      </span>
+    </article>
+  `;
+}
+
+function scanItemsTable(items) {
+  if (!items.length) return '<p class="muted">Nenhum produto nesta RZ.</p>';
+  return `
+    <div class="diverse-table scan-table">
+      <div class="diverse-row scan-row diverse-row-head">
+        <span class="diverse-remessa-cell">Remessa</span>
+        <span class="diverse-sku-cell">SKU</span>
+        <span class="diverse-code-cell">Codigo</span>
+        <span class="diverse-product-cell">Produto</span>
+        <span class="diverse-operator-cell">Status</span>
+        <span class="diverse-quantity-cell">Qtd</span>
+        <span class="diverse-sale-cell">Venda</span>
+        <span class="diverse-cost-cell">Custo</span>
+        <span class="diverse-actions-cell">Acoes</span>
+      </div>
+      ${items.map(scanItemTableRow).join("")}
+    </div>
+  `;
+}
+
+function scanItemTableRow(item) {
+  const product = item.product || {};
+  const scanCode = product.codigoMl || product.sku || "";
+  const typeLabel = item.tipoItem === "excedente_externo" ? "excedente externo" : item.tipoItem;
+  const blingAlert = productBlingAlertMarkup(product);
+  const transferRefs = transferLotsForProductMarkup(product);
+  const deleteButton =
+    item.tipoItem === "excedente_externo"
+      ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
+      : `<button type="button" class="danger ghost icon-button" data-delete-rz-item="${escapeHtml(item.id || "")}" title="Excluir da bipagem" aria-label="Excluir da bipagem">${trashIcon()}</button>`;
+  return `
+    <article class="diverse-row scan-row">
+      <span class="diverse-remessa-cell" data-label="Remessa">${escapeHtml(item.codigoRz || "")}</span>
+      <strong class="diverse-sku-cell" data-label="SKU">${escapeHtml(product.sku || "")}</strong>
+      <span class="diverse-code-cell" data-label="Codigo">${escapeHtml(product.codigoMl || "")}</span>
+      <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}${transferRefs}</span>
+      <span class="diverse-operator-cell" data-label="Status">${escapeHtml(typeLabel || "")}</span>
+      <span class="quantity-stepper diverse-quantity-cell scan-quantity-stepper" data-label="Qtd">
+        <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+        <span class="scan-quantity-label"><strong>${item.qtdConferida}/${item.qtdEsperada}</strong></span>
+        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
+      </span>
+      <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
+      <span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>
+      <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
+        <button type="button" class="ghost icon-button" data-split-product="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
+        <button type="button" class="icon-button" data-print-product="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
+        ${deleteButton}
       </span>
     </article>
   `;
