@@ -130,6 +130,7 @@ const normalizeSearchText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
+const canViewCost = () => isOwnerUser();
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
@@ -666,7 +667,7 @@ async function addDiverseItem(event) {
   button.disabled = true;
   try {
     let valorUnitOverride;
-    if (state.labelOptions.suggestPrice) {
+    if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
       const preview = await previewDiverseItem(codigoMl, codigoRz);
       if (preview.status === "preview") {
         const product = preview.product || {};
@@ -2259,7 +2260,9 @@ function openProductSplitModal(product) {
         preview.textContent = "";
         return;
       }
-      preview.textContent = `Venda: ${money(Number(product.valorUnit || 0) / kit)} | Custo: ${money(Number(product.precoCusto || 0) / kit)} | Quantidade: ${sellable}`;
+      const priceText = `Venda: ${money(Number(product.valorUnit || 0) / kit)}`;
+      const costText = canViewCost() ? ` | Custo: ${money(Number(product.precoCusto || 0) / kit)}` : "";
+      preview.textContent = `${priceText}${costText} | Quantidade: ${sellable}`;
     };
 
     const cleanup = () => {
@@ -6035,11 +6038,14 @@ function renderLots() {
   for (const lot of state.lots) {
     const card = document.createElement("article");
     const activeLotId = state.previewLotId || state.selectedLotId;
+    const lotMeta = canViewCost()
+      ? `${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}`
+      : `${escapeHtml(lot.prefixoSku)} · ${escapeHtml(lot.fornecedor)}`;
     card.className = `lot-card ${lot.id === activeLotId ? "active" : ""}`;
     card.innerHTML = `
       <strong>${escapeHtml(lot.nomeArquivo)}</strong>
       <span class="muted">${lot.totalProducts} SKUs · ${lot.rzs.length} Pallets</span>
-      <span class="muted">${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}</span>
+      <span class="muted">${lotMeta}</span>
       ${lot.totalExcessExternal ? `<span class="badge excess">${lot.totalExcessExternal} excedente(s)</span>` : ""}
     `;
     card.addEventListener("click", () => {
@@ -7727,6 +7733,7 @@ function itemRow(item) {
 
 function scanItemsTable(items) {
   if (!items.length) return '<p class="muted">Nenhum produto neste Pallet.</p>';
+  const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
   return `
     <div class="diverse-table scan-table">
       <div class="diverse-row scan-row diverse-row-head">
@@ -7737,7 +7744,7 @@ function scanItemsTable(items) {
         <span class="diverse-operator-cell">Status</span>
         <span class="diverse-quantity-cell">Qtd</span>
         <span class="diverse-sale-cell">Venda</span>
-        <span class="diverse-cost-cell">Custo</span>
+        ${costHeader}
         <span class="diverse-actions-cell">Acoes</span>
       </div>
       ${items.map(scanItemTableRow).join("")}
@@ -7768,7 +7775,7 @@ function scanItemTableRow(item) {
         <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
       </span>
       <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
-      <span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>
+      ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
         <button type="button" class="ghost icon-button" data-split-product="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
         <button type="button" class="icon-button" data-print-product="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
@@ -7843,6 +7850,7 @@ function diverseItemsTable(lot) {
     if (byCreated) return byCreated;
     return String(a.product?.sku || "").localeCompare(String(b.product?.sku || ""));
   });
+  const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
 
   return `
     <div class="diverse-table">
@@ -7854,7 +7862,7 @@ function diverseItemsTable(lot) {
         <span class="diverse-operator-cell">Operador</span>
         <span class="diverse-quantity-cell">Qtd</span>
         <span class="diverse-sale-cell">Venda</span>
-        <span class="diverse-cost-cell">Custo</span>
+        ${costHeader}
         <span class="diverse-actions-cell">Acoes</span>
       </div>
       ${sortedItems.map((item, index) => diverseItemRow(item, sortedItems[index - 1]?.codigoRz !== item.codigoRz)).join("")}
@@ -7889,7 +7897,7 @@ function diverseItemRow(item, startsRz = false) {
         <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
       <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
-      <span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>
+      ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
         <button type="button" class="ghost icon-button" data-diverse-edit="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         <button type="button" class="ghost icon-button" data-diverse-split="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
@@ -7972,13 +7980,14 @@ function palletRow(item) {
   const value = Number(product.valorUnit || 0);
   const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
   const blingAlert = productBlingAlertMarkup(product);
+  const costDetail = canViewCost() ? `<small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small>` : `<small>Estoque ${product.qtdTotal || 0}</small>`;
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
       <span>${escapeHtml(product.descricao || "")}<small>${escapeHtml(item.tipoItem || "")} ${escapeHtml(item.condicaoGrade || "")}</small><small>${escapeHtml(product.origem || "")} · ${escapeHtml(product.categoria || "")} / ${escapeHtml(product.subcategoria || "")}</small></span>
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
       <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
-      <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small><small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small></span>
+      <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small>${costDetail}</span>
       <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button><button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button></span>
     </article>
   `;
@@ -8038,6 +8047,10 @@ function renderTriageStats() {
   const averageValue = stats.total ? Number(stats.totalValue || 0) / stats.total : 0;
   const averageCost = stats.total ? Number(stats.totalCost || 0) / stats.total : 0;
   const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
+  const costSummary = canViewCost() ? `<small>Preco de venda Bling. Custo: ${money(stats.totalCost || 0)}</small>` : '<small>Preco de venda Bling.</small>';
+  const averageCostMetric = canViewCost() ? `<div class="metric"><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></div>` : "";
+  const destinationCostCopy = canViewCost() ? "Quantidade, venda, custo e media por destino." : "Quantidade, venda e media por destino.";
+  const operatorCostCopy = canViewCost() ? "Produtividade, venda e custo por pessoa." : "Produtividade e venda por pessoa.";
   panel.innerHTML = `
     <div class="triage-stats-hero">
       <div>
@@ -8048,7 +8061,7 @@ function renderTriageStats() {
       <div class="triage-stats-hero-value">
         <span>Valor agregado</span>
         <strong>${money(stats.totalValue || 0)}</strong>
-        <small>Preco de venda Bling. Custo: ${money(stats.totalCost || 0)}</small>
+        ${costSummary}
       </div>
     </div>
     ${triageStatsFilterMarkup(filter)}
@@ -8057,17 +8070,17 @@ function renderTriageStats() {
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
-      <div class="metric"><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></div>
+      ${averageCostMetric}
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
       <section class="triage-stats-block">
         <div class="triage-stats-block-heading">
           <div>
-            <strong>Venda e custo por destino</strong>
+            <strong>${canViewCost() ? "Venda e custo por destino" : "Venda por destino"}</strong>
             <span class="muted">Onde esta indo o valor da bancada.</span>
           </div>
-          <span class="muted">Quantidade, venda, custo e media por destino.</span>
+          <span class="muted">${destinationCostCopy}</span>
         </div>
         ${triageStatsDestinationsMarkup(stats.destinations || [])}
       </section>
@@ -8077,7 +8090,7 @@ function renderTriageStats() {
             <strong>Itens por diagnostico</strong>
             <span class="muted">Condicao registrada no laudo.</span>
           </div>
-          <span class="muted">Quantidade, venda, custo e media por diagnostico.</span>
+          <span class="muted">${canViewCost() ? "Quantidade, venda, custo e media por diagnostico." : "Quantidade, venda e media por diagnostico."}</span>
         </div>
         ${triageStatsDiagnosisConditionsMarkup(stats.diagnosisConditions || [])}
       </section>
@@ -8085,9 +8098,9 @@ function renderTriageStats() {
         <div class="triage-stats-block-heading">
           <div>
             <strong>Itens por operador</strong>
-            <span class="muted">Ranking de produtividade, venda e custo.</span>
+            <span class="muted">${operatorCostCopy}</span>
           </div>
-          <span class="muted">Produtividade, venda e custo por pessoa.</span>
+          <span class="muted">${operatorCostCopy}</span>
         </div>
         ${triageStatsOperatorsMarkup(stats.operators || [])}
       </section>
@@ -8248,6 +8261,7 @@ function downloadTriageStatsList() {
 
 function triageStatsOperatorsMarkup(operators = []) {
   if (!operators.length) return '<p class="muted">Nenhuma triagem registrada.</p>';
+  const showCost = canViewCost();
   return `
     <div class="triage-operator-ranking">
       ${operators.map((operator) => {
@@ -8256,11 +8270,13 @@ function triageStatsOperatorsMarkup(operators = []) {
         const totalCost = Number(operator.totalCost || 0);
         const diagnosed = Number(operator.diagnosed || 0);
         const completion = total ? Math.round((diagnosed / total) * 100) : 0;
+        const costSummary = showCost ? ` - Custo ${money(totalCost)}` : "";
+        const costMetric = showCost ? `<span><strong>${money(total ? totalCost / total : 0)}</strong><small>Custo med.</small></span>` : "";
         return `
           <article class="triage-operator-card">
             <div class="triage-operator-main">
               <strong>${escapeHtml(operatorLabel(operator))}</strong>
-              <span>${total} itens - Venda ${money(totalValue)} - Custo ${money(totalCost)}</span>
+              <span>${total} itens - Venda ${money(totalValue)}${costSummary}</span>
             </div>
             <div class="triage-operator-progress" aria-hidden="true"><span style="width: ${completion}%"></span></div>
             <div class="triage-operator-metrics">
@@ -8268,7 +8284,7 @@ function triageStatsOperatorsMarkup(operators = []) {
               <span><strong>${operator.pending || 0}</strong><small>Pend.</small></span>
               <span><strong>${completion}%</strong><small>Conclusao</small></span>
               <span><strong>${money(total ? totalValue / total : 0)}</strong><small>Media</small></span>
-              <span><strong>${money(total ? totalCost / total : 0)}</strong><small>Custo med.</small></span>
+              ${costMetric}
             </div>
           </article>
         `;
@@ -8280,6 +8296,7 @@ function triageStatsOperatorsMarkup(operators = []) {
 function triageStatsDestinationsMarkup(destinations = []) {
   if (!destinations.length) return '<p class="muted">Nenhum destino definido.</p>';
   const maxValue = destinations.reduce((max, item) => Math.max(max, Number(item.totalValue || 0)), 0);
+  const showCost = canViewCost();
   return `
     <div class="triage-destination-list">
       ${destinations.map((item) => {
@@ -8287,6 +8304,7 @@ function triageStatsDestinationsMarkup(destinations = []) {
         const totalValue = Number(item.totalValue || 0);
         const totalCost = Number(item.totalCost || 0);
         const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
+        const costMeta = showCost ? `<span>${money(totalCost)} custo</span>` : "";
         return `
           <button type="button" class="triage-destination-card" data-open-triage-destination="${escapeHtml(item.destination)}">
             <span class="triage-destination-top">
@@ -8297,7 +8315,7 @@ function triageStatsDestinationsMarkup(destinations = []) {
             <span class="triage-destination-meta">
               <span>${total} itens</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
-              <span>${money(totalCost)} custo</span>
+              ${costMeta}
             </span>
           </button>
         `;
@@ -8309,6 +8327,7 @@ function triageStatsDestinationsMarkup(destinations = []) {
 function triageStatsDiagnosisConditionsMarkup(conditions = []) {
   if (!conditions.length) return '<p class="muted">Nenhum diagnostico registrado no periodo.</p>';
   const maxValue = conditions.reduce((max, item) => Math.max(max, Number(item.totalValue || 0)), 0);
+  const showCost = canViewCost();
   return `
     <div class="triage-destination-list">
       ${conditions.map((item) => {
@@ -8316,6 +8335,7 @@ function triageStatsDiagnosisConditionsMarkup(conditions = []) {
         const totalValue = Number(item.totalValue || 0);
         const totalCost = Number(item.totalCost || 0);
         const width = maxValue ? Math.max(6, Math.round((totalValue / maxValue) * 100)) : 0;
+        const costMeta = showCost ? `<span>${money(totalCost)} custo</span>` : "";
         return `
           <button type="button" class="triage-destination-card" data-open-triage-diagnosis-condition="${escapeHtml(item.condition)}">
             <span class="triage-destination-top">
@@ -8326,7 +8346,7 @@ function triageStatsDiagnosisConditionsMarkup(conditions = []) {
             <span class="triage-destination-meta">
               <span>${total} itens</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
-              <span>${money(totalCost)} custo</span>
+              ${costMeta}
             </span>
           </button>
         `;

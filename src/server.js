@@ -178,6 +178,11 @@ app.use(
     }
   })
 );
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => originalJson(sanitizeOperatorCostPayload(req, body));
+  next();
+});
 app.get("/", (req, res, next) => {
   if (!req.query.code && !req.query.error) return next();
   return requireAuth(req, res, () =>
@@ -2285,6 +2290,48 @@ function isOwnerSession(req) {
   const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
   return role === "owner";
 }
+
+function isOperatorSession(req) {
+  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  return role === "operator";
+}
+
+function sanitizeOperatorCostPayload(req, payload) {
+  if (!isOperatorSession(req) || payload == null) return payload;
+  return stripCostFields(payload);
+}
+
+function stripCostFields(value) {
+  if (Array.isArray(value)) return value.map(stripCostFields);
+  if (!value || typeof value !== "object") return value;
+
+  const result = {};
+  for (const [key, childValue] of Object.entries(value)) {
+    if (isOperatorHiddenCostField(key)) continue;
+    result[key] = stripCostFields(childValue);
+  }
+  return result;
+}
+
+function isOperatorHiddenCostField(key) {
+  const normalized = String(key || "").toLowerCase();
+  return normalized.includes("cost") || normalized.includes("custo") || OPERATOR_HIDDEN_COST_FIELDS.has(key);
+}
+
+const OPERATOR_HIDDEN_COST_FIELDS = new Set([
+  "precoCusto",
+  "preco_custo",
+  "costPrice",
+  "custo",
+  "custoMedioUnitario",
+  "custo_medio_unitario",
+  "tipoCusto",
+  "tipo_custo",
+  "percentualCusto",
+  "percentual_custo",
+  "percentualArremate",
+  "percentual_arremate"
+]);
 
 function triageStatusUrl(req, code) {
   return `${req.protocol}://${req.get("host")}/triagem/visualizar/${encodeURIComponent(code)}`;
