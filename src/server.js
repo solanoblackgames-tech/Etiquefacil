@@ -2160,8 +2160,7 @@ app.post("/api/labels", requireAuth, async (req, res) => {
   const categorySettings = settings.fields?.category || {};
   const shouldReviewProduct = Boolean(settings.reviewBeforePrint);
   const missingRequiredCategory = categorySettings.enabled && categorySettings.required && !String(productContext.product.categoria || "").trim();
-  const shouldAutoReviewProduct = String(productContext.product.origem || "planilha") === "planilha";
-  if (shouldAutoReviewProduct && (shouldReviewProduct || missingRequiredCategory) && !req.body.reviewed) {
+  if ((shouldReviewProduct || missingRequiredCategory) && !req.body.reviewed) {
     return res.status(409).json({
       error: "Confira os dados do produto antes de imprimir esta etiqueta.",
       code: shouldReviewProduct ? "review_required_before_print" : "category_required_before_print",

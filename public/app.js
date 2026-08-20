@@ -239,10 +239,6 @@ function shouldRequireCategoryBeforePrint() {
   return isConferenceFieldRequired("category");
 }
 
-function shouldAutoReviewProductBeforePrint(product) {
-  return String(product?.origem || "planilha") === "planilha";
-}
-
 function shouldPrintConferenceField(key) {
   const field = conferenceField(key);
   return Boolean(field.enabled && field.printOnLabel);
@@ -2130,7 +2126,6 @@ function openProductEditModal(product, options = {}) {
         cost.focus();
         return;
       }
-      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
       if (isConferenceFieldRequired("category") && requireTextField(categoria, "Informe a categoria.", error)) return;
       if (isConferenceFieldRequired("subcategory") && requireTextField(subcategoria, "Informe a subcategoria.", error)) return;
       if (isConferenceFieldRequired("ncm") && requireTextField(ncm, "Informe o NCM.", error)) return;
@@ -2144,6 +2139,7 @@ function openProductEditModal(product, options = {}) {
       }
       if (includeLogisticsFields && isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
       if (includeLogisticsFields && isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
+      if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
       const selectedCategory = categoria.value.trim();
       const mappedNcm = ncmForCategory(selectedCategory);
       const categoryChanged = normalizeSearchText(selectedCategory) !== normalizeSearchText(product.categoria);
@@ -7249,7 +7245,7 @@ async function printProductLabel(product, { lotId = "", afterPrint = null, ...la
 
 async function ensureProductDataBeforePrint(product, lotId) {
   const missingRequiredCategory = shouldRequireCategoryBeforePrint() && !String(product?.categoria || "").trim();
-  if (!shouldAutoReviewProductBeforePrint(product) || (!shouldReviewProductBeforePrint() && !missingRequiredCategory)) return product;
+  if (!shouldReviewProductBeforePrint() && !missingRequiredCategory) return product;
   if (!lotId) {
     alert("Confira os dados do produto antes de imprimir esta etiqueta.");
     return null;
