@@ -7800,9 +7800,17 @@ function printIcon() {
 }
 
 function diverseItemsTable(lot) {
-  const items = (lot.items || []).filter(isNoSheetItem);
-  if (!items.length) return '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
   const activeRz = state.selectedDiverseRz || "";
+  const scanView = isNoSheetScanPanelMounted();
+  const items = (lot.items || []).filter((item) => {
+    if (!isNoSheetItem(item)) return false;
+    return !scanView || !activeRz || item.codigoRz === activeRz;
+  });
+  if (!items.length) {
+    return activeRz
+      ? `<p class="muted">Nenhum codigo bipado no Pallet ${escapeHtml(activeRz)} ainda.</p>`
+      : '<p class="muted">Nenhum codigo bipado neste lote ainda.</p>';
+  }
   const sortedItems = [...items].sort((a, b) => {
     const activeRankA = a.codigoRz === activeRz ? 0 : 1;
     const activeRankB = b.codigoRz === activeRz ? 0 : 1;
