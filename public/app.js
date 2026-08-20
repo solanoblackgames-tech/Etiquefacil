@@ -1426,23 +1426,78 @@ async function createDiverseRz(event) {
 }
 
 async function askPalletCode(lot) {
-  return openDecisionModal({
-    title: "Gerar Pallet",
-    rows: [["Lote", lot?.nomeArquivo || "-"]],
-    fields: [{ name: "code", label: "Campo para bipar ou digitar", placeholder: "Bipe/digite aqui o codigo fisico da BAG", required: true }],
-    actions: [
-      { id: "confirm", label: "Gerar Pallet", primary: true, value: true },
-      { id: "cancel", label: "Cancelar", value: null }
-    ],
-    onSubmit: (action, values) => {
-      if (!action) return null;
-      const code = normalizeCode(values.code);
-      if (!code) throw new Error("Bipe ou digite o codigo fisico da BAG.");
-      if ((lot?.rzs || []).some((rz) => normalizeCode(rz.codigoRz) === code)) {
-        throw new Error("Este Pallet ja existe neste lote.");
+  return new Promise((resolve) => {
+    const modal = $("#decisionModal");
+    const titleEl = $("#decisionTitle");
+    const bodyEl = $("#decisionBody");
+    const fieldsEl = $("#decisionFields");
+    const actionsEl = $("#decisionActions");
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      modal.onkeydown = null;
+      titleEl.textContent = "";
+      bodyEl.innerHTML = "";
+      fieldsEl.innerHTML = "";
+      actionsEl.innerHTML = "";
+    };
+
+    const submit = () => {
+      const input = $("#palletCodeInput");
+      const message = $("#palletCodeMessage");
+      const code = normalizeCode(input?.value);
+      if (!code) {
+        message.textContent = "Bipe ou digite o codigo fisico da BAG.";
+        input?.focus();
+        return;
       }
-      return code;
-    }
+      if ((lot?.rzs || []).some((rz) => normalizeCode(rz.codigoRz) === code)) {
+        message.textContent = "Este Pallet ja existe neste lote.";
+        input?.select();
+        return;
+      }
+      cleanup();
+      resolve(code);
+    };
+
+    titleEl.textContent = "Gerar Pallet";
+    bodyEl.innerHTML = `
+      <div class="decision-body-row">
+        <span>Lote</span>
+        <strong>${escapeHtml(lot?.nomeArquivo || "-")}</strong>
+      </div>
+      <form id="palletCodeForm" class="pallet-code-form">
+        <label for="palletCodeInput">
+          Campo para bipar ou digitar
+          <input id="palletCodeInput" name="code" placeholder="Bipe/digite aqui o codigo fisico da BAG" autocomplete="off" required />
+        </label>
+        <p id="palletCodeMessage" class="message"></p>
+        <div class="label-controls">
+          <button type="submit">Gerar Pallet</button>
+          <button type="button" class="ghost" id="palletCodeCancel">Cancelar</button>
+        </div>
+      </form>
+    `;
+    fieldsEl.innerHTML = "";
+    actionsEl.innerHTML = "";
+    $("#palletCodeForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      submit();
+    });
+    $("#palletCodeCancel").addEventListener("click", () => {
+      cleanup();
+      resolve(null);
+    });
+    modal.onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup();
+        resolve(null);
+      }
+    };
+    modal.classList.remove("hidden");
+    modal.focus();
+    setTimeout(() => $("#palletCodeInput")?.focus(), 0);
   });
 }
 
@@ -1611,7 +1666,16 @@ function isNoSheetLot(lot) {
   if (!lot) return false;
   if (Number(lot.custoMedioUnitario || 0) > 0 && Number(lot.percentualArremate || 0) === 0) return true;
   if ((lot.tipoCusto === "variable" || Number(lot.percentualCusto || 0) > 0) && Number(lot.percentualArremate || 0) === 0) return true;
-  return (lot.products || []).some((product) => product.origem === "lote_sem_planilha" || product.origem === "lote_sem_planilha_manual" || product.origem === "entrada_diversos");
+  return Number(lot.percentualArremate || 0) === 0 && (lot.products || []).some((product) => product.origem === "lote_sem_planilha" || product.origem === "lote_sem_planilha_manual" || product.origem === "entrada_diversos");
+}
+
+function usesPalletProductionPage(lot, codigoRz) {
+  if (isNoSheetLot(lot)) return true;
+  const normalizedRz = normalizeCode(codigoRz);
+  if (!normalizedRz) return false;
+  const items = (lot?.items || []).filter((item) => normalizeCode(item.codigoRz) === normalizedRz);
+  if (!items.length) return true;
+  return items.some((item) => isNoSheetItem(item));
 }
 
 function renderDiverseRzControls(lot) {
@@ -3986,7 +4050,7 @@ async function showScanOnly({ lotId, codigoRz }) {
 
   try {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
-    if (isNoSheetLot(response.lot)) renderNoSheetScanPage(response.lot, codigoRz);
+    if (usesPalletProductionPage(response.lot, codigoRz)) renderNoSheetScanPage(response.lot, codigoRz);
     else renderScanPage(response.lot, codigoRz);
   } catch (error) {
     $("#lotDetail").classList.add("empty");
@@ -6123,15 +6187,15 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>`}
-    ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere um Pallet com o codigo fisico da BAG e inicie a bipagem.</p>' : ""}
-    ${noSheetLot && !operatorNoSheetLot ? `
+    <p class="muted">${noSheetLot ? "Lote sem planilha: gere um Pallet com o codigo fisico da BAG e inicie a bipagem." : "Gere um Pallet com o codigo fisico da BAG para produzir itens extras ou manuais neste lote."}</p>
+    ${`
       <form id="lotDiverseRzForm" class="diverse-rz-form">
         <span class="muted">Bipe o codigo fisico da BAG</span>
         <button type="submit">Gerar Pallet</button>
         <strong id="lotDiverseActiveRz">Nenhum Pallet ativo</strong>
         <span></span>
       </form>
-    ` : ""}
+    `}
     ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
         ${metric("Quantidade bipada", lot.progress.checkedQty)}
@@ -6268,28 +6332,8 @@ async function createLotDetailNoSheetRz(event, lot) {
 function openNoSheetScanTab(lot, codigoRz) {
   const normalizedRz = normalizeCode(codigoRz);
   if (!normalizedRz) return;
-  const opened = openScanWindow(lot.id, normalizedRz);
-  if (!opened) {
-    renderNoSheetScanPage(lot, normalizedRz);
-    updateRoute(lotRzPath(lot.id, normalizedRz));
-    return;
-  }
-  const message = $("#rzSearchMessage");
-  if (message) {
-    message.style.color = "#0f766e";
-    message.textContent = `Bipagem do Pallet ${normalizedRz} aberta em uma nova guia.`;
-  }
-  const rzDetail = $("#rzDetail");
-  if (rzDetail) {
-    rzDetail.innerHTML = `
-      <div class="scan-opened">
-        <strong>Bipagem aberta em uma nova guia.</strong>
-        <span class="muted">Use a guia dedicada para bipar e imprimir etiquetas automaticamente.</span>
-        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
-      </div>
-    `;
-    $("#reopenScanButton").addEventListener("click", () => openScanWindow(lot.id, normalizedRz));
-  }
+  renderNoSheetScanPage(lot, normalizedRz);
+  updateRoute(lotRzPath(lot.id, normalizedRz));
 }
 
 function openNoSheetRz(lot, codigoRz) {
@@ -6330,7 +6374,7 @@ function openNoSheetRz(lot, codigoRz) {
 }
 
 function renderUnifiedRzWorkPage(lot, codigoRz, { push = true } = {}) {
-  if (isNoSheetLot(lot)) {
+  if (usesPalletProductionPage(lot, codigoRz)) {
     renderNoSheetScanPage(lot, codigoRz);
   } else {
     renderScanPage(lot, codigoRz);

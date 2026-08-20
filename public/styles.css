@@ -4930,6 +4930,42 @@ h3 {
   font-weight: 700;
 }
 
+.pallet-code-form {
+  background: #eef9f6;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.pallet-code-form label {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.pallet-code-form input {
+  background: #fff;
+  border: 3px solid var(--accent);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 800;
+  min-height: 60px;
+  padding: 10px 14px;
+}
+
+.pallet-code-form input::placeholder {
+  color: #60737c;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pallet-code-form .label-controls {
+  justify-content: start;
+}
+
 .label-print {
   background: #fff;
   border: 1px solid #cfd6dc;
