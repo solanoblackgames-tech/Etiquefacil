@@ -198,41 +198,7 @@
             <button type="submit">Criar lote</button>
           </form>
 
-          <section class="diverse-shell entry-panel hidden">
-            <div class="panel-heading">
-              <span class="muted">Sem planilha</span>
-              <h3>Lote avulso</h3>
-            </div>
-            <form id="diverseLotForm" class="diverse-form">
-              <label>Nome do lote<input name="name" placeholder="Lote sem planilha" /></label>
-              <label>Fornecedor<input name="fornecedor" placeholder="AMZ04LOTE" required /></label>
-              <label>Tipo de custo<select name="costMode"><option value="fixed">Custo fixo</option><option value="variable">Custo variavel</option></select></label>
-              <label data-cost-field="fixed">Custo fixo unitario<input name="averageCost" type="number" min="0.01" step="0.01" placeholder="12.50" required /></label>
-              <label data-cost-field="variable" class="hidden">% do valor de venda<input name="costPercent" type="number" min="0.01" step="0.01" placeholder="30" /></label>
-              <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
-              <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
-              <div class="wide-field suggestion-template-help">
-                <p class="muted">Use o lote avulso quando voce ainda nao tem uma planilha completa do lote, mas quer criar os Pallets e bipar os produtos manualmente.</p>
-                <div class="suggestion-rules">
-                  <div class="suggestion-rule required">
-                    <strong>Obrigatorio nesta tela</strong>
-                    <span>Fornecedor, Tipo de custo, Custo, Prefixo SKU e Sequencial inicial.</span>
-                  </div>
-                  <div class="suggestion-rule optional">
-                    <strong>Opcional nesta tela</strong>
-                    <span>Nome do lote e Sugestao XLSX. Se nao informar o nome, o sistema usa "Lote sem planilha".</span>
-                  </div>
-                  <div class="suggestion-rule">
-                    <strong>Sugestao XLSX</strong>
-                    <span>Serve para carregar uma lista de produtos sugeridos. Preencha somente as colunas Produto e Preco.</span>
-                    <a class="button-link ghost-link" href="/api/diverse-lots/suggestions-template">Baixar modelo XLSX</a>
-                  </div>
-                </div>
-                <p class="suggestion-note"><strong>Tipo de custo:</strong> em Custo fixo, todos os produtos usam o mesmo custo unitario. Em Custo variavel, o custo e calculado pelo percentual do valor de venda.</p>
-              </div>
-              <label class="wide-field">Sugestao XLSX opcional<input name="suggestionsFile" type="file" accept=".xlsx,.xls" /></label>
-              <button type="submit">Subir lote sem planilha</button>
-            </form>
+          <section class="diverse-shell entry-panel hidden" aria-hidden="true">
             <p id="diverseLotMessage" class="message"></p>
 
             <section id="diverseScanPanel" class="hidden">

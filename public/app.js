@@ -345,7 +345,7 @@ function bindEvents() {
     button.addEventListener("click", () => setMainTab(button.dataset.tab, { resetSelection: true }));
   });
 
-  $("#diverseLotForm").addEventListener("submit", createDiverseLot);
+  $("#diverseLotForm")?.addEventListener("submit", createDiverseLot);
   $("#diverseRzForm").addEventListener("submit", createDiverseRz);
   $("#diverseRzList").addEventListener("click", handleDiverseRzClick);
   $("#diverseScanForm").addEventListener("submit", addDiverseItem);
@@ -544,6 +544,16 @@ function updateUnifiedCostFields(form) {
   updateLotCostFields(form, "variable");
 }
 
+function unifiedLotFormData(form) {
+  const data = new FormData(form);
+  const suggestionsFile = data.get("suggestionsFile");
+  if (suggestionsFile instanceof File && suggestionsFile.size > 0 && !data.get("file")) {
+    data.set("file", suggestionsFile);
+  }
+  data.delete("suggestionsFile");
+  return data;
+}
+
 async function createDiverseLot(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -598,19 +608,20 @@ async function updateLotDescription(event) {
 }
 
 async function createNoSheetLotFromForm(form, { messageSelector, successMessage }) {
-  updateNoSheetCostFields(form);
+  updateUnifiedCostFields(form);
   const button = form.querySelector("button[type='submit']");
   const message = $(messageSelector);
-  $("#diverseLotMessage").textContent = "";
+  const legacyMessage = $("#diverseLotMessage");
+  if (legacyMessage) legacyMessage.textContent = "";
   if (message) {
     message.textContent = "";
     message.style.color = "";
   }
   button.disabled = true;
   try {
-    const response = await api("/api/diverse-lots", {
+    const response = await api("/api/lots/unified", {
       method: "POST",
-      body: new FormData(form)
+      body: unifiedLotFormData(form)
     });
     state.selectedDiverseLotId = response.lot.id;
     if (message) {
@@ -618,7 +629,7 @@ async function createNoSheetLotFromForm(form, { messageSelector, successMessage 
       message.textContent = successMessage;
     }
     form.reset();
-    updateNoSheetCostFields(form);
+    updateUnifiedCostFields(form);
     await loadLots(response.lot.id);
     updateRoute(lotPath(response.lot.id));
     $("#rzSearchInput")?.focus();
@@ -2067,11 +2078,17 @@ function openProductEditModal(product, options = {}) {
 
     fieldVisibility.forEach(([input, visible]) => {
       input.closest("label")?.classList.toggle("hidden", !visible);
+      input.disabled = !visible;
+      if (input === cost) input.required = Boolean(visible);
     });
 
     const cleanup = () => {
       modal.classList.add("hidden");
-      fieldVisibility.forEach(([input]) => input.closest("label")?.classList.remove("hidden"));
+      fieldVisibility.forEach(([input]) => {
+        input.closest("label")?.classList.remove("hidden");
+        input.disabled = false;
+      });
+      cost.required = true;
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
@@ -6795,6 +6812,12 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
   root.querySelectorAll("[data-delete-rz-item]").forEach((button) => {
     button.addEventListener("click", () => deleteLotRzItem(lotId, codigoRz, button.dataset.deleteRzItem, button));
   });
+  root.querySelectorAll("[data-edit-product]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = items.find((candidate) => candidate.product?.id === button.dataset.editProduct);
+      if (item?.product) await editScannedProduct(item.product, lotId, codigoRz);
+    });
+  });
   root.querySelectorAll("[data-split-product]").forEach((button) => {
     button.addEventListener("click", async () => {
       const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
@@ -6808,6 +6831,39 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
     }));
   });
   bindProductPrintButtons(root);
+}
+
+async function editScannedProduct(product, lotId, codigoRz) {
+  const edited = await openProductEditModal(product, { includeLogisticsFields: true });
+  if (!edited) return;
+
+  const message = $("#scanMessage");
+  if (message) message.textContent = "";
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/products/${encodeURIComponent(product.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(edited)
+    });
+    if (response.lot) {
+      renderScanPage(response.lot, codigoRz);
+      await refreshLotsList(response.lot.id);
+    }
+    const updatedMessage = $("#scanMessage");
+    if (updatedMessage) {
+      updatedMessage.style.color = response.bling?.ok === false ? "" : "#0f766e";
+      updatedMessage.textContent = response.bling?.ok === false
+        ? `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`
+        : `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
+    }
+  } catch (error) {
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    } else {
+      alert(error.message);
+    }
+  }
 }
 
 function bindLabelTextControls() {
@@ -7630,8 +7686,7 @@ function primaryInputSelectors() {
     "#loginForm input[name='email']",
     "#adminUsersTab:not(.hidden) #adminCreateUserForm input[name='name']",
     "#adminCatalogTab:not(.hidden) #adminCatalogSearchForm input[name='q']",
-    "#uploadForm input[name='file']",
-    "#diverseLotForm input[name='name']"
+    "#uploadForm input[name='file']"
   ];
 }
 
@@ -7728,6 +7783,7 @@ function itemRow(item) {
       </span>
       ${badge}
       <span class="item-actions">
+        <button type="button" class="ghost icon-button" data-edit-product="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         ${deleteButton}
         <button type="button" class="ghost" data-split-product="${escapeHtml(product.id || "")}">Desmembrar</button>
         <button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button>
@@ -7782,6 +7838,7 @@ function scanItemTableRow(item) {
       <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
       ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
+        <button type="button" class="ghost icon-button" data-edit-product="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         <button type="button" class="ghost icon-button" data-split-product="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
         <button type="button" class="icon-button" data-print-product="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
         ${deleteButton}
