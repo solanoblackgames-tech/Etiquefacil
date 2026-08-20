@@ -13,6 +13,7 @@ import {
   revokeBlingIntegrationTokens,
   runBlingHomologation,
   syncBlingProducts,
+  syncBlingStockBalances,
   updateExistingBlingProducts
 } from "../src/bling-api.js";
 
@@ -361,6 +362,50 @@ test("Bling stock exit payload maps decremented item to stock output", () => {
   assert.equal(payload.operacao, "S");
   assert.equal(payload.quantidade, 1);
   assert.equal(payload.observacoes, "Saida automatica por diminuicao RZ RZ-01");
+});
+
+test("Bling stock balance sync corrects duplicated queued entry instead of adding another entry", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 456, descricao: "Geral" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "228L1090" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, codigo: "228L1090", tributacao: { origem: 0, ncm: "42010000" } } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ produto: { id: 123 }, saldoFisico: 2 }] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 999 } }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingStockBalances({
+      integration: { accessToken: "token" },
+      depositoName: "Geral",
+      observacao: "Entrada automatica pendente por bipagem RZ 228L-1008-001",
+      items: [
+        {
+          sku: "228L1090",
+          descricao: "Carteira Envelope Marrom Couro",
+          valorUnit: 600.9,
+          precoCusto: 199.5,
+          quantidade: 1,
+          qtdConferida: 1
+        }
+      ]
+    });
+
+    const movement = calls.find((call) => call.method === "POST" && call.url.endsWith("/estoques"));
+    assert.equal(result.exits, 1);
+    assert.equal(result.results[0].delta, -1);
+    assert.equal(movement.body.operacao, "S");
+    assert.equal(movement.body.quantidade, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Bling product sync keeps retrying while API rate limit is reached", async () => {

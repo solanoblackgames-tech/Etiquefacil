@@ -3680,12 +3680,24 @@ async function processBlingSyncQueue() {
           continue;
         }
 
-        if (job.type === "stock_entry" || job.type === "stock_exit") {
+        if (job.type === "stock_entry") {
+          await syncBlingStockBalances({
+            integration,
+            items: [job.payload?.item].filter(Boolean),
+            depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
+            observacao: job.payload?.observacao || "Entrada pendente da fila Etiquefacil",
+            saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
+          });
+          await markBlingSyncJobSucceeded(job.id);
+          continue;
+        }
+
+        if (job.type === "stock_exit") {
           await syncBlingStockMovement({
             integration,
             item: job.payload?.item,
             depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
-            operation: job.payload?.operation || (job.type === "stock_exit" ? "exit" : "entry"),
+            operation: job.payload?.operation || "exit",
             observacao: job.payload?.observacao || "Movimento pendente da fila Etiquefacil",
             saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
           });
