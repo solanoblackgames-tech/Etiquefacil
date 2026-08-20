@@ -4902,17 +4902,32 @@ h3 {
 
 .decision-fields {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 6px;
 }
 
 .decision-fields label {
+  color: var(--ink);
   display: grid;
-  gap: 6px;
+  font-size: 15px;
+  gap: 8px;
 }
 
 .decision-fields input {
-  background: #fff;
-  border-color: #9fb4c2;
+  background: #f3fbf9;
+  border: 3px solid var(--accent);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 800;
+  min-height: 58px;
+  padding: 10px 14px;
+}
+
+.decision-fields input::placeholder {
+  color: #60737c;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .label-print {

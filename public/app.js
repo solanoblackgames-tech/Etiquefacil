@@ -1429,7 +1429,7 @@ async function askPalletCode(lot) {
   return openDecisionModal({
     title: "Gerar Pallet",
     rows: [["Lote", lot?.nomeArquivo || "-"]],
-    fields: [{ name: "code", label: "Bipe o codigo fisico da BAG", placeholder: "Codigo do Pallet", required: true }],
+    fields: [{ name: "code", label: "Campo para bipar ou digitar", placeholder: "Bipe/digite aqui o codigo fisico da BAG", required: true }],
     actions: [
       { id: "confirm", label: "Gerar Pallet", primary: true, value: true },
       { id: "cancel", label: "Cancelar", value: null }
