@@ -489,6 +489,77 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
   }
 });
 
+test("scanLotRz accepts previous lot history for external excess", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-rz-previous-history-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-rz-previous-history`;
+    const { createExternalExcess, readDb, scanLotRz, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [
+        { id: "lot-old", userId: "user-1", nomeArquivo: "Lote antigo", percentualArremate: 10, prefixoSku: "OLD", proximoSequencialSku: 1, createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "lot-new", userId: "user-1", nomeArquivo: "Lote novo", percentualArremate: 20, prefixoSku: "NEW", proximoSequencialSku: 7, createdAt: "2026-07-02T00:00:00.000Z" }
+      ],
+      products: [
+        {
+          id: "product-old",
+          lotId: "lot-old",
+          codigoMl: "ML-HIST",
+          sku: "OLD0001",
+          descricao: "Produto do historico anterior",
+          valorUnit: 54,
+          precoCusto: 30,
+          qtdTotal: 1,
+          origem: "planilha",
+          createdAt: "2026-07-01T00:00:00.000Z"
+        }
+      ],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const scan = await scanLotRz({ userId: "user-1", lotId: "lot-new", codigoRz: "RZ-001", codigoMl: "ML-HIST" });
+    assert.equal(scan.scan.status, "historico");
+    assert.equal(scan.scan.history[0].descricao, "Produto do historico anterior");
+
+    const created = await createExternalExcess({ userId: "user-1", lotId: "lot-new", codigoRz: "RZ-001", codigoMl: "ML-HIST" });
+    const db = await readDb();
+
+    assert.equal(created.product.descricao, "Produto do historico anterior");
+    assert.equal(created.product.sku, "NEW0007");
+    assert.equal(created.lot.items[0].tipoItem, "excedente_externo");
+    assert.equal(db.products.find((product) => product.lotId === "lot-new").codigoMl, "ML-HIST");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("no-sheet lot suggestions keep suggested sale price", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

@@ -6852,7 +6852,7 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
     if (response.scan.status === "historico") {
       const history = response.scan.history[0];
       message.innerHTML = `
-        ML encontrado em outra planilha: ${escapeHtml(history.descricao)}.
+        ML encontrado no banco historico: ${escapeHtml(history.descricao)}.
         SKU sugerido no sequencial do lote atual.
         <button id="confirmExternal">Cadastrar excedente externo</button>
       `;

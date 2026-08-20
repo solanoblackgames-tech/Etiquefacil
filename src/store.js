@@ -3365,9 +3365,9 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
     if (sameLotProduct) {
       scan.status = "outro_rz";
     } else {
-      const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl);
+      const history = findExternalExcessHistory(db, userId, lot.id, normalizedMl, 5);
       scan.status = history.length ? "historico" : "desconhecido";
-      scan.history = history.slice(0, 5);
+      scan.history = history;
     }
   }
 
@@ -3466,7 +3466,8 @@ export async function createExternalExcess({ userId, operatorUserId = null, lotI
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
-  const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
+  const history = findExternalExcessHistory(db, userId, lot.id, normalizedMl, 1)[0];
+  if (!history) throw notFound("Codigo ML nao encontrado no banco historico.");
 
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing) throw new Error("Este CÃ³digo ML jÃ¡ existe no lote atual.");
@@ -5559,7 +5560,7 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
       if (sameLotProduct.rows.length) {
         scan.status = "outro_rz";
       } else {
-        const history = await findPgProductHistory(client, userId, lot.id, codigoMl, 5);
+        const history = await findPgExternalExcessHistory(client, userId, lot.id, codigoMl, 5);
         scan.status = history.length ? "historico" : "desconhecido";
         scan.history = history;
       }
@@ -5860,7 +5861,8 @@ async function createExternalExcessPg({ userId, operatorUserId = null, lotId, co
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Lote nÃ£o encontrado.");
 
-    const history = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
+    const history = (await findPgExternalExcessHistory(client, userId, lot.id, codigoMl, 1))[0];
+    if (!history) throw notFound("Codigo ML nao encontrado no banco historico.");
 
     const existing = await client.query("select id from products where lot_id = $1 and codigo_ml = $2 limit 1", [lot.id, codigoMl]);
     if (existing.rows.length) throw new Error("Este CÃ³digo ML jÃ¡ existe no lote atual.");
@@ -6548,9 +6550,27 @@ function findCatalogProduct(db, codigoMl) {
   return (db.catalogProducts || []).find((product) => String(product.codigoMl || "").trim().toUpperCase() === normalized) || null;
 }
 
+function findExternalExcessHistory(db, userId, currentLotId, codigoMl, limit = 5) {
+  const approvedHistory = findApprovedProductHistory(db, userId, currentLotId, codigoMl);
+  const previousHistory = approvedHistory.length ? [] : findProductHistory(db, userId, currentLotId, codigoMl);
+  const catalogProduct = approvedHistory.length || previousHistory.length ? null : findCatalogProduct(db, codigoMl);
+  return [...approvedHistory, ...previousHistory, ...(catalogProduct ? [catalogProduct] : [])].slice(0, limit);
+}
+
 async function findPgCatalogProduct(client, codigoMl) {
   const result = await client.query("select * from catalog_products where upper(trim(codigo_ml)) = upper(trim($1)) limit 1", [codigoMl]);
   return result.rows[0] ? catalogProductFromRow(result.rows[0]) : null;
+}
+
+async function findPgExternalExcessHistory(client, userId, currentLotId, codigoMl, limit = 5) {
+  const approvedHistory = await findPgProductHistory(client, userId, currentLotId, codigoMl, limit);
+  if (approvedHistory.length) return approvedHistory;
+
+  const previousHistory = await findPgPreviousProductHistory(client, userId, currentLotId, codigoMl, limit);
+  if (previousHistory.length) return previousHistory;
+
+  const catalogProduct = await findPgCatalogProduct(client, codigoMl);
+  return catalogProduct ? [catalogProduct] : [];
 }
 
 async function suggestCatalogUpdatePg({ userId, createdByUserId = userId, operatorUserId = null, lotId, productId, payload }) {
