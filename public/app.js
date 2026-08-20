@@ -6300,7 +6300,7 @@ function renderLotDetail(lot) {
   $("#lotDiverseRzForm")?.addEventListener("submit", (event) => createLotDetailNoSheetRz(event, lot));
   detail.querySelectorAll("[data-scan-rz]").forEach((button) => {
     button.addEventListener("click", () => {
-      renderUnifiedRzWorkPage(lot, button.dataset.scanRz);
+      openRzScanInNewTab(lot, button.dataset.scanRz);
     });
   });
   detail.querySelectorAll("[data-pallet-rz]").forEach((button) => {
@@ -6367,7 +6367,7 @@ function openRzFromSearch(lot) {
   }
   message.textContent = "";
   input.value = "";
-  renderUnifiedRzWorkPage(lot, rz.codigoRz);
+  openRzScanInNewTab(lot, rz.codigoRz);
 }
 
 async function createLotDetailNoSheetRz(event, lot) {
@@ -6382,14 +6382,13 @@ async function createLotDetailNoSheetRz(event, lot) {
   const activeRz = $("#lotDiverseActiveRz");
   if (activeRz) activeRz.textContent = `Pallet ativo: ${normalizedRz}`;
   await showRzQrLabel(lot, normalizedRz, normalizedRz, { autoPrint: true });
-  openNoSheetScanTab(lot, codigoRz);
+  openRzScanInNewTab(lot, codigoRz);
 }
 
 function openNoSheetScanTab(lot, codigoRz) {
   const normalizedRz = normalizeCode(codigoRz);
   if (!normalizedRz) return;
-  renderNoSheetScanPage(lot, normalizedRz);
-  updateRoute(lotRzPath(lot.id, normalizedRz));
+  openRzScanInNewTab(lot, normalizedRz);
 }
 
 function openNoSheetRz(lot, codigoRz) {
@@ -6436,6 +6435,31 @@ function renderUnifiedRzWorkPage(lot, codigoRz, { push = true } = {}) {
     renderScanPage(lot, codigoRz);
   }
   if (push) updateRoute(lotRzPath(lot.id, codigoRz));
+}
+
+function openRzScanInNewTab(lot, codigoRz, { push = true } = {}) {
+  const normalizedRz = normalizeCode(codigoRz);
+  if (!normalizedRz) return false;
+
+  state.selectedRz = normalizedRz;
+  document.querySelectorAll(".rz-card").forEach((card) => {
+    card.classList.toggle("selected", normalizeCode(card.dataset.rz) === normalizedRz);
+  });
+
+  const opened = openScanWindow(lot.id, normalizedRz);
+  const rzDetail = $("#rzDetail");
+  if (rzDetail) {
+    rzDetail.innerHTML = `
+      <div class="scan-opened">
+        <strong>${opened ? "Bipagem aberta em uma nova aba." : "Abra a bipagem em uma nova aba."}</strong>
+        <span class="muted">${opened ? "Use a aba dedicada para bipar e imprimir etiquetas automaticamente." : "O navegador bloqueou a abertura automatica. Use o botao abaixo para abrir a aba dedicada."}</span>
+        <button type="button" id="reopenScanButton">Abrir bipagem</button>
+      </div>
+    `;
+    $("#reopenScanButton")?.addEventListener("click", () => openScanWindow(lot.id, normalizedRz));
+  }
+  if (push) updateRoute(lotPath(lot.id));
+  return opened;
 }
 
 async function downloadBling(lotId, kind, messageSelector = "#downloadMessage") {
@@ -6532,26 +6556,7 @@ async function importLotPrices(event, lotId, messageSelector = "#downloadMessage
 }
 
 function renderRz(lot, codigoRz, { push = true } = {}) {
-  state.selectedRz = codigoRz;
-  document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
-  const opened = openScanWindow(lot.id, codigoRz);
-  if (!opened) {
-    renderScanPage(lot, codigoRz);
-    if (push) updateRoute(lotRzPath(lot.id, codigoRz));
-    return;
-  }
-  const rzDetail = $("#rzDetail");
-  if (rzDetail) {
-    rzDetail.innerHTML = `
-      <div class="scan-opened">
-        <strong>Bipagem aberta em uma nova janela.</strong>
-        <span class="muted">Use a janela dedicada para bipar e imprimir etiquetas automaticamente.</span>
-        <button type="button" id="reopenScanButton">Reabrir bipagem</button>
-      </div>
-    `;
-    $("#reopenScanButton")?.addEventListener("click", () => openScanWindow(lot.id, codigoRz));
-  }
-  if (push) updateRoute(lotPath(lot.id));
+  openRzScanInNewTab(lot, codigoRz, { push });
   return;
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
@@ -6650,7 +6655,7 @@ function renderPallet(lot, codigoRz) {
     </section>
   `;
   $("#rzDetail [data-scan-rz]")?.addEventListener("click", () => {
-    renderUnifiedRzWorkPage(lot, codigoRz);
+    openRzScanInNewTab(lot, codigoRz);
   });
   document.querySelectorAll("[data-pallet-split]").forEach((button) => {
     button.addEventListener("click", async () => {
