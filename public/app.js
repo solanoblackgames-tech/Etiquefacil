@@ -287,9 +287,7 @@ function bindEvents() {
     await submitAuth("/api/register", event.currentTarget);
   });
 
-  document.querySelectorAll("[data-toggle-password]").forEach((button) => {
-    button.addEventListener("click", () => togglePasswordVisibility(button));
-  });
+  document.addEventListener("click", handlePasswordToggleClick);
 
   $("#operatorInviteForm").addEventListener("submit", acceptOperatorInvite);
 
@@ -446,6 +444,13 @@ async function submitAuth(url, form) {
   }
 }
 
+function handlePasswordToggleClick(event) {
+  const button = event.target.closest("[data-toggle-password]");
+  if (!button) return;
+  event.preventDefault();
+  togglePasswordVisibility(button);
+}
+
 function togglePasswordVisibility(button) {
   const input = button.closest(".password-input")?.querySelector("input");
   if (!input) return;
@@ -453,6 +458,7 @@ function togglePasswordVisibility(button) {
   input.type = shouldShow ? "text" : "password";
   button.setAttribute("aria-label", shouldShow ? "Ocultar senha" : "Mostrar senha");
   button.setAttribute("title", shouldShow ? "Ocultar senha" : "Mostrar senha");
+  button.setAttribute("aria-pressed", String(shouldShow));
 }
 
 function getOperatorInviteRequest() {
