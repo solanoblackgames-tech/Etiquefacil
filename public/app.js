@@ -45,6 +45,8 @@ const state = {
   lotSelectionToken: 0,
   noSheetSuggestionTimer: null,
   selectedRz: null,
+  blingAlertRefreshTimer: null,
+  blingAlertRefreshInFlight: false,
   scanOnly: false,
   transferReceiveOnly: false,
   transferCameraStream: null,
@@ -76,6 +78,8 @@ const state = {
   }
 };
 
+const BLING_QUEUE_ALERT_PATTERN = /pendente no Bling|pendente de envio ao Bling/i;
+const BLING_QUEUE_ALERT_REFRESH_MS = 15000;
 const $ = (selector) => document.querySelector(selector);
 const toggleClass = (selector, className, force) => {
   const element = $(selector);
@@ -6043,6 +6047,7 @@ async function refreshLotsList(activeLotId = state.selectedLotId) {
 function clearLotDetail() {
   document.body.classList.remove("lot-focus");
   state.previewLotId = null;
+  clearBlingAlertRefreshTimer();
   const detail = addClass("#lotDetail", "empty");
   if (!detail) return;
   detail.innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
@@ -6725,6 +6730,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   `;
   bindScanControls(lot.id, codigoRz, items);
   scheduleLabelMarkupWarmup(displayItems);
+  scheduleBlingQueueAlertRefresh(lot, codigoRz, { lastCodigoMl });
 }
 
 function scanSummaryMarkup(rz) {
@@ -6762,7 +6768,45 @@ function updateRenderedScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   itemsWrapper.innerHTML = scanItemsTable(displayItems);
   bindScanItemControls(lot.id, codigoRz, items, itemsWrapper);
   scheduleLabelMarkupWarmup(displayItems);
+  scheduleBlingQueueAlertRefresh(lot, codigoRz, { lastCodigoMl });
   return true;
+}
+
+function clearBlingAlertRefreshTimer() {
+  if (!state.blingAlertRefreshTimer) return;
+  window.clearTimeout(state.blingAlertRefreshTimer);
+  state.blingAlertRefreshTimer = null;
+}
+
+function hasBlingQueueAlerts(lot, codigoRz) {
+  return (lot.items || []).some((item) => item.codigoRz === codigoRz && BLING_QUEUE_ALERT_PATTERN.test(item.product?.blingAlertMessage || ""));
+}
+
+function scheduleBlingQueueAlertRefresh(lot, codigoRz, { lastCodigoMl = "" } = {}) {
+  clearBlingAlertRefreshTimer();
+  if (!hasBlingQueueAlerts(lot, codigoRz)) return;
+  state.blingAlertRefreshTimer = window.setTimeout(() => {
+    refreshBlingQueueAlerts(lot.id, codigoRz, { lastCodigoMl });
+  }, BLING_QUEUE_ALERT_REFRESH_MS);
+}
+
+async function refreshBlingQueueAlerts(lotId, codigoRz, { lastCodigoMl = "" } = {}) {
+  if (state.blingAlertRefreshInFlight || state.selectedLotId !== lotId || state.selectedRz !== codigoRz) return;
+  state.blingAlertRefreshInFlight = true;
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
+    if (state.selectedLotId !== lotId || state.selectedRz !== codigoRz) return;
+    const updated = updateRenderedScanPage(response.lot, codigoRz, { lastCodigoMl });
+    if (!updated) renderScanPage(response.lot, codigoRz, { lastCodigoMl });
+    if (state.lots.some((lot) => lot.id === lotId)) {
+      state.lots = state.lots.map((lot) => lot.id === lotId ? response.lot : lot);
+      renderLots();
+    }
+  } catch (error) {
+    scheduleBlingQueueAlertRefresh({ id: lotId, items: [{ codigoRz, product: { blingAlertMessage: "pendente no Bling" } }] }, codigoRz, { lastCodigoMl });
+  } finally {
+    state.blingAlertRefreshInFlight = false;
+  }
 }
 
 function prioritizeScannedItems(items, codigoMl) {
@@ -8059,7 +8103,7 @@ function diverseItemRow(item, startsRz = false) {
 
 function productBlingAlertMarkup(product = {}) {
   if (!product.blingAlertMessage || product.blingAlertDismissed) return "";
-  const isQueueAlert = /pendente no Bling|pendente de envio ao Bling/i.test(product.blingAlertMessage);
+  const isQueueAlert = BLING_QUEUE_ALERT_PATTERN.test(product.blingAlertMessage);
   const title = "Aceitar cadastro sem este dado";
   return `
     <span class="bling-alert-inline">
