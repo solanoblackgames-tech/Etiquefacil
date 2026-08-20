@@ -3198,7 +3198,7 @@ function formatDecimal(value) {
 }
 
 function operatorManualDailyAverage(creates, activeDays) {
-  return activeDays ? (Number(creates || 0) * 4) / activeDays : 0;
+  return activeDays ? Number(creates || 0) / activeDays : 0;
 }
 
 function formatShortDate(value) {
@@ -3436,7 +3436,7 @@ function operatorPodiumCard(operator, index) {
       <b>${operator.bippedItems}</b>
       <small>${operator.registrationScans} bipados encontrados / ${operator.creates} cadastrados</small>
       <em>${formatDecimal(operator.averagePerDay)} media/dia</em>
-      <small>${operator.creates} cad. manuais x 4 / ${operator.activeDays || 0} dias</small>
+      <small>${operator.creates} cad. manuais / ${operator.activeDays || 0} dias</small>
     </article>
   `;
 }
