@@ -1556,14 +1556,8 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
       productId: req.params.productId,
       payload
     });
-    try {
-      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
-      const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
-      if (updatedLot) result.lot = updatedLot;
-    } catch (blingError) {
-      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
-      result.bling = { ok: false, error: blingError.message };
-    }
+    await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto atualizado aguardando envio ao Bling." });
+    result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
     res.json(result);
   } catch (error) {
     sendError(res, error);

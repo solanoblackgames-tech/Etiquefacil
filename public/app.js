@@ -86,7 +86,9 @@ const toggleClass = (selector, className, force) => {
 const addClass = (selector, className) => toggleClass(selector, className, true);
 const removeClass = (selector, className) => toggleClass(selector, className, false);
 const LABEL_PRINT_FALLBACK_MS = 15000;
+const LABEL_MARKUP_CACHE_LIMIT = 180;
 let labelPrintFallbackTimer = null;
+const labelMarkupCache = new Map();
 const CONFERENCE_FIELDS = [
   { key: "ean", label: "EAN", formNames: ["ean"] },
   { key: "link", label: "Link do produto", formNames: ["link"] },
@@ -1995,7 +1997,10 @@ async function editDiverseProduct(product) {
     });
     renderDiverseLot(response.lot);
     await refreshLotsList(response.lot.id);
-    if (response.bling?.ok === false) {
+    if (response.bling?.queued) {
+      message.style.color = "#0f766e";
+      message.textContent = "Produto atualizado no sistema. Bling sincronizando em segundo plano.";
+    } else if (response.bling?.ok === false) {
       message.style.color = "";
       message.textContent = `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`;
     } else {
@@ -6718,6 +6723,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
     </section>
   `;
   bindScanControls(lot.id, codigoRz, items);
+  scheduleLabelMarkupWarmup(displayItems);
 }
 
 function scanSummaryMarkup(rz) {
@@ -6754,6 +6760,7 @@ function updateRenderedScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   progress.innerHTML = scanProgressMarkup(rz);
   itemsWrapper.innerHTML = scanItemsTable(displayItems);
   bindScanItemControls(lot.id, codigoRz, items, itemsWrapper);
+  scheduleLabelMarkupWarmup(displayItems);
   return true;
 }
 
@@ -6851,10 +6858,12 @@ async function editScannedProduct(product, lotId, codigoRz) {
     }
     const updatedMessage = $("#scanMessage");
     if (updatedMessage) {
-      updatedMessage.style.color = response.bling?.ok === false ? "" : "#0f766e";
-      updatedMessage.textContent = response.bling?.ok === false
-        ? `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`
-        : `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
+      updatedMessage.style.color = response.bling?.ok === false && !response.bling?.queued ? "" : "#0f766e";
+      updatedMessage.textContent = response.bling?.queued
+        ? "Produto atualizado no sistema. Bling sincronizando em segundo plano."
+        : response.bling?.ok === false
+          ? `Produto atualizado no sistema, mas nao foi atualizado no Bling: ${response.bling.error}`
+          : `Produto atualizado no sistema e no Bling. ${blingProductSyncMessage(response.bling || {})}`;
     }
   } catch (error) {
     if (message) {
@@ -7370,7 +7379,7 @@ async function showLabel(product, { autoPrint = false, meta = null, quantity = 1
   state.labelProduct = product;
   state.labelMeta = meta;
   state.labelLargeQr = labelUsesLargeQr();
-  state.labelPrintMarkup = await labelMarkup(product, meta);
+  state.labelPrintMarkup = await cachedLabelMarkup(product, meta);
   state.labelQuantity = Math.max(1, Math.round(Number(quantity || 1)));
   state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
@@ -7479,6 +7488,83 @@ async function labelMarkup(product, meta = null) {
       <span class="label-footer">${escapeHtml(footer)}</span>
     </section>
   `;
+}
+
+async function cachedLabelMarkup(product, meta = null) {
+  const key = labelMarkupCacheKey(product, meta);
+  const cached = labelMarkupCache.get(key);
+  if (cached) return cached;
+
+  const pending = labelMarkup(product, meta)
+    .then((markup) => {
+      labelMarkupCache.set(key, markup);
+      trimLabelMarkupCache();
+      return markup;
+    })
+    .catch((error) => {
+      labelMarkupCache.delete(key);
+      throw error;
+    });
+  labelMarkupCache.set(key, pending);
+  trimLabelMarkupCache();
+  return pending;
+}
+
+function labelMarkupCacheKey(product = {}, meta = null) {
+  return JSON.stringify({
+    product: {
+      id: product.id || "",
+      sku: product.sku || "",
+      codigoMl: product.codigoMl || "",
+      ean: product.ean || "",
+      descricao: product.descricao || "",
+      valorUnit: Number(product.valorUnit || 0),
+      localizacaoEstoque: product.localizacaoEstoque || ""
+    },
+    label: {
+      largeQr: labelUsesLargeQr(),
+      includePrice: Boolean(state.labelOptions.includePrice),
+      includeClubPrice: Boolean(state.labelOptions.includeClubPrice),
+      includeText: Boolean(state.labelOptions.includeText),
+      customText: state.labelOptions.includeText ? String(state.labelOptions.customText || "").trim() : "",
+      stockLocation: shouldPrintConferenceField("stockLocation")
+    },
+    price: normalizePriceDisplaySettings(state.priceDisplaySettings),
+    footer: labelFooterText(meta)
+  });
+}
+
+function trimLabelMarkupCache() {
+  while (labelMarkupCache.size > LABEL_MARKUP_CACHE_LIMIT) {
+    labelMarkupCache.delete(labelMarkupCache.keys().next().value);
+  }
+}
+
+function scheduleLabelMarkupWarmup(items = []) {
+  const products = [];
+  const seen = new Set();
+  for (const item of items) {
+    const product = item?.product;
+    if (!product?.id || seen.has(product.id)) continue;
+    seen.add(product.id);
+    products.push(product);
+  }
+  const limit = labelUsesLargeQr() ? 24 : 120;
+  const queue = products.slice(0, limit);
+  if (!queue.length) return;
+
+  const warmup = () => {
+    const meta = labelMeta();
+    queue.reduce(
+      (chain, product) => chain.then(() => cachedLabelMarkup(product, meta).catch(() => "")),
+      Promise.resolve()
+    );
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(warmup, { timeout: 1200 });
+  } else {
+    setTimeout(warmup, 80);
+  }
 }
 
 function labelPriceMarkup(product) {
