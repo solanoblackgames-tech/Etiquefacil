@@ -702,7 +702,7 @@ async function addDiverseItem(event) {
         renderDiverseLot(response.lot);
         await refreshLotsList(response.lot.id);
         await showDiverseBlingSyncStatus(response, `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`);
-        if (state.labelOptions.autoPrint) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
+        if (state.labelOptions.autoPrint) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta(), skipReview: true });
         schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
         return;
       } catch (manualError) {
@@ -6925,6 +6925,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
         lotId,
         autoPrint: true,
         meta: labelMeta(),
+        skipReview: true,
         afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
       });
     }
@@ -7245,8 +7246,8 @@ async function printLabel(productId, { reviewed = false } = {}) {
   }
 }
 
-async function printProductLabel(product, { lotId = "", afterPrint = null, ...labelOptions } = {}) {
-  const readyProduct = await ensureProductDataBeforePrint(product, lotId);
+async function printProductLabel(product, { lotId = "", afterPrint = null, skipReview = false, ...labelOptions } = {}) {
+  const readyProduct = skipReview ? product : await ensureProductDataBeforePrint(product, lotId);
   if (!readyProduct) return false;
   await showLabel(readyProduct, labelOptions);
   if (typeof afterPrint === "function") afterPrint(readyProduct);
