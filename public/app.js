@@ -1997,6 +1997,7 @@ async function editDiverseProduct(product) {
     });
     renderDiverseLot(response.lot);
     await refreshLotsList(response.lot.id);
+    if (response.product?.id) await printLabel(response.product.id, { reviewed: true });
     if (response.bling?.queued) {
       message.style.color = "#0f766e";
       message.textContent = "Produto atualizado no sistema. Bling sincronizando em segundo plano.";
@@ -6856,6 +6857,7 @@ async function editScannedProduct(product, lotId, codigoRz) {
       renderScanPage(response.lot, codigoRz);
       await refreshLotsList(response.lot.id);
     }
+    if (response.product?.id) await printLabel(response.product.id, { reviewed: true });
     const updatedMessage = $("#scanMessage");
     if (updatedMessage) {
       updatedMessage.style.color = response.bling?.ok === false && !response.bling?.queued ? "" : "#0f766e";
