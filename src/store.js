@@ -1935,6 +1935,7 @@ export async function ensureActiveSkuReservation({ userId, lotId, operatorUserId
 async function ensureActiveSkuReservationPg({ userId, lotId, operatorUserId }) {
   const client = await getPgPool().connect();
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lot = await getLockedUserLotPg(client, userId, lotId);
     const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId });
@@ -1965,6 +1966,7 @@ async function consumeSkuReservationForProduct({ userId, lot, operatorUserId = n
 async function consumeSkuReservationForProductPg({ userId, lot, operatorUserId, productId }) {
   const client = await getPgPool().connect();
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lockedLot = await getLockedUserLotPg(client, userId, lot.id);
     const reservation = await consumeSkuReservationInPg(client, { userId, lot: lockedLot, operatorUserId, productId });
@@ -1983,6 +1985,33 @@ async function getLockedUserLotPg(client, userId, lotId) {
   const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
   if (!lot) throw notFound("Lote nao encontrado.");
   return lot;
+}
+
+async function ensureSkuReservationSchema(client) {
+  await client.query(`
+    create table if not exists sku_reservations (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      lot_id text not null references lots(id) on delete cascade,
+      operator_user_id text not null,
+      sku text not null,
+      sequence integer not null,
+      status text not null default 'reserved',
+      reserved_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      product_id text references products(id) on delete set null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await client.query("alter table products add column if not exists split_source_product_id text references products(id) on delete set null");
+  await client.query("alter table sku_reservations add column if not exists operator_user_id text not null default ''");
+  await client.query("alter table sku_reservations add column if not exists consumed_at timestamptz");
+  await client.query("alter table sku_reservations add column if not exists product_id text references products(id) on delete set null");
+  await client.query("create index if not exists sku_reservations_lot_status_sequence_idx on sku_reservations(lot_id, status, sequence)");
+  await client.query("create index if not exists sku_reservations_operator_active_idx on sku_reservations(lot_id, operator_user_id, status)");
+  await client.query("create index if not exists products_lot_split_source_idx on products(lot_id, split_source_product_id)");
 }
 
 async function expireSkuReservationsPg(client) {
@@ -4601,7 +4630,6 @@ async function assertPgSchemaReady() {
     "rz_items",
     "scans",
     "labels",
-    "sku_reservations",
     "bling_integrations",
     "bling_sync_jobs",
     "app_settings",
@@ -5558,6 +5586,7 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
   let product;
   let originalProduct;
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
@@ -5825,6 +5854,7 @@ async function createExternalExcessPg({ userId, operatorUserId = null, lotId, co
   const client = await getPgPool().connect();
   let product;
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
@@ -5857,6 +5887,7 @@ async function createManualExternalExcessPg({ userId, createdByUserId = userId, 
   const client = await getPgPool().connect();
   let result;
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
@@ -5956,6 +5987,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
   const client = await getPgPool().connect();
   let result;
   try {
+    await ensureSkuReservationSchema(client);
     await client.query("begin");
     const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
