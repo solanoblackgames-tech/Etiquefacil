@@ -202,7 +202,7 @@ export function buildBlingStockTransferPayload(item, { productId, depositoOrigem
 
 export async function syncBlingProducts({ integration, products, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
-  const supplier = await client.prepareSupplierForItems(products);
+  const supplierSync = await prepareOptionalSupplierForItems(client, products);
   const results = [];
 
   for (const product of products) {
@@ -215,16 +215,16 @@ export async function syncBlingProducts({ integration, products, saveIntegration
           existing,
           productId: existing.id
         });
-        await client.ensureProductSupplier(product, existing.id, supplier);
-        results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: update.alerts });
+        const supplierAlerts = await ensureOptionalProductSupplier(client, product, existing.id, supplierSync.supplier);
+        results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: mergeBlingAlerts(update.alerts, supplierSync.alerts, supplierAlerts) });
         continue;
       }
 
       const created = await createProductAndResolveId(client, product);
       const response = created.response;
       const blingProductId = created.productId;
-      if (blingProductId) await client.ensureProductSupplier(product, blingProductId, supplier);
-      results.push({ sku: product.sku, status: "created", blingProductId, response, alerts: created.alerts });
+      const supplierAlerts = blingProductId ? await ensureOptionalProductSupplier(client, product, blingProductId, supplierSync.supplier) : [];
+      results.push({ sku: product.sku, status: "created", blingProductId, response, alerts: mergeBlingAlerts(created.alerts, supplierSync.alerts, supplierAlerts) });
     } catch (error) {
       results.push({ sku: product.sku, status: "error", error: error.message });
     }
@@ -235,7 +235,7 @@ export async function syncBlingProducts({ integration, products, saveIntegration
 
 export async function updateExistingBlingProducts({ integration, products, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
-  const supplier = await client.prepareSupplierForItems(products);
+  const supplierSync = await prepareOptionalSupplierForItems(client, products);
   const results = [];
 
   for (const product of products) {
@@ -251,8 +251,8 @@ export async function updateExistingBlingProducts({ integration, products, saveI
       existing,
       productId: existing.id
     });
-    await client.ensureProductSupplier(product, existing.id, supplier);
-    results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: update.alerts });
+    const supplierAlerts = await ensureOptionalProductSupplier(client, product, existing.id, supplierSync.supplier);
+    results.push({ sku: product.sku, status: "updated", blingProductId: existing.id, alerts: mergeBlingAlerts(update.alerts, supplierSync.alerts, supplierAlerts) });
   }
 
   return summarizeSync(results);
@@ -260,7 +260,7 @@ export async function updateExistingBlingProducts({ integration, products, saveI
 
 export async function syncBlingStockEntries({ integration, items, depositoName, observacao, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
-  const supplier = await client.prepareSupplierForItems(items);
+  const supplierSync = await prepareOptionalSupplierForItems(client, items);
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
@@ -271,7 +271,7 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
     if (!product?.id) {
       productSync = await createProductAndResolveId(client, item);
       product = { id: productSync.productId, codigo: item.sku };
-      if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
+      if (product.id) productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
     } else {
       productSync = await saveProductWithBlingFallback(client, {
         operation: "update",
@@ -279,7 +279,7 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
         existing: product,
         productId: product.id
       });
-      await client.ensureProductSupplier(item, product.id, supplier);
+      productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
 
@@ -310,7 +310,7 @@ export async function syncBlingStockBalances({
   syncSuppliers = true
 }) {
   const client = new BlingApiClient(integration, saveIntegration);
-  const supplier = syncSuppliers ? await client.prepareSupplierForItems(items) : null;
+  const supplierSync = syncSuppliers ? await prepareOptionalSupplierForItems(client, items) : { supplier: null, alerts: [] };
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
@@ -334,7 +334,9 @@ export async function syncBlingStockBalances({
       });
     }
     if (!product?.id) throw new Error(`Produto ${item.sku} nao retornou ID no Bling.`);
-    if (syncSuppliers) await client.ensureProductSupplier(item, product.id, supplier);
+    if (syncSuppliers) {
+      productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
+    }
 
     const target = numberOrZero(item.qtdConferida || item.quantidade);
     const current = await client.getProductStockBalance(product.id, deposito.id);
@@ -374,7 +376,7 @@ export async function syncBlingStockBalances({
 
 export async function syncBlingStockMovement({ integration, item, depositoName, operation = "entry", observacao, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
-  const supplier = operation === "entry" ? await client.prepareSupplierForItems([item]) : null;
+  const supplierSync = operation === "entry" ? await prepareOptionalSupplierForItems(client, [item]) : { supplier: null, alerts: [] };
   const deposito = await client.findDepositByDescription(depositoName);
   if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
 
@@ -383,7 +385,7 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   if (!product?.id && operation === "entry") {
     productSync = await createProductAndResolveId(client, item);
     product = { id: productSync.productId, codigo: item.sku };
-    if (product.id) await client.ensureProductSupplier(item, product.id, supplier);
+    if (product.id) productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
   } else if (product?.id && operation === "entry") {
     productSync = await saveProductWithBlingFallback(client, {
       operation: "update",
@@ -391,7 +393,7 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
       existing: product,
       productId: product.id
     });
-    await client.ensureProductSupplier(item, product.id, supplier);
+    productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
   }
   if (!product?.id) throw new Error(`Produto ${item.sku} nao encontrado no Bling.`);
 
@@ -769,6 +771,35 @@ function summarizeSync(results) {
     alerted: results.filter((item) => (item.alerts || []).length).length,
     results
   };
+}
+
+async function prepareOptionalSupplierForItems(client, items = []) {
+  try {
+    return { supplier: await client.prepareSupplierForItems(items), alerts: [] };
+  } catch (error) {
+    return { supplier: null, alerts: [supplierBlingAlert(error)] };
+  }
+}
+
+async function ensureOptionalProductSupplier(client, product, productId, supplier = null) {
+  if (product?.fornecedor && !supplier) return [];
+  try {
+    await client.ensureProductSupplier(product, productId, supplier);
+    return [];
+  } catch (error) {
+    return [supplierBlingAlert(error)];
+  }
+}
+
+function supplierBlingAlert(error) {
+  return {
+    field: "fornecedor",
+    message: `Fornecedor nao vinculado no Bling: ${error.message}`
+  };
+}
+
+function mergeBlingAlerts(...groups) {
+  return groups.flat().filter(Boolean);
 }
 
 class BlingHomologationClient {

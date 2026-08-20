@@ -2123,7 +2123,15 @@ export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
         from bling_sync_jobs
         where status in ('pending', 'failed')
           and next_run_at <= $1
-        order by next_run_at asc, created_at asc
+        order by
+          case status when 'pending' then 0 else 1 end asc,
+          case type
+            when 'product' then 0
+            when 'product_delete' then 1
+            else 2
+          end asc,
+          next_run_at asc,
+          created_at asc
         limit $2
       `,
       [now, limit]
@@ -2134,7 +2142,12 @@ export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
   const db = await readDb();
   return (db.blingSyncJobs || [])
     .filter((job) => ["pending", "failed"].includes(job.status) && String(job.nextRunAt || "") <= now)
-    .sort((a, b) => String(a.nextRunAt || "").localeCompare(String(b.nextRunAt || "")) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+    .sort(
+      (a, b) =>
+        blingSyncJobQueuePriority(a) - blingSyncJobQueuePriority(b) ||
+        String(a.nextRunAt || "").localeCompare(String(b.nextRunAt || "")) ||
+        String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+    )
     .slice(0, limit);
 }
 
@@ -6915,6 +6928,12 @@ function mergeStockMovementPayload(current = {}, incoming = {}) {
       qtdConferida
     }
   };
+}
+
+function blingSyncJobQueuePriority(job = {}) {
+  const statusPriority = job.status === "pending" ? 0 : 10;
+  const typePriority = job.type === "product" ? 0 : job.type === "product_delete" ? 1 : 2;
+  return statusPriority + typePriority;
 }
 
 function blingRetryDelayMs(attempts) {
