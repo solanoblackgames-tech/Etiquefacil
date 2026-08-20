@@ -7055,9 +7055,7 @@ async function syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed =
     if (targetMessage) {
       targetMessage.style.color = response.queued ? "" : "#0f766e";
       targetMessage.textContent = response.queued
-        ? printed
-          ? `Bipagem registrada e etiqueta impressa, mas a entrada no Bling ficou na fila: ${response.error || "o sistema tentara novamente."}`
-          : `Bipagem registrada, mas a entrada no Bling ficou na fila: ${response.error || "o sistema tentara novamente."}`
+        ? ""
         : printed
           ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`
           : `Bipagem registrada e entrada lancada no Bling (${response.deposito?.descricao || "Geral"}).`;
