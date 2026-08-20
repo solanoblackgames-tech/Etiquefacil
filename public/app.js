@@ -241,7 +241,7 @@ function shouldRequireCategoryBeforePrint() {
 }
 
 function shouldAutoReviewProductBeforePrint(product) {
-  return String(product?.origem || "planilha") === "planilha";
+  return Boolean(product?.id);
 }
 
 function shouldPrintConferenceField(key) {
@@ -7312,7 +7312,8 @@ async function printProductLabel(product, { lotId = "", afterPrint = null, skipR
 
 async function ensureProductDataBeforePrint(product, lotId) {
   const missingRequiredCategory = shouldRequireCategoryBeforePrint() && !String(product?.categoria || "").trim();
-  if (!shouldAutoReviewProductBeforePrint(product) || (!shouldReviewProductBeforePrint() && !missingRequiredCategory)) return product;
+  const shouldReviewProduct = shouldReviewProductBeforePrint() && shouldAutoReviewProductBeforePrint(product);
+  if (!shouldReviewProduct && !missingRequiredCategory) return product;
   if (!lotId) {
     alert("Confira os dados do produto antes de imprimir esta etiqueta.");
     return null;
