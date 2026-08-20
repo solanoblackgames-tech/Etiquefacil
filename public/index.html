@@ -178,7 +178,7 @@
                 </div>
                 <div class="import-rule optional">
                   <strong>Opcional na planilha</strong>
-                  <span>Codigo ML, Codigo RZ, Qtd, Preco de custo, Categoria, Subcategoria, NCM, EAN, Endereco WMS, Condicao, URL da imagem e Link do produto.</span>
+                  <span>Codigo ML, Codigo Pallet, Qtd, Preco de custo, Categoria, Subcategoria, NCM, EAN, Endereco WMS, Condicao, URL da imagem e Link do produto.</span>
                 </div>
                 <div class="import-rule screen-required">
                   <strong>Obrigatorio nesta tela</strong>
@@ -212,7 +212,7 @@
               <label>Prefixo SKU<input name="skuPrefix" placeholder="DIV" required /></label>
               <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
               <div class="wide-field suggestion-template-help">
-                <p class="muted">Use o lote avulso quando voce ainda nao tem uma planilha completa do lote, mas quer criar as RZs e bipar os produtos manualmente.</p>
+                <p class="muted">Use o lote avulso quando voce ainda nao tem uma planilha completa do lote, mas quer criar os Pallets e bipar os produtos manualmente.</p>
                 <div class="suggestion-rules">
                   <div class="suggestion-rule required">
                     <strong>Obrigatorio nesta tela</strong>
@@ -243,10 +243,11 @@
                 </div>
               </div>
               <form id="diverseRzForm" class="diverse-rz-form">
-                <span id="diverseNextRz" class="muted">Proxima RZ</span>
-                <button type="submit">Gerar RZ</button>
-                <strong id="diverseActiveRz">Nenhuma remessa ativa</strong>
+                <span id="diverseNextRz" class="muted">Bipe o codigo fisico da BAG</span>
+                <button type="submit">Gerar Pallet</button>
+                <strong id="diverseActiveRz">Nenhum Pallet ativo</strong>
               </form>
+              <div id="diversePalletStatus" class="diverse-pallet-status hidden"></div>
               <div id="diverseRzList" class="diverse-rz-list"></div>
               <form id="diverseScanForm" class="search-bar">
                 <input name="codigoMl" placeholder="Bipe ou digite o Codigo ML" autocomplete="off" required />
@@ -369,13 +370,13 @@
           <div id="lots"></div>
         </aside>
         <section class="detail">
-          <div id="lotDetail" class="empty">Crie um lote sem planilha ou selecione um lote para conferir RZs.</div>
+          <div id="lotDetail" class="empty">Crie um lote sem planilha ou selecione um lote para conferir Pallets.</div>
         </section>
       </section>
 
       <section id="searchTab" class="search hidden">
         <form id="searchForm" class="search-bar">
-          <input name="codigoMl" placeholder="Buscar por Codigo ML, nome, EAN, SKU, lote ou RZ" required />
+          <input name="codigoMl" placeholder="Buscar por Codigo ML, nome, EAN, SKU, lote ou Pallet" required />
           <button type="submit">Buscar</button>
         </form>
         <div id="searchResults"></div>

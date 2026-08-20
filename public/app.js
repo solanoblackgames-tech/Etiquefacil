@@ -1409,30 +1409,33 @@ function openDecisionModal({ title, rows = [], fields = [], actions = [], onSubm
 
 async function createDiverseRz(event) {
   event.preventDefault();
-  const codigoRz = nextNoSheetRzCode(state.selectedDiverseLot);
+  const codigoRz = await askPalletCode(state.selectedDiverseLot);
   if (!codigoRz) return;
-  const name = await askRzName(codigoRz);
-  if (name === null) return;
-  saveRzDisplayName(state.selectedDiverseLot?.id, codigoRz, name || codigoRz);
+  saveRzDisplayName(state.selectedDiverseLot?.id, codigoRz, codigoRz);
   setDiverseRz(codigoRz);
-  await showRzQrLabel(state.selectedDiverseLot, codigoRz, name || codigoRz, { autoPrint: true });
+  await showRzQrLabel(state.selectedDiverseLot, codigoRz, codigoRz, { autoPrint: true });
   $("#diverseScanMessage").style.color = "#0f766e";
-  $("#diverseScanMessage").textContent = `Remessa ${name || codigoRz} ativa e etiqueta enviada para impressao.`;
+  $("#diverseScanMessage").textContent = `Pallet ${codigoRz} ativo e etiqueta enviada para impressao.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
 }
 
-async function askRzName(codigoRz) {
+async function askPalletCode(lot) {
   return openDecisionModal({
-    title: "Gerar RZ",
-    rows: [["Codigo da RZ", codigoRz]],
-    fields: [{ name: "name", label: "Nome da RZ", value: codigoRz }],
+    title: "Gerar Pallet",
+    rows: [["Lote", lot?.nomeArquivo || "-"]],
+    fields: [{ name: "code", label: "Bipe o codigo fisico da BAG", placeholder: "Codigo do Pallet", required: true }],
     actions: [
-      { id: "confirm", label: "Gerar RZ", primary: true, value: true },
+      { id: "confirm", label: "Gerar Pallet", primary: true, value: true },
       { id: "cancel", label: "Cancelar", value: null }
     ],
     onSubmit: (action, values) => {
       if (!action) return null;
-      return String(values.name || "").trim();
+      const code = normalizeCode(values.code);
+      if (!code) throw new Error("Bipe ou digite o codigo fisico da BAG.");
+      if ((lot?.rzs || []).some((rz) => normalizeCode(rz.codigoRz) === code)) {
+        throw new Error("Este Pallet ja existe neste lote.");
+      }
+      return code;
     }
   });
 }
@@ -1460,13 +1463,13 @@ async function showRzQrLabel(lot, codigoRz, name = codigoRz, { autoPrint = false
   state.labelReturnFocusSelectors = currentLabelReturnFocusSelectors();
   state.labelPrintMarkup = `
     <section class="rz-qr-label">
-      <img src="${qrSrc}" alt="QR Code da RZ" />
+      <img src="${qrSrc}" alt="QR Code do Pallet" />
       <strong>${escapeHtml(name || codigoRz)}</strong>
       <span>${escapeHtml(codigoRz)}</span>
     </section>
   `;
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
-  $("#labelPrintButton").textContent = "Imprimir RZ";
+  $("#labelPrintButton").textContent = "Imprimir Pallet";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
   if (autoPrint) setTimeout(printCurrentLabel, 180);
@@ -1477,7 +1480,7 @@ function handleDiverseRzClick(event) {
   if (!button) return;
   setDiverseRz(button.dataset.diverseRz);
   $("#diverseScanMessage").style.color = "#0f766e";
-  $("#diverseScanMessage").textContent = `Remessa ${button.dataset.diverseRz} ativa.`;
+  $("#diverseScanMessage").textContent = `Pallet ${button.dataset.diverseRz} ativo.`;
   $("#diverseScanForm input[name='codigoMl']").focus();
 }
 
@@ -1493,7 +1496,7 @@ function renderDiverseLot(lot) {
   const rzs = diverseRzs(lot);
   const activeBelongsToThisLot = previousDiverseLotId === lot.id || !previousDiverseLotId;
   if (state.selectedDiverseRz && !activeBelongsToThisLot && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
-  if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || nextNoSheetRzCode(lot);
+  if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || null;
   mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
@@ -1607,11 +1610,21 @@ function isNoSheetLot(lot) {
 
 function renderDiverseRzControls(lot) {
   const active = state.selectedDiverseRz;
-  $("#diverseNextRz").textContent = `Proxima RZ: ${nextNoSheetRzCode(lot)}`;
-  $("#diverseActiveRz").textContent = active ? `Remessa ativa: ${active}` : "Nenhuma remessa ativa";
+  const scanView = isNoSheetScanPanelMounted();
+  $("#diverseRzForm")?.classList.toggle("hidden", scanView);
+  $("#diverseRzList")?.classList.toggle("hidden", scanView);
+  $("#diverseNextRz").textContent = "Bipe o codigo fisico da BAG";
+  $("#diverseActiveRz").textContent = active ? `Pallet ativo: ${active}` : "Nenhum Pallet ativo";
   $("#diverseScanForm input[name='codigoMl']").disabled = !active;
   $("#diverseScanForm button[type='submit']").disabled = !active;
   $("#generateCodigoMlButton").disabled = !active;
+  const status = $("#diversePalletStatus");
+  if (status) {
+    status.innerHTML = active
+      ? `<span>Pallet em producao</span><strong>${escapeHtml(active)}</strong>`
+      : `<span>Pallet em producao</span><strong>Nenhum Pallet ativo</strong>`;
+    status.classList.toggle("hidden", !scanView);
+  }
   $("#diverseRzList").innerHTML = diverseRzsWithActive(lot)
     .map((rz) => `
       <button type="button" class="${rz.codigoRz === active ? "active" : ""}" data-diverse-rz="${escapeHtml(rz.codigoRz)}">
@@ -1619,6 +1632,12 @@ function renderDiverseRzControls(lot) {
       </button>
     `)
     .join("");
+}
+
+function isNoSheetScanPanelMounted() {
+  const panel = $("#diverseScanPanel");
+  const mount = $("#diversePanelMount");
+  return Boolean(panel && mount && mount.contains(panel));
 }
 
 function diverseRzsWithActive(lot) {
@@ -1713,18 +1732,18 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
     if (state.config.downloadMode === "browser") {
       window.location.href = `/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling`;
       message.style.color = "#0f766e";
-      message.textContent = "Download da remessa enviado para o navegador.";
+      message.textContent = "Download do Pallet enviado para o navegador.";
       return;
     }
 
     const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/bling/save`, { method: "POST" });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || "Nao foi possivel gerar o arquivo Bling da remessa.");
+      throw new Error(payload.error || "Nao foi possivel gerar o arquivo Bling do Pallet.");
     }
     const payload = await response.json();
     message.style.color = "#0f766e";
-    message.innerHTML = `Arquivo da remessa salvo: <strong>${escapeHtml(payload.path)}</strong>`;
+    message.innerHTML = `Arquivo do Pallet salvo: <strong>${escapeHtml(payload.path)}</strong>`;
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -1732,10 +1751,10 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
 }
 
 function diverseScanStatusMessage(response, codigoRz, parent) {
-  if (response.status === "duplicado_rz") return `Quantidade somada na remessa ${codigoRz}.`;
-  if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado na remessa ${codigoRz}.`;
+  if (response.status === "duplicado_rz") return `Quantidade somada no Pallet ${codigoRz}.`;
+  if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado no Pallet ${codigoRz}.`;
   if (response.status === "cadastro_manual") return `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
-  return `SKU ${response.product.sku} gerado na remessa ${codigoRz}.${parent}`;
+  return `SKU ${response.product.sku} gerado no Pallet ${codigoRz}.${parent}`;
 }
 
 function diverseLabelOptionsMarkup() {
@@ -2776,7 +2795,7 @@ function renderOperationalDashboard() {
       </section>
     </div>
     <div class="operational-dashboard-summary">
-      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs · ${lots.remessas || 0} RZs/remessas</small></div>
+      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs · ${lots.remessas || 0} Pallets/remessas</small></div>
       <div class="metric"><span>Valor dos lotes</span><strong>${money(lots.value || 0)}</strong><small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small></div>
       <div class="metric"><span>Custo dos lotes</span><strong>${money(lots.cost || 0)}</strong><small>${money(lots.checkedCost || 0)} ja conferido</small></div>
       <div class="metric"><span>Remessas loja</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small></div>
@@ -4114,7 +4133,7 @@ function renderAdminLots() {
         <span>Lote</span>
         <span>Usuario</span>
         <span>SKUs</span>
-        <span>RZs</span>
+        <span>Pallets</span>
         <span>Conferencia</span>
         <span>Criado em</span>
       </div>
@@ -5931,7 +5950,7 @@ function renderLots() {
     card.className = `lot-card ${lot.id === activeLotId ? "active" : ""}`;
     card.innerHTML = `
       <strong>${escapeHtml(lot.nomeArquivo)}</strong>
-      <span class="muted">${lot.totalProducts} SKUs · ${lot.rzs.length} RZs</span>
+      <span class="muted">${lot.totalProducts} SKUs · ${lot.rzs.length} Pallets</span>
       <span class="muted">${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}</span>
       ${lot.totalExcessExternal ? `<span class="badge excess">${lot.totalExcessExternal} excedente(s)</span>` : ""}
     `;
@@ -6018,7 +6037,7 @@ function renderLotPreview(lot) {
       <div class="summary-grid">
         ${metric("Status", status)}
         ${metric("SKUs", lot.totalProducts)}
-        ${metric("RZs", `${checkedRzs}/${lot.rzs.length}`)}
+        ${metric("Pallets", `${checkedRzs}/${lot.rzs.length}`)}
         ${metric("Excedentes", lot.totalExcessExternal)}
       </div>
       <h3 class="section-title">Andamento geral</h3>
@@ -6028,9 +6047,9 @@ function renderLotPreview(lot) {
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
       </div>
-      <h3 class="section-title">Resumo das RZs</h3>
+      <h3 class="section-title">Resumo dos Pallets</h3>
       <div class="preview-rz-list">
-        ${lot.rzs.length ? lot.rzs.map(previewRzRow).join("") : '<p class="muted">Nenhuma RZ encontrada neste lote.</p>'}
+        ${lot.rzs.length ? lot.rzs.map(previewRzRow).join("") : '<p class="muted">Nenhum Pallet encontrado neste lote.</p>'}
       </div>
     </section>
   `;
@@ -6098,12 +6117,12 @@ function renderLotDetail(lot) {
       </div>
       <button type="button" class="ghost" id="backToLotsButton">Voltar para lotes</button>
     </div>`}
-    ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere/use uma RZ no painel do lote e inicie a bipagem.</p>' : ""}
-    ${noSheetLot ? `
+    ${noSheetLot && !operatorNoSheetLot ? '<p class="muted">Lote sem planilha: gere um Pallet com o codigo fisico da BAG e inicie a bipagem.</p>' : ""}
+    ${noSheetLot && !operatorNoSheetLot ? `
       <form id="lotDiverseRzForm" class="diverse-rz-form">
-        ${operatorNoSheetLot ? "" : `<span class="muted">Proxima RZ: ${escapeHtml(nextNoSheetRzCode(lot))}</span>`}
-        <button type="submit">${operatorNoSheetLot ? "Gerar Novo RZ" : "Gerar RZ"}</button>
-        <strong id="lotDiverseActiveRz">Nenhuma remessa ativa</strong>
+        <span class="muted">Bipe o codigo fisico da BAG</span>
+        <button type="submit">Gerar Pallet</button>
+        <strong id="lotDiverseActiveRz">Nenhum Pallet ativo</strong>
         <span></span>
       </form>
     ` : ""}
@@ -6116,7 +6135,7 @@ function renderLotDetail(lot) {
       <div class="summary-grid">
         ${metric("SKUs", lot.totalProducts)}
         ${metric("Itens esperados", lot.totalItems)}
-        ${metric("RZs", lot.rzs.length)}
+        ${metric("Pallets", lot.rzs.length)}
         ${metric("Excedentes externos", lot.totalExcessExternal)}
       </div>
       <h3 class="section-title">Progresso do lote</h3>
@@ -6128,10 +6147,10 @@ function renderLotDetail(lot) {
       </div>
     `}
     ${operatorNoSheetLot ? "" : `
-    <h3 class="section-title">RZs</h3>
+    <h3 class="section-title">Pallets</h3>
     <div class="rz-search">
-      <input id="rzSearchInput" placeholder="Bipe ou digite o Código RZ" />
-      <button id="rzSearchButton">Abrir RZ</button>
+      <input id="rzSearchInput" placeholder="Bipe ou digite o codigo do Pallet" />
+      <button id="rzSearchButton">Abrir Pallet</button>
     </div>
     <p id="rzSearchMessage" class="message"></p>
     <div class="rz-grid">
@@ -6182,7 +6201,7 @@ function emptyLotDetailMarkup() {
 }
 
 async function deleteLot(lot, button = $("#deleteLotButton")) {
-  if (!confirm(`Excluir o lote ${lot.nomeArquivo}? Esta acao apaga tambem os produtos, RZs, bipagens e etiquetas deste lote.`)) return;
+  if (!confirm(`Excluir o lote ${lot.nomeArquivo}? Esta acao apaga tambem os produtos, Pallets, bipagens e etiquetas deste lote.`)) return;
 
   if (button) button.disabled = true;
   try {
@@ -6210,13 +6229,13 @@ function openRzFromSearch(lot) {
   const rz = lot.rzs.find((item) => normalizeCode(item.codigoRz) === typed);
   if (!rz && isNoSheetLot(lot) && typed) {
     message.style.color = "";
-    message.textContent = "Use Gerar RZ para criar o proximo codigo automaticamente.";
+    message.textContent = "Use Gerar Pallet para cadastrar o codigo fisico da BAG.";
     input.select();
     return;
   }
   if (!rz) {
     message.style.color = "";
-    message.textContent = "RZ não encontrado neste lote.";
+    message.textContent = "Pallet nao encontrado neste lote.";
     input.select();
     return;
   }
@@ -6227,18 +6246,16 @@ function openRzFromSearch(lot) {
 
 async function createLotDetailNoSheetRz(event, lot) {
   event.preventDefault();
-  const codigoRz = nextNoSheetRzCode(lot);
+  const codigoRz = await askPalletCode(lot);
   const normalizedRz = normalizeCode(codigoRz);
   if (!normalizedRz) return;
-  const name = await askRzName(normalizedRz);
-  if (name === null) return;
   state.selectedDiverseRz = normalizedRz;
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
-  saveRzDisplayName(lot.id, normalizedRz, name || normalizedRz);
+  saveRzDisplayName(lot.id, normalizedRz, normalizedRz);
   const activeRz = $("#lotDiverseActiveRz");
-  if (activeRz) activeRz.textContent = `Remessa ativa: ${normalizedRz}`;
-  await showRzQrLabel(lot, normalizedRz, name || normalizedRz, { autoPrint: true });
+  if (activeRz) activeRz.textContent = `Pallet ativo: ${normalizedRz}`;
+  await showRzQrLabel(lot, normalizedRz, normalizedRz, { autoPrint: true });
   openNoSheetScanTab(lot, codigoRz);
 }
 
@@ -6254,7 +6271,7 @@ function openNoSheetScanTab(lot, codigoRz) {
   const message = $("#rzSearchMessage");
   if (message) {
     message.style.color = "#0f766e";
-    message.textContent = `Bipagem da remessa ${normalizedRz} aberta em uma nova guia.`;
+    message.textContent = `Bipagem do Pallet ${normalizedRz} aberta em uma nova guia.`;
   }
   const rzDetail = $("#rzDetail");
   if (rzDetail) {
@@ -6284,11 +6301,11 @@ function openNoSheetRz(lot, codigoRz) {
   const message = $("#rzSearchMessage");
   if (message) {
     message.style.color = "#0f766e";
-    message.textContent = `Remessa ${normalizedRz} ativa.`;
+    message.textContent = `Pallet ${normalizedRz} ativo.`;
   }
 
   const activeRz = $("#lotDiverseActiveRz");
-  if (activeRz) activeRz.textContent = `Remessa ativa: ${normalizedRz}`;
+  if (activeRz) activeRz.textContent = `Pallet ativo: ${normalizedRz}`;
 
   const input = $("#rzSearchInput");
   if (input) input.value = "";
@@ -6301,7 +6318,7 @@ function openNoSheetRz(lot, codigoRz) {
   const scanMessage = $("#diverseScanMessage");
   if (scanMessage) {
     scanMessage.style.color = "#0f766e";
-    scanMessage.textContent = `Remessa ${normalizedRz} ativa.`;
+    scanMessage.textContent = `Pallet ${normalizedRz} ativo.`;
   }
   $("#diverseScanForm input[name='codigoMl']")?.focus();
 }
@@ -6449,7 +6466,7 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       ${metric("Excedente", rz.excess)}
       ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
     </div>
-    <h3 class="section-title">Progresso do RZ</h3>
+    <h3 class="section-title">Progresso do Pallet</h3>
     <div class="summary-grid">
       ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
       ${progressMetric("Preço de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
@@ -6487,7 +6504,7 @@ function renderPallet(lot, codigoRz) {
         </div>
         <div class="pallet-actions">
           <button type="button" data-scan-rz="${escapeHtml(codigoRz)}">Iniciar bipagem</button>
-          ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Remessa</a>` : ""}
+          ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/bling">Baixar Bling Pallet</a>` : ""}
           ${canManage ? `<a class="button-link" href="/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/stock-entry">Entrada Estoque Bling</a>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/pdf">Baixar PDF</a>` : ""}
           ${canManage ? `<a class="button-link" href="${baseUrl}/xlsx">Baixar XLSX</a>` : ""}
@@ -6569,7 +6586,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   if (!detail) return;
   if (!rz) {
     detail.classList.add("empty");
-    detail.textContent = "RZ nao encontrado neste lote.";
+    detail.textContent = "Pallet nao encontrado neste lote.";
     return;
   }
 
@@ -6582,7 +6599,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
       <div class="scan-heading">
         <div>
           <span class="muted">${escapeHtml(lot.nomeArquivo)}</span>
-          <h2>Trabalho da RZ ${escapeHtml(codigoRz)}</h2>
+          <h2>Trabalho do Pallet ${escapeHtml(codigoRz)}</h2>
         </div>
       </div>
       <div class="scan-box">
@@ -6596,7 +6613,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         ${labelTextControls()}
       </div>
       <div class="summary-grid" id="scanSummary">${scanSummaryMarkup(rz)}</div>
-      <h3 class="section-title">Progresso do RZ</h3>
+      <h3 class="section-title">Progresso do Pallet</h3>
       <div class="summary-grid" id="scanProgress">${scanProgressMarkup(rz)}</div>
       <div id="scanMessage" class="message"></div>
       <div id="scanItems">
@@ -6766,7 +6783,7 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
       `;
       $("#confirmExternal").addEventListener("click", () => createExternalExcess(lotId, codigoRz, codigoMl));
     } else if (response.scan.status === "outro_rz") {
-      message.textContent = "Este ML existe no lote, mas pertence a outro RZ.";
+      message.textContent = "Este ML existe no lote, mas pertence a outro Pallet.";
     } else if (response.scan.status === "desconhecido") {
       message.textContent = "ML não encontrado neste lote nem no histórico do usuário.";
     } else {
@@ -6957,7 +6974,7 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
 async function deleteExternalExcess(lotId, codigoRz, codigoMlFromButton, button) {
   const codigoMl = normalizeCodigoMl(codigoMlFromButton);
   if (!codigoMl) return;
-  if (!confirm(`Excluir o excedente ${codigoMl} do Bling e deste RZ?`)) return;
+  if (!confirm(`Excluir o excedente ${codigoMl} do Bling e deste Pallet?`)) return;
 
   try {
     if (button) button.disabled = true;
@@ -7033,7 +7050,7 @@ async function searchMl(event) {
         <div>
           <strong>${escapeHtml(product.descricao || product.codigoMl || product.sku)}</strong>
           <p>${escapeHtml(product.sku || "-")} &middot; ML ${escapeHtml(product.codigoMl || "-")} &middot; EAN ${escapeHtml(product.ean || "-")}</p>
-          <span class="muted">${escapeHtml(product.lot?.nomeArquivo || "Lote anterior")} &middot; RZ ${escapeHtml((product.rzs || []).join(", ") || "-")} &middot; ${money(product.valorUnit)}</span>
+          <span class="muted">${escapeHtml(product.lot?.nomeArquivo || "Lote anterior")} &middot; Pallet ${escapeHtml((product.rzs || []).join(", ") || "-")} &middot; ${money(product.valorUnit)}</span>
         </div>
       </div>
       <div class="result-card-actions">
@@ -7101,7 +7118,7 @@ async function useSearchProductAsDiverseBase(productId, button) {
   const product = state.searchResults.find((item) => item.id === productId);
   if (!product) return;
   if (!canUseSearchProductAsBase()) {
-    alert("Abra um lote sem planilha e deixe uma remessa ativa antes de usar como base.");
+    alert("Abra um lote sem planilha e deixe um Pallet ativo antes de usar como base.");
     return;
   }
   const codigoMl = await askCodigoMlForSearchProduct(product);
@@ -7357,7 +7374,7 @@ function operatorLotDetailMarkup() {
       <div>
         <span class="muted">Conferencia</span>
         <h2>Selecione um lote</h2>
-        <p>Use os lotes liberados pelo usuario principal para conferir as RZs.</p>
+        <p>Use os lotes liberados pelo usuario principal para conferir os Pallets.</p>
       </div>
     </section>
   `;
@@ -7601,7 +7618,7 @@ function rzCard(rz, { canScan = true } = {}) {
       </div>
       <div class="rz-card-actions">
         ${canScan ? `<button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>` : ""}
-        <button type="button" class="ghost" data-pallet-rz="${escapeHtml(rz.codigoRz)}">Exibir pallet</button>
+        <button type="button" class="ghost" data-pallet-rz="${escapeHtml(rz.codigoRz)}">Exibir Pallet</button>
       </div>
     </article>
   `;
@@ -7638,11 +7655,11 @@ function itemRow(item) {
 }
 
 function scanItemsTable(items) {
-  if (!items.length) return '<p class="muted">Nenhum produto nesta RZ.</p>';
+  if (!items.length) return '<p class="muted">Nenhum produto neste Pallet.</p>';
   return `
     <div class="diverse-table scan-table">
       <div class="diverse-row scan-row diverse-row-head">
-        <span class="diverse-remessa-cell">Remessa</span>
+        <span class="diverse-remessa-cell">Pallet</span>
         <span class="diverse-sku-cell">SKU</span>
         <span class="diverse-code-cell">Codigo</span>
         <span class="diverse-product-cell">Produto</span>
@@ -7669,7 +7686,7 @@ function scanItemTableRow(item) {
       : `<button type="button" class="danger ghost icon-button" data-delete-rz-item="${escapeHtml(item.id || "")}" title="Excluir da bipagem" aria-label="Excluir da bipagem">${trashIcon()}</button>`;
   return `
     <article class="diverse-row scan-row">
-      <span class="diverse-remessa-cell" data-label="Remessa">${escapeHtml(item.codigoRz || "")}</span>
+      <span class="diverse-remessa-cell" data-label="Pallet">${escapeHtml(item.codigoRz || "")}</span>
       <strong class="diverse-sku-cell" data-label="SKU">${escapeHtml(product.sku || "")}</strong>
       <span class="diverse-code-cell" data-label="Codigo">${escapeHtml(product.codigoMl || "")}</span>
       <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}${transferRefs}</span>
@@ -7751,7 +7768,7 @@ function diverseItemsTable(lot) {
   return `
     <div class="diverse-table">
       <div class="diverse-row diverse-row-head">
-        <span class="diverse-remessa-cell">Remessa</span>
+        <span class="diverse-remessa-cell">Pallet</span>
         <span class="diverse-sku-cell">SKU</span>
         <span class="diverse-code-cell">Codigo</span>
         <span class="diverse-product-cell">Produto</span>
@@ -7780,9 +7797,9 @@ function diverseItemRow(item, startsRz = false) {
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
   return `
-    ${startsRz ? `<div class="diverse-rz-divider">Remessa ${escapeHtml(item.codigoRz || "")}</div>` : ""}
+    ${startsRz ? `<div class="diverse-rz-divider">Pallet ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
-      <span class="diverse-remessa-cell" data-label="Remessa">${escapeHtml(item.codigoRz || "")}</span>
+      <span class="diverse-remessa-cell" data-label="Pallet">${escapeHtml(item.codigoRz || "")}</span>
       <strong class="diverse-sku-cell" data-label="SKU">${escapeHtml(product.sku || "")}</strong>
       <span class="diverse-code-cell" data-label="Codigo">${escapeHtml(product.codigoMl || "")}</span>
       <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}</span>

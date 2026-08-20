@@ -3492,6 +3492,32 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.diverse-pallet-status {
+  align-items: center;
+  background: #d7ece9;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  color: #075e57;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 10px 0;
+  min-height: 54px;
+  padding: 12px 16px;
+}
+
+.diverse-pallet-status span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.diverse-pallet-status strong {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+
 .diverse-rz-list {
   display: flex;
   flex-wrap: wrap;
