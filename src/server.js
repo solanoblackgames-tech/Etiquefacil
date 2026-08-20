@@ -59,6 +59,7 @@ import {
   decrementTransferLotItem,
   decrementLotRzScan,
   ensureStore,
+  ensureActiveSkuReservation,
   enqueueBlingSyncJob,
   forceReceivePublicTransferLotScan,
   getBlingAppConfig,
@@ -1604,31 +1605,28 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
     const userId = workspaceUserId(req);
     const result = await splitLotProduct({
       userId,
+      operatorUserId: operatorUserId(req),
       lotId: req.params.lotId,
       productId: req.params.productId,
       codigoRz: req.body.codigoRz,
       payload: req.body
     });
     const labelQuantity = Math.max(1, Math.round(Number(req.body.sellableQuantity || 1)));
-    try {
-      result.bling = await syncSplitProductToBling(userId, result.lot, result.originalProduct, result.product, labelQuantity);
-      const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
-      if (updatedLot) result.lot = updatedLot;
-    } catch (blingError) {
-      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
-      const balanceItems = [stockMovementItemFromProduct(result.lot, result.product, labelQuantity)];
-      if (result.originalProduct?.sku && result.originalProduct.sku !== result.product.sku) {
-        balanceItems.unshift(stockMovementItemFromProduct(result.lot, result.originalProduct, 0));
-      }
-      await enqueueStockBalanceSync({
-        userId,
-        lot: result.lot,
-        items: balanceItems,
-        observacao: `Desmembramento de produto ${result.product.sku || ""}`.trim(),
-        errorMessage: blingError.message
-      });
-      result.bling = { ok: false, error: blingError.message };
+    await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto desmembrado aguardando envio ao Bling." });
+    const balanceItems = [stockMovementItemFromProduct(result.lot, result.product, labelQuantity)];
+    if (result.originalProduct?.sku && result.originalProduct.sku !== result.product.sku) {
+      balanceItems.unshift(stockMovementItemFromProduct(result.lot, result.originalProduct, 0));
     }
+    await enqueueStockBalanceSync({
+      userId,
+      lot: result.lot,
+      items: balanceItems,
+      observacao: `Desmembramento de produto ${result.product.sku || ""}`.trim(),
+      errorMessage: "Saldo de desmembramento aguardando envio ao Bling."
+    });
+    result.lot = await getUserLotDetail(userId, req.params.lotId);
+    result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
+    scheduleBlingSyncQueue();
     const labelResult = await createLabel(userId, result.product.id, labelQuantity);
     result.label = labelResult?.label || null;
     result.labels = labelResult?.labels || [];
@@ -1957,7 +1955,7 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
   try {
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "create_external_excess", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    res.json(await createExternalExcess({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    res.json(await createExternalExcess({ userId: workspaceUserId(req), operatorUserId: operatorUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
   } catch (error) {
     sendError(res, error);
   }
@@ -1977,13 +1975,10 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
       codigoMl,
       manualProduct: req.body.manualProduct
     });
-    try {
-      result.bling = await syncSingleLotProductToBling(userId, result.lot, result.product);
-    } catch (blingError) {
-      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
-      result.lot = await getUserLotDetail(userId, req.params.lotId);
-      result.bling = { ok: false, error: blingError.message };
-    }
+    await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
+    result.lot = await getUserLotDetail(userId, req.params.lotId);
+    result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
+    scheduleBlingSyncQueue();
     res.json(result);
   } catch (error) {
     sendError(res, error);
@@ -2025,6 +2020,19 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (
   }
 });
 
+app.post("/api/lots/:lotId/sku-reservations/ensure-active", requireAuth, async (req, res) => {
+  try {
+    const reservation = await ensureActiveSkuReservation({
+      userId: workspaceUserId(req),
+      lotId: req.params.lotId,
+      operatorUserId: operatorUserId(req)
+    });
+    res.json({ ok: true, reservation: { id: reservation.id, expiresAt: reservation.expiresAt } });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
@@ -2061,21 +2069,18 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
           source: "diverse_lot"
         });
       }
-      try {
-        result.bling = await syncSingleNoSheetProductStockEntry(userId, result.lot, result.product, codigoRz);
-      } catch (blingError) {
-        await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: blingError.message });
-        await enqueueStockMovementSync({
-          userId,
-          lotId: req.params.lotId,
-          codigoRz,
-          item: stockMovementItemFromProduct(result.lot, result.product),
-          operation: "entry",
-          errorMessage: blingError.message
-        });
-        result.lot = await getUserLotDetail(userId, req.params.lotId);
-        result.bling = { ok: false, error: blingError.message };
-      }
+      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
+      await enqueueStockMovementSync({
+        userId,
+        lotId: req.params.lotId,
+        codigoRz,
+        item: stockMovementItemFromProduct(result.lot, result.product),
+        operation: "entry",
+        errorMessage: "Entrada de estoque aguardando envio ao Bling."
+      });
+      result.lot = await getUserLotDetail(userId, req.params.lotId);
+      result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
+      scheduleBlingSyncQueue();
     }
 
     res.json(result);
@@ -3559,6 +3564,17 @@ async function seedBlingAppConfigFromEnv() {
 }
 
 let blingSyncQueueRunning = false;
+let blingSyncQueueScheduled = false;
+
+function scheduleBlingSyncQueue() {
+  if (blingSyncQueueScheduled) return;
+  blingSyncQueueScheduled = true;
+  const handle = setImmediate(() => {
+    blingSyncQueueScheduled = false;
+    processBlingSyncQueue();
+  });
+  handle.unref?.();
+}
 
 async function processBlingSyncQueue() {
   if (blingSyncQueueRunning) return;

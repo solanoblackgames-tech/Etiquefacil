@@ -40,6 +40,7 @@ const state = {
   selectedDiverseLotId: null,
   selectedDiverseLot: null,
   selectedDiverseRz: null,
+  skuReservationLots: new Set(),
   searchResults: [],
   lotSelectionToken: 0,
   noSheetSuggestionTimer: null,
@@ -866,6 +867,11 @@ function bindNoSheetSuggestionUploadForms(root = document) {
 async function showDiverseBlingSyncStatus(response, baseMessage) {
   const message = $("#diverseScanMessage");
   try {
+    if (response.bling?.queued) {
+      message.style.color = "#0f766e";
+      message.textContent = `${baseMessage} Bling sincronizando em segundo plano.`;
+      return;
+    }
     if (response.bling?.ok === false) throw new Error(response.bling.error || "Erro ao sincronizar produto.");
     const bling = response.bling || await syncDiverseProductToBling(response.lot.id, response.product.id);
     if (bling.lot) {
@@ -1554,6 +1560,7 @@ function renderDiverseLot(lot) {
   const previousDiverseLotId = state.selectedDiverseLotId;
   state.selectedDiverseLotId = lot.id;
   state.selectedDiverseLot = lot;
+  ensureActiveDiverseSkuReservation(lot.id);
   const rzs = diverseRzs(lot);
   const activeBelongsToThisLot = previousDiverseLotId === lot.id || !previousDiverseLotId;
   if (state.selectedDiverseRz && !activeBelongsToThisLot && !rzs.some((rz) => rz.codigoRz === state.selectedDiverseRz)) state.selectedDiverseRz = null;
@@ -1573,6 +1580,18 @@ function renderDiverseLot(lot) {
   bindNoSheetSuggestionUploadForms($("#diverseScanPanel"));
   bindDiverseQuantityControls(lot);
   schedulePrimaryInputFocus();
+}
+
+async function ensureActiveDiverseSkuReservation(lotId) {
+  if (!lotId || state.skuReservationLots.has(lotId)) return;
+  state.skuReservationLots.add(lotId);
+  try {
+    await api(`/api/lots/${encodeURIComponent(lotId)}/sku-reservations/ensure-active`, { method: "POST" });
+  } catch (error) {
+    state.skuReservationLots.delete(lotId);
+    const message = $("#diverseScanMessage");
+    if (message) message.textContent = `Nao foi possivel pre-reservar o proximo SKU: ${error.message}`;
+  }
 }
 
 function bindDiverseQuantityControls(lot) {
@@ -2209,7 +2228,10 @@ async function splitLotProduct(product, codigoRz, { lotId = state.selectedLotId,
     await refreshLotsList(response.lot.id);
     if (message) {
       const printed = response.labelQuantity || split.sellableQuantity;
-      if (response.bling?.ok === false) {
+      if (response.bling?.queued) {
+        message.style.color = "#0f766e";
+        message.textContent = `Produto desmembrado e ${printed} etiqueta(s) enviada(s) para impressao. Bling sincronizando em segundo plano.`;
+      } else if (response.bling?.ok === false) {
         message.style.color = "";
         message.textContent = `Produto desmembrado e ${printed} etiqueta(s) enviada(s) para impressao, mas o Bling nao atualizou: ${response.bling.error}`;
       } else {
@@ -6631,6 +6653,7 @@ function renderNoSheetScanPage(lot, codigoRz) {
 function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
   state.selectedLotId = lot.id;
   state.selectedRz = codigoRz;
+  ensureActiveDiverseSkuReservation(lot.id);
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
   const detail = $("#lotDetail");
   if (!detail) return;
@@ -6883,9 +6906,11 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
       body: JSON.stringify({ codigoMl, manualProduct })
     });
 
-    const blingMessage = response.bling?.ok === false
-      ? ` Bling nao atualizado: ${response.bling.error || "verifique a integracao."}`
-      : ` ${response.bling ? blingProductSyncMessage(response.bling) : "Produto sincronizado no Bling."}`;
+    const blingMessage = response.bling?.queued
+      ? " Bling sincronizando em segundo plano."
+      : response.bling?.ok === false
+        ? ` Bling nao atualizado: ${response.bling.error || "verifique a integracao."}`
+        : ` ${response.bling ? blingProductSyncMessage(response.bling) : "Produto sincronizado no Bling."}`;
     const successMessage = `SKU ${response.product.sku} gerado localmente e enviado para sugestao do banco historico.${blingMessage}`;
     renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     $("#scanMessage").textContent = successMessage;

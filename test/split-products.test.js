@@ -40,7 +40,7 @@ test("calculateSplitProductValues adjusts only the current RZ quantity from tota
   assert.equal(split.qtdTotal, 8);
 });
 
-test("splitLotProduct generates a new product code and zeroes the original product", async () => {
+test("splitLotProduct uses reserved SKU and zeroes the original product", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-split-product-"));
@@ -51,7 +51,7 @@ test("splitLotProduct generates a new product code and zeroes the original produ
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-split-product`;
-    const { readDb, splitLotProduct, writeDb } = await import(storeUrl.href);
+    const { ensureActiveSkuReservation, readDb, splitLotProduct, writeDb } = await import(storeUrl.href);
 
     await writeDb({
       users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
@@ -94,6 +94,7 @@ test("splitLotProduct generates a new product code and zeroes the original produ
           createdAt: "2026-08-04T00:00:00.000Z"
         }
       ],
+      skuReservations: [],
       scans: [],
       labels: [],
       blingIntegrations: [],
@@ -112,8 +113,10 @@ test("splitLotProduct generates a new product code and zeroes the original produ
       triageEvents: []
     });
 
+    await ensureActiveSkuReservation({ userId: "user-1", lotId: "lot-1", operatorUserId: "user-1" });
     const result = await splitLotProduct({
       userId: "user-1",
+      operatorUserId: "user-1",
       lotId: "lot-1",
       productId: "product-original",
       codigoRz: "RZ-1",
@@ -130,13 +133,102 @@ test("splitLotProduct generates a new product code and zeroes the original produ
     assert.equal(original.qtdTotal, 0);
     assert.equal(created.codigoMl, "ABCX00007");
     assert.equal(created.sku, "ABC0007");
+    assert.equal(created.splitSourceProductId, "product-original");
     assert.equal(created.qtdTotal, 4);
     assert.equal(created.valorUnit, 20);
     assert.equal(db.rzItems[0].productId, created.id);
     assert.equal(db.rzItems[0].qtdEsperada, 4);
-    assert.equal(db.lots[0].proximoSequencialSku, 8);
+    assert.equal(db.lots[0].proximoSequencialSku, 9);
+    assert.ok(db.skuReservations.some((reservation) => reservation.sku === "ABC0007" && reservation.status === "consumed" && reservation.productId === created.id));
+    assert.ok(db.skuReservations.some((reservation) => reservation.sku === "ABC0008" && reservation.status === "reserved"));
     assert.equal(result.originalProduct.codigoMl, "ABCD12345");
     assert.equal(result.originalProduct.qtdTotal, 0);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("splitLotProduct reuses the previous split SKU for the same original product in the lot", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-split-product-reuse-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-split-product-reuse`;
+    const { ensureActiveSkuReservation, readDb, splitLotProduct, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [
+        {
+          id: "lot-1",
+          userId: "user-1",
+          nomeArquivo: "Lote",
+          percentualArremate: 50,
+          fornecedor: "Fornecedor",
+          prefixoSku: "ABC",
+          proximoSequencialSku: 7,
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      products: [
+        {
+          id: "product-original",
+          lotId: "lot-1",
+          codigoMl: "ABCD12345",
+          sku: "ABC0001",
+          descricao: "KIT COM 5 PECAS",
+          valorUnit: 100,
+          precoCusto: 50,
+          qtdTotal: 10,
+          origem: "planilha",
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      rzItems: [
+        { id: "item-1", lotId: "lot-1", productId: "product-original", codigoRz: "RZ-1", qtdEsperada: 5, qtdConferida: 5, valorTotal: 100, tipoItem: "esperado", createdAt: "2026-08-04T00:00:00.000Z" },
+        { id: "item-2", lotId: "lot-1", productId: "product-original", codigoRz: "RZ-2", qtdEsperada: 5, qtdConferida: 5, valorTotal: 100, tipoItem: "esperado", createdAt: "2026-08-04T00:01:00.000Z" }
+      ],
+      scans: [],
+      labels: [],
+      skuReservations: [],
+      blingIntegrations: []
+    });
+
+    await ensureActiveSkuReservation({ userId: "user-1", lotId: "lot-1", operatorUserId: "user-1" });
+    const first = await splitLotProduct({
+      userId: "user-1",
+      operatorUserId: "user-1",
+      lotId: "lot-1",
+      productId: "product-original",
+      codigoRz: "RZ-1",
+      payload: { kitQuantity: 5, sellableQuantity: 4, descricao: "PECA UNITARIA" }
+    });
+    const second = await splitLotProduct({
+      userId: "user-1",
+      operatorUserId: "user-1",
+      lotId: "lot-1",
+      productId: "product-original",
+      codigoRz: "RZ-2",
+      payload: { kitQuantity: 5, sellableQuantity: 3, descricao: "PECA UNITARIA" }
+    });
+
+    const db = await readDb();
+    const splitProducts = db.products.filter((product) => product.splitSourceProductId === "product-original");
+    assert.equal(splitProducts.length, 1);
+    assert.equal(first.product.id, second.product.id);
+    assert.equal(second.product.sku, "ABC0007");
+    assert.equal(splitProducts[0].qtdTotal, 7);
+    assert.equal(db.rzItems.find((item) => item.id === "item-1").productId, splitProducts[0].id);
+    assert.equal(db.rzItems.find((item) => item.id === "item-2").productId, splitProducts[0].id);
+    assert.equal(db.skuReservations.filter((reservation) => reservation.status === "consumed").length, 1);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

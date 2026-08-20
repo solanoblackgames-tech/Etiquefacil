@@ -46,6 +46,7 @@ const emptyDb = () => ({
   rzItems: [],
   scans: [],
   labels: [],
+  skuReservations: [],
   blingIntegrations: [],
   blingSyncJobs: [],
   appSettings: {},
@@ -1669,6 +1670,7 @@ export async function deleteOperatorForOwner(ownerUserId, operatorUserId) {
   if (!operator) throw notFound("Operador nao encontrado.");
   db.users = db.users.filter((item) => item.id !== operatorUserId);
   db.operatorActivities = (db.operatorActivities || []).filter((activity) => activity.operatorUserId !== operatorUserId);
+  db.skuReservations = (db.skuReservations || []).filter((reservation) => reservation.operatorUserId !== operatorUserId);
   await writeDb(db);
   return { ok: true };
 }
@@ -1692,6 +1694,7 @@ export async function deleteUser(userId) {
   db.rzItems = db.rzItems.filter((item) => !lotIds.has(item.lotId) && !productIds.has(item.productId));
   db.scans = db.scans.filter((scan) => !lotIds.has(scan.lotId));
   db.labels = db.labels.filter((label) => label.userId !== userId && !lotIds.has(label.lotId) && !productIds.has(label.productId));
+  db.skuReservations = (db.skuReservations || []).filter((reservation) => reservation.userId !== userId && !lotIds.has(reservation.lotId));
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   db.blingSyncJobs = (db.blingSyncJobs || []).filter((job) => job.userId !== userId);
   db.operatorInvites = (db.operatorInvites || []).filter((invite) => invite.ownerUserId !== userId);
@@ -1717,6 +1720,7 @@ export async function deleteUserLot(userId, lotId) {
   db.rzItems = db.rzItems.filter((item) => item.lotId !== lot.id && !productIds.has(item.productId));
   db.scans = db.scans.filter((scan) => scan.lotId !== lot.id);
   db.labels = db.labels.filter((label) => label.lotId !== lot.id && !productIds.has(label.productId));
+  db.skuReservations = (db.skuReservations || []).filter((reservation) => reservation.lotId !== lot.id);
   await writeDb(db);
   return { ok: true };
 }
@@ -1852,7 +1856,19 @@ export async function enqueueBlingSyncJob({
           lot_id = excluded.lot_id,
           sku = excluded.sku,
           status = 'pending',
-          payload = excluded.payload,
+          payload = case
+            when excluded.type in ('stock_entry', 'stock_exit') then
+              jsonb_set(
+                jsonb_set(
+                  excluded.payload,
+                  '{item,quantidade}',
+                  to_jsonb(coalesce((bling_sync_jobs.payload #>> '{item,quantidade}')::numeric, 0) + coalesce((excluded.payload #>> '{item,quantidade}')::numeric, 0))
+                ),
+                '{item,qtdConferida}',
+                to_jsonb(coalesce((bling_sync_jobs.payload #>> '{item,qtdConferida}')::numeric, 0) + coalesce((excluded.payload #>> '{item,qtdConferida}')::numeric, 0))
+              )
+            else excluded.payload
+          end,
           error_message = excluded.error_message,
           next_run_at = excluded.next_run_at,
           updated_at = excluded.updated_at
@@ -1879,11 +1895,15 @@ export async function enqueueBlingSyncJob({
   db.blingSyncJobs = db.blingSyncJobs || [];
   const index = db.blingSyncJobs.findIndex((job) => job.productId === normalized.productId && job.type === normalized.type);
   if (index >= 0) {
+    const payload = isStockMovementJob(normalized.type)
+      ? mergeStockMovementPayload(db.blingSyncJobs[index].payload, normalized.payload)
+      : normalized.payload;
     db.blingSyncJobs[index] = {
       ...db.blingSyncJobs[index],
       ...normalized,
       id: db.blingSyncJobs[index].id,
       attempts: db.blingSyncJobs[index].attempts || 0,
+      payload,
       status: "pending",
       updatedAt: normalized.updatedAt
     };
@@ -1897,6 +1917,171 @@ export async function enqueueBlingSyncJob({
   }
   await writeDb(db);
   return db.blingSyncJobs.find((job) => job.productId === normalized.productId && job.type === normalized.type);
+}
+
+export async function ensureActiveSkuReservation({ userId, lotId, operatorUserId = null }) {
+  await ensureStore();
+  const operatorKey = skuReservationOperatorKey(userId, operatorUserId);
+  if (hasPostgres()) return ensureActiveSkuReservationPg({ userId, lotId, operatorUserId: operatorKey });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: operatorKey });
+  await writeDb(db);
+  return reservation;
+}
+
+async function ensureActiveSkuReservationPg({ userId, lotId, operatorUserId }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lot = await getLockedUserLotPg(client, userId, lotId);
+    const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId });
+    await client.query("commit");
+    return reservation;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function consumeSkuReservationForProduct({ userId, lot, operatorUserId = null, productId }) {
+  const operatorKey = skuReservationOperatorKey(userId, operatorUserId);
+  if (hasPostgres()) return consumeSkuReservationForProductPg({ userId, lot, operatorUserId: operatorKey, productId });
+
+  const db = await readDb();
+  const dbLot = getUserLotFromDb(db, userId, lot.id);
+  if (!dbLot) throw notFound("Lote nao encontrado.");
+  db.skuReservations = db.skuReservations || [];
+  const reservation = ensureActiveSkuReservationInDb(db, { userId, lot: dbLot, operatorUserId: operatorKey });
+  consumeSkuReservationInDb(reservation, productId);
+  await writeDb(db);
+  return reservation;
+}
+
+async function consumeSkuReservationForProductPg({ userId, lot, operatorUserId, productId }) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("begin");
+    const lockedLot = await getLockedUserLotPg(client, userId, lot.id);
+    const reservation = await consumeSkuReservationInPg(client, { userId, lot: lockedLot, operatorUserId, productId });
+    await client.query("commit");
+    return reservation;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getLockedUserLotPg(client, userId, lotId) {
+  const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
+  const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  return lot;
+}
+
+async function expireSkuReservationsPg(client) {
+  await client.query(
+    `
+      update sku_reservations
+      set status = 'expired',
+          updated_at = now()
+      where status = 'reserved'
+        and expires_at < now()
+        and product_id is null
+    `
+  );
+}
+
+async function ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId }) {
+  await expireSkuReservationsPg(client);
+  const active = await client.query(
+    `
+      select *
+      from sku_reservations
+      where lot_id = $1
+        and operator_user_id = $2
+        and status = 'reserved'
+        and expires_at >= now()
+      order by reserved_at asc
+      limit 1
+    `,
+    [lot.id, operatorUserId]
+  );
+  if (active.rows[0]) return skuReservationFromRow(active.rows[0]);
+
+  const available = await client.query(
+    `
+      select *
+      from sku_reservations
+      where lot_id = $1
+        and status = 'expired'
+        and product_id is null
+      order by sequence asc
+      limit 1
+      for update
+    `,
+    [lot.id]
+  );
+  const now = new Date().toISOString();
+  if (available.rows[0]) {
+    const updated = await client.query(
+      `
+        update sku_reservations
+        set user_id = $2,
+            operator_user_id = $3,
+            status = 'reserved',
+            reserved_at = $4,
+            expires_at = $5,
+            consumed_at = null,
+            product_id = null,
+            updated_at = $4
+        where id = $1
+        returning *
+      `,
+      [available.rows[0].id, userId, operatorUserId, now, endOfTodayIso()]
+    );
+    return skuReservationFromRow(updated.rows[0]);
+  }
+
+  const sequence = Number(lot.proximoSequencialSku || 1);
+  const reservation = buildSkuReservation({ userId, lot, operatorUserId, sequence });
+  const inserted = await client.query(
+    `
+      insert into sku_reservations (
+        id, user_id, lot_id, operator_user_id, sku, sequence, status, reserved_at, expires_at, consumed_at, product_id, created_at, updated_at
+      )
+      values ($1, $2, $3, $4, $5, $6, 'reserved', $7, $8, null, null, $9, $9)
+      returning *
+    `,
+    [reservation.id, userId, lot.id, operatorUserId, reservation.sku, reservation.sequence, reservation.reservedAt, reservation.expiresAt, reservation.createdAt]
+  );
+  await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+  lot.proximoSequencialSku = sequence + 1;
+  return skuReservationFromRow(inserted.rows[0]);
+}
+
+async function consumeSkuReservationInPg(client, { userId, lot, operatorUserId, productId }) {
+  const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId });
+  const now = new Date().toISOString();
+  const result = await client.query(
+    `
+      update sku_reservations
+      set status = 'consumed',
+          consumed_at = $2,
+          product_id = $3,
+          updated_at = $2
+      where id = $1
+      returning *
+    `,
+    [reservation.id, now, productId]
+  );
+  return skuReservationFromRow(result.rows[0]);
 }
 
 export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
@@ -2543,7 +2728,7 @@ export async function dismissLotProductBlingAlert({ userId, lotId, productId }) 
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function splitLotProduct({ userId, lotId, productId, codigoRz, payload }) {
+export async function splitLotProduct({ userId, operatorUserId = null, lotId, productId, codigoRz, payload }) {
   await ensureStore();
   const kitQuantity = Math.round(Number(payload?.kitQuantity || 0));
   const sellableQuantity = Math.round(Number(payload?.sellableQuantity || 0));
@@ -2553,7 +2738,7 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   if (sellableQuantity > kitQuantity) throw new Error("A quantidade vendavel nao pode ser maior que o kit original.");
   if (!descricao) throw new Error("Informe o titulo do produto unitario.");
 
-  if (hasPostgres()) return splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao });
+  if (hasPostgres()) return splitLotProductPg({ userId, operatorUserId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -2564,30 +2749,43 @@ export async function splitLotProduct({ userId, lotId, productId, codigoRz, payl
   if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
   const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
-  const codigoMl = generateSplitCodigoMl(lot, new Set((db.products || []).map((item) => normalizeCode(item.codigoMl))));
+  const existingSplit = findSplitProductForOriginal(db.products, lot.id, product.id);
+  const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
   const originalProduct = { ...product, qtdTotal: 0 };
-  const newProduct = {
-    ...product,
-    id: randomUUID(),
-    codigoMl,
-    sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
-    descricao: split.descricao,
-    valorUnit: split.valorUnit,
-    precoCusto: split.precoCusto,
-    qtdTotal: sellableQuantity,
-    origem: product.origem || "planilha",
-    createdAt: new Date().toISOString(),
-    blingAlertMessage: "",
-    blingAlertDismissed: false
-  };
+  let newProduct = existingSplit;
+  if (newProduct) {
+    newProduct.descricao = split.descricao;
+    newProduct.valorUnit = split.valorUnit;
+    newProduct.precoCusto = split.precoCusto;
+    newProduct.qtdTotal = Number(newProduct.qtdTotal || 0) + sellableQuantity;
+    newProduct.blingAlertDismissed = false;
+  } else {
+    const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+    newProduct = {
+      ...product,
+      id: randomUUID(),
+      codigoMl: generateSplitCodigoMl({ ...lot, proximoSequencialSku: reservation.sequence }, new Set((db.products || []).map((item) => normalizeCode(item.codigoMl)))),
+      sku: reservation.sku,
+      descricao: split.descricao,
+      valorUnit: split.valorUnit,
+      precoCusto: split.precoCusto,
+      qtdTotal: sellableQuantity,
+      origem: product.origem || "planilha",
+      splitSourceProductId: product.id,
+      createdAt: new Date().toISOString(),
+      blingAlertMessage: "",
+      blingAlertDismissed: false
+    };
+    consumeSkuReservationInDb(reservation, newProduct.id);
+    db.products.push(newProduct);
+    ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+  }
   product.qtdTotal = 0;
-  db.products.push(newProduct);
   item.productId = newProduct.id;
   item.qtdEsperada = sellableQuantity;
   item.qtdConferida = Math.min(Number(item.qtdConferida || 0), sellableQuantity);
   item.valorTotal = split.valorTotal;
   item.tipoItem = splitItemType(item.tipoItem);
-  lot.proximoSequencialSku += 1;
 
   await writeDb(db);
   return { product: newProduct, originalProduct, lot: summarizeLot(db, lot, true) };
@@ -3230,10 +3428,10 @@ export async function decrementDiverseLotItemQuantity({ userId, lotId, codigoRz,
   return { lot: summarizeLot(db, lot, true) };
 }
 
-export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }) {
+export async function createExternalExcess({ userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
-  if (hasPostgres()) return createExternalExcessPg({ userId, lotId, codigoRz, codigoMl: normalizedMl });
+  if (hasPostgres()) return createExternalExcessPg({ userId, operatorUserId, lotId, codigoRz, codigoMl: normalizedMl });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -3244,10 +3442,13 @@ export async function createExternalExcess({ userId, lotId, codigoRz, codigoMl }
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing) throw new Error("Este CÃ³digo ML jÃ¡ existe no lote atual.");
 
-  const { product, item } = buildExternalExcessRecords(lot, history, codigoRz, normalizedMl);
-  lot.proximoSequencialSku += 1;
+  const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+  const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+  const { product, item } = buildExternalExcessRecords(lot, history, codigoRz, normalizedMl, { sku: reservation.sku });
+  consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
+  ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   await writeDb(db);
   return { product, lot: summarizeLot(db, lot, true) };
 }
@@ -3266,8 +3467,10 @@ export async function createManualExternalExcess({ userId, createdByUserId = use
   if (existing) throw new Error("Este Codigo ML ja existe no lote atual.");
 
   const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
-  const { product, item } = buildExternalExcessRecords(lot, sourceManual, codigoRz, normalizedMl, { createdByUserId, operatorUserId });
-  lot.proximoSequencialSku += 1;
+  const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+  const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+  const { product, item } = buildExternalExcessRecords(lot, sourceManual, codigoRz, normalizedMl, { createdByUserId, operatorUserId, sku: reservation.sku });
+  consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
   mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
@@ -3279,6 +3482,7 @@ export async function createManualExternalExcess({ userId, createdByUserId = use
     status: "cadastro_manual",
     createdAt: new Date().toISOString()
   });
+  ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   await writeDb(db);
   return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
 }
@@ -3343,6 +3547,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nÃƒÂ£o encontrado.");
+  const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
 
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing && preview) return { status: "preview_existing", product: existing, lot: summarizeLot(db, lot, true) };
@@ -3366,28 +3571,34 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     return { status: "preview", product: { ...source, codigoMl: normalizedMl }, source: history || previousHistory ? "historico" : "catalogo_oculto", lot: summarizeLot(db, lot, true) };
   }
   if (previousHistory) {
-    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
-    lot.proximoSequencialSku += 1;
+    const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+    consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
+    ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
     return { status: "criado", product, parent: previousHistory, source: "historico", lot: summarizeLot(db, lot, true) };
   }
   if (!history && source) {
-    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
-    lot.proximoSequencialSku += 1;
+    const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+    consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
+    ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
     return { status: "criado", product, parent: null, source: "catalogo_oculto", lot: summarizeLot(db, lot, true) };
   }
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
-    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId });
-    lot.proximoSequencialSku += 1;
+    const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku });
+    consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
     mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
+    ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
     return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
   }
@@ -3399,10 +3610,12 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     throw error;
   }
 
-  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId });
-  lot.proximoSequencialSku += 1;
+  const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+  consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
+  ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   await writeDb(db);
   return { status: "criado", product, parent: history, lot: summarizeLot(db, lot, true) };
 }
@@ -3824,6 +4037,7 @@ async function ensurePgStore() {
       bling_alert_message text not null default '',
       bling_alert_dismissed boolean not null default false,
       origem text not null default 'planilha',
+      split_source_product_id text references products(id) on delete set null,
       created_at timestamptz not null default now()
     );
 
@@ -3879,6 +4093,22 @@ async function ensurePgStore() {
       lot_id text not null references lots(id) on delete cascade,
       user_id text not null references users(id) on delete cascade,
       created_at timestamptz not null default now()
+    );
+
+    create table if not exists sku_reservations (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      lot_id text not null references lots(id) on delete cascade,
+      operator_user_id text not null,
+      sku text not null,
+      sequence integer not null,
+      status text not null default 'reserved',
+      reserved_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      product_id text references products(id) on delete set null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
     );
 
     create table if not exists bling_integrations (
@@ -4143,6 +4373,10 @@ async function ensurePgStore() {
     alter table products add column if not exists localizacao_estoque text not null default '';
     alter table products add column if not exists bling_alert_message text not null default '';
     alter table products add column if not exists bling_alert_dismissed boolean not null default false;
+    alter table products add column if not exists split_source_product_id text references products(id) on delete set null;
+    alter table sku_reservations add column if not exists operator_user_id text not null default '';
+    alter table sku_reservations add column if not exists consumed_at timestamptz;
+    alter table sku_reservations add column if not exists product_id text references products(id) on delete set null;
     alter table bling_sync_jobs add column if not exists payload jsonb not null default '{}'::jsonb;
     alter table bling_sync_jobs add column if not exists error_message text not null default '';
     alter table bling_sync_jobs add column if not exists attempts integer not null default 0;
@@ -4252,6 +4486,9 @@ async function ensurePgStore() {
     create index if not exists products_lot_sku_norm_idx on products(lot_id, upper(trim(sku)));
     create index if not exists products_lot_sku_code39_idx on products(lot_id, regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g'));
     create index if not exists products_lot_ean_norm_idx on products(lot_id, upper(trim(ean)));
+    create index if not exists products_lot_split_source_idx on products(lot_id, split_source_product_id);
+    create index if not exists sku_reservations_lot_status_sequence_idx on sku_reservations(lot_id, status, sequence);
+    create index if not exists sku_reservations_operator_active_idx on sku_reservations(lot_id, operator_user_id, status);
     create index if not exists catalog_products_codigo_ml_idx on catalog_products(codigo_ml);
     create index if not exists rz_items_lot_id_idx on rz_items(lot_id);
     create index if not exists rz_items_product_id_idx on rz_items(product_id);
@@ -4364,6 +4601,7 @@ async function assertPgSchemaReady() {
     "rz_items",
     "scans",
     "labels",
+    "sku_reservations",
     "bling_integrations",
     "bling_sync_jobs",
     "app_settings",
@@ -4453,13 +4691,14 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, blingIntegrations, blingSyncJobs, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  const [users, lots, products, rzItems, scans, labels, skuReservations, blingIntegrations, blingSyncJobs, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
     query("select * from rz_items order by created_at asc"),
     query("select * from scans order by created_at asc"),
     query("select * from labels order by created_at asc"),
+    query("select * from sku_reservations order by created_at asc"),
     query("select * from bling_integrations order by updated_at asc"),
     query("select * from bling_sync_jobs order by next_run_at asc, created_at asc"),
     query("select * from user_settings order by updated_at asc"),
@@ -4482,6 +4721,7 @@ async function readPgDb() {
     rzItems: rzItems.rows.map(rzItemFromRow),
     scans: scans.rows.map(scanFromRow),
     labels: labels.rows.map(labelFromRow),
+    skuReservations: skuReservations.rows.map(skuReservationFromRow),
     blingIntegrations: blingIntegrations.rows.map(blingIntegrationFromRow),
     blingSyncJobs: blingSyncJobs.rows.map(blingSyncJobFromRow),
     userSettings: userSettings.rows.map(userSettingFromRow),
@@ -4512,6 +4752,7 @@ async function writePgDb(db) {
     await client.query("delete from transfer_items");
     await client.query("delete from transfer_lots");
     await client.query("delete from bling_sync_jobs");
+    await client.query("delete from sku_reservations");
     await client.query("delete from bling_integrations");
     await client.query("delete from user_settings");
     await client.query("delete from labels");
@@ -4576,7 +4817,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "products",
-      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
+      ["id", "lot_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "split_source_product_id", "created_at"],
       (db.products || []).map((product) => [
         product.id,
         product.lotId,
@@ -4601,6 +4842,7 @@ async function writePgDb(db) {
         product.blingAlertMessage || "",
         Boolean(product.blingAlertDismissed),
         product.origem || "planilha",
+        product.splitSourceProductId || null,
         product.createdAt
       ])
     );
@@ -4642,6 +4884,7 @@ async function writePgDb(db) {
       ["id", "product_id", "lot_id", "user_id", "created_at"],
       (db.labels || []).map((label) => [label.id, label.productId, label.lotId, label.userId, label.createdAt])
     );
+    await insertSkuReservationRows(client, db.skuReservations || []);
     await insertBlingIntegrationRows(client, db.blingIntegrations || []);
     await insertBlingSyncJobRows(client, db.blingSyncJobs || []);
     await insertTransferLotRows(client, db.transferLots || []);
@@ -4748,7 +4991,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
   await insertRows(
     client,
     "products",
-    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "created_at"],
+    ["id", "lot_id", "created_by_user_id", "operator_user_id", "codigo_ml", "sku", "descricao", "valor_unit", "preco_custo", "qtd_total", "categoria", "subcategoria", "ncm", "ean", "data_validade", "link", "foto", "altura_caixa", "largura_caixa", "comprimento_caixa", "peso_caixa", "localizacao_estoque", "bling_alert_message", "bling_alert_dismissed", "origem", "split_source_product_id", "created_at"],
     products.map((product) => [
       product.id,
       product.lotId,
@@ -4775,6 +5018,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       product.blingAlertMessage || "",
       Boolean(product.blingAlertDismissed),
       product.origem || "planilha",
+      product.splitSourceProductId || null,
       product.createdAt
     ])
   );
@@ -4794,6 +5038,29 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       item.valorTotal || 0,
       item.tipoItem || "esperado",
       item.createdAt
+    ])
+  );
+}
+
+async function insertSkuReservationRows(client, reservations = []) {
+  await insertRows(
+    client,
+    "sku_reservations",
+    ["id", "user_id", "lot_id", "operator_user_id", "sku", "sequence", "status", "reserved_at", "expires_at", "consumed_at", "product_id", "created_at", "updated_at"],
+    reservations.map((reservation) => [
+      reservation.id,
+      reservation.userId,
+      reservation.lotId,
+      reservation.operatorUserId,
+      reservation.sku,
+      Number(reservation.sequence || 0),
+      reservation.status || "reserved",
+      reservation.reservedAt || reservation.createdAt || new Date().toISOString(),
+      reservation.expiresAt || endOfTodayIso(),
+      reservation.consumedAt || null,
+      reservation.productId || null,
+      reservation.createdAt || reservation.reservedAt || new Date().toISOString(),
+      reservation.updatedAt || reservation.createdAt || reservation.reservedAt || new Date().toISOString()
     ])
   );
 }
@@ -5286,7 +5553,7 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
 }
 
-async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {
+async function splitLotProductPg({ userId, operatorUserId = null, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {
   const client = await getPgPool().connect();
   let product;
   let originalProduct;
@@ -5308,8 +5575,6 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
     const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
-    const usedCodes = await client.query("select codigo_ml from products where lot_id = $1", [lot.id]);
-    const codigoMl = generateSplitCodigoMl(lot, new Set(usedCodes.rows.map((row) => normalizeCode(row.codigo_ml))));
     const zeroedOriginal = await client.query(
       `update products
        set qtd_total = 0
@@ -5320,48 +5585,76 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
     originalProduct = productFromRow(zeroedOriginal.rows[0]);
 
     const now = new Date().toISOString();
-    const newProductResult = await client.query(
-      `insert into products (
-         id, lot_id, created_by_user_id, operator_user_id, codigo_ml, sku, descricao,
-         valor_unit, preco_custo, qtd_total, categoria, subcategoria, ncm, ean,
-         data_validade, link, foto, altura_caixa, largura_caixa, comprimento_caixa,
-         peso_caixa, localizacao_estoque, origem, created_at
-       )
-       values (
-         $1, $2, $3, $4, $5, $6, $7,
-         $8, $9, $10, $11, $12, $13, $14,
-         $15, $16, $17, $18, $19, $20,
-         $21, $22, $23, $24
-       )
-       returning *`,
-      [
-        randomUUID(),
-        lot.id,
-        current.createdByUserId || null,
-        current.operatorUserId || null,
-        codigoMl,
-        formatSku(lot.prefixoSku, lot.proximoSequencialSku),
-        split.descricao,
-        split.valorUnit,
-        split.precoCusto,
-        sellableQuantity,
-        current.categoria || "",
-        current.subcategoria || "",
-        current.ncm || "",
-        current.ean || "",
-        current.dataValidade || "",
-        current.link || "",
-        current.foto || "",
-        current.alturaCaixa || null,
-        current.larguraCaixa || null,
-        current.comprimentoCaixa || null,
-        current.pesoCaixa || null,
-        current.localizacaoEstoque || "",
-        current.origem || "planilha",
-        now
-      ]
+    const existingSplit = await client.query(
+      "select * from products where lot_id = $1 and split_source_product_id = $2 order by created_at asc limit 1 for update",
+      [lot.id, current.id]
     );
-    product = productFromRow(newProductResult.rows[0]);
+    if (existingSplit.rows[0]) {
+      const updatedSplit = await client.query(
+        `
+          update products
+          set descricao = $2,
+              valor_unit = $3,
+              preco_custo = $4,
+              qtd_total = qtd_total + $5,
+              bling_alert_dismissed = false
+          where id = $1
+          returning *
+        `,
+        [existingSplit.rows[0].id, split.descricao, split.valorUnit, split.precoCusto, sellableQuantity]
+      );
+      product = productFromRow(updatedSplit.rows[0]);
+    } else {
+      const usedCodes = await client.query("select codigo_ml from products where lot_id = $1", [lot.id]);
+      const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+      const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+      const codigoMl = generateSplitCodigoMl({ ...lot, proximoSequencialSku: reservation.sequence }, new Set(usedCodes.rows.map((row) => normalizeCode(row.codigo_ml))));
+      const newProductResult = await client.query(
+        `insert into products (
+           id, lot_id, created_by_user_id, operator_user_id, codigo_ml, sku, descricao,
+           valor_unit, preco_custo, qtd_total, categoria, subcategoria, ncm, ean,
+           data_validade, link, foto, altura_caixa, largura_caixa, comprimento_caixa,
+           peso_caixa, localizacao_estoque, origem, split_source_product_id, created_at
+         )
+         values (
+           $1, $2, $3, $4, $5, $6, $7,
+           $8, $9, $10, $11, $12, $13, $14,
+           $15, $16, $17, $18, $19, $20,
+           $21, $22, $23, $24, $25
+         )
+         returning *`,
+        [
+          randomUUID(),
+          lot.id,
+          current.createdByUserId || null,
+          current.operatorUserId || null,
+          codigoMl,
+          reservation.sku,
+          split.descricao,
+          split.valorUnit,
+          split.precoCusto,
+          sellableQuantity,
+          current.categoria || "",
+          current.subcategoria || "",
+          current.ncm || "",
+          current.ean || "",
+          current.dataValidade || "",
+          current.link || "",
+          current.foto || "",
+          current.alturaCaixa || null,
+          current.larguraCaixa || null,
+          current.comprimentoCaixa || null,
+          current.pesoCaixa || null,
+          current.localizacaoEstoque || "",
+          current.origem || "planilha",
+          current.id,
+          now
+        ]
+      );
+      product = productFromRow(newProductResult.rows[0]);
+      await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: product.id });
+      await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+    }
 
     await client.query(
       `update rz_items
@@ -5373,7 +5666,6 @@ async function splitLotProductPg({ userId, lotId, productId, codigoRz, kitQuanti
        where lot_id = $1 and product_id = $2 and codigo_rz = $3`,
       [lot.id, current.id, codigoRz, product.id, sellableQuantity, split.valorTotal, splitItemType(item.tipo_item)]
     );
-    await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -5529,7 +5821,7 @@ async function decrementDiverseLotItemQuantityPg({ userId, lotId, codigoRz, codi
   return { lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
+async function createExternalExcessPg({ userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
   const client = await getPgPool().connect();
   let product;
   try {
@@ -5543,10 +5835,13 @@ async function createExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
     const existing = await client.query("select id from products where lot_id = $1 and codigo_ml = $2 limit 1", [lot.id, codigoMl]);
     if (existing.rows.length) throw new Error("Este CÃ³digo ML jÃ¡ existe no lote atual.");
 
-    const records = buildExternalExcessRecords(lot, history, codigoRz, codigoMl);
+    const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+    const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+    const records = buildExternalExcessRecords(lot, history, codigoRz, codigoMl, { sku: reservation.sku });
     product = records.product;
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-    await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+    await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
+    await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -5571,7 +5866,9 @@ async function createManualExternalExcessPg({ userId, createdByUserId = userId, 
     if (existing.rows.length) throw new Error("Este Codigo ML ja existe no lote atual.");
 
     const source = normalizeManualProduct(manualProduct, codigoMl);
-    const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl, { createdByUserId, operatorUserId });
+    const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+    const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+    const records = buildExternalExcessRecords(lot, source, codigoRz, codigoMl, { createdByUserId, operatorUserId, sku: reservation.sku });
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
     await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
     await client.query(
@@ -5579,7 +5876,8 @@ async function createManualExternalExcessPg({ userId, createdByUserId = userId, 
        values ($1, $2, $3, $4, $5, $6, $7)`,
       [randomUUID(), lot.id, codigoRz, codigoMl, "cadastro_manual", null, new Date().toISOString()]
     );
-    await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+    await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
+    await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
     result = { status: "cadastro_manual", product: records.product };
     await client.query("commit");
   } catch (error) {
@@ -5662,6 +5960,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
     const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Lote nÃƒÂ£o encontrado.");
+    const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
 
     const existingResult = await client.query("select * from products where lot_id = $1 and codigo_ml = $2 limit 1 for update", [lot.id, codigoMl]);
     const existing = existingResult.rows[0] && productFromRow(existingResult.rows[0]);
@@ -5698,10 +5997,12 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       }
       if (!history && manualProduct) {
         const source = normalizeManualProduct(manualProduct, codigoMl);
-        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId });
+        const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
-        await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+        await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
+        await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
         result = { status: "cadastro_manual", product: records.product, parent: null };
         await client.query("commit");
         return { ...result, lot: await getUserLotDetail(userId, lotId) };
@@ -5714,9 +6015,11 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         throw error;
       }
 
-      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId });
+      const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
+      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
-      await client.query("update lots set proximo_sequencial_sku = proximo_sequencial_sku + 1 where id = $1", [lot.id]);
+      await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
+      await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
       result = { status: "criado", product: records.product, parent: history };
     }
 
@@ -6299,7 +6602,7 @@ async function reviewCatalogRequestPg(requestId, action, options = {}) {
 
 function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = {}) {
   const valorUnit = roundMoney(history.valorUnit);
-  const sku = formatSku(lot.prefixoSku, lot.proximoSequencialSku);
+  const sku = options.sku || formatSku(lot.prefixoSku, lot.proximoSequencialSku);
   const product = {
     id: randomUUID(),
     lotId: lot.id,
@@ -6350,7 +6653,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     createdByUserId: options.createdByUserId || null,
     operatorUserId: options.operatorUserId || null,
     codigoMl,
-    sku: formatSku(lot.prefixoSku, lot.proximoSequencialSku),
+    sku: options.sku || formatSku(lot.prefixoSku, lot.proximoSequencialSku),
     descricao: history.descricao,
     valorUnit,
     precoCusto: noSheetProductCost(lot, history, valorUnit),
@@ -6541,6 +6844,25 @@ function blingQueueAlertMessage(job = {}) {
 
 function isBlingQueueAlert(message = "") {
   return /pendente no Bling|pendente de envio ao Bling/i.test(String(message || ""));
+}
+
+function isStockMovementJob(type) {
+  return type === "stock_entry" || type === "stock_exit";
+}
+
+function mergeStockMovementPayload(current = {}, incoming = {}) {
+  const currentItem = current.item || {};
+  const incomingItem = incoming.item || {};
+  const quantidade = Number(currentItem.quantidade || 0) + Number(incomingItem.quantidade || 0);
+  const qtdConferida = Number(currentItem.qtdConferida || 0) + Number(incomingItem.qtdConferida || 0);
+  return {
+    ...incoming,
+    item: {
+      ...incomingItem,
+      quantidade,
+      qtdConferida
+    }
+  };
 }
 
 function blingRetryDelayMs(attempts) {
@@ -6879,6 +7201,12 @@ function generateSplitCodigoMl(lot = {}, usedCodes = new Set()) {
     if (!usedCodes.has(candidate)) return candidate;
   }
   throw new Error("Nao foi possivel gerar um Codigo ML disponivel para o desmembramento.");
+}
+
+function findSplitProductForOriginal(products = [], lotId, originalProductId) {
+  return [...products]
+    .filter((product) => product.lotId === lotId && product.splitSourceProductId === originalProductId)
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))[0] || null;
 }
 
 function splitItemType(type) {
@@ -7304,6 +7632,7 @@ function productFromRow(row) {
     blingAlertMessage: row.bling_alert_message || "",
     blingAlertDismissed: Boolean(row.bling_alert_dismissed),
     origem: row.origem || "planilha",
+    splitSourceProductId: row.split_source_product_id || "",
     createdAt: iso(row.created_at)
   };
 }
@@ -7337,6 +7666,116 @@ function blingSyncJobFromRow(row) {
     nextRunAt: iso(row.next_run_at),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
+  };
+}
+
+function skuReservationFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    lotId: row.lot_id,
+    operatorUserId: row.operator_user_id,
+    sku: row.sku,
+    sequence: Number(row.sequence || 0),
+    status: row.status || "reserved",
+    reservedAt: iso(row.reserved_at),
+    expiresAt: iso(row.expires_at),
+    consumedAt: row.consumed_at ? iso(row.consumed_at) : "",
+    productId: row.product_id || "",
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function skuReservationOperatorKey(userId, operatorUserId) {
+  return String(operatorUserId || userId || "").trim();
+}
+
+function endOfTodayIso(now = new Date()) {
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return end.toISOString();
+}
+
+function isExpiredSkuReservation(reservation, now = new Date()) {
+  return reservation?.status === "reserved" && reservation.expiresAt && new Date(reservation.expiresAt).getTime() < now.getTime();
+}
+
+function expireSkuReservations(reservations = [], now = new Date()) {
+  let changed = false;
+  for (const reservation of reservations) {
+    if (!isExpiredSkuReservation(reservation, now)) continue;
+    reservation.status = "expired";
+    reservation.updatedAt = now.toISOString();
+    changed = true;
+  }
+  return changed;
+}
+
+function ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId }) {
+  db.skuReservations = db.skuReservations || [];
+  expireSkuReservations(db.skuReservations);
+  const active = db.skuReservations.find(
+    (reservation) =>
+      reservation.lotId === lot.id &&
+      reservation.operatorUserId === operatorUserId &&
+      reservation.status === "reserved" &&
+      !isExpiredSkuReservation(reservation)
+  );
+  if (active) return active;
+
+  const available = db.skuReservations
+    .filter((reservation) => reservation.lotId === lot.id && reservation.status === "expired" && !reservation.productId)
+    .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0))[0];
+  const now = new Date().toISOString();
+  if (available) {
+    Object.assign(available, {
+      userId,
+      operatorUserId,
+      status: "reserved",
+      reservedAt: now,
+      expiresAt: endOfTodayIso(),
+      consumedAt: "",
+      productId: "",
+      updatedAt: now
+    });
+    return available;
+  }
+
+  const sequence = Number(lot.proximoSequencialSku || 1);
+  const reservation = buildSkuReservation({ userId, lot, operatorUserId, sequence });
+  lot.proximoSequencialSku = sequence + 1;
+  db.skuReservations.push(reservation);
+  return reservation;
+}
+
+function consumeSkuReservationInDb(reservation, productId) {
+  const now = new Date().toISOString();
+  Object.assign(reservation, {
+    status: "consumed",
+    consumedAt: now,
+    productId,
+    updatedAt: now
+  });
+  return reservation;
+}
+
+function buildSkuReservation({ userId, lot, operatorUserId, sequence }) {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    userId,
+    lotId: lot.id,
+    operatorUserId,
+    sku: formatSku(lot.prefixoSku, sequence),
+    sequence: Number(sequence || 0),
+    status: "reserved",
+    reservedAt: now,
+    expiresAt: endOfTodayIso(),
+    consumedAt: "",
+    productId: "",
+    createdAt: now,
+    updatedAt: now
   };
 }
 
