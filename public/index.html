@@ -144,11 +144,32 @@
 
       <section id="profileTab" class="profile-shell hidden">
         <aside class="profile-menu">
+          <button data-profile-section="help" type="button">Ajuda</button>
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
           <button data-profile-section="operators" type="button">Operadores</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
+
+        <section id="profileHelp" class="settings-shell profile-section hidden">
+          <section class="entry-panel profile-help-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Ajuda e treinamento</h3>
+            </div>
+            <p class="muted">Use este material para aprender a criar lotes, bipar produtos, configurar etiquetas e cadastrar itens no Etique Facil.</p>
+            <div class="training-resource-card">
+              <div>
+                <strong>Treinamento atualizado do Etique Facil</strong>
+                <span>PDF com telas novas, passo a passo e checklist rapido para operador.</span>
+              </div>
+              <div class="training-resource-actions">
+                <a class="button-link primary-action" href="/docs/treinamento-etique-facil-telas-novas.pdf" target="_blank" rel="noopener">Abrir PDF</a>
+                <a class="button-link ghost-link" href="/docs/treinamento-etique-facil-telas-novas.pdf" download>Baixar</a>
+              </div>
+            </div>
+          </section>
+        </section>
 
         <section id="profileDashboard" class="settings-shell profile-section hidden">
           <section class="entry-panel operational-dashboard-panel" id="profileOperationalDashboardPanel">

@@ -2418,10 +2418,11 @@ async function showApp(user) {
 
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
-  document.querySelector('#app [data-tab="profile"]')?.classList.toggle("hidden", operator && !canViewOperatorStats());
+  document.querySelector('#app [data-tab="profile"]')?.classList.remove("hidden");
   document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
+  document.querySelector('[data-profile-section="help"]')?.classList.remove("hidden");
   document.querySelector('[data-profile-section="dashboard"]')?.classList.toggle("hidden", user.role !== "owner");
   document.querySelector('[data-profile-section="entries"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="sync"]')?.classList.toggle("hidden", operator);
@@ -2831,16 +2832,18 @@ function getBlingCallbackMessage() {
 }
 
 function setProfileSection(section = "entries") {
+  if (state.user?.role === "operator" && !canViewOperatorStats()) section = "help";
   if (section === "operators" && !canViewOperatorStats()) section = isOwnerUser() ? "entries" : "";
   if (section === "triageStats" && !canViewTriageStats()) section = canViewOperatorStats() ? "operators" : "";
-  if (state.user?.role === "operator" && !["operators", "triageStats"].includes(section)) {
-    section = canViewOperatorStats() ? "operators" : "";
+  if (state.user?.role === "operator" && !["help", "operators", "triageStats"].includes(section)) {
+    section = canViewOperatorStats() ? "operators" : "help";
   }
   if (!section) return;
   state.profileSection = section;
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.classList.toggle("active", button.dataset.profileSection === section);
   });
+  $("#profileHelp").classList.toggle("hidden", section !== "help");
   $("#profileDashboard").classList.toggle("hidden", section !== "dashboard");
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
@@ -3931,11 +3934,6 @@ async function recordOperatorActivity(action, metadata = {}) {
 
 async function applyRouteFromLocation({ replace = false } = {}) {
   const route = parseRoute(window.location.pathname);
-  if (state.user?.role === "operator" && route.view === "profile" && !canViewOperatorStats()) {
-    setMainTab("lots", { push: false, resetSelection: true });
-    if (replace) updateRoute("/lotes", { replace: true });
-    return;
-  }
 
   if (route.view === "lotRz") {
     const lot = await selectLot(route.lotId, { push: false });
@@ -4026,7 +4024,6 @@ function updateRoute(path, { replace = false } = {}) {
 
 function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
   let target = tab || "profile";
-  if (state.user?.role === "operator" && target === "profile" && !canViewOperatorStats()) target = "lots";
   if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "triage" && !state.user?.triageAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {

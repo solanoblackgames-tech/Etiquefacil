@@ -479,6 +479,10 @@ h3 {
   width: 100%;
 }
 
+#profileHelp.settings-shell {
+  max-width: 980px;
+}
+
 #profileOperators .entry-panel {
   display: grid;
   gap: 12px;
@@ -1360,6 +1364,51 @@ h3 {
   border-radius: 8px;
   box-shadow: var(--shadow);
   padding: 18px;
+}
+
+.profile-help-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.training-resource-card {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.training-resource-card strong,
+.training-resource-card span {
+  display: block;
+}
+
+.training-resource-card span {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.training-resource-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .training-resource-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-resource-actions {
+    justify-content: flex-start;
+  }
 }
 
 .panel-heading {
