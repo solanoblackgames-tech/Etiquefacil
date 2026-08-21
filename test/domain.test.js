@@ -101,8 +101,8 @@ test("specialist import uses explicit product cost when provided", async () => {
 
 test("unified import uses fixed cost when product cost is absent", async () => {
   const rows = [
-    ["Descricao", "Preco de venda", "Qtd"],
-    ["Produto com custo fixo", 100, 2]
+    ["Codigo ML", "Descricao", "Preco de venda", "Qtd"],
+    ["ML-FIX", "Produto com custo fixo", 100, 2]
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
@@ -122,8 +122,8 @@ test("unified import uses fixed cost when product cost is absent", async () => {
 
 test("unified import keeps explicit product cost above fixed default", async () => {
   const rows = [
-    ["Descricao", "Preco de venda", "Qtd", "Preco de custo"],
-    ["Produto com custo informado", 100, 2, 37.45]
+    ["Codigo ML", "Descricao", "Preco de venda", "Qtd", "Preco de custo"],
+    ["ML-COST", "Produto com custo informado", 100, 2, 37.45]
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
@@ -139,6 +139,30 @@ test("unified import keeps explicit product cost above fixed default", async () 
   });
 
   assert.equal(result.products[0].precoCusto, 37.45);
+});
+
+test("unified import treats rows with quantity but no Codigo ML as suggestions", async () => {
+  const rows = [
+    ["Codigo ML", "Descricao", "Preco de venda", "Qtd"],
+    ["", "Produto aguardando bipagem", 89.9, 3],
+    ["ML-OK", "Produto com ML", 100, 2]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  const result = await importUnifiedLotWorkbook(buffer, {
+    skuPrefix: "fix",
+    startSequence: 1,
+    costMode: "fixed",
+    averageCost: 12.5,
+    auctionPercent: 0
+  });
+
+  assert.deepEqual(result.suggestions, [{ descricao: "Produto aguardando bipagem", valorUnit: 89.9 }]);
+  assert.deepEqual(result.products.map((product) => product.codigoMl), ["ML-OK"]);
+  assert.equal(result.items.length, 1);
 });
 
 test("Bling CSV maps SKU, ML brand and total stock", () => {

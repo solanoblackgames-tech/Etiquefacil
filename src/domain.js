@@ -307,14 +307,14 @@ export async function importUnifiedLotWorkbook(buffer, lotInput) {
     const valorUnit = parseNumber(get(row, "valorUnit"));
     if (!descricao || !Number.isFinite(valorUnit) || valorUnit <= 0) continue;
 
+    const codigoMl = String(get(row, "codigoMl") || "").trim().toUpperCase();
     const qtd = hasQuantityColumn(indexByColumn) ? readQuantity(row, indexByColumn, get) : 0;
-    if (!qtd) {
+    if (!qtd || !codigoMl) {
       suggestions.push({ descricao, valorUnit: roundMoney(valorUnit) });
       continue;
     }
 
     const sku = formatSku(lotInput.skuPrefix, sequence++);
-    const codigoMl = String(get(row, "codigoMl") || sku).trim().toUpperCase();
     const codigoRz = String(get(row, "codigoRz") || defaultRz).trim().toUpperCase();
     const valorTotal = indexByColumn.has("valorTotal") ? parseNumber(get(row, "valorTotal")) : roundMoney(qtd * valorUnit);
     const explicitCost = indexByColumn.has("precoCusto") ? roundMoney(parseNumber(get(row, "precoCusto"))) : 0;
