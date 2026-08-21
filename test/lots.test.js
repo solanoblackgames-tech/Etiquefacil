@@ -581,7 +581,7 @@ test("no-sheet lot suggestions keep suggested sale price", async () => {
       startSequence: 1,
       averageCost: 10,
       suggestions: [
-        { descricao: "Kit vestido infantil", valorUnit: "129,90" },
+        { descricao: "Kit vestido infantil", valorUnit: "129,90", quantidade: "3" },
         { descricao: "Sapato social", maiorPreco: "89.50" }
       ]
     });
@@ -590,12 +590,57 @@ test("no-sheet lot suggestions keep suggested sale price", async () => {
     const alternateResult = await suggestNoSheetProducts({ userId: "user-1", lotId: lot.id, query: "sapato" });
 
     assert.equal(result.source, "lista_lote");
-    assert.deepEqual(result.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit]), [
-      ["Kit vestido infantil", 129.9]
+    assert.deepEqual(result.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit, suggestion.quantidade]), [
+      ["Kit vestido infantil", 129.9, 3]
     ]);
     assert.deepEqual(alternateResult.suggestions.map((suggestion) => [suggestion.descricao, suggestion.valorUnit]), [
       ["Sapato social", 89.5]
     ]);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("manual no-sheet product uses suggestion quantity as expected quantity", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-no-sheet-manual-quantity-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-no-sheet-manual-quantity`;
+    const { addDiverseLotItem, createDiverseLot, readDb } = await import(storeUrl.href);
+
+    const lot = await createDiverseLot({
+      userId: "user-1",
+      name: "Lote sem planilha",
+      fornecedor: "Fornecedor",
+      skuPrefix: "DIV",
+      startSequence: 1,
+      averageCost: 10
+    });
+
+    const result = await addDiverseLotItem({
+      userId: "user-1",
+      lotId: lot.id,
+      codigoMl: "ML-QTD",
+      codigoRz: "PALLET-1",
+      manualProduct: { descricao: "Produto com qtd", valorUnit: 50 },
+      quantidade: 4
+    });
+    const db = await readDb();
+    const product = db.products.find((item) => item.id === result.product.id);
+    const rzItem = db.rzItems.find((item) => item.productId === result.product.id);
+
+    assert.equal(product.qtdTotal, 4);
+    assert.equal(rzItem.qtdEsperada, 4);
+    assert.equal(rzItem.valorTotal, 200);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

@@ -3579,13 +3579,14 @@ export async function deleteExternalExcess({ userId, lotId, codigoRz, codigoMl }
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
+export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
   const normalizedRz = String(codigoRz || "").trim().toUpperCase();
   if (!normalizedMl) throw new Error("Informe o CÃƒÂ³digo ML.");
   if (!normalizedRz) throw new Error("Informe o RZ.");
-  if (hasPostgres()) return addDiverseLotItemPg({ userId, createdByUserId, operatorUserId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, preview });
+  const expectedQuantity = normalizeExpectedQuantity(quantidade);
+  if (hasPostgres()) return addDiverseLotItemPg({ userId, createdByUserId, operatorUserId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, quantidade: expectedQuantity, preview });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -3597,12 +3598,12 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   if (existing) {
     const item = db.rzItems.find((candidate) => candidate.productId === existing.id && candidate.codigoRz === normalizedRz);
     if (item) {
-      item.qtdEsperada += 1;
+      item.qtdEsperada += expectedQuantity;
       item.valorTotal = roundMoney(item.qtdEsperada * existing.valorUnit);
     } else {
-      db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz));
+      db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz, { quantidade: expectedQuantity }));
     }
-    existing.qtdTotal += 1;
+    existing.qtdTotal += expectedQuantity;
     await writeDb(db);
     return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, lot: summarizeLot(db, lot, true) };
   }
@@ -3615,7 +3616,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
   if (previousHistory) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -3625,7 +3626,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
   if (!history && source) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -3636,7 +3637,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku });
+    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -3654,7 +3655,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
 
   const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
   consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
@@ -5998,7 +5999,7 @@ async function deleteExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, preview = false }) {
+async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -6008,6 +6009,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
     const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Lote nÃƒÂ£o encontrado.");
     const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
+    const expectedQuantity = normalizeExpectedQuantity(quantidade);
 
     const existingResult = await client.query("select * from products where lot_id = $1 and codigo_ml = $2 limit 1 for update", [lot.id, codigoMl]);
     const existing = existingResult.rows[0] && productFromRow(existingResult.rows[0]);
@@ -6022,17 +6024,17 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         await client.query(
           `
             update rz_items
-            set qtd_esperada = qtd_esperada + 1,
+            set qtd_esperada = qtd_esperada + $3,
                 valor_total = valor_total + $2
             where id = $1
           `,
-          [existingItem.id, existing.valorUnit]
+          [existingItem.id, roundMoney(Number(existing.valorUnit || 0) * expectedQuantity), expectedQuantity]
         );
       } else {
-        await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz)] });
+        await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity })] });
       }
-      await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [existing.id]);
-      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + 1 } };
+      await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
+      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity } };
     } else {
       const approvedHistory = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
       const previousHistory = approvedHistory ? null : (await findPgPreviousProductHistory(client, userId, lot.id, codigoMl, 1))[0];
@@ -6045,7 +6047,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       if (!history && manualProduct) {
         const source = normalizeManualProduct(manualProduct, codigoMl);
         const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku });
+        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
@@ -6063,7 +6065,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       }
 
       const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku });
+      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
       await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
@@ -6712,6 +6714,7 @@ function buildExternalExcessRecords(lot, history, codigoRz, codigoMl, options = 
 
 function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) {
   const valorUnit = decimalMoney(options.valorUnitOverride === undefined || options.valorUnitOverride === "" ? history.valorUnit : options.valorUnitOverride);
+  const quantidade = normalizeExpectedQuantity(options.quantidade);
   const product = {
     id: randomUUID(),
     lotId: lot.id,
@@ -6722,7 +6725,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     descricao: history.descricao,
     valorUnit,
     precoCusto: noSheetProductCost(lot, history, valorUnit),
-    qtdTotal: 1,
+    qtdTotal: quantidade,
     categoria: history.categoria || "",
     subcategoria: history.subcategoria || "",
     ncm: history.ncm || "",
@@ -6738,7 +6741,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     origem: options.origem || "lote_sem_planilha",
     createdAt: new Date().toISOString()
   };
-  const item = buildDiverseRzItem(lot, product, codigoRz);
+  const item = buildDiverseRzItem(lot, product, codigoRz, { quantidade });
   return { product, item };
 }
 
@@ -6749,20 +6752,26 @@ function noSheetProductCost(lot, history, valorUnit) {
   return roundMoney(Number(lot?.custoMedioUnitario || history?.precoCusto || 0));
 }
 
-function buildDiverseRzItem(lot, product, codigoRz) {
+function buildDiverseRzItem(lot, product, codigoRz, options = {}) {
+  const quantidade = normalizeExpectedQuantity(options.quantidade);
   return {
     id: randomUUID(),
     lotId: lot.id,
     productId: product.id,
     codigoRz,
     enderecoWms: "",
-    qtdEsperada: 1,
+    qtdEsperada: quantidade,
     qtdConferida: 0,
     condicaoGrade: "",
-    valorTotal: product.valorUnit,
+    valorTotal: roundMoney(Number(product.valorUnit || 0) * quantidade),
     tipoItem: "lote_sem_planilha",
     createdAt: new Date().toISOString()
   };
+}
+
+function normalizeExpectedQuantity(value) {
+  const quantity = requiredInt(value ?? 1);
+  return quantity > 0 ? quantity : 1;
 }
 
 function normalizeNoSheetSuggestions(input) {
@@ -6781,6 +6790,8 @@ function normalizeNoSheetSuggestions(input) {
     };
     const valorUnit = decimalMoney(item?.valorUnit ?? item?.valor_unit ?? item?.preco ?? item?.precoSugerido ?? item?.preco_sugerido ?? item?.maiorPreco ?? item?.maior_preco ?? item?.valorSugerido ?? item?.valor_sugerido ?? item?.price ?? item?.valor);
     if (Number.isFinite(valorUnit) && valorUnit > 0) suggestion.valorUnit = valorUnit;
+    const quantidade = optionalInt(item?.quantidade ?? item?.qtd ?? item?.qty ?? item?.quantity ?? item?.qtdEsperada ?? item?.qtd_esperada ?? item?.qtdTotal ?? item?.qtd_total);
+    if (Number.isInteger(quantidade) && quantidade > 0) suggestion.quantidade = quantidade;
     suggestions.push(suggestion);
   }
   return suggestions.slice(0, 1000);

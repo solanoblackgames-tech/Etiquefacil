@@ -2047,10 +2047,12 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
       codigoRz,
       manualProduct: req.body.manualProduct,
       valorUnitOverride: req.body.valorUnitOverride,
+      quantidade: req.body.quantidade ?? req.body.manualProduct?.quantidade,
       preview
     });
 
     if (!preview && result?.product?.id) {
+      const movementQuantity = req.body.quantidade ?? req.body.manualProduct?.quantidade ?? 1;
       await recordOperatorActivity(req.session.user, "scan_ml", {
         lotId: req.params.lotId,
         codigoRz,
@@ -2073,7 +2075,7 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
         userId,
         lotId: req.params.lotId,
         codigoRz,
-        item: stockMovementItemFromProduct(result.lot, result.product),
+        item: stockMovementItemFromProduct(result.lot, result.product, movementQuantity),
         operation: "entry",
         errorMessage: "Entrada de estoque aguardando envio ao Bling."
       });
@@ -3336,22 +3338,23 @@ function buildLotImportTemplateWorkbook() {
 
 function buildNoSheetSuggestionTemplateWorkbook() {
   const rows = [
-    ["Produto", "Preco"],
-    ["Produto exemplo", 129.9],
-    ["Outro produto exemplo", 89.5]
+    ["Produto", "Preco", "Qtd"],
+    ["Produto exemplo", 129.9, 2],
+    ["Outro produto exemplo", 89.5, 1]
   ];
   const instructions = [
     ["Como usar"],
     ["Preencha uma sugestao por linha na aba Sugestoes."],
     ["A coluna Produto deve conter o nome/descricao do produto."],
     ["A coluna Preco deve conter o preco de venda sugerido, usando numero ou formato brasileiro como 129,90."],
-    ["Mantenha os nomes das colunas Produto e Preco na primeira linha."]
+    ["A coluna Qtd e opcional; quando preenchida, sera usada como quantidade esperada ao aplicar a sugestao."],
+    ["Mantenha os nomes das colunas Produto, Preco e Qtd na primeira linha."]
   ];
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
-  sheet["!cols"] = [{ wch: 56 }, { wch: 14 }];
-  sheet["!autofilter"] = { ref: "A1:B1" };
+  sheet["!cols"] = [{ wch: 56 }, { wch: 14 }, { wch: 10 }];
+  sheet["!autofilter"] = { ref: "A1:C1" };
   instructionsSheet["!cols"] = [{ wch: 90 }];
   XLSX.utils.book_append_sheet(workbook, sheet, "Sugestoes");
   XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucoes");
@@ -3492,11 +3495,12 @@ function parseNoSheetSuggestionRows(rows) {
   const headerIndex = usefulRows.findIndex((row, index) => index < 10 && findNoSheetNameColumn(row.map((cell) => normalizeHeader(cell))) >= 0);
   const header = headerIndex >= 0 ? usefulRows[headerIndex].map((cell) => normalizeHeader(cell)) : usefulRows[0].map((cell) => normalizeHeader(cell));
   const priceColumn = header.findIndex(isNoSheetPriceColumn);
+  const quantityColumn = header.findIndex(isNoSheetQuantityColumn);
   const nameColumn = findNoSheetNameColumn(header);
   const start = headerIndex >= 0 ? headerIndex + 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
   return usefulRows.slice(start)
-    .map((row) => buildNoSheetSuggestion(row[column], noSheetSuggestionPriceCell(row, column, priceColumn)))
+    .map((row) => buildNoSheetSuggestion(row[column], noSheetSuggestionPriceCell(row, column, priceColumn), quantityColumn >= 0 ? row[quantityColumn] : ""))
     .filter((suggestion) => suggestion.descricao);
 }
 
@@ -3513,6 +3517,11 @@ function isNoSheetPriceColumn(name) {
   const compact = String(name || "").replace(/[^a-z0-9]/g, "");
   if (["preco", "valor", "venda", "valorunitario", "valorunit", "precodevenda", "precovenda", "precosugerido", "valorsugerido", "maiorpreco"].includes(compact)) return true;
   return compact.includes("preco") || compact.includes("valor") || compact.includes("venda");
+}
+
+function isNoSheetQuantityColumn(name) {
+  const compact = String(name || "").replace(/[^a-z0-9]/g, "");
+  return ["qtd", "qtde", "quantidade", "qty", "quantity", "qtdesperada", "quantidadeesperada"].includes(compact);
 }
 
 function looksLikeMoney(value) {
@@ -3542,13 +3551,24 @@ function parseNoSheetSuggestionLine(line) {
   const delimiter = text.includes(";") ? ";" : text.includes("\t") ? "\t" : text.includes(",") ? "," : "";
   if (!delimiter) return buildNoSheetSuggestion(text);
   const parts = text.split(delimiter);
-  return buildNoSheetSuggestion(parts[0], parts.slice(1).join(delimiter));
+  if (delimiter !== ",") return buildNoSheetSuggestion(parts[0], parts[1], parts[2]);
+  const valueParts = parts.slice(1).map((part) => part.trim());
+  const last = valueParts[valueParts.length - 1];
+  const previous = valueParts[valueParts.length - 2];
+  const lastLooksLikeQuantity = /^\d+$/.test(last) && (
+    valueParts.length >= 3 && !(/^\d+$/.test(previous) && previous.length <= 2) ||
+    valueParts.length === 2 && /[.$]/.test(previous)
+  );
+  const quantity = lastLooksLikeQuantity ? valueParts.pop() : "";
+  return buildNoSheetSuggestion(parts[0], valueParts.join(","), quantity);
 }
 
-function buildNoSheetSuggestion(descricao, valorUnit = "") {
+function buildNoSheetSuggestion(descricao, valorUnit = "", quantidade = "") {
   const suggestion = { descricao: String(descricao ?? "").trim() };
   const price = roundMoney(parseNumber(valorUnit));
   if (Number.isFinite(price) && price > 0) suggestion.valorUnit = price;
+  const quantity = parseNumber(quantidade);
+  if (Number.isInteger(quantity) && quantity > 0) suggestion.quantidade = quantity;
   return suggestion;
 }
 

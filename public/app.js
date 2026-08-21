@@ -688,8 +688,15 @@ async function addDiverseItem(event) {
   button.disabled = true;
   try {
     let valorUnitOverride;
+    const preview = await previewDiverseItem(codigoMl, codigoRz);
+    if (preview.status === "preview_existing") {
+      const action = await askProductAlreadyRegistered(preview.product, { sameCode: true });
+      if (action !== "use_existing") {
+        input.select();
+        return;
+      }
+    }
     if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
-      const preview = await previewDiverseItem(codigoMl, codigoRz);
       if (preview.status === "preview") {
         const product = preview.product || {};
         const suggestedPrice = await findNoSheetSuggestedPriceForProduct(product);
@@ -714,7 +721,21 @@ async function addDiverseItem(event) {
           input.select();
           return;
         }
-        const response = await createDiverseItem({ codigoMl, codigoRz, manualProduct });
+        let targetCodigoMl = codigoMl;
+        let targetManualProduct = manualProduct;
+        const existingByDescription = findExistingDiverseProductByDescription(manualProduct.descricao);
+        if (existingByDescription) {
+          const action = await askProductAlreadyRegistered(existingByDescription, { sameCode: false, quantidade: manualProduct.quantidade });
+          if (!action) {
+            input.select();
+            return;
+          }
+          if (action === "use_existing") {
+            targetCodigoMl = existingByDescription.codigoMl;
+            targetManualProduct = undefined;
+          }
+        }
+        const response = await createDiverseItem({ codigoMl: targetCodigoMl, codigoRz, manualProduct: targetManualProduct, quantidade: manualProduct.quantidade });
         input.value = "";
         renderDiverseLot(response.lot);
         await refreshLotsList(response.lot.id);
@@ -759,9 +780,9 @@ function renderManualDescriptionSuggestions(suggestions) {
       <button type="button" data-manual-description-suggestion-close aria-label="Fechar sugestoes">X</button>
     </div>
     ${suggestions.map((suggestion, index) => `
-      <div role="button" tabindex="0" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}">
+      <div role="button" tabindex="0" data-manual-description-suggestion="${index}" data-suggested-price="${escapeHtml(manualSuggestionPriceText(suggestion))}" data-suggested-quantity="${escapeHtml(manualSuggestionQuantityText(suggestion))}">
         <strong>${escapeHtml(suggestion.descricao)}</strong>
-        <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}</span>
+        <span>${suggestion.source === "lista_lote" ? "Lista do lote" : `Historico ${suggestion.codigoMl || ""}`}${suggestionPriceValue(suggestion) > 0 ? ` · Preco sugerido ${money(suggestionPriceValue(suggestion))}` : " · Sem preco sugerido"}${manualSuggestionQuantityValue(suggestion) > 1 ? ` · Qtd ${manualSuggestionQuantityValue(suggestion)}` : ""}</span>
       </div>
     `).join("")}
   `;
@@ -796,6 +817,43 @@ function normalizePriceDisplaySettings(settings = {}) {
 
 function manualSuggestionPriceText(suggestion) {
   return suggestion?.valorUnit ?? suggestion?.valor_unit ?? suggestion?.preco ?? suggestion?.precoSugerido ?? suggestion?.preco_sugerido ?? suggestion?.valorSugerido ?? suggestion?.valor_sugerido ?? suggestion?.price ?? suggestion?.valor ?? "";
+}
+
+function manualSuggestionQuantityText(suggestion) {
+  return suggestion?.quantidade ?? suggestion?.qtd ?? suggestion?.qty ?? suggestion?.quantity ?? suggestion?.qtdEsperada ?? suggestion?.qtd_esperada ?? suggestion?.qtdTotal ?? suggestion?.qtd_total ?? "";
+}
+
+function manualSuggestionQuantityValue(suggestion) {
+  const raw = manualSuggestionQuantityText(suggestion);
+  if (raw === undefined || raw === null || raw === "") return 1;
+  const quantity = Number.parseInt(String(raw).replace(/\D/g, ""), 10);
+  return Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+}
+
+function findExistingDiverseProductByDescription(description) {
+  const key = normalizeSearchText(description);
+  if (!key) return null;
+  return (state.selectedDiverseLot?.products || []).find((product) => normalizeSearchText(product.descricao) === key) || null;
+}
+
+function askProductAlreadyRegistered(product = {}, { sameCode = false, quantidade = 1 } = {}) {
+  const quantity = Number.isInteger(Number(quantidade)) && Number(quantidade) > 1 ? Number(quantidade) : 1;
+  return openDecisionModal({
+    title: "SKU ja cadastrado",
+    rows: [
+      ["Produto vigente", product.descricao || "-"],
+      ["SKU vigente", product.sku || "-"],
+      ["Codigo ML vigente", product.codigoMl || "-"],
+      ["Quantidade a aplicar", String(quantity)]
+    ],
+    actions: [
+      { id: "use", label: "Usar SKU vigente", primary: true, value: "use_existing" },
+      sameCode
+        ? { id: "cancel", label: "Cancelar", value: null }
+        : { id: "new", label: "Novo cadastro", value: "new_registration" }
+    ],
+    onSubmit: (action) => action
+  });
 }
 
 async function findNoSheetSuggestedPriceForProduct(product = {}) {
@@ -939,11 +997,11 @@ async function previewDiverseItem(codigoMl, codigoRz) {
   });
 }
 
-async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitOverride }) {
+async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade }) {
   return api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ codigoMl, codigoRz, manualProduct, valorUnitOverride })
+    body: JSON.stringify({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade })
   });
 }
 
@@ -1038,6 +1096,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const cancel = $("#manualProductCancel");
     const ncmOptions = normalizeConferenceSettings(state.conferenceSettings).ncmByCategory;
     const ncmListId = `manualProductNcmList-${Date.now()}`;
+    let selectedSuggestedQuantity = manualSuggestionQuantityValue(initialValues);
 
     const showBoxDimensions = includeLogisticsFields || isConferenceFieldEnabled("boxDimensions");
     const showWeight = includeLogisticsFields || isConferenceFieldEnabled("weight");
@@ -1185,6 +1244,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       window.clearTimeout(state.noSheetSuggestionTimer);
       state.manualSuggestionSuppressUntil = Date.now() + 1200;
       description.value = suggestion.descricao || "";
+      selectedSuggestedQuantity = manualSuggestionQuantityValue(suggestion);
       const lotSuggestion = findNoSheetSuggestionByDescription(description.value);
       const suggestedPrice = parseMoneyInput(button.dataset.suggestedPrice || manualSuggestionPriceText(suggestion) || manualSuggestionPriceText(lotSuggestion));
       if (Number.isFinite(suggestedPrice) && suggestedPrice > 0) {
@@ -1275,9 +1335,13 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (isConferenceFieldRequired("weight") && requireTextField(pesoCaixa, "Informe o peso da caixa.", error)) return;
       if (isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
       if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
+      if (selectedSuggestedQuantity <= 1) {
+        selectedSuggestedQuantity = manualSuggestionQuantityValue(findNoSheetSuggestionByDescription(descricao));
+      }
       const result = {
         descricao,
         valorUnit,
+        quantidade: selectedSuggestedQuantity,
         categoria: categoria ? categoria.value.trim() : "",
         subcategoria: subcategoria ? subcategoria.value.trim() : "",
         ncm: ncm ? normalizeNcmText(ncm.value) : ncmForCategory(categoria?.value),
