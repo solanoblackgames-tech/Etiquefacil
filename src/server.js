@@ -2272,21 +2272,24 @@ async function requireTransferAccess(req, res, next) {
 }
 
 function workspaceUserId(req) {
-  return req.session.user?.workspaceUserId || req.session.user?.id;
+  return req.session?.user?.workspaceUserId || req.session?.user?.id;
 }
 
 function operatorUserId(req) {
-  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
-  return role === "operator" ? req.session.user.id : null;
+  const user = req.session?.user;
+  const role = user?.role || (user?.parentUserId ? "operator" : "owner");
+  return role === "operator" ? user.id : null;
 }
 
 function isOwnerSession(req) {
-  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  const user = req.session?.user;
+  const role = user?.role || (user?.parentUserId ? "operator" : "owner");
   return role === "owner";
 }
 
 function isOperatorSession(req) {
-  const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
+  const user = req.session?.user;
+  const role = user?.role || (user?.parentUserId ? "operator" : "owner");
   return role === "operator";
 }
 
