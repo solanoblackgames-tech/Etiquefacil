@@ -2052,7 +2052,8 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
     });
 
     if (!preview && result?.product?.id) {
-      const movementQuantity = req.body.quantidade ?? req.body.manualProduct?.quantidade ?? 1;
+      const requestedQuantity = Number(req.body.quantidade ?? req.body.manualProduct?.quantidade ?? 1);
+      const movementQuantity = Number.isFinite(requestedQuantity) && requestedQuantity > 1 ? 0 : 1;
       await recordOperatorActivity(req.session.user, "scan_ml", {
         lotId: req.params.lotId,
         codigoRz,
@@ -2071,14 +2072,16 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
         });
       }
       await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
-      await enqueueStockMovementSync({
-        userId,
-        lotId: req.params.lotId,
-        codigoRz,
-        item: stockMovementItemFromProduct(result.lot, result.product, movementQuantity),
-        operation: "entry",
-        errorMessage: "Entrada de estoque aguardando envio ao Bling."
-      });
+      if (movementQuantity > 0) {
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz,
+          item: stockMovementItemFromProduct(result.lot, result.product, movementQuantity),
+          operation: "entry",
+          errorMessage: "Entrada de estoque aguardando envio ao Bling."
+        });
+      }
       result.lot = await getUserLotDetail(userId, req.params.lotId);
       result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
       scheduleBlingSyncQueue();

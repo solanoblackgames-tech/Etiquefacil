@@ -8139,7 +8139,8 @@ function itemCreatedAt(item) {
 
 function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
-  const quantity = item.qtdEsperada || 0;
+  const expectedQuantity = Number(item.qtdEsperada || 0);
+  const checkedQuantity = Number(item.qtdConferida || 0);
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
   return `
@@ -8151,8 +8152,8 @@ function diverseItemRow(item, startsRz = false) {
       <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}</span>
       <span class="diverse-operator-cell" data-label="Operador">${escapeHtml(productOperatorLabel(product))}</span>
       <span class="quantity-stepper diverse-quantity-cell" data-label="Qtd">
-        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${quantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
-        <strong>${quantity}</strong>
+        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${expectedQuantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+        <strong>${checkedQuantity}/${expectedQuantity}</strong>
         <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
       <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
