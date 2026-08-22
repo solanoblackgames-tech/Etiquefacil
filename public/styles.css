@@ -3726,7 +3726,7 @@ h3 {
     minmax(105px, 0.8fr)
     minmax(160px, 2fr)
     minmax(104px, 0.95fr)
-    112px
+    128px
     minmax(78px, 0.7fr)
     minmax(76px, 0.7fr)
     138px;
@@ -3741,7 +3741,7 @@ h3 {
     minmax(105px, 0.8fr)
     minmax(160px, 2fr)
     minmax(104px, 0.95fr)
-    112px
+    128px
     minmax(78px, 0.7fr)
     138px;
 }
@@ -3780,7 +3780,7 @@ h3 {
   align-items: center;
   display: grid;
   gap: 6px;
-  grid-template-columns: 30px 34px 30px;
+  grid-template-columns: 30px minmax(48px, max-content) 30px;
   justify-content: center;
   width: 100%;
 }
@@ -3789,6 +3789,7 @@ h3 {
   font-size: 15px;
   line-height: 30px;
   text-align: center;
+  white-space: nowrap;
 }
 
 .scan-quantity-stepper {
