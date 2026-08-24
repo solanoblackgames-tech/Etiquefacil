@@ -5104,7 +5104,7 @@ h3 {
   grid-template-rows: 10mm 13mm 3.5mm 6mm;
   height: 40mm;
   overflow: hidden;
-  padding: 2.5mm 4mm 1.8mm;
+  padding: 2.3mm 2mm 1.6mm;
   width: 60mm;
 }
 
@@ -5272,19 +5272,19 @@ h3 {
 }
 
 .label-print.has-club-price {
-  grid-template-rows: 7.2mm 8mm 2.6mm 14.6mm;
+  grid-template-rows: 6.8mm 10.2mm 2.6mm 12.2mm;
 }
 
 .label-print.has-club-price.has-meta {
-  grid-template-rows: 6.8mm 7.6mm 2.5mm 13.4mm 2mm;
+  grid-template-rows: 6.4mm 9.8mm 2.4mm 12.1mm 1.8mm;
 }
 
 .label-print.has-club-price.has-note {
-  grid-template-rows: 6.7mm 7.4mm 2.5mm 12.8mm 3.4mm;
+  grid-template-rows: 6.3mm 9.6mm 2.4mm 11.8mm 3.2mm;
 }
 
 .label-print.has-club-price.has-note.has-meta {
-  grid-template-rows: 6.2mm 7.4mm 2.5mm 12.4mm 2.8mm 1.9mm;
+  grid-template-rows: 5.8mm 9.2mm 2.3mm 11.6mm 2.7mm 1.8mm;
   padding-bottom: 1.2mm;
 }
 
@@ -5314,7 +5314,7 @@ h3 {
   justify-self: center;
   margin-top: 2px;
   shape-rendering: crispEdges;
-  width: 49mm;
+  width: 56mm;
 }
 
 .has-note .label-barcode {
@@ -5322,7 +5322,7 @@ h3 {
 }
 
 .has-club-price .label-barcode {
-  height: 8.4mm;
+  height: 10mm;
 }
 
 .label-sku {
