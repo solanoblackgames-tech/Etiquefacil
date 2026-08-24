@@ -364,6 +364,26 @@ test("Bling stock exit payload maps decremented item to stock output", () => {
   assert.equal(payload.observacoes, "Saida automatica por diminuicao RZ RZ-01");
 });
 
+test("Bling stock payloads preserve explicit zero quantity", () => {
+  const entry = buildBlingStockEntryPayload(
+    { sku: "AMZ04L0001", quantidade: 4, qtdConferida: 0 },
+    { productId: 123, depositoId: 456 }
+  );
+  const exit = buildBlingStockExitPayload(
+    { sku: "AMZ04L0001", quantidade: 0, qtdConferida: 0 },
+    { productId: 123, depositoId: 456 }
+  );
+  const transfer = buildBlingStockTransferPayload(
+    { sku: "AMZ04L0001", quantidade: 0, quantidadeConferida: 7 },
+    { productId: 123, depositoOrigemId: 456, depositoDestinoId: 789 }
+  );
+
+  assert.equal(entry.quantidade, 0);
+  assert.equal(exit.quantidade, 0);
+  assert.equal(transfer.saida.quantidade, 0);
+  assert.equal(transfer.entrada.quantidade, 0);
+});
+
 test("Bling stock balance sync corrects duplicated queued entry instead of adding another entry", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -402,6 +422,52 @@ test("Bling stock balance sync corrects duplicated queued entry instead of addin
     assert.equal(result.exits, 1);
     assert.equal(result.results[0].delta, -1);
     assert.equal(movement.body.operacao, "S");
+    assert.equal(movement.body.quantidade, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Bling stock balance sync adds only the missing quantity for repeated no-sheet entry", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 456, descricao: "Geral" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "BRS2406L0393" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, codigo: "BRS2406L0393", tributacao: { origem: 0, ncm: "42010000" } } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ produto: { id: 123 }, saldoFisico: 1 }] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 999 } }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingStockBalances({
+      integration: { accessToken: "token" },
+      depositoName: "Geral",
+      observacao: "Entrada automatica pendente por bipagem RZ BRS2406L-1013-001",
+      items: [
+        {
+          sku: "BRS2406L0393",
+          descricao: "testessssssss",
+          valorUnit: 50,
+          precoCusto: 15,
+          quantidade: 2,
+          qtdConferida: 2
+        }
+      ]
+    });
+
+    const movement = calls.find((call) => call.method === "POST" && call.url.endsWith("/estoques"));
+    assert.equal(result.entries, 1);
+    assert.equal(result.results[0].current, 1);
+    assert.equal(result.results[0].target, 2);
+    assert.equal(result.results[0].delta, 1);
+    assert.equal(movement.body.operacao, "E");
     assert.equal(movement.body.quantidade, 1);
   } finally {
     globalThis.fetch = originalFetch;

@@ -2052,8 +2052,6 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
     });
 
     if (!preview && result?.product?.id) {
-      const requestedQuantity = Number(req.body.quantidade ?? req.body.manualProduct?.quantidade ?? 1);
-      const movementQuantity = Number.isFinite(requestedQuantity) && requestedQuantity > 1 ? 0 : 1;
       await recordOperatorActivity(req.session.user, "scan_ml", {
         lotId: req.params.lotId,
         codigoRz,
@@ -2072,16 +2070,13 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
         });
       }
       await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
-      if (movementQuantity > 0) {
-        await enqueueStockMovementSync({
-          userId,
-          lotId: req.params.lotId,
-          codigoRz,
-          item: stockMovementItemFromProduct(result.lot, result.product, movementQuantity),
-          operation: "entry",
-          errorMessage: "Entrada de estoque aguardando envio ao Bling."
-        });
-      }
+      await enqueueStockBalanceSync({
+        userId,
+        lot: result.lot,
+        items: [stockMovementItemFromProduct(result.lot, result.product, result.product.qtdTotal)],
+        observacao: `Entrada automatica pendente por bipagem RZ ${codigoRz}`,
+        errorMessage: "Entrada de estoque aguardando envio ao Bling."
+      });
       result.lot = await getUserLotDetail(userId, req.params.lotId);
       result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
       scheduleBlingSyncQueue();
@@ -2948,11 +2943,12 @@ async function enqueueStockMovementSync({ userId, lotId, codigoRz, item, operati
 
 async function enqueueStockBalanceSync({ userId, lot, items, observacao, errorMessage }) {
   const key = items.map((item) => item.productId || item.sku).filter(Boolean).join("-") || "lot";
+  const singleItem = items.length === 1 ? items[0] : null;
   return enqueueBlingSyncJob({
     userId,
     lotId: lot.id,
-    productId: `stock-balance:${lot.id}:${key}`,
-    sku: `STOCK-BALANCE-${lot.id}`,
+    productId: singleItem?.productId || `stock-balance:${lot.id}:${key}`,
+    sku: singleItem?.sku || `STOCK-BALANCE-${lot.id}`,
     type: "stock_balance",
     payload: {
       items,
@@ -3011,8 +3007,8 @@ function stockMovementItemFromProduct(lot, product, quantity = 1) {
     fornecedor: lot.fornecedor || "",
     link: product.link || "",
     foto: product.foto || "",
-    quantidade: Number(quantity || 1),
-    qtdConferida: Number(quantity || 1)
+    quantidade: Number(quantity ?? 1),
+    qtdConferida: Number(quantity ?? 1)
   };
 }
 

@@ -162,7 +162,7 @@ export function buildBlingStockEntryPayload(item, { productId, depositoId, obser
     produto: { id: Number(productId), codigo: item.sku || "" },
     deposito: { id: Number(depositoId) },
     operacao: "E",
-    quantidade: numberOrZero(item.qtdConferida || item.quantidade),
+    quantidade: numberOrZero(item.qtdConferida ?? item.quantidade),
     preco: numberOrZero(item.precoCusto),
     custo: numberOrZero(item.precoCusto),
     observacoes: observacao
@@ -174,7 +174,7 @@ export function buildBlingStockExitPayload(item, { productId, depositoId, observ
     produto: { id: Number(productId), codigo: item.sku || "" },
     deposito: { id: Number(depositoId) },
     operacao: "S",
-    quantidade: numberOrZero(item.quantidade || item.qtdConferida || 1),
+    quantidade: numberOrZero(item.quantidade ?? item.qtdConferida ?? 1),
     observacoes: observacao
   });
 }
@@ -320,7 +320,7 @@ export async function syncBlingStockBalances({
     let productSync = { alerts: [] };
     if (!product?.id) {
       if (!createMissingProducts) {
-        results.push({ sku: item.sku, status: "missing", current: 0, target: numberOrZero(item.qtdConferida || item.quantidade), delta: 0 });
+        results.push({ sku: item.sku, status: "missing", current: 0, target: numberOrZero(item.qtdConferida ?? item.quantidade), delta: 0 });
         continue;
       }
       productSync = await createProductAndResolveId(client, item);
@@ -338,7 +338,7 @@ export async function syncBlingStockBalances({
       productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
     }
 
-    const target = numberOrZero(item.qtdConferida || item.quantidade);
+    const target = numberOrZero(item.qtdConferida ?? item.quantidade);
     const current = await client.getProductStockBalance(product.id, deposito.id);
     const delta = target - current;
     if (delta > 0) {
@@ -400,7 +400,7 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   const payloadBuilder = operation === "exit" ? buildBlingStockExitPayload : buildBlingStockEntryPayload;
   const response = await client.createStockEntry(
     payloadBuilder(
-      { ...item, quantidade: item.quantidade || 1, qtdConferida: item.qtdConferida || 1 },
+      { ...item, quantidade: item.quantidade ?? 1, qtdConferida: item.qtdConferida ?? 1 },
       {
         productId: product.id,
         depositoId: deposito.id,
