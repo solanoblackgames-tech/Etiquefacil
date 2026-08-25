@@ -2315,8 +2315,9 @@ async function splitLotProduct(product, codigoRz, { lotId = state.selectedLotId,
       meta: labelMeta(response.label?.createdAt),
       quantity: response.labelQuantity || split.sellableQuantity
     });
-    if (typeof render === "function") render(response.lot);
-    else renderLotRz(response.lot, codigoRz, { replace: false });
+    const splitScanCode = response.product?.codigoMl || response.product?.sku || product.codigoMl || product.sku || "";
+    if (typeof render === "function") render(response.lot, splitScanCode);
+    else renderScanPage(response.lot, codigoRz, { lastCodigoMl: splitScanCode });
     await refreshLotsList(response.lot.id);
     if (message) {
       const printed = response.labelQuantity || split.sellableQuantity;
@@ -6939,7 +6940,7 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
   root.querySelectorAll("[data-split-product]").forEach((button) => {
     button.addEventListener("click", async () => {
       const item = items.find((candidate) => candidate.product?.id === button.dataset.splitProduct);
-      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId });
+      if (item?.product) await splitLotProduct(item.product, codigoRz, { lotId, render: (updatedLot, splitScanCode) => renderScanPage(updatedLot, codigoRz, { lastCodigoMl: splitScanCode }) });
     });
   });
   root.querySelectorAll("[data-dismiss-bling-alert]").forEach((button) => {
