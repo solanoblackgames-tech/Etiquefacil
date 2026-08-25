@@ -5785,7 +5785,7 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
       `update rz_items
        set qtd_esperada = greatest(qtd_esperada - 1, 0),
            qtd_conferida = greatest(qtd_conferida - 1, 0),
-           valor_total = round((greatest(qtd_esperada - 1, 0) * $4)::numeric, 2),
+           valor_total = round((greatest(qtd_esperada - 1, 0) * $4::numeric)::numeric, 2),
            tipo_item = $5
        where id = $1 and lot_id = $2 and product_id = $3`,
       [item.id, lot.id, current.id, current.valorUnit || 0, splitItemType(item.tipo_item)]
@@ -5800,7 +5800,7 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
         `update rz_items
          set qtd_esperada = qtd_esperada + $2,
              qtd_conferida = qtd_conferida + $2,
-             valor_total = round(((qtd_esperada + $2) * $3)::numeric, 2),
+             valor_total = round(((qtd_esperada + $2) * $3::numeric)::numeric, 2),
              tipo_item = $4
          where id = $1`,
         [splitItemResult.rows[0].id, sellableQuantity, product.valorUnit || 0, splitItemType(splitItemResult.rows[0].tipo_item)]
