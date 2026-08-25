@@ -843,17 +843,7 @@ export async function listBlingIntegrationsForAdmin() {
 export async function listLotsForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
-    const [db, usersResult] = await Promise.all([
-      readPgDb(),
-      query("select id, name, email, tenant_name, parent_user_id, role, operator_code, created_at from users")
-    ]);
-    const usersById = new Map(usersResult.rows.map((row) => [row.id, sanitizeUser(userFromRow(row))]));
-    return db.lots
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((lot) => ({
-        ...summarizeLot(db, lot),
-        user: usersById.get(lot.userId) || null
-      }));
+    return listLotsForAdminPg();
   }
 
   const db = await readDb();
@@ -864,6 +854,87 @@ export async function listLotsForAdmin() {
       ...summarizeLot(db, lot),
       user: usersById.get(lot.userId) || null
     }));
+}
+
+async function listLotsForAdminPg() {
+  const result = await query(
+    `
+      with product_counts as (
+        select
+          lot_id,
+          count(*)::int as total_products,
+          count(*) filter (where origem = any($1::text[]))::int as total_excess_external
+        from products
+        group by lot_id
+      ),
+      rz_totals as (
+        select
+          ri.lot_id,
+          count(distinct ri.codigo_rz)::int as total_rzs,
+          coalesce(sum(ri.qtd_esperada), 0)::numeric as expected_qty,
+          coalesce(sum(ri.qtd_conferida), 0)::numeric as checked_qty,
+          coalesce(sum(ri.qtd_esperada * coalesce(p.valor_unit, 0)), 0)::numeric as expected_value,
+          coalesce(sum(case when ri.tipo_item = 'excedente_externo' then 0 else least(ri.qtd_conferida, ri.qtd_esperada) * coalesce(p.valor_unit, 0) end), 0)::numeric as checked_value
+        from rz_items ri
+        left join products p on p.id = ri.product_id
+        group by ri.lot_id
+      )
+      select
+        l.*,
+        coalesce(pc.total_products, 0)::int as total_products,
+        coalesce(pc.total_excess_external, 0)::int as total_excess_external,
+        coalesce(rt.total_rzs, 0)::int as total_rzs,
+        coalesce(rt.expected_qty, 0)::numeric as expected_qty,
+        coalesce(rt.checked_qty, 0)::numeric as checked_qty,
+        coalesce(rt.expected_value, 0)::numeric as expected_value,
+        coalesce(rt.checked_value, 0)::numeric as checked_value,
+        u.id as user_id_owner,
+        u.tenant_id as user_tenant_id,
+        u.tenant_name as user_tenant_name,
+        u.parent_user_id as user_parent_user_id,
+        u.role as user_role,
+        u.operator_code as user_operator_code,
+        u.triage_access as user_triage_access,
+        u.transfer_access as user_transfer_access,
+        u.operator_stats_access as user_operator_stats_access,
+        u.large_qr_label_access as user_large_qr_label_access,
+        u.name as user_name,
+        u.email as user_email,
+        u.password_hash as user_password_hash,
+        u.created_at as user_created_at
+      from lots l
+      left join product_counts pc on pc.lot_id = l.id
+      left join rz_totals rt on rt.lot_id = l.id
+      left join users u on u.id = l.user_id
+      order by l.created_at desc
+    `,
+    [EXCESS_EXPORT_ORIGINS]
+  );
+
+  return result.rows.map((row) => {
+    const lot = lotFromRow(row);
+    const expectedQty = num(row.expected_qty);
+    const checkedQty = num(row.checked_qty);
+    const expectedValue = num(row.expected_value);
+    const checkedValue = num(row.checked_value);
+    const user = row.user_id_owner ? sanitizeUser(userFromPrefixedRow(row, "user_")) : null;
+    return {
+      ...lot,
+      totalProducts: Number(row.total_products || 0),
+      totalItems: expectedQty,
+      totalExcessExternal: Number(row.total_excess_external || 0),
+      progress: {
+        expectedQty,
+        checkedQty,
+        qtyPercent: percent(checkedQty, expectedQty),
+        expectedValue: roundMoney(expectedValue),
+        checkedValue: roundMoney(checkedValue),
+        valuePercent: percent(checkedValue, expectedValue)
+      },
+      rzs: Array.from({ length: Number(row.total_rzs || 0) }, () => ({})),
+      user
+    };
+  });
 }
 
 function groupAdminUsersWithOperators(users) {
@@ -2793,7 +2864,7 @@ export async function splitLotProduct({ userId, operatorUserId = null, lotId, pr
   const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
   const existingSplit = findSplitProductForOriginal(db.products, lot.id, product.id);
   const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
-  const originalProduct = { ...product, qtdTotal: 0 };
+  const originalProduct = { ...product, qtdTotal: Math.max(0, Number(product.qtdTotal || 0) - 1) };
   let newProduct = existingSplit;
   if (newProduct) {
     newProduct.descricao = split.descricao;
@@ -2822,12 +2893,21 @@ export async function splitLotProduct({ userId, operatorUserId = null, lotId, pr
     db.products.push(newProduct);
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   }
-  product.qtdTotal = 0;
-  item.productId = newProduct.id;
-  item.qtdEsperada = sellableQuantity;
-  item.qtdConferida = Math.min(Number(item.qtdConferida || 0), sellableQuantity);
-  item.valorTotal = split.valorTotal;
+  product.qtdTotal = originalProduct.qtdTotal;
+  item.qtdEsperada = Math.max(0, Number(item.qtdEsperada || 0) - 1);
+  item.qtdConferida = Math.max(0, Number(item.qtdConferida || 0) - 1);
+  item.valorTotal = roundMoney(Number(product.valorUnit || 0) * Number(item.qtdEsperada || 0));
   item.tipoItem = splitItemType(item.tipoItem);
+
+  const splitItem = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === newProduct.id && candidate.codigoRz === codigoRz);
+  if (splitItem) {
+    splitItem.qtdEsperada = Number(splitItem.qtdEsperada || 0) + sellableQuantity;
+    splitItem.qtdConferida = Number(splitItem.qtdConferida || 0) + sellableQuantity;
+    splitItem.valorTotal = roundMoney(Number(splitItem.qtdEsperada || 0) * Number(newProduct.valorUnit || 0));
+    splitItem.tipoItem = splitItemType(splitItem.tipoItem);
+  } else {
+    db.rzItems.push(buildSplitRzItem(lot, newProduct, codigoRz, sellableQuantity));
+  }
 
   await writeDb(db);
   return { product: newProduct, originalProduct, lot: summarizeLot(db, lot, true) };
@@ -4169,7 +4249,7 @@ async function ensurePgStore() {
       id text primary key,
       user_id text not null references users(id) on delete cascade,
       lot_id text not null references lots(id) on delete cascade,
-      product_id text not null references products(id) on delete cascade,
+      product_id text not null,
       sku text not null,
       type text not null,
       status text not null default 'pending',
@@ -4425,6 +4505,7 @@ async function ensurePgStore() {
     alter table bling_sync_jobs add column if not exists error_message text not null default '';
     alter table bling_sync_jobs add column if not exists attempts integer not null default 0;
     alter table bling_sync_jobs add column if not exists next_run_at timestamptz not null default now();
+    alter table bling_sync_jobs drop constraint if exists bling_sync_jobs_product_id_fkey;
     create unique index if not exists bling_sync_jobs_product_type_idx on bling_sync_jobs(product_id, type);
     alter table catalog_products add column if not exists ean text not null default '';
     alter table catalog_products add column if not exists ncm text not null default '';
@@ -5619,14 +5700,14 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
     const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
-    const zeroedOriginal = await client.query(
+    const updatedOriginal = await client.query(
       `update products
-       set qtd_total = 0
+       set qtd_total = greatest(qtd_total - 1, 0)
        where id = $1 and lot_id = $2
        returning *`,
       [current.id, lot.id]
     );
-    originalProduct = productFromRow(zeroedOriginal.rows[0]);
+    originalProduct = productFromRow(updatedOriginal.rows[0]);
 
     const now = new Date().toISOString();
     const existingSplit = await client.query(
@@ -5702,14 +5783,31 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
 
     await client.query(
       `update rz_items
-       set product_id = $4,
-           qtd_esperada = $5,
-           qtd_conferida = least(qtd_conferida, $5),
-           valor_total = $6,
-           tipo_item = $7
-       where lot_id = $1 and product_id = $2 and codigo_rz = $3`,
-      [lot.id, current.id, codigoRz, product.id, sellableQuantity, split.valorTotal, splitItemType(item.tipo_item)]
+       set qtd_esperada = greatest(qtd_esperada - 1, 0),
+           qtd_conferida = greatest(qtd_conferida - 1, 0),
+           valor_total = round((greatest(qtd_esperada - 1, 0) * $4)::numeric, 2),
+           tipo_item = $5
+       where id = $1 and lot_id = $2 and product_id = $3`,
+      [item.id, lot.id, current.id, current.valorUnit || 0, splitItemType(item.tipo_item)]
     );
+
+    const splitItemResult = await client.query(
+      "select * from rz_items where lot_id = $1 and product_id = $2 and codigo_rz = $3 limit 1 for update",
+      [lot.id, product.id, codigoRz]
+    );
+    if (splitItemResult.rows[0]) {
+      await client.query(
+        `update rz_items
+         set qtd_esperada = qtd_esperada + $2,
+             qtd_conferida = qtd_conferida + $2,
+             valor_total = round(((qtd_esperada + $2) * $3)::numeric, 2),
+             tipo_item = $4
+         where id = $1`,
+        [splitItemResult.rows[0].id, sellableQuantity, product.valorUnit || 0, splitItemType(splitItemResult.rows[0].tipo_item)]
+      );
+    } else {
+      await insertLotRows(client, { rzItems: [buildSplitRzItem(lot, product, codigoRz, sellableQuantity)] });
+    }
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -7293,6 +7391,22 @@ function findSplitProductForOriginal(products = [], lotId, originalProductId) {
 
 function splitItemType(type) {
   return type === "excedente_outro_rz" ? "esperado" : type || "esperado";
+}
+
+function buildSplitRzItem(lot, product, codigoRz, quantity) {
+  return {
+    id: randomUUID(),
+    lotId: lot.id,
+    productId: product.id,
+    codigoRz,
+    enderecoWms: "",
+    qtdEsperada: Number(quantity || 0),
+    qtdConferida: Number(quantity || 0),
+    condicaoGrade: "",
+    valorTotal: roundMoney(Number(product.valorUnit || 0) * Number(quantity || 0)),
+    tipoItem: "esperado",
+    createdAt: new Date().toISOString()
+  };
 }
 
 function upsertCatalogProduct(db, request) {

@@ -1614,7 +1614,7 @@ app.post("/api/lots/:lotId/products/:productId/split", requireAuth, async (req, 
     await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto desmembrado aguardando envio ao Bling." });
     const balanceItems = [stockMovementItemFromProduct(result.lot, result.product, labelQuantity)];
     if (result.originalProduct?.sku && result.originalProduct.sku !== result.product.sku) {
-      balanceItems.unshift(stockMovementItemFromProduct(result.lot, result.originalProduct, 0));
+      balanceItems.unshift(stockMovementItemFromProduct(result.lot, result.originalProduct, result.originalProduct.qtdTotal));
     }
     await enqueueStockBalanceSync({
       userId,
@@ -3061,7 +3061,7 @@ async function syncSplitProductToBling(userId, lot, originalProduct, product, qu
     qtdConferida: Number(targetQuantity || 0)
   });
   const items = [splitItem(product, quantity)];
-  if (originalProduct?.sku && originalProduct.sku !== product.sku) items.unshift(splitItem(originalProduct, 0));
+  if (originalProduct?.sku && originalProduct.sku !== product.sku) items.unshift(splitItem(originalProduct, Number(originalProduct.qtdTotal || 0)));
   return syncBlingStockBalances({
     integration,
     items,

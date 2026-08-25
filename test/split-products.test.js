@@ -40,7 +40,7 @@ test("calculateSplitProductValues adjusts only the current RZ quantity from tota
   assert.equal(split.qtdTotal, 8);
 });
 
-test("splitLotProduct uses reserved SKU and zeroes the original product", async () => {
+test("splitLotProduct uses reserved SKU and keeps the original product in the RZ", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-split-product-"));
@@ -130,19 +130,24 @@ test("splitLotProduct uses reserved SKU and zeroes the original product", async 
     const original = db.products.find((product) => product.id === "product-original");
     const created = db.products.find((product) => product.id === result.product.id);
 
-    assert.equal(original.qtdTotal, 0);
+    assert.equal(original.qtdTotal, 4);
     assert.equal(created.codigoMl, "ABCX00007");
     assert.equal(created.sku, "ABC0007");
     assert.equal(created.splitSourceProductId, "product-original");
     assert.equal(created.qtdTotal, 4);
     assert.equal(created.valorUnit, 20);
-    assert.equal(db.rzItems[0].productId, created.id);
-    assert.equal(db.rzItems[0].qtdEsperada, 4);
+    const originalItem = db.rzItems.find((item) => item.id === "item-1");
+    const splitItem = db.rzItems.find((item) => item.productId === created.id);
+    assert.equal(originalItem.productId, "product-original");
+    assert.equal(originalItem.qtdEsperada, 4);
+    assert.equal(originalItem.qtdConferida, 4);
+    assert.equal(splitItem.qtdEsperada, 4);
+    assert.equal(splitItem.qtdConferida, 4);
     assert.equal(db.lots[0].proximoSequencialSku, 9);
     assert.ok(db.skuReservations.some((reservation) => reservation.sku === "ABC0007" && reservation.status === "consumed" && reservation.productId === created.id));
     assert.ok(db.skuReservations.some((reservation) => reservation.sku === "ABC0008" && reservation.status === "reserved"));
     assert.equal(result.originalProduct.codigoMl, "ABCD12345");
-    assert.equal(result.originalProduct.qtdTotal, 0);
+    assert.equal(result.originalProduct.qtdTotal, 4);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
@@ -226,8 +231,13 @@ test("splitLotProduct reuses the previous split SKU for the same original produc
     assert.equal(first.product.id, second.product.id);
     assert.equal(second.product.sku, "ABC0007");
     assert.equal(splitProducts[0].qtdTotal, 7);
-    assert.equal(db.rzItems.find((item) => item.id === "item-1").productId, splitProducts[0].id);
-    assert.equal(db.rzItems.find((item) => item.id === "item-2").productId, splitProducts[0].id);
+    assert.equal(db.products.find((product) => product.id === "product-original").qtdTotal, 8);
+    assert.equal(db.rzItems.find((item) => item.id === "item-1").productId, "product-original");
+    assert.equal(db.rzItems.find((item) => item.id === "item-1").qtdEsperada, 4);
+    assert.equal(db.rzItems.find((item) => item.id === "item-2").productId, "product-original");
+    assert.equal(db.rzItems.find((item) => item.id === "item-2").qtdEsperada, 4);
+    assert.equal(db.rzItems.find((item) => item.productId === splitProducts[0].id && item.codigoRz === "RZ-1").qtdEsperada, 4);
+    assert.equal(db.rzItems.find((item) => item.productId === splitProducts[0].id && item.codigoRz === "RZ-2").qtdEsperada, 3);
     assert.equal(db.skuReservations.filter((reservation) => reservation.status === "consumed").length, 1);
   } finally {
     process.chdir(originalCwd);
