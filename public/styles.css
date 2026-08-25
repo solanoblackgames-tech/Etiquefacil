@@ -3729,7 +3729,7 @@ h3 {
     128px
     minmax(78px, 0.7fr)
     minmax(76px, 0.7fr)
-    138px;
+    minmax(158px, auto);
   min-width: 0;
   padding: 10px;
 }
@@ -3743,7 +3743,7 @@ h3 {
     minmax(104px, 0.95fr)
     128px
     minmax(78px, 0.7fr)
-    138px;
+    minmax(158px, auto);
 }
 
 .diverse-rz-divider {
@@ -3771,6 +3771,7 @@ h3 {
 }
 
 .diverse-row-actions .icon-button {
+  flex: 0 0 34px;
   height: 34px;
   min-height: 34px;
   width: 34px;
@@ -3861,7 +3862,7 @@ h3 {
       minmax(160px, 2fr)
       112px
       minmax(78px, 0.75fr)
-      138px;
+      minmax(158px, auto);
   }
 
   .diverse-row-head .diverse-operator-cell,
