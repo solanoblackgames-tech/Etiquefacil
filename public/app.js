@@ -399,6 +399,12 @@ function bindEvents() {
     event.preventDefault();
     lookupTriageCode();
   });
+  $("#triageCreateForm input[name='sku']").addEventListener("change", lookupTriageSku);
+  $("#triageCreateForm input[name='sku']").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
   $("#triageFilterForm").addEventListener("change", handleTriageFilterChange);
   $("#triageFilterForm").addEventListener("click", handleTriageFilterClick);
@@ -9016,6 +9022,7 @@ async function createTriageItem(event) {
   const form = event.currentTarget;
   $("#triageMessage").textContent = "";
   try {
+    await hydrateTriageProductFromSku(form);
     const response = await api("/api/triage/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -9040,6 +9047,26 @@ async function createTriageItem(event) {
     $("#triageMessage").textContent = error.message;
     schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
   }
+}
+
+async function lookupTriageSku() {
+  const form = $("#triageCreateForm");
+  await hydrateTriageProductFromSku(form, { showNotFound: true });
+}
+
+async function hydrateTriageProductFromSku(form, { showNotFound = false } = {}) {
+  const sku = String(form?.elements?.sku?.value || "").trim();
+  if (!sku) return null;
+  const hasProductData = ["descricao", "ean", "asin", "productCode"].some((name) => String(form.elements?.[name]?.value || "").trim());
+  if (hasProductData) return null;
+  const response = await api(`/api/triage/lookup?code=${encodeURIComponent(sku)}`);
+  if (response.product) {
+    fillTriageProduct(response.product);
+    renderTriageLookupPreview(response.product);
+    return response.product;
+  }
+  if (showNotFound) renderTriageLookupPreview(null, "SKU nao encontrado na base. A etiqueta sera criada somente com o codigo bipado.");
+  return null;
 }
 
 function generateSecuritySealsPdf(event) {

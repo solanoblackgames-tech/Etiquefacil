@@ -342,6 +342,19 @@
             </form>
             <p id="triageTransferSettingsMessage" class="message"></p>
           </section>
+          <section class="entry-panel profile-security-seals-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Gerar A4 de lacres QR</h3>
+            </div>
+            <form id="securitySealsForm" class="security-seals-form">
+              <label>Folhas A4<input name="pages" type="number" min="1" max="50" step="1" value="1" required /></label>
+              <label>Prefixo<input name="prefix" maxlength="12" value="LCR" required /></label>
+              <label>Sequencial inicial<input name="start" type="number" min="1" max="999999" step="1" value="1" required /></label>
+              <button type="submit">Gerar PDF A4</button>
+            </form>
+            <p class="muted security-seals-note">Cada folha sai completa com lacres de 15mm x 15mm. No layout padrao, 1 A4 gera 204 lacres. O QR contem somente o codigo do lacre.</p>
+          </section>
         </section>
 
         <section id="profileOperators" class="settings-shell profile-section hidden">
@@ -469,20 +482,6 @@
           </form>
           <div id="triageLookupPreview" class="triage-lookup-preview hidden"></div>
           <p id="triageMessage" class="message"></p>
-        </section>
-
-        <section class="entry-panel triage-seals-panel">
-          <div class="panel-heading">
-            <span class="muted">Lacres avulsos</span>
-            <h3>Gerar A4 de lacres QR</h3>
-          </div>
-          <form id="securitySealsForm" class="security-seals-form">
-            <label>Folhas A4<input name="pages" type="number" min="1" max="50" step="1" value="1" required /></label>
-            <label>Prefixo<input name="prefix" maxlength="12" value="LCR" required /></label>
-            <label>Sequencial inicial<input name="start" type="number" min="1" max="999999" step="1" value="1" required /></label>
-            <button type="submit">Gerar PDF A4</button>
-          </form>
-          <p class="muted security-seals-note">Cada folha sai completa com lacres de 15mm x 15mm. No layout padrao, 1 A4 gera 204 lacres. O QR contem somente o codigo do lacre.</p>
         </section>
 
         <section class="layout triage-layout">

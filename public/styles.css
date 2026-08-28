@@ -1519,13 +1519,13 @@ h3 {
 }
 
 .triage-create-panel {
-  align-items: center;
+  align-items: flex-start;
   background: #ffffff;
   display: flex;
   gap: 10px;
-  grid-column: 1;
-  min-height: 42px;
-  padding: 4px 10px;
+  grid-column: 1 / -1;
+  min-height: 64px;
+  padding: 10px 12px;
 }
 
 .triage-create-panel .panel-heading {
@@ -1534,14 +1534,14 @@ h3 {
 }
 
 .triage-create-panel .panel-heading h3,
-.triage-seals-panel .panel-heading h3 {
+.profile-security-seals-panel .panel-heading h3 {
   font-size: 12px;
   margin-top: 1px;
   white-space: nowrap;
 }
 
 .triage-create-panel .panel-heading .muted,
-.triage-seals-panel .panel-heading .muted {
+.profile-security-seals-panel .panel-heading .muted {
   font-size: 10px;
 }
 
@@ -1552,19 +1552,17 @@ h3 {
 }
 
 .triage-form {
-  align-items: center;
-  display: grid;
-  gap: 6px;
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   flex: 1 1 auto;
-  grid-template-columns: minmax(210px, 1fr) minmax(190px, 1fr) minmax(170px, 0.8fr);
   min-width: 0;
 }
 
 .triage-form .wide-field {
-  align-items: center;
-  grid-column: auto;
-  grid-template-columns: auto minmax(180px, 1fr);
-  min-width: 0;
+  flex: 1 1 260px;
+  min-width: 220px;
 }
 
 .triage-form .triage-hidden-field {
@@ -1576,23 +1574,8 @@ h3 {
 .triage-form input[name="securitySealCode"] {
   font-size: 14px;
   font-weight: 700;
-  min-height: 28px;
-  padding: 0 10px;
-}
-
-.triage-seals-panel {
-  align-items: center;
-  background: #ffffff;
-  display: flex;
-  gap: 10px;
-  grid-column: 2;
-  min-height: 42px;
-  padding: 4px 10px;
-}
-
-.triage-seals-panel .panel-heading {
-  flex: 0 0 132px;
-  margin-bottom: 0;
+  min-height: 36px;
+  padding: 0 12px;
 }
 
 .security-seals-form {
@@ -1622,6 +1605,24 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.profile-security-seals-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-security-seals-panel .security-seals-form label {
+  font-size: 12px;
+}
+
+.profile-security-seals-panel .security-seals-form {
+  grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
+}
+
+.profile-security-seals-panel .security-seals-note {
+  font-size: 12px;
+  white-space: normal;
 }
 
 .triage-lookup-preview {
@@ -1730,49 +1731,34 @@ h3 {
     padding: 4px 8px 8px;
   }
 
-  .triage-create-panel,
-  .triage-seals-panel {
-    min-height: 36px;
-    padding: 3px 8px;
+  .triage-create-panel {
+    min-height: 58px;
+    padding: 8px;
   }
 
-  .triage-create-panel .panel-heading,
-  .triage-seals-panel .panel-heading {
+  .triage-create-panel .panel-heading {
     flex-basis: 104px;
   }
 
-  .triage-create-panel .panel-heading h3,
-  .triage-seals-panel .panel-heading h3 {
+  .triage-create-panel .panel-heading h3 {
     font-size: 11px;
   }
 
   .triage-create-panel .panel-heading .muted,
-  .triage-seals-panel .panel-heading .muted,
-  .triage-form label,
-  .security-seals-form label {
+  .triage-form label {
     font-size: 9px;
   }
 
   .triage-form .wide-field {
-    grid-template-columns: auto minmax(120px, 1fr);
-  }
-
-  .security-seals-form {
-    gap: 5px;
-    grid-template-columns: 68px 76px 106px auto;
+    flex: 1 1 240px;
+    min-width: 210px;
   }
 
   .triage-form input[name="lookupCode"],
   .triage-form input[name="sku"],
-  .triage-form input[name="securitySealCode"],
-  .security-seals-form input,
-  .security-seals-form button {
-    min-height: 24px;
-    padding: 0 7px;
-  }
-
-  .security-seals-note {
-    display: none;
+  .triage-form input[name="securitySealCode"] {
+    min-height: 32px;
+    padding: 0 10px;
   }
 
   .triage-layout .lot-list {
@@ -5871,8 +5857,7 @@ h3 {
     padding: 16px;
   }
 
-  .triage-create-panel,
-  .triage-seals-panel {
+  .triage-create-panel {
     grid-template-columns: 1fr;
   }
 

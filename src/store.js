@@ -3225,6 +3225,7 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
     const client = await getPgPool().connect();
     try {
       await client.query("begin");
+      await ensureTransferLotTriageColumnsPg(client);
       const existingResult = await client.query(
         "select * from transfer_lots where user_id = $1 and source = 'triage' and triage_item_id = $2 and status <> 'synced' order by created_at desc limit 1 for update",
         [userId, item.id]
@@ -5460,6 +5461,7 @@ async function insertBlingSyncJobRows(client, jobs = []) {
 
 async function insertTransferLotRows(client, lots = []) {
   const target = client || { query };
+  if (hasPostgres()) await ensureTransferLotTriageColumnsPg(target);
   await insertRows(
     target,
     "transfer_lots",
@@ -5484,6 +5486,15 @@ async function insertTransferLotRows(client, lots = []) {
       lot.triageDestination || ""
     ])
   );
+}
+
+async function ensureTransferLotTriageColumnsPg(target = { query }) {
+  await target.query(`
+    alter table transfer_lots add column if not exists source text not null default 'manual';
+    alter table transfer_lots add column if not exists triage_item_id text;
+    alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
+    alter table transfer_lots add column if not exists triage_destination text not null default '';
+  `);
 }
 
 async function insertTransferItemRows(client, items = []) {
