@@ -371,7 +371,7 @@ function bindEvents() {
   $("#triageCreateForm input[name='lookupCode']").addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    event.currentTarget.form.requestSubmit();
+    lookupTriageCode();
   });
   $("#triageItems").addEventListener("click", handleTriageItemsClick);
   $("#triageFilterForm").addEventListener("change", handleTriageFilterChange);
@@ -8637,10 +8637,6 @@ async function createTriageItem(event) {
   const form = event.currentTarget;
   $("#triageMessage").textContent = "";
   try {
-    if (new FormData(form).get("lookupCode") && !new FormData(form).get("descricao") && !new FormData(form).get("sku") && !new FormData(form).get("ean")) {
-      const lookup = await lookupTriageCode();
-      if (lookup?.item) return;
-    }
     const response = await api("/api/triage/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8659,9 +8655,11 @@ async function createTriageItem(event) {
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
     $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
   } catch (error) {
     $("#triageMessage").style.color = "";
     $("#triageMessage").textContent = error.message;
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
   }
 }
 
@@ -8696,11 +8694,11 @@ async function lookupTriageCode() {
       updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
       $("#triageMessage").style.color = "#0f766e";
       $("#triageMessage").textContent = "Etiqueta de triagem encontrada.";
-      schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
       return { item: response.item };
     }
     if (!response.product) {
-      renderTriageLookupPreview(null, "Produto nao encontrado para esta bipagem.");
+      renderTriageLookupPreview(null, "Etiqueta ou lacre nao encontrado.");
       schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
       return null;
     }

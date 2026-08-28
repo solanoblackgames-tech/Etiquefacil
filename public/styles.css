@@ -1556,7 +1556,7 @@ h3 {
   display: grid;
   gap: 6px;
   flex: 1 1 auto;
-  grid-template-columns: minmax(220px, 1.35fr) minmax(180px, 0.85fr);
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, 1fr) minmax(170px, 0.8fr);
   min-width: 0;
 }
 
@@ -1572,6 +1572,7 @@ h3 {
 }
 
 .triage-form input[name="lookupCode"],
+.triage-form input[name="sku"],
 .triage-form input[name="securitySealCode"] {
   font-size: 14px;
   font-weight: 700;
@@ -1762,6 +1763,7 @@ h3 {
   }
 
   .triage-form input[name="lookupCode"],
+  .triage-form input[name="sku"],
   .triage-form input[name="securitySealCode"],
   .security-seals-form input,
   .security-seals-form button {

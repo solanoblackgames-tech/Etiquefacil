@@ -81,6 +81,43 @@ test("createTriageItem keeps code sequence after deleting an earlier label", asy
   }
 });
 
+test("createTriageItem creates a new label every time the same SKU is scanned", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-repeat-sku-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-repeat-sku`;
+    const { createTriageItem, writeDb } = await import(storeUrl.href);
+    await writeDb(emptyDb());
+
+    const first = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      payload: { sku: "SKU-REPETIDO" }
+    });
+    const second = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      payload: { sku: "SKU-REPETIDO" }
+    });
+
+    assert.equal(first.sku, "SKU-REPETIDO");
+    assert.equal(second.sku, "SKU-REPETIDO");
+    assert.notEqual(first.id, second.id);
+    assert.notEqual(first.code, second.code);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("operator can delete only their last five generated triage labels", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
