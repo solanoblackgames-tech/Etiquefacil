@@ -249,6 +249,7 @@ export async function createUser({ name, email, password, parentUserId = null })
 
   if (hasPostgres()) {
     try {
+      await ensureUserStockTransferAcceptanceColumnPg();
       await query(
         `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, stock_transfer_acceptance_access, operator_stats_access, large_qr_label_access, name, email, password_hash, created_at)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
@@ -553,6 +554,7 @@ export async function updateUserTransferAccessForAdmin(userId, transferAccess) {
 export async function updateUserStockTransferAcceptanceAccessForAdmin(userId, stockTransferAcceptanceAccess) {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query("update users set stock_transfer_acceptance_access = $2 where id = $1 returning *", [userId, Boolean(stockTransferAcceptanceAccess)]);
     if (!result.rows.length) throw notFound("Usuario nao encontrado.");
     return { user: sanitizeUser(userFromRow(result.rows[0])) };
@@ -623,6 +625,7 @@ export async function updateOperatorTransferAccess({ ownerUserId, operatorUserId
 export async function updateOperatorStockTransferAcceptanceAccess({ ownerUserId, operatorUserId, stockTransferAcceptanceAccess }) {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       "update users set stock_transfer_acceptance_access = $3 where id = $2 and parent_user_id = $1 returning *",
       [ownerUserId, operatorUserId, Boolean(stockTransferAcceptanceAccess)]
@@ -836,6 +839,7 @@ export async function recordOperatorActivity(user, action, metadata = {}) {
 export async function listUsersForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       `
         select
@@ -902,6 +906,7 @@ export async function listUsersForAdmin() {
 export async function listBlingIntegrationsForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       `
         select
@@ -964,6 +969,7 @@ export async function listLotsForAdmin() {
 }
 
 async function listLotsForAdminPg() {
+  await ensureUserStockTransferAcceptanceColumnPg();
   const result = await query(
     `
       with product_counts as (
@@ -1157,6 +1163,7 @@ export async function listTriageStatsRows(userId, period = {}) {
   const range = normalizeOperatorActivityRange(period);
   const lotId = String(period.lotId || "").trim();
   if (hasPostgres()) {
+    await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       `
         select
@@ -5567,6 +5574,10 @@ async function ensureTransferLotTriageColumnsPg(target = { query }) {
     alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
     alter table transfer_lots add column if not exists triage_destination text not null default '';
   `);
+}
+
+async function ensureUserStockTransferAcceptanceColumnPg(target = { query }) {
+  await target.query("alter table users add column if not exists stock_transfer_acceptance_access boolean not null default false");
 }
 
 async function insertTransferItemRows(client, items = []) {
