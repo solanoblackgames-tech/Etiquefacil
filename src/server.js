@@ -799,7 +799,7 @@ app.post("/api/operator-invites/:token/accept", async (req, res) => {
   }
 });
 
-app.get("/api/bling/deposits", requireAuth, requireTransferAccess, async (req, res) => {
+app.get("/api/bling/deposits", requireAuth, requireTransferOrTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
     const integration = await getRequiredBlingCredentials(userId);
@@ -2315,6 +2315,17 @@ async function requireTransferAccess(req, res, next) {
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.transferAccess) return next();
     return res.status(403).json({ error: "Modulo de transferencia nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+async function requireTransferOrTriageAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.transferAccess || freshUser?.triageAccess) return next();
+    return res.status(403).json({ error: "Modulo de transferencia ou triagem nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
   }

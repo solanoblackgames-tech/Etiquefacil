@@ -4642,6 +4642,62 @@ h3 {
   width: auto;
 }
 
+.triage-settings-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.triage-deposit-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.triage-deposit-chip {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.triage-deposit-chip.selected {
+  background: #e6fffb;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.triage-deposit-chip small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.triage-diagnosis-rule-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.triage-rule-card {
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(170px, 1.2fr) minmax(150px, 1fr) minmax(170px, 1fr) minmax(140px, auto) auto;
+  padding: 12px;
+}
+
+.triage-rule-card .check-option {
+  align-self: center;
+}
+
 .admin-heading {
   gap: 12px;
   margin-bottom: 12px;

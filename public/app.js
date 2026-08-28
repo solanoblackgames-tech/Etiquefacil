@@ -35,6 +35,7 @@ const state = {
   operationalOperatorSort: { key: "totalValue", direction: "desc" },
   blingDeposits: [],
   blingDepositsLoaded: false,
+  blingDepositsError: "",
   profileSection: "entries",
   lots: [],
   selectedLotId: null,
@@ -424,6 +425,7 @@ function bindEvents() {
   $("#profileTriageStatsPanel").addEventListener("submit", handleTriageStatsFilterSubmit);
   $("#profileTriageStatsPanel").addEventListener("change", handleTriageStatsFilterChange);
   $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
+  $("#profileTriageRules").addEventListener("click", handleTriageRulesClick);
   $("#profileOperationalDashboardPanel").addEventListener("click", handleOperationalDashboardClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2683,20 +2685,9 @@ function renderTriageTransferSettings() {
   if (!form) return;
   const settings = state.triageTransferSettings || defaultTriageTransferSettings();
   form.elements.enabled.checked = Boolean(settings.enabled);
-  form.elements.defaultOriginDeposit.value = settings.defaultOriginDeposit || "";
-  form.elements.destinations.value = (settings.destinations || [])
-    .map((item) => [item.code, item.label, item.depositName].join(" | "))
-    .join("\n");
-  form.elements.diagnosisOptions.value = (settings.diagnosisOptions || [])
-    .map((item) => [
-      item.code,
-      item.label,
-      item.destination,
-      item.depositOrigin,
-      item.depositDestination,
-      item.transferEnabled ? "sim" : "nao"
-    ].join(" | "))
-    .join("\n");
+  renderTriageOriginDepositSelect(form, settings);
+  renderTriageDepositChoices(settings);
+  renderTriageDiagnosisRuleList(settings);
 }
 
 async function saveTriageTransferSettings(event) {
@@ -2710,8 +2701,7 @@ async function saveTriageTransferSettings(event) {
     const payload = {
       enabled: form.elements.enabled.checked,
       defaultOriginDeposit: form.elements.defaultOriginDeposit.value,
-      destinations: parseAdminTriageDestinations(form.elements.destinations.value),
-      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value)
+      ...profileTriageRulesPayload(form)
     };
     const response = await api("/api/profile/triage-transfer-settings", {
       method: "PATCH",
@@ -2729,6 +2719,161 @@ async function saveTriageTransferSettings(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function renderTriageOriginDepositSelect(form, settings) {
+  const select = form.elements.defaultOriginDeposit;
+  const deposits = triageAvailableDepositNames(settings);
+  const current = settings.defaultOriginDeposit || deposits[0] || "";
+  select.innerHTML = deposits.length
+    ? deposits.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")
+    : '<option value="">Autorize o Bling para carregar depositos</option>';
+  select.disabled = !deposits.length;
+  select.value = deposits.includes(current) ? current : deposits[0] || "";
+}
+
+function renderTriageDepositChoices(settings) {
+  const wrapper = $("#triageDepositChoices");
+  if (!wrapper) return;
+  const deposits = triageAvailableDepositNames(settings);
+  if (state.blingDepositsError && !deposits.length) {
+    wrapper.innerHTML = `<p class="message">${escapeHtml(state.blingDepositsError)} Autorize o Bling em Perfil > Integre ao Bling.</p>`;
+    return;
+  }
+  if (!state.blingDepositsLoaded && !deposits.length) {
+    wrapper.innerHTML = '<p class="muted">Carregando depositos do Bling...</p>';
+    return;
+  }
+  if (!deposits.length) {
+    wrapper.innerHTML = '<p class="message">Nenhum deposito do Bling carregado. Autorize o Bling em Perfil > Integre ao Bling.</p>';
+    return;
+  }
+  const used = new Set((settings.diagnosisOptions || []).map((option) => String(option.depositDestination || "").trim()).filter(Boolean));
+  wrapper.innerHTML = deposits.map((name) => `
+    <button type="button" class="triage-deposit-chip ${used.has(name) ? "selected" : ""}" data-set-default-triage-origin="${escapeHtml(name)}">
+      <span>${escapeHtml(name)}</span>
+      ${used.has(name) ? "<small>em uso</small>" : "<small>selecionar origem</small>"}
+    </button>
+  `).join("");
+}
+
+function renderTriageDiagnosisRuleList(settings) {
+  const wrapper = $("#triageDiagnosisRuleList");
+  if (!wrapper) return;
+  const deposits = triageAvailableDepositNames(settings);
+  const rules = settings.diagnosisOptions?.length ? settings.diagnosisOptions : defaultTriageTransferSettings().diagnosisOptions;
+  wrapper.innerHTML = rules.map((rule) => triageDiagnosisRuleCard(rule, deposits, settings.defaultOriginDeposit)).join("");
+}
+
+function triageDiagnosisRuleCard(rule = {}, deposits = [], defaultOriginDeposit = "") {
+  const label = String(rule.label || rule.code || "").trim();
+  const code = normalizeRuleCode(rule.code || label);
+  const destinationDeposit = String(rule.depositDestination || "").trim();
+  const originDeposit = String(rule.depositOrigin || defaultOriginDeposit || "").trim();
+  const depositOptions = deposits.length
+    ? deposits.map((name) => `<option value="${escapeHtml(name)}" ${name === destinationDeposit ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
+    : `<option value="${escapeHtml(destinationDeposit)}">${escapeHtml(destinationDeposit || "Depositos indisponiveis")}</option>`;
+  const originOptions = deposits.length
+    ? deposits.map((name) => `<option value="${escapeHtml(name)}" ${name === originDeposit ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
+    : `<option value="${escapeHtml(originDeposit)}">${escapeHtml(originDeposit || "Depositos indisponiveis")}</option>`;
+  return `
+    <article class="triage-rule-card" data-triage-rule-card data-rule-code="${escapeHtml(code)}">
+      <label>Tipo de laudo
+        <input name="diagnosisLabel" value="${escapeHtml(label)}" placeholder="Ex: OK venda internet" required />
+      </label>
+      <label>Deposito origem
+        <select name="depositOrigin" ${deposits.length ? "" : "disabled"}>${originOptions}</select>
+      </label>
+      <label>Deposito destino no Bling
+        <select name="depositDestination" ${deposits.length ? "" : "disabled"} required>${depositOptions}</select>
+      </label>
+      <label class="check-option">
+        <input name="transferEnabled" type="checkbox" ${rule.transferEnabled === false ? "" : "checked"} />
+        Gerar transferencia
+      </label>
+      <button type="button" class="ghost danger" data-remove-triage-diagnosis>Remover</button>
+    </article>
+  `;
+}
+
+function triageAvailableDepositNames(settings = state.triageTransferSettings || defaultTriageTransferSettings()) {
+  return [...new Set([
+    ...(state.blingDeposits || []).map((deposit) => deposit.descricao),
+    settings.defaultOriginDeposit,
+    ...(settings.destinations || []).map((destination) => destination.depositName),
+    ...(settings.diagnosisOptions || []).flatMap((option) => [option.depositOrigin, option.depositDestination])
+  ].map((name) => String(name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+function profileTriageRulesPayload(form) {
+  const defaultOriginDeposit = String(form.elements.defaultOriginDeposit.value || "").trim();
+  const cards = [...form.querySelectorAll("[data-triage-rule-card]")];
+  const diagnosisOptions = cards.map((card) => {
+    const label = String(card.querySelector('[name="diagnosisLabel"]')?.value || "").trim();
+    const code = normalizeRuleCode(card.dataset.ruleCode || label);
+    const depositOrigin = String(card.querySelector('[name="depositOrigin"]')?.value || defaultOriginDeposit).trim();
+    const depositDestination = String(card.querySelector('[name="depositDestination"]')?.value || "").trim();
+    const destination = normalizeRuleCode(depositDestination);
+    return {
+      code,
+      label,
+      destination,
+      depositOrigin,
+      depositDestination,
+      transferEnabled: Boolean(card.querySelector('[name="transferEnabled"]')?.checked)
+    };
+  });
+  const destinations = [...new Map(diagnosisOptions.map((rule) => [
+    rule.destination,
+    { code: rule.destination, label: rule.depositDestination, depositName: rule.depositDestination }
+  ])).values()];
+  return { destinations, diagnosisOptions };
+}
+
+function normalizeRuleCode(value) {
+  const normalized = normalizeCodigoMl(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "LAUDO";
+}
+
+function handleTriageRulesClick(event) {
+  const defaultButton = event.target.closest("[data-set-default-triage-origin]");
+  if (defaultButton) {
+    const select = $("#triageTransferSettingsForm")?.elements?.defaultOriginDeposit;
+    if (select) select.value = defaultButton.dataset.setDefaultTriageOrigin || "";
+    return;
+  }
+  if (event.target.closest("[data-refresh-triage-deposits]")) {
+    loadBlingDeposits({ force: true, quiet: true }).then(renderTriageTransferSettings);
+    return;
+  }
+  if (event.target.closest("[data-add-triage-diagnosis]")) {
+    addTriageDiagnosisRuleCard();
+    return;
+  }
+  const removeButton = event.target.closest("[data-remove-triage-diagnosis]");
+  if (removeButton) {
+    removeButton.closest("[data-triage-rule-card]")?.remove();
+  }
+}
+
+function addTriageDiagnosisRuleCard() {
+  const wrapper = $("#triageDiagnosisRuleList");
+  const form = $("#triageTransferSettingsForm");
+  if (!wrapper || !form) return;
+  const deposits = triageAvailableDepositNames();
+  const deposit = deposits[0] || "";
+  wrapper.insertAdjacentHTML("beforeend", triageDiagnosisRuleCard({
+    code: `NOVO_LAUDO_${Date.now()}`,
+    label: "Novo laudo",
+    depositOrigin: form.elements.defaultOriginDeposit.value || deposit,
+    depositDestination: deposit,
+    transferEnabled: true
+  }, deposits, form.elements.defaultOriginDeposit.value));
+  wrapper.querySelector("[data-triage-rule-card]:last-child input")?.select();
 }
 
 async function refreshPriceDisplaySettingsForm() {
@@ -3026,7 +3171,10 @@ function setProfileSection(section = "entries") {
     renderConferenceSettings();
     refreshPriceDisplaySettingsForm();
   }
-  if (section === "triageRules") renderTriageTransferSettings();
+  if (section === "triageRules") {
+    renderTriageTransferSettings();
+    loadBlingDeposits({ quiet: true }).then(renderTriageTransferSettings);
+  }
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
 }
@@ -5775,25 +5923,29 @@ async function loadTransferLots(selectId = state.selectedTransferLotId) {
   }
 }
 
-async function loadBlingDeposits({ force = false } = {}) {
+async function loadBlingDeposits({ force = false, quiet = false } = {}) {
   const form = $("#transferLotForm");
-  if (!form || (state.blingDepositsLoaded && !force)) return;
+  if (state.blingDepositsLoaded && !force) return;
   renderDepositSelects({ loading: true });
   try {
     const response = await api("/api/bling/deposits");
     state.blingDeposits = response.deposits || [];
     state.blingDepositsLoaded = true;
+    state.blingDepositsError = "";
     renderDepositSelects();
-    if (!state.blingDeposits.length) {
+    if (!quiet && form && !state.blingDeposits.length) {
       $("#transferMessage").style.color = "";
       $("#transferMessage").textContent = "Nenhum deposito ativo foi encontrado no Bling.";
     }
   } catch (error) {
     state.blingDeposits = [];
     state.blingDepositsLoaded = false;
+    state.blingDepositsError = error.message;
     renderDepositSelects({ error: error.message });
-    $("#transferMessage").style.color = "";
-    $("#transferMessage").textContent = `${error.message} Autorize o Bling em Perfil > Integre ao Bling para selecionar os depositos.`;
+    if (!quiet && form) {
+      $("#transferMessage").style.color = "";
+      $("#transferMessage").textContent = `${error.message} Autorize o Bling em Perfil > Integre ao Bling para selecionar os depositos.`;
+    }
   }
 }
 

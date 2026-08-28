@@ -316,18 +316,26 @@
             </div>
             <form id="triageTransferSettingsForm" class="settings-form triage-rules-form">
               <label>Deposito origem padrao
-                <input name="defaultOriginDeposit" placeholder="Ex: Triagem" />
+                <select name="defaultOriginDeposit"></select>
               </label>
               <label class="wide-field checkbox-field">
                 <input name="enabled" type="checkbox" />
                 <span>Gerar transferencia automaticamente ao salvar laudo</span>
               </label>
-              <label class="wide-field">Destinos e depositos do Bling
-                <textarea name="destinations" rows="5" placeholder="ECOMMERCE | Ecommerce | Ecommerce&#10;LOJA | Loja | Loja"></textarea>
-              </label>
-              <label class="wide-field">Opcoes de diagnostico
-                <textarea name="diagnosisOptions" rows="8" placeholder="OK_VENDA_INTERNET | OK venda internet | ECOMMERCE | Triagem | Ecommerce | sim&#10;OK_COM_DETALHES | OK com detalhes | LOJA | Triagem | Loja | sim"></textarea>
-              </label>
+              <div class="wide-field triage-deposit-picker">
+                <div class="triage-settings-heading">
+                  <strong>Depositos encontrados no Bling</strong>
+                  <button type="button" class="ghost" data-refresh-triage-deposits>Atualizar depositos</button>
+                </div>
+                <div id="triageDepositChoices" class="triage-deposit-choices"></div>
+              </div>
+              <div class="wide-field triage-diagnosis-builder">
+                <div class="triage-settings-heading">
+                  <strong>Tipos de laudo</strong>
+                  <button type="button" data-add-triage-diagnosis>Adicionar laudo</button>
+                </div>
+                <div id="triageDiagnosisRuleList" class="triage-diagnosis-rule-list"></div>
+              </div>
               <div class="settings-actions">
                 <button type="submit">Salvar configuracao</button>
               </div>
