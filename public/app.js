@@ -3969,7 +3969,7 @@ function operatorPermissionConfig(kind, operator) {
     transfer: {
       enabled: operator.transferAccess,
       canToggle: isOwnerUser() && state.user?.transferAccess,
-      label: "Transferencia",
+      label: "Aceitar transferencia de estoque",
       route: "transfer-access",
       bodyKey: "transferAccess"
     },
@@ -5068,7 +5068,7 @@ function adminUserRow(user) {
             <button type="submit">Salvar senha</button>
           </form>
           <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
           <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
@@ -5108,7 +5108,7 @@ function adminOperatorRow(operator) {
           <button type="submit">Salvar senha</button>
         </form>
         <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
         <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
