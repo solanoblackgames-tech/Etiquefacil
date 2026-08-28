@@ -25,6 +25,7 @@ const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
 const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled";
 const CONFERENCE_SETTINGS_KEY = "conference_registration";
 const PRICE_DISPLAY_SETTINGS_KEY = "price_display";
+const TRIAGE_TRANSFER_SETTINGS_KEY = "triage_transfer";
 const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
 const OPERATOR_DASHBOARD_ACTIONS = [
   "login",
@@ -83,6 +84,27 @@ const PRICE_DISPLAY_DEFAULTS = Object.freeze({
   discountPercent: 30,
   discountLabel: "CLIENTE CLUBE PAGA",
   regularLabel: "DEMAIS CLIENTES"
+});
+
+const DEFAULT_TRIAGE_TRANSFER_SETTINGS = Object.freeze({
+  enabled: true,
+  defaultOriginDeposit: "Triagem",
+  diagnosisOptions: [
+    { code: "OK_VENDA_INTERNET", label: "OK venda internet", destination: "ECOMMERCE", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Ecommerce", requireAcceptance: true },
+    { code: "OK_VENDA_DIRETA", label: "OK venda direta", destination: "VENDA_DIRETA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Venda Direta", requireAcceptance: true },
+    { code: "OK_COM_DETALHES", label: "OK com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
+    { code: "RMA", label: "RMA", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true },
+    { code: "OK_FUNCIONANDO", label: "OK funcionando", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
+    { code: "FUNCIONANDO_COM_DETALHES", label: "Funcionando com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
+    { code: "NAO_LIGA", label: "Nao liga", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true },
+    { code: "QUEBRADO_DANIFICADO", label: "Quebrado/danificado", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true }
+  ],
+  destinations: [
+    { code: "ECOMMERCE", label: "Ecommerce", depositName: "Ecommerce" },
+    { code: "LOJA", label: "Loja", depositName: "Loja" },
+    { code: "VENDA_DIRETA", label: "Venda direta", depositName: "Venda Direta" },
+    { code: "RMA", label: "RMA", depositName: "RMA" }
+  ]
 });
 
 export function hasPostgres() {
@@ -423,6 +445,51 @@ export async function saveUserPriceDisplaySettings(userId, payload = {}) {
     existing.updatedAt = now;
   } else {
     db.userSettings.push({ userId, key: PRICE_DISPLAY_SETTINGS_KEY, value: settings, createdAt: now, updatedAt: now });
+  }
+  await writeDb(db);
+  return settings;
+}
+
+export async function getUserTriageTransferSettings(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "select value from user_settings where user_id = $1 and key = $2 limit 1",
+      [userId, TRIAGE_TRANSFER_SETTINGS_KEY]
+    );
+    return normalizeTriageTransferSettings(result.rows[0]?.value || {});
+  }
+
+  const db = await readDb();
+  const setting = (db.userSettings || []).find((item) => item.userId === userId && item.key === TRIAGE_TRANSFER_SETTINGS_KEY);
+  return normalizeTriageTransferSettings(setting?.value || {});
+}
+
+export async function saveUserTriageTransferSettings(userId, payload = {}) {
+  await ensureStore();
+  const settings = normalizeTriageTransferSettings(payload);
+  const now = new Date().toISOString();
+
+  if (hasPostgres()) {
+    const result = await query(
+      `insert into user_settings (user_id, key, value, updated_at)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, key)
+       do update set value = excluded.value, updated_at = excluded.updated_at
+       returning value`,
+      [userId, TRIAGE_TRANSFER_SETTINGS_KEY, settings, now]
+    );
+    return normalizeTriageTransferSettings(result.rows[0]?.value || settings);
+  }
+
+  const db = await readDb();
+  db.userSettings = db.userSettings || [];
+  const existing = db.userSettings.find((item) => item.userId === userId && item.key === TRIAGE_TRANSFER_SETTINGS_KEY);
+  if (existing) {
+    existing.value = settings;
+    existing.updatedAt = now;
+  } else {
+    db.userSettings.push({ userId, key: TRIAGE_TRANSFER_SETTINGS_KEY, value: settings, createdAt: now, updatedAt: now });
   }
   await writeDb(db);
   return settings;
@@ -3055,7 +3122,19 @@ function buildTransferLotWithAutomaticName(db, { userId, descricao = "", deposit
   });
 }
 
-function buildTransferLotRecord({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null, creator = null, sequence = 1 }) {
+function buildTransferLotRecord({
+  userId,
+  descricao = "",
+  depositoOrigem,
+  depositoDestino,
+  createdByUserId = null,
+  creator = null,
+  sequence = 1,
+  source = "manual",
+  triageItemId = null,
+  diagnosisCondition = "",
+  triageDestination = ""
+}) {
   const createdAt = new Date().toISOString();
   return {
     id: randomUUID(),
@@ -3070,7 +3149,11 @@ function buildTransferLotRecord({ userId, descricao = "", depositoOrigem, deposi
     syncedAt: null,
     receivedTotal: null,
     receivedAt: null,
-    receivedByName: ""
+    receivedByName: "",
+    source: source || "manual",
+    triageItemId: triageItemId || null,
+    diagnosisCondition: diagnosisCondition || "",
+    triageDestination: triageDestination || ""
   };
 }
 
@@ -3120,6 +3203,115 @@ export async function createTransferLot({ userId, descricao = "", depositoOrigem
   db.transferLots.push(lot);
   await writeDb(db);
   return summarizeTransferLot(lot, []);
+}
+
+export async function createOrUpdateTriageTransfer({ userId, item, createdByUserId = null, settings = null }) {
+  await ensureStore();
+  const triageSettings = normalizeTriageTransferSettings(settings || await getUserTriageTransferSettings(userId));
+  const rule = findTriageDiagnosisOption(triageSettings, item?.diagnosisCondition);
+  if (!triageSettings.enabled || !rule?.transferEnabled) return { status: "skipped", reason: "disabled" };
+
+  const depositoOrigem = String(rule.depositOrigin || triageSettings.defaultOriginDeposit || "").trim();
+  const depositoDestino = String(rule.depositDestination || destinationDepositName(triageSettings, rule.destination || item?.destination) || "").trim();
+  if (!depositoOrigem) throw new Error("Configure o deposito de origem da regra de triagem.");
+  if (!depositoDestino) throw new Error("Configure o deposito de destino da regra de triagem.");
+  if (normalizeText(depositoOrigem) === normalizeText(depositoDestino)) throw new Error("Origem e destino da regra de triagem precisam ser diferentes.");
+
+  const now = new Date().toISOString();
+  const transferProduct = transferProductFromTriageItem(item);
+  const descricao = `Triagem ${item.code} - ${rule.label || item.diagnosisCondition}`;
+
+  if (hasPostgres()) {
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      const existingResult = await client.query(
+        "select * from transfer_lots where user_id = $1 and source = 'triage' and triage_item_id = $2 and status <> 'synced' order by created_at desc limit 1 for update",
+        [userId, item.id]
+      );
+      let lot = existingResult.rows[0] ? transferLotFromRow(existingResult.rows[0]) : null;
+      let status = "updated";
+      if (lot) {
+        await client.query(
+          `update transfer_lots
+           set descricao = $2, deposito_origem = $3, deposito_destino = $4, status = 'waiting_store',
+               diagnosis_condition = $5, triage_destination = $6
+           where id = $1`,
+          [lot.id, descricao, depositoOrigem, depositoDestino, item.diagnosisCondition || "", rule.destination || item.destination || ""]
+        );
+        lot = { ...lot, descricao, depositoOrigem, depositoDestino, status: "waiting_store", diagnosisCondition: item.diagnosisCondition || "", triageDestination: rule.destination || item.destination || "" };
+        await client.query("delete from transfer_items where transfer_lot_id = $1", [lot.id]);
+      } else {
+        const creatorId = createdByUserId || userId;
+        const [creatorResult, sequenceResult] = await Promise.all([
+          client.query("select * from users where id = $1 limit 1", [creatorId]),
+          client.query(
+            "select count(*)::int as total from transfer_lots where user_id = $1 and coalesce(created_by_user_id, user_id) = $2",
+            [userId, creatorId]
+          )
+        ]);
+        lot = buildTransferLotRecord({
+          userId,
+          descricao,
+          depositoOrigem,
+          depositoDestino,
+          createdByUserId,
+          creator: creatorResult.rows[0] ? userFromRow(creatorResult.rows[0]) : null,
+          sequence: Number(sequenceResult.rows[0]?.total || 0) + 1,
+          source: "triage",
+          triageItemId: item.id,
+          diagnosisCondition: item.diagnosisCondition || "",
+          triageDestination: rule.destination || item.destination || ""
+        });
+        lot.status = "waiting_store";
+        await insertTransferLotRows(client, [lot]);
+        status = "created";
+      }
+      await insertTransferItemRows(client, [buildTransferItem(lot.id, transferProduct)]);
+      await client.query("commit");
+      return { status, lot: await getTransferLotDetail(userId, lot.id) };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  const db = await readDb();
+  db.transferLots = db.transferLots || [];
+  db.transferItems = db.transferItems || [];
+  let lot = db.transferLots
+    .filter((candidate) => candidate.userId === userId && candidate.source === "triage" && candidate.triageItemId === item.id && candidate.status !== "synced")
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
+  let status = "updated";
+  if (lot) {
+    lot.descricao = descricao;
+    lot.depositoOrigem = depositoOrigem;
+    lot.depositoDestino = depositoDestino;
+    lot.status = "waiting_store";
+    lot.diagnosisCondition = item.diagnosisCondition || "";
+    lot.triageDestination = rule.destination || item.destination || "";
+    db.transferItems = db.transferItems.filter((transferItem) => transferItem.transferLotId !== lot.id);
+  } else {
+    lot = buildTransferLotWithAutomaticName(db, {
+      userId,
+      descricao,
+      depositoOrigem,
+      depositoDestino,
+      createdByUserId
+    });
+    lot.status = "waiting_store";
+    lot.source = "triage";
+    lot.triageItemId = item.id;
+    lot.diagnosisCondition = item.diagnosisCondition || "";
+    lot.triageDestination = rule.destination || item.destination || "";
+    db.transferLots.push(lot);
+    status = "created";
+  }
+  db.transferItems.push(buildTransferItem(lot.id, transferProduct));
+  await writeDb(db);
+  return { status, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
 export async function scanTransferLot({ userId, transferLotId, code, externalProduct = null }) {
@@ -4290,7 +4482,11 @@ async function ensurePgStore() {
       synced_at timestamptz,
       received_total integer,
       received_at timestamptz,
-      received_by_name text not null default ''
+      received_by_name text not null default '',
+      source text not null default 'manual',
+      triage_item_id text,
+      diagnosis_condition text not null default '',
+      triage_destination text not null default ''
     );
 
     create table if not exists transfer_items (
@@ -4562,6 +4758,10 @@ async function ensurePgStore() {
     alter table transfer_lots add column if not exists received_total integer;
     alter table transfer_lots add column if not exists received_at timestamptz;
     alter table transfer_lots add column if not exists received_by_name text not null default '';
+    alter table transfer_lots add column if not exists source text not null default 'manual';
+    alter table transfer_lots add column if not exists triage_item_id text;
+    alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
+    alter table transfer_lots add column if not exists triage_destination text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
@@ -5263,7 +5463,7 @@ async function insertTransferLotRows(client, lots = []) {
   await insertRows(
     target,
     "transfer_lots",
-    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name"],
+    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name", "source", "triage_item_id", "diagnosis_condition", "triage_destination"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
@@ -5277,7 +5477,11 @@ async function insertTransferLotRows(client, lots = []) {
       lot.syncedAt || null,
       lot.receivedTotal ?? null,
       lot.receivedAt || null,
-      lot.receivedByName || ""
+      lot.receivedByName || "",
+      lot.source || "manual",
+      lot.triageItemId || null,
+      lot.diagnosisCondition || "",
+      lot.triageDestination || ""
     ])
   );
 }
@@ -7833,6 +8037,24 @@ function productFromRow(row) {
   };
 }
 
+function transferProductFromTriageItem(item = {}) {
+  const sku = normalizeCode(item.sku || item.productCode || item.codigoBling2 || item.asin || item.code);
+  const codigoMl = normalizeCode(item.productCode || item.codigoBling2 || item.asin || sku || item.code);
+  if (!sku && !codigoMl) throw new Error("Item de triagem sem SKU ou codigo para transferencia.");
+  return {
+    id: null,
+    lotId: null,
+    sourceLotId: null,
+    sourceLotName: "Triagem",
+    codigoMl: codigoMl || sku,
+    sku: sku || codigoMl,
+    descricao: String(item.descricao || item.code || sku || codigoMl).trim(),
+    ean: String(item.ean || "").trim(),
+    origem: "triagem",
+    createdAt: item.updatedAt || item.createdAt || new Date().toISOString()
+  };
+}
+
 function productFromPrefixedStatsRow(row, prefix) {
   return {
     id: row[`${prefix}id`],
@@ -8662,7 +8884,11 @@ function transferLotFromRow(row) {
     syncedAt: row.synced_at ? iso(row.synced_at) : null,
     receivedTotal: row.received_total === null || row.received_total === undefined ? null : Number(row.received_total),
     receivedAt: row.received_at ? iso(row.received_at) : null,
-    receivedByName: row.received_by_name || ""
+    receivedByName: row.received_by_name || "",
+    source: row.source || "manual",
+    triageItemId: row.triage_item_id || null,
+    diagnosisCondition: row.diagnosis_condition || "",
+    triageDestination: row.triage_destination || ""
   };
 }
 
@@ -9181,7 +9407,8 @@ function normalizeTriageInput(input = {}) {
 
 function normalizeTriageDestination(value) {
   const destination = normalizeCode(value);
-  if (!["LOJA", "VENDA_DIRETA", "INTERNET", "RMA"].includes(destination)) throw new Error("Destino invalido. Use Loja, Venda direta, Internet ou RMA.");
+  if (!destination) throw new Error("Destino invalido.");
+  if (destination.length > 40) throw new Error("Destino deve ter no maximo 40 caracteres.");
   return destination;
 }
 
@@ -9253,11 +9480,87 @@ function normalizePriceDisplaySettings(input = {}) {
   };
 }
 
+function normalizeTriageTransferSettings(input = {}) {
+  const defaults = DEFAULT_TRIAGE_TRANSFER_SETTINGS;
+  const defaultOriginDeposit = String(input.defaultOriginDeposit ?? input.default_origin_deposit ?? defaults.defaultOriginDeposit).trim();
+  const destinations = normalizeTriageTransferDestinations(input.destinations || defaults.destinations);
+  const destinationCodes = new Set(destinations.map((item) => item.code));
+  const diagnosisOptions = normalizeTriageDiagnosisOptions(input.diagnosisOptions || input.diagnosis_options || defaults.diagnosisOptions, {
+    defaultOriginDeposit,
+    destinationCodes,
+    destinations
+  });
+  return {
+    enabled: input.enabled === undefined ? defaults.enabled : Boolean(input.enabled),
+    defaultOriginDeposit,
+    destinations,
+    diagnosisOptions
+  };
+}
+
+function normalizeTriageTransferDestinations(input = []) {
+  const rows = Array.isArray(input) ? input : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const code = normalizeCode(row?.code || row?.value || row?.destination || row?.label);
+    const label = String(row?.label || row?.name || row?.code || "").trim();
+    const depositName = String(row?.depositName ?? row?.deposit_name ?? row?.deposito ?? label).trim();
+    if (!code || seen.has(code)) continue;
+    if (code.length > 40) throw new Error("Codigo de destino deve ter no maximo 40 caracteres.");
+    normalized.push({ code, label: label || code, depositName });
+    seen.add(code);
+  }
+  if (!normalized.length) throw new Error("Cadastre pelo menos um destino de triagem.");
+  return normalized;
+}
+
+function normalizeTriageDiagnosisOptions(input = [], { defaultOriginDeposit = "", destinationCodes = new Set(), destinations = [] } = {}) {
+  const rows = Array.isArray(input) ? input : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const code = normalizeCode(row?.code || row?.value || row?.diagnosisCondition || row?.label);
+    const label = String(row?.label || row?.name || row?.code || "").trim();
+    const destination = normalizeCode(row?.destination || row?.destinationCode || row?.destino);
+    const transferEnabled = row?.transferEnabled === undefined && row?.transfer_enabled === undefined ? true : Boolean(row?.transferEnabled ?? row?.transfer_enabled);
+    const depositOrigin = String(row?.depositOrigin ?? row?.deposit_origin ?? row?.depositoOrigem ?? defaultOriginDeposit).trim();
+    const depositDestination = String(row?.depositDestination ?? row?.deposit_destination ?? row?.depositoDestino ?? destinationDepositName({ destinations }, destination)).trim();
+    if (!code || seen.has(code)) continue;
+    if (code.length > 60) throw new Error("Codigo de laudo deve ter no maximo 60 caracteres.");
+    if (!destination || !destinationCodes.has(destination)) throw new Error(`Destino invalido para o laudo ${label || code}.`);
+    if (transferEnabled && (!depositOrigin || !depositDestination)) throw new Error(`Configure origem e destino Bling para o laudo ${label || code}.`);
+    normalized.push({
+      code,
+      label: label || code,
+      destination,
+      transferEnabled,
+      depositOrigin,
+      depositDestination,
+      requireAcceptance: row?.requireAcceptance === undefined && row?.require_acceptance === undefined ? true : Boolean(row?.requireAcceptance ?? row?.require_acceptance)
+    });
+    seen.add(code);
+  }
+  if (!normalized.length) throw new Error("Cadastre pelo menos uma opcao de laudo.");
+  return normalized;
+}
+
+function findTriageDiagnosisOption(settings, diagnosisCondition) {
+  const code = normalizeCode(diagnosisCondition);
+  return (settings?.diagnosisOptions || []).find((option) => option.code === code) || null;
+}
+
+function destinationDepositName(settings, destinationCode) {
+  const code = normalizeCode(destinationCode);
+  return (settings?.destinations || []).find((destination) => destination.code === code)?.depositName || "";
+}
+
 function normalizeTriageDiagnosisCondition(value, { allowEmpty = false } = {}) {
   const condition = normalizeCode(value);
   if (!condition && allowEmpty) return "";
-  if (["OK_FUNCIONANDO", "FUNCIONANDO_COM_DETALHES", "NAO_LIGA", "QUEBRADO_DANIFICADO"].includes(condition)) return condition;
-  throw new Error("Diagnostico invalido. Use OK funcionando, Funcionando com detalhes, Nao liga ou Quebrado/danificado.");
+  if (!condition) throw new Error("Diagnostico invalido.");
+  if (condition.length > 60) throw new Error("Diagnostico deve ter no maximo 60 caracteres.");
+  return condition;
 }
 
 function normalizeTriageDiagnosisPhoto(value) {

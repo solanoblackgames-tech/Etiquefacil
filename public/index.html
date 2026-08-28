@@ -483,6 +483,7 @@
       <nav class="tabs admin-tabs">
         <button data-admin-tab="users" class="active">Usuarios</button>
         <button data-admin-tab="bling">Bling</button>
+        <button data-admin-tab="triageRules">Triagem/WMS</button>
         <button data-admin-tab="lots">Lotes</button>
         <button data-admin-tab="catalog">Banco historico</button>
       </nav>
@@ -519,6 +520,38 @@
             <div id="adminBlingIntegrations" class="admin-users">
               <p class="muted admin-empty-state">Carregando integracoes Bling...</p>
             </div>
+          </section>
+        </section>
+
+        <section id="adminTriageRulesTab" class="hidden">
+          <section class="admin-panel">
+            <div class="admin-heading">
+              <div>
+                <h2>Regras de triagem e WMS</h2>
+                <p>Defina laudos, destinos e depositos usados para gerar transferencias automaticas no mesmo Bling.</p>
+              </div>
+              <button id="adminTriageRulesRefreshButton" class="ghost" type="button">Atualizar</button>
+            </div>
+            <form id="adminTriageRulesForm" class="admin-form triage-rules-form">
+              <label>Conta Etiquefacil
+                <select name="userId"></select>
+              </label>
+              <label>Deposito origem padrao
+                <input name="defaultOriginDeposit" placeholder="Ex: Triagem" />
+              </label>
+              <label class="wide-field checkbox-field">
+                <input name="enabled" type="checkbox" />
+                <span>Gerar transferencias automaticamente pela triagem</span>
+              </label>
+              <label class="wide-field">Destinos e depositos
+                <textarea name="destinations" rows="5" placeholder="ECOMMERCE | Ecommerce | Ecommerce&#10;LOJA | Loja | Loja"></textarea>
+              </label>
+              <label class="wide-field">Laudos e regras de transferencia
+                <textarea name="diagnosisOptions" rows="8" placeholder="OK_VENDA_INTERNET | OK venda internet | ECOMMERCE | Triagem | Ecommerce | sim&#10;OK_COM_DETALHES | OK com detalhes | LOJA | Triagem | Loja | sim"></textarea>
+              </label>
+              <button type="submit">Salvar regras</button>
+              <p id="adminTriageRulesMessage" class="message"></p>
+            </form>
           </section>
         </section>
 

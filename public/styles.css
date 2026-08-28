@@ -4616,6 +4616,31 @@ h3 {
   margin-top: 14px;
 }
 
+.admin-form.triage-rules-form {
+  align-items: start;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+}
+
+.triage-rules-form .wide-field {
+  grid-column: 1 / -1;
+}
+
+.triage-rules-form textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-height: 110px;
+  resize: vertical;
+}
+
+.triage-rules-form .checkbox-field {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.triage-rules-form .checkbox-field input {
+  width: auto;
+}
+
 .admin-heading {
   gap: 12px;
   margin-bottom: 12px;

@@ -3,6 +3,8 @@ const state = {
   adminUsers: [],
   adminBlingIntegrations: [],
   adminLots: [],
+  adminTriageTransferSettings: null,
+  adminTriageTransferUserId: "",
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
@@ -67,6 +69,7 @@ const state = {
   config: { downloadMode: "local" },
   conferenceSettings: defaultConferenceSettings(),
   priceDisplaySettings: defaultPriceDisplaySettings(),
+  triageTransferSettings: defaultTriageTransferSettings(),
   labelOptions: {
     autoPrint: localStorage.getItem("etiquefacil.autoPrint") !== "false",
     includePrice: localStorage.getItem("etiquefacil.includePrice") !== "false",
@@ -165,6 +168,25 @@ function defaultPriceDisplaySettings() {
     discountPercent: 30,
     discountLabel: "CLIENTE CLUBE PAGA",
     regularLabel: "DEMAIS CLIENTES"
+  };
+}
+
+function defaultTriageTransferSettings() {
+  return {
+    enabled: true,
+    defaultOriginDeposit: "Triagem",
+    destinations: [
+      { code: "ECOMMERCE", label: "Ecommerce", depositName: "Ecommerce" },
+      { code: "LOJA", label: "Loja", depositName: "Loja" },
+      { code: "VENDA_DIRETA", label: "Venda direta", depositName: "Venda Direta" },
+      { code: "RMA", label: "RMA", depositName: "RMA" }
+    ],
+    diagnosisOptions: [
+      { code: "OK_VENDA_INTERNET", label: "OK venda internet", destination: "ECOMMERCE", depositOrigin: "Triagem", depositDestination: "Ecommerce", transferEnabled: true, requireAcceptance: true },
+      { code: "OK_VENDA_DIRETA", label: "OK venda direta", destination: "VENDA_DIRETA", depositOrigin: "Triagem", depositDestination: "Venda Direta", transferEnabled: true, requireAcceptance: true },
+      { code: "OK_COM_DETALHES", label: "OK com detalhes", destination: "LOJA", depositOrigin: "Triagem", depositDestination: "Loja", transferEnabled: true, requireAcceptance: true },
+      { code: "RMA", label: "RMA", destination: "RMA", depositOrigin: "Triagem", depositDestination: "RMA", transferEnabled: true, requireAcceptance: true }
+    ]
   };
 }
 
@@ -312,8 +334,11 @@ function bindEvents() {
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
   $("#adminBlingRefreshButton").addEventListener("click", loadAdminBlingIntegrations);
   $("#adminLotsRefreshButton").addEventListener("click", loadAdminLots);
+  $("#adminTriageRulesRefreshButton").addEventListener("click", loadAdminTriageTransferSettings);
   $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogReviewLists);
   $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
+  $("#adminTriageRulesForm").addEventListener("submit", saveAdminTriageTransferSettings);
+  $("#adminTriageRulesForm").elements.userId.addEventListener("change", (event) => loadAdminTriageTransferSettings(event.target.value));
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
   $("#adminBlingIntegrations").addEventListener("click", handleAdminBlingIntegrationsClick);
@@ -1823,9 +1848,9 @@ function diverseRzsWithActive(lot) {
 function diverseRzs(lot) {
   const byRz = new Map();
   for (const item of lot?.items || []) {
-    if (!isNoSheetItem(item)) continue;
+    if (!isDiversePanelItem(item)) continue;
     const current = byRz.get(item.codigoRz) || { codigoRz: item.codigoRz, items: 0 };
-    current.items += item.qtdEsperada || 0;
+    current.items += Math.max(Number(item.qtdEsperada || 0), Number(item.qtdConferida || 0));
     byRz.set(item.codigoRz, current);
   }
   return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz));
@@ -2450,6 +2475,7 @@ async function showApp(user) {
     await loadAdminUsers();
     await loadAdminBlingIntegrations();
     await loadAdminLots();
+    await loadAdminTriageTransferSettings();
     await loadAdminCatalogReviewLists();
     await loadAdminCatalogProducts();
     schedulePrimaryInputFocus();
@@ -2463,6 +2489,7 @@ async function showApp(user) {
   applyUserPermissions(user);
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
+  if (user.triageAccess) await loadTriageTransferSettings();
   if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   const scanRequest = getScanRequest();
   if (scanRequest) {
@@ -2627,6 +2654,25 @@ async function loadPriceDisplaySettings() {
   } catch {
     state.priceDisplaySettings = defaultPriceDisplaySettings();
   }
+}
+
+async function loadTriageTransferSettings() {
+  try {
+    const response = await api("/api/triage/settings");
+    state.triageTransferSettings = normalizeTriageTransferSettings(response.settings);
+  } catch {
+    state.triageTransferSettings = defaultTriageTransferSettings();
+  }
+}
+
+function normalizeTriageTransferSettings(settings = {}) {
+  const defaults = defaultTriageTransferSettings();
+  return {
+    enabled: settings.enabled === undefined ? defaults.enabled : Boolean(settings.enabled),
+    defaultOriginDeposit: String(settings.defaultOriginDeposit || defaults.defaultOriginDeposit || "").trim(),
+    destinations: Array.isArray(settings.destinations) && settings.destinations.length ? settings.destinations : defaults.destinations,
+    diagnosisOptions: Array.isArray(settings.diagnosisOptions) && settings.diagnosisOptions.length ? settings.diagnosisOptions : defaults.diagnosisOptions
+  };
 }
 
 async function refreshPriceDisplaySettingsForm() {
@@ -4195,6 +4241,16 @@ async function loadAdminLots() {
   renderAdminLots();
 }
 
+async function loadAdminTriageTransferSettings(userId = "") {
+  const selectedUserId = userId || state.adminTriageTransferUserId || firstAdminOwnerId();
+  renderAdminTriageUserOptions(selectedUserId);
+  if (!selectedUserId) return;
+  const response = await api(`/api/admin/users/${encodeURIComponent(selectedUserId)}/triage-transfer-settings`);
+  state.adminTriageTransferUserId = selectedUserId;
+  state.adminTriageTransferSettings = normalizeTriageTransferSettings(response.settings);
+  renderAdminTriageTransferSettings();
+}
+
 async function loadAdminCatalogRequests() {
   const response = await api("/api/admin/catalog-requests");
   state.adminCatalogRequests = response.requests;
@@ -4226,9 +4282,105 @@ function setAdminTab(tab) {
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
   $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
   $("#adminBlingTab").classList.toggle("hidden", tab !== "bling");
+  $("#adminTriageRulesTab").classList.toggle("hidden", tab !== "triageRules");
   $("#adminLotsTab").classList.toggle("hidden", tab !== "lots");
   $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
   schedulePrimaryInputFocus();
+}
+
+function firstAdminOwnerId() {
+  return (state.adminUsers || []).find((user) => user.role !== "operator")?.id || state.adminUsers?.[0]?.id || "";
+}
+
+function renderAdminTriageUserOptions(selectedUserId = "") {
+  const select = $("#adminTriageRulesForm")?.elements?.userId;
+  if (!select) return;
+  const users = state.adminUsers || [];
+  select.innerHTML = users
+    .filter((user) => user.role !== "operator")
+    .map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name || user.email)} (${escapeHtml(user.email || "")})</option>`)
+    .join("");
+  select.value = selectedUserId || firstAdminOwnerId();
+}
+
+function renderAdminTriageTransferSettings() {
+  const form = $("#adminTriageRulesForm");
+  if (!form) return;
+  renderAdminTriageUserOptions(state.adminTriageTransferUserId);
+  const settings = state.adminTriageTransferSettings || defaultTriageTransferSettings();
+  form.elements.enabled.checked = Boolean(settings.enabled);
+  form.elements.defaultOriginDeposit.value = settings.defaultOriginDeposit || "";
+  form.elements.destinations.value = (settings.destinations || [])
+    .map((item) => [item.code, item.label, item.depositName].join(" | "))
+    .join("\n");
+  form.elements.diagnosisOptions.value = (settings.diagnosisOptions || [])
+    .map((item) => [
+      item.code,
+      item.label,
+      item.destination,
+      item.depositOrigin,
+      item.depositDestination,
+      item.transferEnabled ? "sim" : "nao"
+    ].join(" | "))
+    .join("\n");
+}
+
+async function saveAdminTriageTransferSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type='submit']");
+  const message = $("#adminTriageRulesMessage");
+  const userId = form.elements.userId.value;
+  if (!userId) {
+    message.textContent = "Selecione uma conta Etiquefacil.";
+    return;
+  }
+  button.disabled = true;
+  message.textContent = "";
+  try {
+    const payload = {
+      enabled: form.elements.enabled.checked,
+      defaultOriginDeposit: form.elements.defaultOriginDeposit.value,
+      destinations: parseAdminTriageDestinations(form.elements.destinations.value),
+      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value)
+    };
+    const response = await api(`/api/admin/users/${encodeURIComponent(userId)}/triage-transfer-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    state.adminTriageTransferUserId = userId;
+    state.adminTriageTransferSettings = normalizeTriageTransferSettings(response.settings);
+    renderAdminTriageTransferSettings();
+    message.style.color = "#0f766e";
+    message.textContent = "Regras de triagem salvas.";
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function parseAdminTriageDestinations(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [code, label, depositName] = line.split("|").map((part) => part.trim());
+    return { code, label, depositName };
+  });
+}
+
+function parseAdminTriageDiagnosisOptions(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [code, label, destination, depositOrigin, depositDestination, transferEnabled = "sim"] = line.split("|").map((part) => part.trim());
+    return {
+      code,
+      label,
+      destination,
+      depositOrigin,
+      depositDestination,
+      transferEnabled: !/^n(a|ã)?o|false|0$/i.test(transferEnabled)
+    };
+  });
 }
 
 async function createAdminUser(event) {
@@ -5649,6 +5801,7 @@ function renderTransferLots() {
       ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
+      ${lot.source === "triage" ? `<span class="muted">Origem: Triagem${lot.diagnosisCondition ? ` - ${escapeHtml(triageDiagnosisConditionLabel(lot.diagnosisCondition))}` : ""}</span>` : ""}
       ${lot.divergenceCount ? `<span class="transfer-error-count">${lot.divergenceCount} erro${lot.divergenceCount === 1 ? "" : "s"} producao</span>` : ""}
       <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
     </article>
@@ -8091,7 +8244,7 @@ function diverseItemsTable(lot) {
   const activeRz = state.selectedDiverseRz || "";
   const scanView = isNoSheetScanPanelMounted();
   const items = (lot.items || []).filter((item) => {
-    if (!isNoSheetItem(item)) return false;
+    if (!isDiversePanelItem(item)) return false;
     return !scanView || !activeRz || item.codigoRz === activeRz;
   });
   if (!items.length) {
@@ -8134,6 +8287,10 @@ function isNoSheetItem(item) {
   return item.tipoItem === "entrada_diversos" || item.tipoItem === "lote_sem_planilha" || item.tipoItem === "lote_sem_planilha_manual";
 }
 
+function isDiversePanelItem(item) {
+  return isNoSheetItem(item) || item.tipoItem === "excedente_externo";
+}
+
 function itemCreatedAt(item) {
   return item?.product?.createdAt || item?.createdAt || "";
 }
@@ -8142,8 +8299,17 @@ function diverseItemRow(item, startsRz = false) {
   const product = item.product || {};
   const expectedQuantity = Number(item.qtdEsperada || 0);
   const checkedQuantity = Number(item.qtdConferida || 0);
+  const isExternalExcess = item.tipoItem === "excedente_externo";
+  const itemTypeLabel = isExternalExcess ? "excedente externo" : item.tipoItem || "";
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
+  const quantityCell = isExternalExcess
+    ? `<strong>${checkedQuantity}/${expectedQuantity}</strong>`
+    : `
+        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${expectedQuantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+        <strong>${checkedQuantity}/${expectedQuantity}</strong>
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
+      `;
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Pallet ${escapeHtml(item.codigoRz || "")}</div>` : ""}
     <article class="diverse-row">
@@ -8153,13 +8319,12 @@ function diverseItemRow(item, startsRz = false) {
       <span class="diverse-product-cell" data-label="Produto">${escapeHtml(product.descricao || "")}${blingAlert}</span>
       <span class="diverse-operator-cell" data-label="Operador">${escapeHtml(productOperatorLabel(product))}</span>
       <span class="quantity-stepper diverse-quantity-cell" data-label="Qtd">
-        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${expectedQuantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
-        <strong>${checkedQuantity}/${expectedQuantity}</strong>
-        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
+        ${quantityCell}
       </span>
       <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
       ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
+        ${isExternalExcess ? `<span class="badge excess">${escapeHtml(itemTypeLabel)}</span>` : ""}
         <button type="button" class="ghost icon-button" data-diverse-edit="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
         <button type="button" class="ghost icon-button" data-diverse-split="${escapeHtml(product.id || "")}" title="Desmembrar" aria-label="Desmembrar">${splitIcon()}</button>
         <button type="button" class="icon-button" data-diverse-label="${escapeHtml(product.id || "")}" title="Reimprimir" aria-label="Reimprimir">${printIcon()}</button>
@@ -8625,9 +8790,12 @@ function operatorLabel(operator = {}) {
 
 function destinationLabel(destination) {
   const value = String(destination || "").trim().toUpperCase();
+  const configured = (state.triageTransferSettings?.destinations || []).find((item) => item.code === value);
+  if (configured?.label) return configured.label;
   if (value === "LOJA") return "Loja";
   if (value === "VENDA_DIRETA") return "Venda direta";
   if (value === "INTERNET") return "Internet";
+  if (value === "ECOMMERCE") return "Ecommerce";
   if (value === "RMA") return "RMA";
   return value || "Sem destino";
 }
@@ -8835,6 +9003,16 @@ function renderTriageFilterOptions() {
   select.value = operators.has(current) ? current : "";
   if (select.value !== state.triageFilters.operator) state.triageFilters.operator = select.value;
   statusSelect.value = state.triageFilters.status || "";
+  diagnosisConditionSelect.innerHTML = `<option value="">Todos</option>${ensureSelectedOption(
+    state.triageTransferSettings?.diagnosisOptions || [],
+    state.triageFilters.diagnosisCondition,
+    triageDiagnosisConditionLabel(state.triageFilters.diagnosisCondition)
+  ).map((option) => `<option value="${escapeHtml(option.code)}">${escapeHtml(option.label || option.code)}</option>`).join("")}`;
+  destinationSelect.innerHTML = `<option value="">Todos</option>${ensureSelectedOption(
+    state.triageTransferSettings?.destinations || [],
+    state.triageFilters.destination,
+    destinationLabel(state.triageFilters.destination)
+  ).map((option) => `<option value="${escapeHtml(option.code)}">${escapeHtml(option.label || option.code)}</option>`).join("")}`;
   diagnosisConditionSelect.value = state.triageFilters.diagnosisCondition || "";
   destinationSelect.value = state.triageFilters.destination || "";
   const currentLotId = state.triageFilters.lotId || "";
@@ -9072,6 +9250,9 @@ function triageDiagnosisPhotoFormMarkup(item) {
 }
 
 function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
+  const settings = state.triageTransferSettings || defaultTriageTransferSettings();
+  const diagnosisOptions = ensureSelectedOption(settings.diagnosisOptions || [], item.diagnosisCondition, triageDiagnosisConditionLabel(item.diagnosisCondition));
+  const destinationOptions = ensureSelectedOption(settings.destinations || [], item.destination, destinationLabel(item.destination));
   return `
     <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}">
       <div class="panel-heading">
@@ -9081,20 +9262,14 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
       <label>Diagnostico
         <select name="diagnosisCondition" required>
           <option value="">Selecione</option>
-          <option value="OK_FUNCIONANDO" ${item.diagnosisCondition === "OK_FUNCIONANDO" ? "selected" : ""}>OK funcionando</option>
-          <option value="FUNCIONANDO_COM_DETALHES" ${item.diagnosisCondition === "FUNCIONANDO_COM_DETALHES" ? "selected" : ""}>Funcionando com detalhes</option>
-          <option value="NAO_LIGA" ${item.diagnosisCondition === "NAO_LIGA" ? "selected" : ""}>Nao liga</option>
-          <option value="QUEBRADO_DANIFICADO" ${item.diagnosisCondition === "QUEBRADO_DANIFICADO" ? "selected" : ""}>Quebrado/danificado</option>
+          ${diagnosisOptions.map((option) => `<option value="${escapeHtml(option.code)}" ${item.diagnosisCondition === option.code ? "selected" : ""}>${escapeHtml(option.label || option.code)}</option>`).join("")}
         </select>
       </label>
       <label>Descricao do diagnostico<textarea name="diagnosis" rows="4">${escapeHtml(item.diagnosis || "")}</textarea></label>
       <label>Destino
         <select name="destination" required>
           <option value="">Selecione</option>
-          <option value="LOJA" ${item.destination === "LOJA" ? "selected" : ""}>Loja</option>
-          <option value="VENDA_DIRETA" ${item.destination === "VENDA_DIRETA" ? "selected" : ""}>Venda direta</option>
-          <option value="INTERNET" ${item.destination === "INTERNET" ? "selected" : ""}>Internet</option>
-          <option value="RMA" ${item.destination === "RMA" ? "selected" : ""}>RMA</option>
+          ${destinationOptions.map((option) => `<option value="${escapeHtml(option.code)}" ${item.destination === option.code ? "selected" : ""}>${escapeHtml(option.label || option.code)}</option>`).join("")}
         </select>
       </label>
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
@@ -9109,6 +9284,17 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
       <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
     </form>
   `;
+}
+
+function ensureSelectedOption(options = [], selectedCode = "", selectedLabel = "") {
+  const selected = normalizeCodigoMl(selectedCode);
+  const normalized = (options || []).map((option) => ({
+    ...option,
+    code: normalizeCodigoMl(option.code),
+    label: String(option.label || option.code || "").trim()
+  })).filter((option) => option.code);
+  if (selected && !normalized.some((option) => option.code === selected)) normalized.push({ code: selected, label: selectedLabel || selected });
+  return normalized;
 }
 
 function boxDimensionsLabel(item = {}) {
@@ -9164,7 +9350,14 @@ function triageHistoryOperatorLabel(event) {
 }
 
 function triageDiagnosisConditionLabel(value) {
+  const code = String(value || "").trim().toUpperCase();
+  const configured = (state.triageTransferSettings?.diagnosisOptions || []).find((item) => item.code === code);
+  if (configured?.label) return configured.label;
   const labels = {
+    OK_VENDA_INTERNET: "OK venda internet",
+    OK_VENDA_DIRETA: "OK venda direta",
+    OK_COM_DETALHES: "OK com detalhes",
+    RMA: "RMA",
     OK_FUNCIONANDO: "OK funcionando",
     FUNCIONANDO_COM_DETALHES: "Funcionando com detalhes",
     NAO_LIGA: "Nao liga",
@@ -9174,6 +9367,13 @@ function triageDiagnosisConditionLabel(value) {
 }
 
 async function handleTriageDetailChange(event) {
+  const diagnosisSelect = event.target.closest('select[name="diagnosisCondition"]');
+  if (diagnosisSelect) {
+    const rule = (state.triageTransferSettings?.diagnosisOptions || []).find((option) => option.code === diagnosisSelect.value);
+    const destinationSelect = diagnosisSelect.form?.elements?.destination;
+    if (rule?.destination && destinationSelect && !destinationSelect.value) destinationSelect.value = rule.destination;
+    return;
+  }
   const input = event.target.closest('input[name="diagnosisPhotoFile"]');
   if (!input) return;
   const form = input.form;
@@ -9277,7 +9477,8 @@ async function handleTriageDetailSubmit(event) {
     }
     refreshTriageStatsIfVisible();
     $("#triageDetailMessage").style.color = "#0f766e";
-    $("#triageDetailMessage").textContent = form.classList.contains("triage-photo-only-form") ? "Foto salva no laudo." : "Diagnostico salvo.";
+    $("#triageDetailMessage").textContent = triageDiagnosisSaveMessage(response, form);
+    if (response.transfer?.lot && state.user?.transferAccess) await loadTransferLots();
     if (shouldPrintAfterSave && !$("#triageTab")?.classList.contains("triage-view-only")) {
       setTimeout(printTriageLabel, 0);
     }
@@ -9315,6 +9516,14 @@ async function handleTriageEditSubmit(event) {
   } catch (error) {
     if (message) message.textContent = error.message;
   }
+}
+
+function triageDiagnosisSaveMessage(response, form) {
+  if (form.classList.contains("triage-photo-only-form")) return "Foto salva no laudo.";
+  const transferStatus = response?.transfer?.status;
+  if (transferStatus === "created") return "Diagnostico salvo e transferencia enviada para aceite.";
+  if (transferStatus === "updated") return "Diagnostico salvo e transferencia de triagem atualizada.";
+  return "Diagnostico salvo.";
 }
 
 async function deleteSelectedTriageItem() {

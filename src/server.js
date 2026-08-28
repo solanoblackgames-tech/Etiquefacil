@@ -38,6 +38,7 @@ import {
   createDiverseLot,
   createLabel,
   createTriageItem,
+  createOrUpdateTriageTransfer,
   createTransferLot,
   createLotFromImport,
   createManualExternalExcess,
@@ -80,6 +81,7 @@ import {
   getUserBlingIntegration,
   getUserConferenceSettings,
   getUserPriceDisplaySettings,
+  getUserTriageTransferSettings,
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
@@ -132,6 +134,7 @@ import {
   saveUserBlingIntegration,
   saveUserConferenceSettings,
   saveUserPriceDisplaySettings,
+  saveUserTriageTransferSettings,
   saveBlingAppConfig,
   acceptOperatorInvite,
   verifyUser
@@ -274,6 +277,22 @@ app.delete("/api/admin/bling-integrations/:userId", requireAdmin, async (req, re
 
 app.get("/api/admin/lots", requireAdmin, async (req, res) => {
   res.json({ lots: await listLotsForAdmin() });
+});
+
+app.get("/api/admin/users/:userId/triage-transfer-settings", requireAdmin, async (req, res) => {
+  try {
+    res.json({ settings: await getUserTriageTransferSettings(req.params.userId) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.put("/api/admin/users/:userId/triage-transfer-settings", requireAdmin, async (req, res) => {
+  try {
+    res.json({ settings: await saveUserTriageTransferSettings(req.params.userId, req.body || {}) });
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 app.get("/api/admin/catalog-requests", requireAdmin, async (req, res) => {
@@ -613,6 +632,14 @@ app.get("/api/dashboard/operations", requireAuth, requireOwner, async (req, res)
   }
 });
 
+app.get("/api/triage/settings", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ settings: await getUserTriageTransferSettings(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
@@ -687,14 +714,20 @@ app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, a
 
 app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const item = await updateTriageDiagnosis({
-      userId: workspaceUserId(req),
+      userId,
       code: req.params.code,
       operatorUserId: operatorUserId(req) || req.session.user?.id,
       payload: req.body || {}
     });
+    const transfer = await createOrUpdateTriageTransfer({
+      userId,
+      item,
+      createdByUserId: req.session.user?.id
+    });
     await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination, diagnosisCondition: item.diagnosisCondition });
-    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }) });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }), transfer });
   } catch (error) {
     sendError(res, error);
   }
