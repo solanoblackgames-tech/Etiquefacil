@@ -3886,6 +3886,7 @@ function operatorViewModel(operator) {
     operatorCode: operator.operatorCode || "",
     triageAccess: Boolean(operator.triageAccess),
     transferAccess: Boolean(operator.transferAccess),
+    stockTransferAcceptanceAccess: Boolean(operator.stockTransferAcceptanceAccess),
     operatorStatsAccess: Boolean(operator.operatorStatsAccess),
     largeQrLabelAccess: Boolean(operator.largeQrLabelAccess),
     logins,
@@ -3969,9 +3970,16 @@ function operatorPermissionConfig(kind, operator) {
     transfer: {
       enabled: operator.transferAccess,
       canToggle: isOwnerUser() && state.user?.transferAccess,
-      label: "Aceitar transferencia de estoque",
+      label: "Transferencia",
       route: "transfer-access",
       bodyKey: "transferAccess"
+    },
+    stockTransferAcceptance: {
+      enabled: operator.stockTransferAcceptanceAccess,
+      canToggle: isOwnerUser(),
+      label: "Aceitar transferencia de estoque",
+      route: "stock-transfer-acceptance-access",
+      bodyKey: "stockTransferAcceptanceAccess"
     },
     operatorStats: {
       enabled: operator.operatorStatsAccess,
@@ -3997,7 +4005,7 @@ function openOperatorPermissionsModal(operator) {
   const bodyEl = $("#decisionBody");
   const fieldsEl = $("#decisionFields");
   const actionsEl = $("#decisionActions");
-  const permissions = ["triage", "transfer", "operatorStats", "largeQrLabel"]
+  const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel"]
     .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
     .filter((permission) => permission.kind !== "largeQrLabel" || state.user?.largeQrLabelAccess || permission.enabled);
 
@@ -4292,7 +4300,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
-  if (route.view === "triageView" && !state.user?.triageAccess) {
+  if (route.view === "triageView" && !state.user?.triageAccess && !state.user?.stockTransferAcceptanceAccess) {
     setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
     if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
     return;
@@ -4306,7 +4314,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   }
 
   if (route.view === "transferAccept") {
-    if (!state.user?.transferAccess) {
+    if (!state.user?.stockTransferAcceptanceAccess) {
       setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
       if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
       return;
@@ -5068,7 +5076,8 @@ function adminUserRow(user) {
             <button type="submit">Salvar senha</button>
           </form>
           <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
+          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+          <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(user.id)}" data-stock-transfer-acceptance-access="${user.stockTransferAcceptanceAccess ? "false" : "true"}">${user.stockTransferAcceptanceAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
           <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
@@ -5108,7 +5117,8 @@ function adminOperatorRow(operator) {
           <button type="submit">Salvar senha</button>
         </form>
         <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
+        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
+        <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(operator.id)}" data-stock-transfer-acceptance-access="${operator.stockTransferAcceptanceAccess ? "false" : "true"}">${operator.stockTransferAcceptanceAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
         <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
@@ -5178,6 +5188,27 @@ async function handleAdminBlingIntegrationsClick(event) {
 }
 
 async function handleAdminUsersClick(event) {
+  const stockTransferAcceptanceButton = event.target.closest("[data-toggle-admin-stock-transfer-acceptance]");
+  if (stockTransferAcceptanceButton) {
+    stockTransferAcceptanceButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(stockTransferAcceptanceButton.dataset.toggleAdminStockTransferAcceptance)}/stock-transfer-acceptance-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stockTransferAcceptanceAccess: stockTransferAcceptanceButton.dataset.stockTransferAcceptanceAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de aceite de estoque atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      stockTransferAcceptanceButton.disabled = false;
+    }
+    return;
+  }
+
   const transferButton = event.target.closest("[data-toggle-admin-transfer]");
   if (transferButton) {
     transferButton.disabled = true;
@@ -9454,6 +9485,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
 
 function renderTriageItemView(item) {
   const detail = $("#triageDetail");
+  const canEditDiagnosis = Boolean(state.user?.triageAccess);
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="triage-readonly-view">
@@ -9461,7 +9493,7 @@ function renderTriageItemView(item) {
         <span class="muted">Visualizacao da etiqueta</span>
         <h2>${escapeHtml(item.code)}</h2>
       </div>
-      ${triageDiagnosisFormMarkup(item, { qrMode: true })}
+      ${canEditDiagnosis ? triageDiagnosisFormMarkup(item, { qrMode: true }) : ""}
       ${triageTransferSummaryMarkup(item.triageTransfer)}
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
       <dl class="triage-fields">
@@ -9489,7 +9521,7 @@ function triageTransferSummaryMarkup(transfer) {
   if (!transfer?.id) return "";
   const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
   const actionLabel = complete ? "Ver transferencia de estoque" : "Aceitar transferencia de estoque";
-  const action = state.user?.transferAccess
+  const action = state.user?.stockTransferAcceptanceAccess
     ? `<a class="button-link primary-action" href="${escapeHtml(transferReceivePath(transfer))}">${actionLabel}</a>`
     : "";
   return `

@@ -121,6 +121,7 @@ import {
   updateUserLotDescription,
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
+  updateOperatorStockTransferAcceptanceAccess,
   updateOperatorStatsAccess,
   updateOperatorLargeQrLabelAccess,
   updateOperatorForOwner,
@@ -129,6 +130,7 @@ import {
   updateProductRegistrationFromTriage,
   updateUserTriageAccessForAdmin,
   updateUserTransferAccessForAdmin,
+  updateUserStockTransferAcceptanceAccessForAdmin,
   updateUserOperatorStatsAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
@@ -359,6 +361,14 @@ app.patch("/api/admin/users/:userId/transfer-access", requireAdmin, async (req, 
   }
 });
 
+app.patch("/api/admin/users/:userId/stock-transfer-acceptance-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserStockTransferAcceptanceAccessForAdmin(req.params.userId, Boolean(req.body?.stockTransferAcceptanceAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/admin/users/:userId/operator-stats-access", requireAdmin, async (req, res) => {
   try {
     res.json(await updateUserOperatorStatsAccessForAdmin(req.params.userId, Boolean(req.body?.operatorStatsAccess)));
@@ -463,6 +473,18 @@ app.patch("/api/operators/:operatorUserId/transfer-access", requireAuth, require
       ownerUserId: workspaceUserId(req),
       operatorUserId: req.params.operatorUserId,
       transferAccess: Boolean(req.body?.transferAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/stock-transfer-acceptance-access", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorStockTransferAcceptanceAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      stockTransferAcceptanceAccess: Boolean(req.body?.stockTransferAcceptanceAccess)
     }));
   } catch (error) {
     sendError(res, error);
@@ -704,7 +726,7 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
   }
 });
 
-app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req, res) => {
+app.get("/api/triage/items/:code", requireAuth, requireTriageViewOrStockTransferAcceptanceAccess, async (req, res) => {
   try {
     res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code), { includeHistory: isOwnerSession(req), includeTransfer: true }) });
   } catch (error) {
@@ -835,7 +857,7 @@ app.post("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, r
   }
 });
 
-app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferAccess, async (req, res) => {
+app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
   if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
   res.json({ lot });
@@ -871,7 +893,7 @@ app.post("/api/transfer-lots/:transferLotId/release", requireAuth, requireTransf
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireTransferAccess, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code });
@@ -881,7 +903,7 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireT
   }
 });
 
-app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, requireTransferAccess, async (req, res) => {
+app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
   try {
     const payload = {
       userId: workspaceUserId(req),
@@ -901,6 +923,73 @@ app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, re
     });
     res.json(result);
   } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/confirm-total", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
+  let result = null;
+  try {
+    const userId = workspaceUserId(req);
+    const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
+    if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    result = await confirmPublicTransferLotTotal({
+      transferLotId: req.params.transferLotId,
+      receivedTotal: req.body?.receivedTotal,
+      reporterName: req.body?.reporterName || operatorAuditLabel(req.session.user)
+    });
+    const items = transferItemsForBling(result.lot);
+    const observacao = `Transferencia Etiquefacil ${result.lot.name} - aceite estoque (${result.lot.totalReceived}/${result.lot.totalPlanned})`;
+    let transferResult;
+    try {
+      transferResult = await syncBlingStockTransfers({
+        integration: await getRequiredBlingCredentials(result.lot.userId),
+        items,
+        depositoOrigemName: result.lot.depositoOrigem,
+        depositoDestinoName: result.lot.depositoDestino,
+        observacao,
+        saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
+      });
+      if (transferResult.ok) {
+        await markTransferLotSynced(result.lot.userId, result.lot.id);
+        result.lot.status = "synced";
+      }
+    } catch (blingError) {
+      await enqueueStockTransferSync({ userId: result.lot.userId, lot: result.lot, items, observacao, errorMessage: blingError.message, markLotSynced: true });
+      transferResult = { ok: false, queued: true, error: blingError.message };
+    }
+    const currentLot = await getTransferLotDetail(userId, req.params.transferLotId);
+    res.json({ ...result, lot: currentLot, transfer: transferResult });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/force-receive-scan", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
+  let result = null;
+  try {
+    const userId = workspaceUserId(req);
+    const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
+    if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
+    const reason = normalizeRequiredJustification(req.body.reason || req.body.justificativa);
+    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason });
+    let transferResult;
+    try {
+      transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+    } catch (blingError) {
+      await enqueueStockTransferSync({
+        userId: result.lot.userId,
+        lot: result.lot,
+        items: [{ ...result.item, quantidade: 1 }],
+        observacao: `Transferencia Etiquefacil ${result.lot.name} - aceite estoque`,
+        errorMessage: blingError.message
+      });
+      transferResult = { ok: false, queued: true, error: blingError.message };
+    }
+    res.json({ ...result, transfer: transferResult });
+  } catch (error) {
+    if (result?.item?.id) await undoPublicTransferLotScan({ transferLotId: req.params.transferLotId, itemId: result.item.id }).catch(() => null);
     sendError(res, error);
   }
 });
@@ -2310,12 +2399,45 @@ async function requireTriageAccess(req, res, next) {
   }
 }
 
+async function requireTriageViewOrStockTransferAcceptanceAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.triageAccess || freshUser?.stockTransferAcceptanceAccess) return next();
+    return res.status(403).json({ error: "Visualizacao de laudo ou aceite de estoque nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
 async function requireTransferAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.transferAccess) return next();
     return res.status(403).json({ error: "Modulo de transferencia nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+async function requireStockTransferAcceptanceAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.stockTransferAcceptanceAccess) return next();
+    return res.status(403).json({ error: "Aceite de transferencia de estoque nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+async function requireTransferViewOrAcceptanceAccess(req, res, next) {
+  try {
+    if (req.session.user?.role === "admin") return next();
+    const freshUser = await refreshSessionUser(req);
+    if (freshUser?.transferAccess || freshUser?.stockTransferAcceptanceAccess) return next();
+    return res.status(403).json({ error: "Transferencia ou aceite de estoque nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
   }

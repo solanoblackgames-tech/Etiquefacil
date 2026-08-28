@@ -238,6 +238,7 @@ export async function createUser({ name, email, password, parentUserId = null })
     operatorCode,
     triageAccess: false,
     transferAccess: false,
+    stockTransferAcceptanceAccess: false,
     operatorStatsAccess: false,
     largeQrLabelAccess: false,
     name: name.trim(),
@@ -249,9 +250,9 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, operator_stats_access, large_qr_label_access, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.operatorStatsAccess, user.largeQrLabelAccess, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, stock_transfer_acceptance_access, operator_stats_access, large_qr_label_access, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.stockTransferAcceptanceAccess, user.operatorStatsAccess, user.largeQrLabelAccess, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -511,6 +512,7 @@ export function sanitizeUser(user) {
   };
   if (user.triageAccess) sanitized.triageAccess = true;
   if (user.transferAccess) sanitized.transferAccess = true;
+  if (user.stockTransferAcceptanceAccess) sanitized.stockTransferAcceptanceAccess = true;
   if (user.operatorStatsAccess) sanitized.operatorStatsAccess = true;
   if (user.largeQrLabelAccess) sanitized.largeQrLabelAccess = true;
   return sanitized;
@@ -544,6 +546,22 @@ export async function updateUserTransferAccessForAdmin(userId, transferAccess) {
   const user = db.users.find((item) => item.id === userId);
   if (!user) throw notFound("Usuario nao encontrado.");
   user.transferAccess = Boolean(transferAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateUserStockTransferAcceptanceAccessForAdmin(userId, stockTransferAcceptanceAccess) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("update users set stock_transfer_acceptance_access = $2 where id = $1 returning *", [userId, Boolean(stockTransferAcceptanceAccess)]);
+    if (!result.rows.length) throw notFound("Usuario nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuario nao encontrado.");
+  user.stockTransferAcceptanceAccess = Boolean(stockTransferAcceptanceAccess);
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -598,6 +616,25 @@ export async function updateOperatorTransferAccess({ ownerUserId, operatorUserId
   const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
   if (!user) throw notFound("Operador nao encontrado.");
   user.transferAccess = Boolean(transferAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateOperatorStockTransferAcceptanceAccess({ ownerUserId, operatorUserId, stockTransferAcceptanceAccess }) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query(
+      "update users set stock_transfer_acceptance_access = $3 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, Boolean(stockTransferAcceptanceAccess)]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!user) throw notFound("Operador nao encontrado.");
+  user.stockTransferAcceptanceAccess = Boolean(stockTransferAcceptanceAccess);
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -810,6 +847,7 @@ export async function listUsersForAdmin() {
           u.operator_code,
           u.triage_access,
           u.transfer_access,
+          u.stock_transfer_acceptance_access,
           u.operator_stats_access,
           u.large_qr_label_access,
           u.name,
@@ -833,6 +871,7 @@ export async function listUsersForAdmin() {
       operatorCode: row.operator_code ? Number(row.operator_code) : null,
       triageAccess: Boolean(row.triage_access),
       transferAccess: Boolean(row.transfer_access),
+      stockTransferAcceptanceAccess: Boolean(row.stock_transfer_acceptance_access),
       operatorStatsAccess: Boolean(row.operator_stats_access),
       largeQrLabelAccess: Boolean(row.large_qr_label_access),
       name: row.name,
@@ -880,6 +919,7 @@ export async function listBlingIntegrationsForAdmin() {
           u.operator_code,
           u.triage_access,
           u.transfer_access,
+          u.stock_transfer_acceptance_access,
           u.operator_stats_access,
           u.large_qr_label_access,
           u.name,
@@ -963,6 +1003,7 @@ async function listLotsForAdminPg() {
         u.operator_code as user_operator_code,
         u.triage_access as user_triage_access,
         u.transfer_access as user_transfer_access,
+        u.stock_transfer_acceptance_access as user_stock_transfer_acceptance_access,
         u.operator_stats_access as user_operator_stats_access,
         u.large_qr_label_access as user_large_qr_label_access,
         u.name as user_name,
@@ -1163,6 +1204,7 @@ export async function listTriageStatsRows(userId, period = {}) {
           u.operator_code as user__operator_code,
           u.triage_access as user__triage_access,
           u.transfer_access as user__transfer_access,
+          u.stock_transfer_acceptance_access as user__stock_transfer_acceptance_access,
           u.operator_stats_access as user__operator_stats_access,
           u.large_qr_label_access as user__large_qr_label_access,
           u.name as user__name,
@@ -4332,6 +4374,7 @@ async function ensurePgStore() {
       operator_code integer,
       triage_access boolean not null default false,
       transfer_access boolean not null default false,
+      stock_transfer_acceptance_access boolean not null default false,
       operator_stats_access boolean not null default false,
       large_qr_label_access boolean not null default false,
       name text not null,
@@ -4685,6 +4728,7 @@ async function ensurePgStore() {
     alter table users add column if not exists operator_code integer;
     alter table users add column if not exists triage_access boolean not null default false;
     alter table users add column if not exists transfer_access boolean not null default false;
+    alter table users add column if not exists stock_transfer_acceptance_access boolean not null default false;
     alter table users add column if not exists operator_stats_access boolean not null default false;
     alter table users add column if not exists large_qr_label_access boolean not null default false;
     update users set tenant_id = id where tenant_id is null or tenant_id = '';
@@ -5118,7 +5162,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "operator_stats_access", "large_qr_label_access", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "stock_transfer_acceptance_access", "operator_stats_access", "large_qr_label_access", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
@@ -5128,6 +5172,7 @@ async function writePgDb(db) {
         optionalInt(user.operatorCode) || null,
         Boolean(user.triageAccess),
         Boolean(user.transferAccess),
+        Boolean(user.stockTransferAcceptanceAccess),
         Boolean(user.operatorStatsAccess),
         Boolean(user.largeQrLabelAccess),
         user.name,
@@ -7934,6 +7979,7 @@ function userFromRow(row) {
     operatorCode: row.operator_code ? Number(row.operator_code) : null,
     triageAccess: Boolean(row.triage_access),
     transferAccess: Boolean(row.transfer_access),
+    stockTransferAcceptanceAccess: Boolean(row.stock_transfer_acceptance_access),
     operatorStatsAccess: Boolean(row.operator_stats_access),
     largeQrLabelAccess: Boolean(row.large_qr_label_access),
     name: row.name,
@@ -8000,6 +8046,7 @@ function userFromPrefixedRow(row, prefix) {
     operatorCode: row[`${prefix}operator_code`] ? Number(row[`${prefix}operator_code`]) : null,
     triageAccess: Boolean(row[`${prefix}triage_access`]),
     transferAccess: Boolean(row[`${prefix}transfer_access`]),
+    stockTransferAcceptanceAccess: Boolean(row[`${prefix}stock_transfer_acceptance_access`]),
     operatorStatsAccess: Boolean(row[`${prefix}operator_stats_access`]),
     largeQrLabelAccess: Boolean(row[`${prefix}large_qr_label_access`]),
     name: row[`${prefix}name`],
@@ -9350,6 +9397,10 @@ function normalizeDbTenants(db) {
     }
     if (user.transferAccess === undefined) {
       user.transferAccess = false;
+      changed = true;
+    }
+    if (user.stockTransferAcceptanceAccess === undefined) {
+      user.stockTransferAcceptanceAccess = false;
       changed = true;
     }
     if (user.operatorStatsAccess === undefined) {
