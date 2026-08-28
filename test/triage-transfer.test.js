@@ -76,7 +76,7 @@ test("triage diagnosis creates one waiting transfer from configured deposits", a
       userId: "owner-1",
       code: triageItem.code,
       operatorUserId: "operator-1",
-      payload: { diagnosisCondition: "OK_VENDA_INTERNET", destination: "ECOMMERCE", diagnosis: "Aprovado" }
+      payload: { diagnosisCondition: "OK_VENDA_INTERNET", destination: "RMA", diagnosis: "Aprovado" }
     });
 
     const created = await createOrUpdateTriageTransfer({ userId: "owner-1", item: diagnosed, createdByUserId: "operator-1" });
@@ -85,6 +85,7 @@ test("triage diagnosis creates one waiting transfer from configured deposits", a
 
     assert.equal(created.status, "created");
     assert.equal(updated.status, "updated");
+    assert.equal(diagnosed.destination, "ECOMMERCE");
     assert.equal(transfers.length, 1);
     assert.equal(transfers[0].source, "triage");
     assert.equal(transfers[0].status, "waiting_store");

@@ -1401,10 +1401,13 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
   return item;
 }
 
-export async function updateTriageDiagnosis({ userId, code, operatorUserId = null, payload = {} }) {
+export async function updateTriageDiagnosis({ userId, code, operatorUserId = null, payload = {}, settings = null }) {
   await ensureStore();
-  const destination = normalizeTriageDestination(payload.destination);
   const diagnosisCondition = normalizeTriageDiagnosisCondition(payload.diagnosisCondition ?? payload.diagnosis_condition);
+  const triageSettings = normalizeTriageTransferSettings(settings || await getUserTriageTransferSettings(userId));
+  const rule = findTriageDiagnosisOption(triageSettings, diagnosisCondition);
+  if (!rule) throw new Error("Diagnostico nao configurado para a triagem.");
+  const destination = normalizeTriageDestination(rule.destination);
   const diagnosis = String(payload.diagnosis || "").trim();
   const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
   const now = new Date().toISOString();

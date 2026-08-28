@@ -69,7 +69,7 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
     assert.equal(history.length, 2);
     assert.equal(history[0].diagnosis, "Segundo laudo");
     assert.equal(history[0].diagnosisCondition, "FUNCIONANDO_COM_DETALHES");
-    assert.equal(history[0].destination, "VENDA_DIRETA");
+    assert.equal(history[0].destination, "LOJA");
     assert.equal(history[1].diagnosis, "Primeiro laudo");
     assert.equal(history[1].diagnosisCondition, "OK_FUNCIONANDO");
     assert.equal(stats.totalCost, 0);
@@ -221,7 +221,7 @@ test("triage stats rows can be filtered by lot for export", async () => {
     assert.equal(rows[0].item.diagnosis, "Laudo aprovado");
     assert.equal(items.length, 1);
     assert.equal(items[0].lotId, "lot-1");
-    assert.equal(items[0].destination, "VENDA_DIRETA");
+    assert.equal(items[0].destination, "LOJA");
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

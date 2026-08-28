@@ -9587,7 +9587,9 @@ function triageDiagnosisPhotoFormMarkup(item) {
 function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
   const settings = state.triageTransferSettings || defaultTriageTransferSettings();
   const diagnosisOptions = ensureSelectedOption(settings.diagnosisOptions || [], item.diagnosisCondition, triageDiagnosisConditionLabel(item.diagnosisCondition));
-  const destinationOptions = ensureSelectedOption(settings.destinations || [], item.destination, destinationLabel(item.destination));
+  const selectedRule = triageDiagnosisRule(item.diagnosisCondition);
+  const automaticDestination = selectedRule?.destination || item.destination || "";
+  const automaticDestinationLabel = automaticDestination ? destinationLabel(automaticDestination) : "Selecione um diagnostico";
   return `
     <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}">
       <div class="panel-heading">
@@ -9601,12 +9603,11 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         </select>
       </label>
       <label>Descricao do diagnostico<textarea name="diagnosis" rows="4">${escapeHtml(item.diagnosis || "")}</textarea></label>
-      <label>Destino
-        <select name="destination" required>
-          <option value="">Selecione</option>
-          ${destinationOptions.map((option) => `<option value="${escapeHtml(option.code)}" ${item.destination === option.code ? "selected" : ""}>${escapeHtml(option.label || option.code)}</option>`).join("")}
-        </select>
-      </label>
+      <input type="hidden" name="destination" value="${escapeHtml(automaticDestination)}" />
+      <div class="readonly-field" data-triage-auto-destination>
+        <span>Destino automatico</span>
+        <strong>${escapeHtml(automaticDestinationLabel)}</strong>
+      </div>
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
       <label>Foto do laudo
         <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" />
@@ -9619,6 +9620,20 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
       <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
     </form>
   `;
+}
+
+function triageDiagnosisRule(condition) {
+  const code = normalizeCodigoMl(condition);
+  return (state.triageTransferSettings?.diagnosisOptions || []).find((option) => option.code === code) || null;
+}
+
+function updateTriageAutomaticDestination(form, condition) {
+  const rule = triageDiagnosisRule(condition);
+  const destination = rule?.destination || "";
+  const destinationInput = form?.elements?.destination;
+  if (destinationInput) destinationInput.value = destination;
+  const preview = form?.querySelector("[data-triage-auto-destination] strong");
+  if (preview) preview.textContent = destination ? destinationLabel(destination) : "Selecione um diagnostico";
 }
 
 function ensureSelectedOption(options = [], selectedCode = "", selectedLabel = "") {
@@ -9704,9 +9719,7 @@ function triageDiagnosisConditionLabel(value) {
 async function handleTriageDetailChange(event) {
   const diagnosisSelect = event.target.closest('select[name="diagnosisCondition"]');
   if (diagnosisSelect) {
-    const rule = (state.triageTransferSettings?.diagnosisOptions || []).find((option) => option.code === diagnosisSelect.value);
-    const destinationSelect = diagnosisSelect.form?.elements?.destination;
-    if (rule?.destination && destinationSelect && !destinationSelect.value) destinationSelect.value = rule.destination;
+    updateTriageAutomaticDestination(diagnosisSelect.form, diagnosisSelect.value);
     return;
   }
   const input = event.target.closest('input[name="diagnosisPhotoFile"]');

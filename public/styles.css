@@ -2512,6 +2512,21 @@ h3 {
   min-height: 96px;
 }
 
+.readonly-field {
+  background: #f8fafb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.readonly-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .triage-photo-preview,
 .triage-diagnosis-photo {
   align-items: start;
