@@ -7,6 +7,7 @@ import { formatSku, parseNumber, roundMoney } from "./domain.js";
 import { findApprovedProductHistory, findProductHistory, getBlingProducts, summarizeLot } from "./lots.js";
 import { insertRows } from "./pg-bulk.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
+import { normalizeWmsDeposits } from "./wms-labels.js";
 
 const { Pool } = pg;
 
@@ -104,7 +105,8 @@ const DEFAULT_TRIAGE_TRANSFER_SETTINGS = Object.freeze({
     { code: "LOJA", label: "Loja", depositName: "Loja" },
     { code: "VENDA_DIRETA", label: "Venda direta", depositName: "Venda Direta" },
     { code: "RMA", label: "RMA", depositName: "RMA" }
-  ]
+  ],
+  wmsDeposits: []
 });
 
 export function hasPostgres() {
@@ -3212,7 +3214,9 @@ function buildTransferLotRecord({
   source = "manual",
   triageItemId = null,
   diagnosisCondition = "",
-  triageDestination = ""
+  triageDestination = "",
+  wmsEnabled = false,
+  wmsPrefix = ""
 }) {
   const createdAt = new Date().toISOString();
   return {
@@ -3232,7 +3236,9 @@ function buildTransferLotRecord({
     source: source || "manual",
     triageItemId: triageItemId || null,
     diagnosisCondition: diagnosisCondition || "",
-    triageDestination: triageDestination || ""
+    triageDestination: triageDestination || "",
+    wmsEnabled: Boolean(wmsEnabled),
+    wmsPrefix: String(wmsPrefix || "").trim()
   };
 }
 
@@ -3299,6 +3305,9 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
   const now = new Date().toISOString();
   const transferProduct = transferProductFromTriageItem(item);
   const descricao = `Triagem ${item.code} - ${rule.label || item.diagnosisCondition}`;
+  const wmsConfig = triageDestinationWmsConfig(triageSettings, depositoDestino);
+  const wmsEnabled = Boolean(wmsConfig);
+  const wmsPrefix = wmsConfig?.prefix || "";
 
   if (hasPostgres()) {
     const client = await getPgPool().connect();
@@ -3315,11 +3324,11 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
         await client.query(
           `update transfer_lots
            set descricao = $2, deposito_origem = $3, deposito_destino = $4, status = 'waiting_store',
-               diagnosis_condition = $5, triage_destination = $6
+               diagnosis_condition = $5, triage_destination = $6, wms_enabled = $7, wms_prefix = $8
            where id = $1`,
-          [lot.id, descricao, depositoOrigem, depositoDestino, item.diagnosisCondition || "", rule.destination || item.destination || ""]
+          [lot.id, descricao, depositoOrigem, depositoDestino, item.diagnosisCondition || "", rule.destination || item.destination || "", wmsEnabled, wmsPrefix]
         );
-        lot = { ...lot, descricao, depositoOrigem, depositoDestino, status: "waiting_store", diagnosisCondition: item.diagnosisCondition || "", triageDestination: rule.destination || item.destination || "" };
+        lot = { ...lot, descricao, depositoOrigem, depositoDestino, status: "waiting_store", diagnosisCondition: item.diagnosisCondition || "", triageDestination: rule.destination || item.destination || "", wmsEnabled, wmsPrefix };
         await client.query("delete from transfer_items where transfer_lot_id = $1", [lot.id]);
       } else {
         const creatorId = createdByUserId || userId;
@@ -3341,7 +3350,9 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
           source: "triage",
           triageItemId: item.id,
           diagnosisCondition: item.diagnosisCondition || "",
-          triageDestination: rule.destination || item.destination || ""
+          triageDestination: rule.destination || item.destination || "",
+          wmsEnabled,
+          wmsPrefix
         });
         lot.status = "waiting_store";
         await insertTransferLotRows(client, [lot]);
@@ -3372,6 +3383,8 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
     lot.status = "waiting_store";
     lot.diagnosisCondition = item.diagnosisCondition || "";
     lot.triageDestination = rule.destination || item.destination || "";
+    lot.wmsEnabled = wmsEnabled;
+    lot.wmsPrefix = wmsPrefix;
     db.transferItems = db.transferItems.filter((transferItem) => transferItem.transferLotId !== lot.id);
   } else {
     lot = buildTransferLotWithAutomaticName(db, {
@@ -3386,6 +3399,8 @@ export async function createOrUpdateTriageTransfer({ userId, item, createdByUser
     lot.triageItemId = item.id;
     lot.diagnosisCondition = item.diagnosisCondition || "";
     lot.triageDestination = rule.destination || item.destination || "";
+    lot.wmsEnabled = wmsEnabled;
+    lot.wmsPrefix = wmsPrefix;
     db.transferLots.push(lot);
     status = "created";
   }
@@ -3440,62 +3455,67 @@ export async function releaseTransferLotForStore({ userId, transferLotId }) {
   return { lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
-export async function receiveTransferLotScan({ userId, transferLotId, code }) {
+export async function receiveTransferLotScan({ userId, transferLotId, code, wmsLocation = "" }) {
   await ensureStore();
   const normalized = normalizeCode(code);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
-  if (hasPostgres()) return receiveTransferLotScanPg({ userId, transferLotId, code: normalized });
+  if (hasPostgres()) return receiveTransferLotScanPg({ userId, transferLotId, code: normalized, wmsLocation });
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  if (normalizedWmsLocation) item.wmsLocation = normalizedWmsLocation;
   item.createdAt = new Date().toISOString();
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
-export async function receivePublicTransferLotScan({ transferLotId, code }) {
+export async function receivePublicTransferLotScan({ transferLotId, code, wmsLocation = "" }) {
   await ensureStore();
   const normalized = normalizeCode(code);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
-  if (hasPostgres()) return receiveTransferLotScanPg({ transferLotId, code: normalized });
+  if (hasPostgres()) return receiveTransferLotScanPg({ transferLotId, code: normalized, wmsLocation });
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
+  if (normalizedWmsLocation) item.wmsLocation = normalizedWmsLocation;
   item.createdAt = new Date().toISOString();
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
-export async function forceReceivePublicTransferLotScan({ transferLotId, code, reason }) {
+export async function forceReceivePublicTransferLotScan({ transferLotId, code, reason, wmsLocation = "" }) {
   await ensureStore();
   const normalized = normalizeCode(code);
   const normalizedReason = normalizeForceTransferReason(reason);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
-  if (hasPostgres()) return forceReceiveTransferLotScanPg({ transferLotId, code: normalized, reason: normalizedReason });
+  if (hasPostgres()) return forceReceiveTransferLotScanPg({ transferLotId, code: normalized, reason: normalizedReason, wmsLocation });
 
   const db = await readDb();
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId);
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
   const product = findTransferProduct(db, lot.userId, normalized);
   if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
@@ -3511,6 +3531,7 @@ export async function forceReceivePublicTransferLotScan({ transferLotId, code, r
     existingForced.forceReason = normalizedReason;
     existingForced.forceCode = normalized;
     existingForced.forceAt = now;
+    if (normalizedWmsLocation) existingForced.wmsLocation = normalizedWmsLocation;
     existingForced.createdAt = now;
     occurrence.itemId = existingForced.id;
   } else {
@@ -3518,6 +3539,7 @@ export async function forceReceivePublicTransferLotScan({ transferLotId, code, r
       ...buildTransferItem(lot.id, product),
       quantidade: 0,
       quantidadeConferida: 1,
+      wmsLocation: normalizedWmsLocation,
       forceReason: normalizedReason,
       forceCode: normalized,
       forceAt: now
@@ -4567,7 +4589,9 @@ async function ensurePgStore() {
       source text not null default 'manual',
       triage_item_id text,
       diagnosis_condition text not null default '',
-      triage_destination text not null default ''
+      triage_destination text not null default '',
+      wms_enabled boolean not null default false,
+      wms_prefix text not null default ''
     );
 
     create table if not exists transfer_items (
@@ -4833,6 +4857,7 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists peso_caixa numeric;
     alter table catalog_rejected_requests add column if not exists localizacao_estoque text not null default '';
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
+    alter table transfer_items add column if not exists wms_location text not null default '';
     alter table transfer_items add column if not exists force_reason text not null default '';
     alter table transfer_items add column if not exists force_code text not null default '';
     alter table transfer_items add column if not exists force_at timestamptz;
@@ -4844,6 +4869,8 @@ async function ensurePgStore() {
     alter table transfer_lots add column if not exists triage_item_id text;
     alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
     alter table transfer_lots add column if not exists triage_destination text not null default '';
+    alter table transfer_lots add column if not exists wms_enabled boolean not null default false;
+    alter table transfer_lots add column if not exists wms_prefix text not null default '';
     update catalog_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
     update catalog_rejected_requests set created_by_user_id = user_id where created_by_user_id is null or created_by_user_id = '';
 
@@ -5547,7 +5574,7 @@ async function insertTransferLotRows(client, lots = []) {
   await insertRows(
     target,
     "transfer_lots",
-    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name", "source", "triage_item_id", "diagnosis_condition", "triage_destination"],
+    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name", "source", "triage_item_id", "diagnosis_condition", "triage_destination", "wms_enabled", "wms_prefix"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
@@ -5565,7 +5592,9 @@ async function insertTransferLotRows(client, lots = []) {
       lot.source || "manual",
       lot.triageItemId || null,
       lot.diagnosisCondition || "",
-      lot.triageDestination || ""
+      lot.triageDestination || "",
+      Boolean(lot.wmsEnabled),
+      lot.wmsPrefix || ""
     ])
   );
 }
@@ -5576,6 +5605,8 @@ async function ensureTransferLotTriageColumnsPg(target = { query }) {
     alter table transfer_lots add column if not exists triage_item_id text;
     alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
     alter table transfer_lots add column if not exists triage_destination text not null default '';
+    alter table transfer_lots add column if not exists wms_enabled boolean not null default false;
+    alter table transfer_lots add column if not exists wms_prefix text not null default '';
   `);
 }
 
@@ -5585,10 +5616,11 @@ async function ensureUserStockTransferAcceptanceColumnPg(target = { query }) {
 
 async function insertTransferItemRows(client, items = []) {
   const target = client || { query };
+  if (hasPostgres()) await ensureTransferItemWmsColumnsPg(target);
   await insertRows(
     target,
     "transfer_items",
-    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "force_reason", "force_code", "force_at", "created_at"],
+    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "wms_location", "force_reason", "force_code", "force_at", "created_at"],
     items.map((item) => [
       item.id,
       item.transferLotId,
@@ -5600,12 +5632,17 @@ async function insertTransferItemRows(client, items = []) {
       item.ean || "",
       requiredInt(item.quantidade),
       requiredInt(item.quantidadeConferida),
+      item.wmsLocation || "",
       item.forceReason || "",
       item.forceCode || "",
       item.forceAt || null,
       item.createdAt
     ])
   );
+}
+
+async function ensureTransferItemWmsColumnsPg(target = { query }) {
+  await target.query("alter table transfer_items add column if not exists wms_location text not null default ''");
 }
 
 async function insertTransferForcedOccurrenceRows(client, occurrences = []) {
@@ -6529,11 +6566,12 @@ async function scanTransferLotPg({ userId, transferLotId, code, externalProduct 
   return { ...result, lot: await getTransferLotDetail(userId, transferLotId) };
 }
 
-async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
+async function receiveTransferLotScanPg({ userId, transferLotId, code, wmsLocation = "" }) {
   const client = await getPgPool().connect();
   let result;
   try {
     await client.query("begin");
+    await ensureTransferItemWmsColumnsPg(client);
     const lotResult = userId
       ? await client.query("select * from transfer_lots where id = $1 and user_id = $2 limit 1 for update", [transferLotId, userId])
       : await client.query("select * from transfer_lots where id = $1 limit 1 for update", [transferLotId]);
@@ -6559,15 +6597,16 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code }) {
 
     const item = transferItemFromRow(itemResult.rows[0]);
     if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
+    const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
     const nextReceived = Number(item.quantidadeConferida || 0) + 1;
     const now = new Date().toISOString();
-    await client.query("update transfer_items set quantidade_conferida = $2, created_at = $3 where id = $1", [item.id, nextReceived, now]);
+    await client.query("update transfer_items set quantidade_conferida = $2, wms_location = $3, created_at = $4 where id = $1", [item.id, nextReceived, normalizedWmsLocation || item.wmsLocation || "", now]);
 
     const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
-    const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived, createdAt: now } : transferItemFromRow(row));
+    const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived, wmsLocation: normalizedWmsLocation || item.wmsLocation || "", createdAt: now } : transferItemFromRow(row));
     updateTransferLotReceivingStatus(lot, items);
     await client.query("update transfer_lots set status = $2 where id = $1", [lot.id, lot.status]);
-    result = { status: nextReceived > Number(item.quantidade || 0) ? "over" : "received", item: { ...item, quantidadeConferida: nextReceived, createdAt: now } };
+    result = { status: nextReceived > Number(item.quantidade || 0) ? "over" : "received", item: { ...item, quantidadeConferida: nextReceived, wmsLocation: normalizedWmsLocation || item.wmsLocation || "", createdAt: now } };
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -6610,16 +6649,18 @@ async function confirmTransferLotTotalPg({ transferLotId, receivedTotal, reporte
   return { ...result, lot: await getPublicTransferLotDetail(transferLotId) };
 }
 
-async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
+async function forceReceiveTransferLotScanPg({ transferLotId, code, reason, wmsLocation = "" }) {
   const client = await getPgPool().connect();
   let result;
   try {
     await client.query("begin");
+    await ensureTransferItemWmsColumnsPg(client);
     const lotResult = await client.query("select * from transfer_lots where id = $1 limit 1 for update", [transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
     if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
     if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
+    const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
     const product = await findPgTransferProduct(client, lot.userId, code);
     if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
@@ -6635,15 +6676,16 @@ async function forceReceiveTransferLotScanPg({ transferLotId, code, reason }) {
     if (item) {
       const nextReceived = Number(item.quantidadeConferida || 0) + 1;
       await client.query(
-        "update transfer_items set quantidade_conferida = $2, force_reason = $3, force_code = $4, force_at = $5, created_at = $5 where id = $1",
-        [item.id, nextReceived, reason, code, now]
+        "update transfer_items set quantidade_conferida = $2, wms_location = $3, force_reason = $4, force_code = $5, force_at = $6, created_at = $6 where id = $1",
+        [item.id, nextReceived, normalizedWmsLocation || item.wmsLocation || "", reason, code, now]
       );
-      item = { ...item, quantidadeConferida: nextReceived, forceReason: reason, forceCode: code, forceAt: now };
+      item = { ...item, quantidadeConferida: nextReceived, wmsLocation: normalizedWmsLocation || item.wmsLocation || "", forceReason: reason, forceCode: code, forceAt: now };
     } else {
       item = {
         ...buildTransferItem(lot.id, product),
         quantidade: 0,
         quantidadeConferida: 1,
+        wmsLocation: normalizedWmsLocation,
         forceReason: reason,
         forceCode: code,
         forceAt: now
@@ -8987,7 +9029,9 @@ function transferLotFromRow(row) {
     source: row.source || "manual",
     triageItemId: row.triage_item_id || null,
     diagnosisCondition: row.diagnosis_condition || "",
-    triageDestination: row.triage_destination || ""
+    triageDestination: row.triage_destination || "",
+    wmsEnabled: Boolean(row.wms_enabled),
+    wmsPrefix: row.wms_prefix || ""
   };
 }
 
@@ -9003,6 +9047,7 @@ function transferItemFromRow(row) {
     ean: row.ean || "",
     quantidade: Number(row.quantidade || 0),
     quantidadeConferida: Number(row.quantidade_conferida || 0),
+    wmsLocation: row.wms_location || "",
     forceReason: row.force_reason || "",
     forceCode: row.force_code || "",
     forceAt: row.force_at ? iso(row.force_at) : null,
@@ -9276,6 +9321,28 @@ function normalizeTransferReceivedTotal(value) {
   if (rounded !== quantity) throw new Error("Informe o total recebido sem casas decimais.");
   if (rounded < 0) throw new Error("O total recebido nao pode ser negativo.");
   return rounded;
+}
+
+function normalizeTransferWmsLocation(lot, value) {
+  if (!lot?.wmsEnabled) return "";
+  const location = String(value || "").trim().toUpperCase();
+  if (!location) throw new Error("Informe a posicao WMS para alocar o produto.");
+  const expected = normalizeWmsLocationPrefix(lot.wmsPrefix || lot.depositoDestino);
+  const actual = normalizeWmsLocationPrefix(location);
+  if (!expected || (actual !== expected && !actual.startsWith(`${expected}-`))) {
+    const receivedDeposit = actual.split("-")[0] || "outro deposito";
+    throw new Error(`Esta posicao pertence a ${receivedDeposit}. Este produto deve ser alocado no deposito ${lot.depositoDestino}.`);
+  }
+  return location;
+}
+
+function normalizeWmsLocationPrefix(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function transferLotTotalConfirmationStatus(lot, items) {
@@ -9587,6 +9654,7 @@ function normalizeTriageTransferSettings(input = {}) {
   const defaults = DEFAULT_TRIAGE_TRANSFER_SETTINGS;
   const defaultOriginDeposit = String(input.defaultOriginDeposit ?? input.default_origin_deposit ?? defaults.defaultOriginDeposit).trim();
   const destinations = normalizeTriageTransferDestinations(input.destinations || defaults.destinations);
+  const wmsDeposits = normalizeWmsDeposits(input.wmsDeposits || input.wms_deposits || defaults.wmsDeposits || []);
   const destinationCodes = new Set(destinations.map((item) => item.code));
   const diagnosisOptions = normalizeTriageDiagnosisOptions(input.diagnosisOptions || input.diagnosis_options || defaults.diagnosisOptions, {
     defaultOriginDeposit,
@@ -9597,8 +9665,23 @@ function normalizeTriageTransferSettings(input = {}) {
     enabled: input.enabled === undefined ? defaults.enabled : Boolean(input.enabled),
     defaultOriginDeposit,
     destinations,
-    diagnosisOptions
+    diagnosisOptions,
+    wmsDeposits
   };
+}
+
+function triageDestinationWmsConfig(settings, depositName) {
+  const expected = normalizeWmsDepositKey(depositName);
+  return expected ? (settings?.wmsDeposits || []).find((item) => normalizeWmsDepositKey(item.depositName) === expected) || null : null;
+}
+
+function normalizeWmsDepositKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function normalizeTriageTransferDestinations(input = []) {

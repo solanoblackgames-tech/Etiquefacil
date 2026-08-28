@@ -183,6 +183,7 @@ function defaultTriageTransferSettings() {
       { code: "VENDA_DIRETA", label: "Venda direta", depositName: "Venda Direta" },
       { code: "RMA", label: "RMA", depositName: "RMA" }
     ],
+    wmsDeposits: [],
     diagnosisOptions: [
       { code: "OK_VENDA_INTERNET", label: "OK venda internet", destination: "ECOMMERCE", depositOrigin: "Triagem", depositDestination: "Ecommerce", transferEnabled: true, requireAcceptance: true },
       { code: "OK_VENDA_DIRETA", label: "OK venda direta", destination: "VENDA_DIRETA", depositOrigin: "Triagem", depositDestination: "Venda Direta", transferEnabled: true, requireAcceptance: true },
@@ -438,6 +439,7 @@ function bindEvents() {
   $("#profileTriageStatsPanel").addEventListener("change", handleTriageStatsFilterChange);
   $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
   $("#profileTriageRules").addEventListener("click", handleTriageRulesClick);
+  $("#profileTriageRules").addEventListener("input", handleTriageRulesInput);
   $("#profileOperationalDashboardPanel").addEventListener("click", handleOperationalDashboardClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2688,6 +2690,7 @@ function normalizeTriageTransferSettings(settings = {}) {
     enabled: settings.enabled === undefined ? defaults.enabled : Boolean(settings.enabled),
     defaultOriginDeposit: String(settings.defaultOriginDeposit || defaults.defaultOriginDeposit || "").trim(),
     destinations: Array.isArray(settings.destinations) && settings.destinations.length ? settings.destinations : defaults.destinations,
+    wmsDeposits: Array.isArray(settings.wmsDeposits || settings.wms_deposits) ? (settings.wmsDeposits || settings.wms_deposits) : defaults.wmsDeposits,
     diagnosisOptions: Array.isArray(settings.diagnosisOptions) && settings.diagnosisOptions.length ? settings.diagnosisOptions : defaults.diagnosisOptions
   };
 }
@@ -2699,6 +2702,7 @@ function renderTriageTransferSettings() {
   form.elements.enabled.checked = Boolean(settings.enabled);
   renderTriageOriginDepositSelect(form, settings);
   renderTriageDepositChoices(settings);
+  renderTriageWmsDepositList(settings);
   renderTriageDiagnosisRuleList(settings);
 }
 
@@ -2777,6 +2781,135 @@ function renderTriageDiagnosisRuleList(settings) {
   wrapper.innerHTML = rules.map((rule) => triageDiagnosisRuleCard(rule, deposits, settings.defaultOriginDeposit)).join("");
 }
 
+function renderTriageWmsDepositList(settings) {
+  const wrapper = $("#triageWmsDepositList");
+  if (!wrapper) return;
+  const deposits = triageAvailableDepositNames(settings);
+  const wmsDeposits = Array.isArray(settings.wmsDeposits) ? settings.wmsDeposits : [];
+  wrapper.innerHTML = wmsDeposits.length
+    ? wmsDeposits.map((wms) => triageWmsDepositCard(wms, deposits)).join("")
+    : '<p class="muted transfer-empty">Nenhum destino usando WMS. Destinos sem WMS continuam no aceite/conferencia normal.</p>';
+}
+
+function triageWmsDepositCard(wms = {}, deposits = []) {
+  const depositName = String(wms.depositName || "").trim();
+  const prefix = String(wms.prefix || depositName || "WMS").trim().toUpperCase();
+  const rowsConfig = normalizeWmsRowsConfig(wms.rowsConfig || wms.rows_config, wms);
+  const total = wmsTotalLabels(rowsConfig);
+  const preview = wmsPositionPreview(prefix, rowsConfig);
+  const depositOptions = deposits.length
+    ? deposits.map((name) => `<option value="${escapeHtml(name)}" ${name === depositName ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
+    : `<option value="${escapeHtml(depositName)}">${escapeHtml(depositName || "Depositos indisponiveis")}</option>`;
+  return `
+    <article class="triage-wms-card" data-wms-deposit-card>
+      <label>Deposito destino
+        <select name="wmsDepositName" ${deposits.length ? "" : "disabled"} required>${depositOptions}</select>
+      </label>
+      <label>Prefixo da posicao
+        <input name="wmsPrefix" value="${escapeHtml(prefix)}" placeholder="Ex: ECOM" required />
+      </label>
+      <div class="triage-wms-rows" data-wms-row-list>
+        ${rowsConfig.map((row) => triageWmsRow(row)).join("")}
+      </div>
+      <div class="triage-wms-preview">
+        <span>Ruas ${escapeHtml(preview.rowsLabel)}</span>
+        <strong>${escapeHtml(preview.firstCode)} ate ${escapeHtml(preview.lastCode)}</strong>
+      </div>
+      <div class="triage-wms-card-actions">
+        <span>${total} etiquetas</span>
+        <button type="button" class="ghost" data-add-wms-row>Adicionar rua</button>
+        <button type="button" class="ghost" data-print-wms-labels>Imprimir QR 100x150</button>
+        <button type="button" class="ghost danger" data-remove-wms-deposit>Remover</button>
+      </div>
+    </article>
+  `;
+}
+
+function triageWmsRow(row = {}) {
+  return `
+    <div class="triage-wms-row" data-wms-row>
+      <label>Rua
+        <input name="wmsRowLabel" maxlength="6" value="${escapeHtml(row.label || "A")}" required />
+      </label>
+      <label>Colunas nesta rua
+        <input name="wmsRowColumns" type="number" min="1" max="200" step="1" value="${positiveInteger(row.columns, 1)}" required />
+      </label>
+      <label>Posicoes por coluna
+        <input name="wmsRowPositions" type="number" min="1" max="200" step="1" value="${positiveInteger(row.positions, 1)}" required />
+      </label>
+      <button type="button" class="ghost danger" data-remove-wms-row>Remover rua</button>
+    </div>
+  `;
+}
+
+function positiveInteger(value, fallback = 1) {
+  const number = Number.parseInt(value, 10);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function wmsPositionPreview(prefix, rowsConfig) {
+  const rows = rowsConfig.length ? rowsConfig : [{ label: "A", columns: 1, positions: 1 }];
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  return {
+    rowsLabel: rows.length > 1 ? `${first.label} ate ${last.label}` : first.label,
+    firstCode: `${prefix}-${first.label}-1-1`,
+    lastCode: `${prefix}-${last.label}-${last.columns}-${last.positions}`
+  };
+}
+
+function rowNumberToLetters(value) {
+  let number = positiveInteger(value, 1);
+  let text = "";
+  while (number > 0) {
+    number -= 1;
+    text = String.fromCharCode(65 + (number % 26)) + text;
+    number = Math.floor(number / 26);
+  }
+  return text;
+}
+
+function normalizeWmsRowsConfig(input, fallback = {}) {
+  const rows = Array.isArray(input) ? input : [];
+  if (rows.length) {
+    return rows.map((row, index) => ({
+      label: normalizeWmsRowLabel(row.label || row.rua || rowNumberToLetters(index + 1)),
+      columns: positiveInteger(row.columns ?? row.colunas, 1),
+      positions: positiveInteger(row.positions ?? row.posicoes, 1)
+    })).filter((row) => row.label);
+  }
+  const count = positiveInteger(fallback.rows, 1);
+  const columns = positiveInteger(fallback.columns, 1);
+  const positions = positiveInteger(fallback.positions, 1);
+  return Array.from({ length: count }, (_, index) => ({
+    label: rowNumberToLetters(index + 1),
+    columns,
+    positions
+  }));
+}
+
+function readWmsRowsConfig(card) {
+  return [...card.querySelectorAll("[data-wms-row]")].map((row, index) => ({
+    label: normalizeWmsRowLabel(row.querySelector('[name="wmsRowLabel"]')?.value || rowNumberToLetters(index + 1)),
+    columns: positiveInteger(row.querySelector('[name="wmsRowColumns"]')?.value, 1),
+    positions: positiveInteger(row.querySelector('[name="wmsRowPositions"]')?.value, 1)
+  })).filter((row) => row.label);
+}
+
+function normalizeWmsRowLabel(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "")
+    .slice(0, 6) || "A";
+}
+
+function wmsTotalLabels(rowsConfig) {
+  return rowsConfig.reduce((sum, row) => sum + positiveInteger(row.columns, 1) * positiveInteger(row.positions, 1), 0);
+}
+
 function triageDiagnosisRuleCard(rule = {}, deposits = [], defaultOriginDeposit = "") {
   const label = String(rule.label || rule.code || "").trim();
   const code = normalizeRuleCode(rule.code || label);
@@ -2839,7 +2972,23 @@ function profileTriageRulesPayload(form) {
     rule.destination,
     { code: rule.destination, label: rule.depositDestination, depositName: rule.depositDestination }
   ])).values()];
-  return { destinations, diagnosisOptions };
+  const wmsDeposits = [...form.querySelectorAll("[data-wms-deposit-card]")].map((card) => ({
+    depositName: String(card.querySelector('[name="wmsDepositName"]')?.value || "").trim(),
+    prefix: normalizeWmsPrefix(card.querySelector('[name="wmsPrefix"]')?.value),
+    rowsConfig: readWmsRowsConfig(card)
+  })).filter((item) => item.depositName);
+  return { destinations, diagnosisOptions, wmsDeposits };
+}
+
+function normalizeWmsPrefix(value) {
+  const normalized = String(value || "WMS")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "WMS";
 }
 
 function normalizeRuleCode(value) {
@@ -2866,10 +3015,57 @@ function handleTriageRulesClick(event) {
     addTriageDiagnosisRuleCard();
     return;
   }
+  if (event.target.closest("[data-add-wms-deposit]")) {
+    addTriageWmsDepositCard();
+    return;
+  }
+  if (event.target.closest("[data-add-wms-row]")) {
+    addTriageWmsRow(event.target.closest("[data-wms-deposit-card]"));
+    return;
+  }
+  const removeWmsRowButton = event.target.closest("[data-remove-wms-row]");
+  if (removeWmsRowButton) {
+    const card = removeWmsRowButton.closest("[data-wms-deposit-card]");
+    if (card.querySelectorAll("[data-wms-row]").length > 1) removeWmsRowButton.closest("[data-wms-row]")?.remove();
+    updateWmsCardPreview(card);
+    return;
+  }
+  if (event.target.closest("[data-print-wms-labels]")) {
+    openWmsLabelsPdf(event.target.closest("[data-wms-deposit-card]"));
+    return;
+  }
+  const removeWmsButton = event.target.closest("[data-remove-wms-deposit]");
+  if (removeWmsButton) {
+    removeWmsButton.closest("[data-wms-deposit-card]")?.remove();
+    return;
+  }
   const removeButton = event.target.closest("[data-remove-triage-diagnosis]");
   if (removeButton) {
     removeButton.closest("[data-triage-rule-card]")?.remove();
   }
+}
+
+function handleTriageRulesInput(event) {
+  const card = event.target.closest("[data-wms-deposit-card]");
+  if (!card) return;
+  if (event.target.name === "wmsRowLabel") event.target.value = normalizeWmsRowLabel(event.target.value);
+  updateWmsCardPreview(card);
+}
+
+function updateWmsCardPreview(card) {
+  if (!card) return;
+  const rowsConfig = readWmsRowsConfig(card);
+  const total = wmsTotalLabels(rowsConfig);
+  const label = card.querySelector(".triage-wms-card-actions span");
+  if (label) label.textContent = `${total} etiquetas`;
+  const preview = wmsPositionPreview(
+    normalizeWmsPrefix(card.querySelector('[name="wmsPrefix"]')?.value),
+    rowsConfig
+  );
+  const previewLabel = card.querySelector(".triage-wms-preview span");
+  const previewCodes = card.querySelector(".triage-wms-preview strong");
+  if (previewLabel) previewLabel.textContent = `Ruas ${preview.rowsLabel}`;
+  if (previewCodes) previewCodes.textContent = `${preview.firstCode} ate ${preview.lastCode}`;
 }
 
 function addTriageDiagnosisRuleCard() {
@@ -2886,6 +3082,56 @@ function addTriageDiagnosisRuleCard() {
     transferEnabled: true
   }, deposits, form.elements.defaultOriginDeposit.value));
   wrapper.querySelector("[data-triage-rule-card]:last-child input")?.select();
+}
+
+function addTriageWmsDepositCard() {
+  const wrapper = $("#triageWmsDepositList");
+  if (!wrapper) return;
+  const deposits = triageAvailableDepositNames();
+  const existing = new Set([...wrapper.querySelectorAll('[name="wmsDepositName"]')].map((input) => input.value));
+  const depositName = deposits.find((deposit) => !existing.has(deposit)) || deposits[0] || "";
+  if (!depositName) {
+    $("#triageTransferSettingsMessage").textContent = "Carregue os depositos do Bling antes de gerar um deposito WMS.";
+    return;
+  }
+  const empty = wrapper.querySelector(".transfer-empty");
+  if (empty) empty.remove();
+  wrapper.insertAdjacentHTML("beforeend", triageWmsDepositCard({
+    depositName,
+    prefix: normalizeWmsPrefix(depositName),
+    rowsConfig: [{ label: "A", columns: 1, positions: 1 }]
+  }, deposits));
+  wrapper.querySelector("[data-wms-deposit-card]:last-child input")?.select();
+}
+
+function addTriageWmsRow(card) {
+  const list = card?.querySelector("[data-wms-row-list]");
+  if (!list) return;
+  const rowsConfig = readWmsRowsConfig(card);
+  const label = nextWmsRowLabel(rowsConfig);
+  const previous = rowsConfig[rowsConfig.length - 1] || { columns: 1, positions: 1 };
+  list.insertAdjacentHTML("beforeend", triageWmsRow({ label, columns: previous.columns, positions: previous.positions }));
+  updateWmsCardPreview(card);
+  list.querySelector("[data-wms-row]:last-child input")?.select();
+}
+
+function nextWmsRowLabel(rowsConfig) {
+  const used = new Set(rowsConfig.map((row) => normalizeWmsRowLabel(row.label)));
+  for (let index = 1; index <= 200; index += 1) {
+    const label = rowNumberToLetters(index);
+    if (!used.has(label)) return label;
+  }
+  return "A";
+}
+
+function openWmsLabelsPdf(card) {
+  if (!card) return;
+  const params = new URLSearchParams({
+    depositName: String(card.querySelector('[name="wmsDepositName"]')?.value || "").trim(),
+    prefix: normalizeWmsPrefix(card.querySelector('[name="wmsPrefix"]')?.value),
+    rowsConfig: readWmsRowsConfig(card).map((row) => `${row.label}|${row.columns}|${row.positions}`).join("\n")
+  });
+  window.open(`/api/triage/wms-labels.pdf?${params.toString()}`, "_blank", "noopener");
 }
 
 async function refreshPriceDisplaySettingsForm() {
@@ -4320,7 +4566,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
       return;
     }
     await showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
-    if (replace) updateRoute(`/transferencias/${encodeURIComponent(route.transferLotId)}/aceite`, { replace: true });
+    if (replace) updateRoute(`/transferencias/${encodeURIComponent(route.transferLotId)}/${route.transferMode || "aceite"}`, { replace: true });
     return;
   }
 
@@ -4337,7 +4583,7 @@ function parseRoute(pathname) {
   const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length || parts[0] === "entradas" || parts[0] === "perfil" || parts[0] === "bling") return { view: "profile" };
   if (parts[0] === "busca") return { view: "search" };
-  if (parts[0] === "transferencias" && parts[1] && parts[2] === "aceite") return { view: "transferAccept", transferLotId: parts[1] };
+  if (parts[0] === "transferencias" && parts[1] && (parts[2] === "aceite" || parts[2] === "wms")) return { view: "transferAccept", transferLotId: parts[1], transferMode: parts[2] };
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
@@ -4581,7 +4827,8 @@ async function saveAdminTriageTransferSettings(event) {
       enabled: form.elements.enabled.checked,
       defaultOriginDeposit: form.elements.defaultOriginDeposit.value,
       destinations: parseAdminTriageDestinations(form.elements.destinations.value),
-      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value)
+      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value),
+      wmsDeposits: state.adminTriageTransferSettings?.wmsDeposits || []
     };
     const response = await api(`/api/admin/users/${encodeURIComponent(userId)}/triage-transfer-settings`, {
       method: "PUT",
@@ -5077,7 +5324,7 @@ function adminUserRow(user) {
           </form>
           <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
           <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
-          <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(user.id)}" data-stock-transfer-acceptance-access="${user.stockTransferAcceptanceAccess ? "false" : "true"}">${user.stockTransferAcceptanceAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
+          <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(user.id)}" data-stock-transfer-acceptance-access="${user.stockTransferAcceptanceAccess ? "false" : "true"}">${user.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
           <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
@@ -5118,7 +5365,7 @@ function adminOperatorRow(operator) {
         </form>
         <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
         <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
-        <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(operator.id)}" data-stock-transfer-acceptance-access="${operator.stockTransferAcceptanceAccess ? "false" : "true"}">${operator.stockTransferAcceptanceAccess ? "Bloquear aceite estoque" : "Liberar aceite estoque"}</button>
+        <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(operator.id)}" data-stock-transfer-acceptance-access="${operator.stockTransferAcceptanceAccess ? "false" : "true"}">${operator.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
         <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
@@ -5198,7 +5445,7 @@ async function handleAdminUsersClick(event) {
         body: JSON.stringify({ stockTransferAcceptanceAccess: stockTransferAcceptanceButton.dataset.stockTransferAcceptanceAccess === "true" })
       });
       $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de aceite de estoque atualizada.";
+      $("#adminMessage").textContent = "Permissao de entrada WMS atualizada.";
       await loadAdminUsers();
     } catch (error) {
       $("#adminMessage").style.color = "";
@@ -5460,6 +5707,10 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
     renderTransferReceiveCompletePage(lot);
     return;
   }
+  if (lot.wmsEnabled) {
+    renderTransferWmsEntryPage(lot, { suppressInputFocus });
+    return;
+  }
   const expected = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
   const finishLabel = lot.source === "triage" ? "Aceitar transferencia de estoque" : "Finalizar transferencia";
   detail.classList.remove("empty");
@@ -5514,6 +5765,76 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
   if (!suppressInputFocus) schedulePrimaryInputFocus(["#transferTotalReceivedInput"]);
 }
 
+function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
+  const detail = $("#transferDetail");
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="scan-page transfer-receive-page">
+      <div class="scan-heading">
+        <div>
+          <span class="muted">${escapeHtml(lot.depositoOrigem)} para ${escapeHtml(lot.depositoDestino)}</span>
+          <h2>Entrada WMS</h2>
+          ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
+        </div>
+        <div class="transfer-status-group">
+          ${transferReleasedIconMarkup(lot)}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status, lot)}</span>
+        </div>
+      </div>
+      <div class="summary-grid">
+        ${metric("A alocar", lot.totalPlanned ?? lot.totalQty)}
+        ${metric("Alocado", lot.totalReceived || 0)}
+        ${metric("Falta", lot.totalPending ?? 0)}
+      </div>
+      <form id="transferReceiveForm" class="transfer-total-form wms-entry-form">
+        <label>Etiqueta da triagem
+          <input id="transferReceiveInput" name="code" placeholder="Bipe LAB, SKU, Codigo ML ou EAN" autocomplete="off" ${suppressInputFocus ? "" : "autofocus"} required />
+        </label>
+        <label>Posicao WMS
+          <input id="transferWmsLocationInput" name="wmsLocation" placeholder="${escapeHtml(wmsLocationPlaceholder(lot))}" autocomplete="off" required />
+        </label>
+        <button type="submit">Alocar produto</button>
+      </form>
+      ${state.pendingTransferConfirmation ? transferPendingConfirmation(state.pendingTransferConfirmation) : ""}
+      <div id="transferReceiveMessage" class="message"></div>
+      ${transferDivergenceReportPanel(lot)}
+      <details class="transfer-items-panel" open>
+        <summary>
+          <span>Itens para alocar</span>
+          <strong>${lot.totalSkus || 0} SKUs - ${lot.totalPlanned ?? lot.totalQty} unidades</strong>
+        </summary>
+        <div class="diverse-table transfer-table transfer-receive-table">
+          <div class="diverse-row transfer-row diverse-row-head">
+            <span>SKU</span>
+            <span>Codigo</span>
+            <span>Produto</span>
+            <span>Qtd</span>
+          </div>
+          ${transferReceiveAllRows(lot)}
+        </div>
+      </details>
+    </section>
+  `;
+  $("#transferReceiveForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    prepareTransferReceiveConfirmation(lot);
+  });
+  detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
+  detail.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
+  detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
+  if (!suppressInputFocus) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+}
+
+function wmsLocationPlaceholder(lot) {
+  const prefix = String(lot?.wmsPrefix || lot?.depositoDestino || "DESTINO")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `Ex: ${prefix || "DESTINO"}-A01`;
+}
+
 function isTransferReceiveComplete(lot) {
   if (lot.status === "synced") return true;
   const planned = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
@@ -5531,7 +5852,7 @@ function renderTransferReceiveCompletePage(lot) {
         <div>
           <span class="muted">${escapeHtml(lot.depositoOrigem)} para ${escapeHtml(lot.depositoDestino)}</span>
           <h2>Conferencia encerrada</h2>
-          <p>Todas as quantidades desta remessa foram conferidas.</p>
+          <p>${lot.wmsEnabled ? "Todos os produtos foram alocados no WMS." : "Todas as quantidades desta remessa foram conferidas."}</p>
         </div>
         <div class="transfer-status-group">
           ${transferReleasedIconMarkup(lot)}
@@ -5540,7 +5861,7 @@ function renderTransferReceiveCompletePage(lot) {
       </div>
       <div class="summary-grid">
         ${metric("Planejado", lot.totalPlanned ?? lot.totalQty)}
-        ${metric("Recebido", lot.totalReceived || 0)}
+        ${metric(lot.wmsEnabled ? "Alocado" : "Recebido", lot.totalReceived || 0)}
         ${metric("Diferenca", transferTotalDifferenceLabel(lot))}
       </div>
       <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
@@ -5686,19 +6007,21 @@ function transferPendingConfirmation(pending) {
   const title = item ? escapeHtml(item.descricao) : "Produto nao identificado na remessa";
   const force = pending.force === true;
   const subtitle = item ? `${escapeHtml(item.sku)} · ${escapeHtml(item.codigoMl)}` : escapeHtml(pending.code);
+  const wmsLocation = String(pending.wmsLocation || "").trim();
   return `
     <section class="transfer-confirm-panel ${force ? "force-transfer-panel" : ""}">
       <span class="muted">${force ? "Codigo fora da remessa" : "Etiqueta lida"}</span>
       <strong>${title}</strong>
       <span>${subtitle}</span>
+      ${wmsLocation ? `<p>Posicao WMS: <strong>${escapeHtml(wmsLocation)}</strong></p>` : ""}
       ${force ? `
-        <p>Deseja forcar a transferencia deste item no Bling?</p>
+        <p>${pending.wmsLocation ? "Deseja forcar a alocacao deste item no WMS?" : "Deseja forcar a transferencia deste item no Bling?"}</p>
         <label>Descreva o ocorrido antes de finalizar
           <textarea id="forceTransferReason" rows="4" maxlength="1000" placeholder="Ex.: item fisico veio junto na caixa, mas nao estava previsto na remessa."></textarea>
         </label>
       ` : ""}
       <div class="transfer-confirm-actions">
-        <button type="button" data-confirm-transfer-entry>${force ? "Forcar transferencia no Bling" : "Confirmar entrada no estoque"}</button>
+        <button type="button" data-confirm-transfer-entry>${force ? pending.wmsLocation ? "Forcar alocacao" : "Forcar transferencia no Bling" : pending.wmsLocation ? "Confirmar alocacao" : "Confirmar entrada no estoque"}</button>
         <button type="button" class="ghost" data-cancel-transfer-entry>Cancelar leitura</button>
       </div>
     </section>
@@ -5719,11 +6042,12 @@ function transferReceiveAllRows(lot) {
 }
 
 function transferReceiveItemRow(item) {
+  const wmsLocation = String(item.wmsLocation || "").trim();
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
       <span>${escapeHtml(item.codigoMl)}</span>
-      <span>${escapeHtml(item.descricao)}</span>
+      <span>${escapeHtml(item.descricao)}${wmsLocation ? `<small>WMS ${escapeHtml(wmsLocation)}</small>` : ""}</span>
       <span>${item.quantidade}</span>
     </article>
   `;
@@ -5749,17 +6073,26 @@ function findTransferReceiveItem(lot, code) {
 function prepareTransferReceiveConfirmation(lot) {
   if (state.pendingTransferReceive || state.pendingTransferConfirmation) return;
   const input = $("#transferReceiveInput");
+  const wmsInput = $("#transferWmsLocationInput");
   if (!input) return;
   const code = normalizeCode(input.value);
+  const wmsLocation = String(wmsInput?.value || "").trim().toUpperCase();
   input.value = code;
   if (!code) return;
+  if (lot.wmsEnabled && !wmsLocation) {
+    $("#transferReceiveMessage").style.color = "";
+    $("#transferReceiveMessage").textContent = "Informe a posicao WMS para alocar o produto.";
+    schedulePrimaryInputFocus(["#transferWmsLocationInput"]);
+    return;
+  }
   const item = findTransferReceiveItem(lot, code);
   const forcedExcess = item && Number(item.quantidade || 0) === 0;
   const missing = item ? Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) : 0;
   playTransferReadSound();
   if (!item || forcedExcess) {
-    state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, force: true };
+    state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, force: true, wmsLocation };
     input.value = "";
+    if (wmsInput) wmsInput.value = "";
     if (state.transferCameraStream) {
       mountTransferCameraConfirmation(lot);
     } else {
@@ -5777,8 +6110,9 @@ function prepareTransferReceiveConfirmation(lot) {
     input.select();
     return;
   }
-  state.pendingTransferConfirmation = { transferLotId: lot.id, code, item };
+  state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, wmsLocation };
   input.value = "";
+  if (wmsInput) wmsInput.value = "";
   if (state.transferCameraStream) {
     mountTransferCameraConfirmation(lot);
   } else {
@@ -5786,7 +6120,7 @@ function prepareTransferReceiveConfirmation(lot) {
   }
   const message = $("#transferReceiveMessage");
   message.style.color = "#0f766e";
-  message.textContent = "Confira o produto em maos e confirme a entrada no estoque.";
+  message.textContent = lot.wmsEnabled ? "Confira o produto e confirme a alocacao no WMS." : "Confira o produto em maos e confirme a entrada no estoque.";
 }
 
 function cancelTransferReceiveConfirmation(lot) {
@@ -5808,6 +6142,8 @@ function mountTransferCameraConfirmation(lot) {
   const input = $("#transferReceiveInput");
   const button = $("#transferReceiveForm button");
   if (input) input.disabled = true;
+  const wmsInput = $("#transferWmsLocationInput");
+  if (wmsInput) wmsInput.disabled = true;
   if (button) button.disabled = true;
   if (!cameraPanel || !state.pendingTransferConfirmation) return;
   clearTransferCameraConfirmation();
@@ -5829,6 +6165,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
   const button = $("#transferReceiveForm button");
   const confirmButton = $("[data-confirm-transfer-entry]");
   const input = $("#transferReceiveInput");
+  const wmsInput = $("#transferWmsLocationInput");
   const code = pending.code;
   const reason = pending.force ? String($("#forceTransferReason")?.value || "").trim() : "";
   if (pending.force && reason.length < 5) {
@@ -5839,6 +6176,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
   }
   state.pendingTransferReceive = true;
   if (input) input.disabled = true;
+  if (wmsInput) wmsInput.disabled = true;
   if (button) button.disabled = true;
   if (confirmButton) confirmButton.disabled = true;
   const shouldResumeCamera = Boolean(state.transferCameraStream);
@@ -5847,7 +6185,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     const response = await api(`${transferReceiveApiBase(transferLotId)}/${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(pending.force ? { code, reason } : { code })
+      body: JSON.stringify(pending.force ? { code, reason, wmsLocation: pending.wmsLocation || "" } : { code, wmsLocation: pending.wmsLocation || "" })
     });
     state.pendingTransferConfirmation = null;
     if (shouldResumeCamera) stopTransferCamera();
@@ -5856,8 +6194,12 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     const message = $("#transferReceiveMessage");
     message.style.color = "#0f766e";
     message.textContent = pending.force
-      ? `${response.item?.sku || code} transferido no Bling com ocorrencia registrada.`
-      : `${response.item?.sku || code} confirmado no estoque.`;
+      ? pending.wmsLocation
+        ? `${response.item?.sku || code} alocado em ${pending.wmsLocation} com ocorrencia registrada.`
+        : `${response.item?.sku || code} transferido no Bling com ocorrencia registrada.`
+      : pending.wmsLocation
+        ? `${response.item?.sku || code} alocado em ${pending.wmsLocation}.`
+        : `${response.item?.sku || code} confirmado no estoque.`;
     if (shouldResumeCamera && !isTransferReceiveComplete(response.lot)) await startTransferCamera(transferLotId, response.lot);
   } catch (error) {
     playTransferErrorSound();
@@ -5866,9 +6208,11 @@ async function confirmTransferReceiveCurrent(transferLotId) {
   } finally {
     state.pendingTransferReceive = false;
     const currentInput = $("#transferReceiveInput");
+    const currentWmsInput = $("#transferWmsLocationInput");
     const currentButton = $("#transferReceiveForm button");
     const currentConfirmButton = $("[data-confirm-transfer-entry]");
     if (currentInput) currentInput.disabled = Boolean(state.pendingTransferConfirmation);
+    if (currentWmsInput) currentWmsInput.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentButton) currentButton.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentConfirmButton) currentConfirmButton.disabled = false;
     if (!state.pendingTransferConfirmation && !state.transferCameraStream) schedulePrimaryInputFocus(["#transferReceiveInput"]);
@@ -6193,7 +6537,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
   const canSync = state.user?.role !== "operator";
   const synced = lot.status === "synced";
   const cdLocked = lot.status !== "open";
-  const receivedMetricLabel = lot.source === "triage" ? "Aceite estoque" : "Conferido loja";
+  const receivedMetricLabel = lot.wmsEnabled ? "Alocado WMS" : lot.source === "triage" ? "Aceite estoque" : "Conferido loja";
   const displayItems = prioritizeTransferItems(lot.items || [], lastCode);
   const detail = $("#transferDetail");
   detail.classList.remove("empty");
@@ -6228,8 +6572,8 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
       ${transferDivergenceReportsList(lot)}
       <div class="actions">
         <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da remessa</button>
-        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
-        <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.source === "triage" ? "Aceitar transferencia de estoque" : "Abrir conferencia da loja"}</a>
+        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${lot.wmsEnabled ? "Liberar para WMS" : lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
+        <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.wmsEnabled ? "Alocar produto" : lot.source === "triage" ? "Aceitar transferencia de estoque" : "Abrir conferencia da loja"}</a>
       </div>
       <div class="actions ${canSync ? "" : "hidden"}">
         <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar CSV</a>
@@ -6320,6 +6664,16 @@ function transferItemRow(item, synced) {
 }
 
 function transferStatusLabel(status, lot = {}) {
+  if (lot?.source === "triage" && lot?.wmsEnabled) {
+    return ({
+      open: "Aguardando transferencia",
+      waiting_store: "Aguardando alocacao WMS",
+      checking: "Alocacao em andamento",
+      ready_sync: "Alocacao concluida",
+      divergent: "Alocacao divergente",
+      synced: "Enviada"
+    })[status] || "Aberta";
+  }
   if (lot?.source === "triage") {
     return ({
       open: "Aguardando transferencia",
@@ -6346,7 +6700,7 @@ function isTransferReleasedForStore(status) {
 
 function transferReleasedIconMarkup(lot = {}) {
   if (!isTransferReleasedForStore(lot.status)) return "";
-  const label = lot.source === "triage" ? "Aguardando aceite de estoque" : "Liberada para loja";
+  const label = lot.wmsEnabled ? "Aguardando alocacao WMS" : lot.source === "triage" ? "Aguardando aceite de estoque" : "Liberada para loja";
   return `<span class="transfer-store-check" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">&#10003;</span>`;
 }
 
@@ -6437,14 +6791,14 @@ async function handleTransferDetailClick(event) {
 async function releaseTransferLot(transferLotId, button) {
   const lot = state.transferLots.find((item) => item.id === transferLotId);
   const triageTransfer = lot?.source === "triage";
-  if (!confirm(triageTransfer ? "Liberar esta transferencia para aceite de estoque?" : "Liberar esta remessa para conferencia na loja?")) return;
+  if (!confirm(lot?.wmsEnabled ? "Liberar esta transferencia para entrada WMS?" : triageTransfer ? "Liberar esta transferencia para aceite de estoque?" : "Liberar esta remessa para conferencia na loja?")) return;
   button.disabled = true;
   try {
     const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/release`, { method: "POST" });
     renderTransferDetail(response.lot);
     await loadTransferLots(transferLotId);
     $("#transferScanMessage").style.color = "#0f766e";
-    $("#transferScanMessage").textContent = triageTransfer ? "Transferencia liberada para aceite de estoque." : "Remessa liberada para a loja.";
+    $("#transferScanMessage").textContent = lot?.wmsEnabled ? "Transferencia liberada para entrada WMS." : triageTransfer ? "Transferencia liberada para aceite de estoque." : "Remessa liberada para a loja.";
   } catch (error) {
     $("#transferScanMessage").style.color = "";
     $("#transferScanMessage").textContent = error.message;
@@ -7937,7 +8291,44 @@ async function showLabel(product, { autoPrint = false, meta = null, quantity = 1
   $("#labelPrintButton").textContent = "Imprimir etiqueta";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
+  scheduleLabelDescriptionFit($("#labelPreview"));
   if (autoPrint) setTimeout(printCurrentLabel, 120);
+}
+
+function scheduleLabelDescriptionFit(root = document) {
+  requestAnimationFrame(() => fitLabelDescriptions(root));
+}
+
+function fitLabelDescriptions(root = document) {
+  root.querySelectorAll(".label-print:not(.label-print-large-qr) .label-desc").forEach(fitLabelDescription);
+}
+
+function fitLabelDescription(element) {
+  const label = element.closest(".label-print");
+  if (!label || !element.textContent.trim()) return;
+  const maxSize = label.classList.contains("has-club-price") ? 10.8 : 14;
+  const minSize = 5.2;
+  const lineHeight = label.classList.contains("has-club-price") ? 1.08 : 1.1;
+  element.style.fontSize = `${maxSize}px`;
+  element.style.lineHeight = String(lineHeight);
+  if (labelDescriptionFits(element)) return;
+
+  let low = minSize;
+  let high = maxSize;
+  for (let i = 0; i < 8; i += 1) {
+    const mid = (low + high) / 2;
+    element.style.fontSize = `${mid}px`;
+    if (labelDescriptionFits(element)) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  element.style.fontSize = `${Math.max(minSize, low).toFixed(2)}px`;
+}
+
+function labelDescriptionFits(element) {
+  return element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1;
 }
 
 function code39Svg(value) {
@@ -8193,6 +8584,7 @@ async function printCurrentLabel() {
   document.body.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   document.documentElement.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   if (isLargeQrLabel) appendLargeQrPrintStyle();
+  fitLabelDescriptions(printRoot);
   await waitForPrintableImages(printRoot);
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
@@ -9539,7 +9931,7 @@ function renderTriageItemView(item) {
 function triageTransferSummaryMarkup(transfer) {
   if (!transfer?.id) return "";
   const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
-  const actionLabel = complete ? "Ver transferencia de estoque" : "Aceitar transferencia de estoque";
+  const actionLabel = transfer.wmsEnabled ? complete ? "Ver entrada WMS" : "Alocar produto" : complete ? "Ver transferencia de estoque" : "Aceitar transferencia de estoque";
   const action = state.user?.stockTransferAcceptanceAccess
     ? `<a class="button-link primary-action" href="${escapeHtml(transferReceivePath(transfer))}">${actionLabel}</a>`
     : "";
@@ -9548,7 +9940,7 @@ function triageTransferSummaryMarkup(transfer) {
       <div>
         <span class="muted">Transferencia gerada pela triagem</span>
         <strong>${escapeHtml(transfer.depositoOrigem || "-")} -> ${escapeHtml(transfer.depositoDestino || "-")}</strong>
-        <small>${escapeHtml(transferStatusLabel(transfer.status, transfer))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} recebido</small>
+        <small>${escapeHtml(transferStatusLabel(transfer.status, transfer))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} ${transfer.wmsEnabled ? "alocado" : "recebido"}</small>
       </div>
       ${action}
     </section>
@@ -9556,7 +9948,7 @@ function triageTransferSummaryMarkup(transfer) {
 }
 
 function transferReceivePath(lot) {
-  const suffix = lot?.source === "triage" ? "aceite" : "loja";
+  const suffix = lot?.wmsEnabled ? "wms" : lot?.source === "triage" ? "aceite" : "loja";
   return `/transferencias/${encodeURIComponent(lot?.id || "")}/${suffix}`;
 }
 
@@ -9869,7 +10261,7 @@ async function handleTriageEditSubmit(event) {
 function triageDiagnosisSaveMessage(response, form) {
   if (form.classList.contains("triage-photo-only-form")) return "Foto salva no laudo.";
   const transferStatus = response?.transfer?.status;
-  if (transferStatus === "created") return "Diagnostico salvo e transferencia enviada para aceite.";
+  if (transferStatus === "created") return "Diagnostico salvo e transferencia enviada para entrada WMS.";
   if (transferStatus === "updated") return "Diagnostico salvo e transferencia de triagem atualizada.";
   return "Diagnostico salvo.";
 }

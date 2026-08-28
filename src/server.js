@@ -30,6 +30,7 @@ import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, imp
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
+import { buildWmsLocationLabelsPdf, buildWmsPositionCodes, normalizeWmsDeposit } from "./wms-labels.js";
 import {
   addDiverseLotItem,
   canDeleteTriageItem,
@@ -671,6 +672,20 @@ app.get("/api/dashboard/operations", requireAuth, requireOwner, async (req, res)
   }
 });
 
+app.get("/api/triage/wms-labels.pdf", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
+  try {
+    const options = normalizeWmsDeposit(req.query || {});
+    const buffer = await buildWmsLocationLabelsPdf(options);
+    const total = buildWmsPositionCodes(options).length;
+    const fileName = `posicoes-wms-${safeFileName(options.prefix)}-${total}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.send(buffer);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/triage/settings", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({ settings: await getUserTriageTransferSettings(workspaceUserId(req)) });
@@ -896,8 +911,9 @@ app.post("/api/transfer-lots/:transferLotId/release", requireAuth, requireTransf
 app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
-    await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code });
-    res.json(await receiveTransferLotScan({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code }));
+    const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
+    await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code, wmsLocation });
+    res.json(await receiveTransferLotScan({ userId: workspaceUserId(req), transferLotId: req.params.transferLotId, code, wmsLocation }));
   } catch (error) {
     sendError(res, error);
   }
@@ -973,7 +989,8 @@ app.post("/api/transfer-lots/:transferLotId/force-receive-scan", requireAuth, re
     if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const reason = normalizeRequiredJustification(req.body.reason || req.body.justificativa);
-    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason });
+    const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
+    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason, wmsLocation });
     let transferResult;
     try {
       transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
@@ -998,7 +1015,8 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", requirePublicT
   let result = null;
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
-    result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code });
+    const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
+    result = await receivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, wmsLocation });
     let transferResult;
     try {
       transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
@@ -1062,7 +1080,8 @@ app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", requireP
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const reason = String(req.body.reason || req.body.descricao || "").trim();
-    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason });
+    const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
+    result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason, wmsLocation });
     let transferResult;
     try {
       transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
@@ -2404,7 +2423,7 @@ async function requireTriageViewOrStockTransferAcceptanceAccess(req, res, next) 
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.triageAccess || freshUser?.stockTransferAcceptanceAccess) return next();
-    return res.status(403).json({ error: "Visualizacao de laudo ou aceite de estoque nao liberado para este usuario." });
+    return res.status(403).json({ error: "Visualizacao de laudo ou entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
   }
@@ -2426,7 +2445,7 @@ async function requireStockTransferAcceptanceAccess(req, res, next) {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.stockTransferAcceptanceAccess) return next();
-    return res.status(403).json({ error: "Aceite de transferencia de estoque nao liberado para este usuario." });
+    return res.status(403).json({ error: "Entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
   }
@@ -2437,7 +2456,7 @@ async function requireTransferViewOrAcceptanceAccess(req, res, next) {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.transferAccess || freshUser?.stockTransferAcceptanceAccess) return next();
-    return res.status(403).json({ error: "Transferencia ou aceite de estoque nao liberado para este usuario." });
+    return res.status(403).json({ error: "Transferencia ou entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
   }
