@@ -412,6 +412,7 @@ function bindEvents() {
   });
   $("#conferenceSettingsForm").addEventListener("submit", saveConferenceSettings);
   $("#priceDisplaySettingsForm").addEventListener("submit", savePriceDisplaySettings);
+  $("#triageTransferSettingsForm").addEventListener("submit", saveTriageTransferSettings);
   $("#operatorForm").addEventListener("submit", createOperator);
   $("#operatorInviteButton").addEventListener("click", generateOperatorInvite);
   $("#operatorManualToggle").addEventListener("click", toggleOperatorManualForm);
@@ -2519,6 +2520,7 @@ function applyUserPermissions(user) {
   document.querySelector('[data-profile-section="entries"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="sync"]')?.classList.toggle("hidden", operator);
   document.querySelector('[data-profile-section="conferenceSettings"]')?.classList.toggle("hidden", operator);
+  document.querySelector('[data-profile-section="triageRules"]')?.classList.toggle("hidden", operator || !user.triageAccess);
   document.querySelector('[data-profile-section="operators"]')?.classList.toggle("hidden", !canViewOperatorStats());
   document.querySelector('[data-profile-section="triageStats"]')?.classList.toggle("hidden", !canViewTriageStats());
   if (!canViewTriageStats()) {
@@ -2527,6 +2529,7 @@ function applyUserPermissions(user) {
   if (!canViewOperatorStats()) {
     document.querySelector("#profileOperators")?.classList.add("hidden");
   }
+  if (operator || !user.triageAccess) document.querySelector("#profileTriageRules")?.classList.add("hidden");
   document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isOwnerUser());
   if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
@@ -2658,7 +2661,7 @@ async function loadPriceDisplaySettings() {
 
 async function loadTriageTransferSettings() {
   try {
-    const response = await api("/api/triage/settings");
+    const response = await api("/api/profile/triage-transfer-settings");
     state.triageTransferSettings = normalizeTriageTransferSettings(response.settings);
   } catch {
     state.triageTransferSettings = defaultTriageTransferSettings();
@@ -2673,6 +2676,59 @@ function normalizeTriageTransferSettings(settings = {}) {
     destinations: Array.isArray(settings.destinations) && settings.destinations.length ? settings.destinations : defaults.destinations,
     diagnosisOptions: Array.isArray(settings.diagnosisOptions) && settings.diagnosisOptions.length ? settings.diagnosisOptions : defaults.diagnosisOptions
   };
+}
+
+function renderTriageTransferSettings() {
+  const form = $("#triageTransferSettingsForm");
+  if (!form) return;
+  const settings = state.triageTransferSettings || defaultTriageTransferSettings();
+  form.elements.enabled.checked = Boolean(settings.enabled);
+  form.elements.defaultOriginDeposit.value = settings.defaultOriginDeposit || "";
+  form.elements.destinations.value = (settings.destinations || [])
+    .map((item) => [item.code, item.label, item.depositName].join(" | "))
+    .join("\n");
+  form.elements.diagnosisOptions.value = (settings.diagnosisOptions || [])
+    .map((item) => [
+      item.code,
+      item.label,
+      item.destination,
+      item.depositOrigin,
+      item.depositDestination,
+      item.transferEnabled ? "sim" : "nao"
+    ].join(" | "))
+    .join("\n");
+}
+
+async function saveTriageTransferSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type='submit']");
+  const message = $("#triageTransferSettingsMessage");
+  button.disabled = true;
+  message.textContent = "";
+  try {
+    const payload = {
+      enabled: form.elements.enabled.checked,
+      defaultOriginDeposit: form.elements.defaultOriginDeposit.value,
+      destinations: parseAdminTriageDestinations(form.elements.destinations.value),
+      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value)
+    };
+    const response = await api("/api/profile/triage-transfer-settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    state.triageTransferSettings = normalizeTriageTransferSettings(response.settings);
+    renderTriageTransferSettings();
+    renderTriageItems();
+    message.style.color = "#0f766e";
+    message.textContent = "Configuracao de laudos salva.";
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function refreshPriceDisplaySettingsForm() {
@@ -2946,6 +3002,7 @@ function setProfileSection(section = "entries") {
   if (state.user?.role === "operator" && !canViewOperatorStats()) section = "help";
   if (section === "operators" && !canViewOperatorStats()) section = isOwnerUser() ? "entries" : "";
   if (section === "triageStats" && !canViewTriageStats()) section = canViewOperatorStats() ? "operators" : "";
+  if (section === "triageRules" && (!isOwnerUser() || !state.user?.triageAccess)) section = "entries";
   if (state.user?.role === "operator" && !["help", "operators", "triageStats"].includes(section)) {
     section = canViewOperatorStats() ? "operators" : "help";
   }
@@ -2959,6 +3016,7 @@ function setProfileSection(section = "entries") {
   $("#profileEntries").classList.toggle("hidden", section !== "entries");
   $("#profileSync").classList.toggle("hidden", section !== "sync");
   $("#profileConferenceSettings").classList.toggle("hidden", section !== "conferenceSettings");
+  $("#profileTriageRules").classList.toggle("hidden", section !== "triageRules");
   $("#profileOperators").classList.toggle("hidden", section !== "operators");
   $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
@@ -2968,6 +3026,7 @@ function setProfileSection(section = "entries") {
     renderConferenceSettings();
     refreshPriceDisplaySettingsForm();
   }
+  if (section === "triageRules") renderTriageTransferSettings();
   if (section === "operators") loadOperators();
   if (section === "triageStats") loadTriageStats();
 }

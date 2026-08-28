@@ -565,6 +565,22 @@ app.patch("/api/profile/price-display-settings", requireAuth, requireOwner, asyn
   }
 });
 
+app.get("/api/profile/triage-transfer-settings", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ settings: await getUserTriageTransferSettings(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/profile/triage-transfer-settings", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
+  try {
+    res.json({ settings: await saveUserTriageTransferSettings(workspaceUserId(req), req.body || {}) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({

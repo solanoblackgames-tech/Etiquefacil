@@ -147,6 +147,7 @@
           <button data-profile-section="help" type="button">Ajuda</button>
           <button data-profile-section="dashboard" type="button">Dashboard</button>
           <button data-profile-section="entries" class="active" type="button">Entradas</button>
+          <button data-profile-section="triageRules" type="button">Laudos e depositos</button>
           <button data-profile-section="operators" type="button">Operadores</button>
           <button data-profile-section="triageStats" type="button">Estatisticas triagem</button>
         </aside>
@@ -304,6 +305,34 @@
               </div>
             </form>
             <p id="priceDisplaySettingsMessage" class="message"></p>
+          </section>
+        </section>
+
+        <section id="profileTriageRules" class="settings-shell profile-section hidden">
+          <section class="entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Perfil</span>
+              <h3>Laudos e depositos da triagem</h3>
+            </div>
+            <form id="triageTransferSettingsForm" class="settings-form triage-rules-form">
+              <label>Deposito origem padrao
+                <input name="defaultOriginDeposit" placeholder="Ex: Triagem" />
+              </label>
+              <label class="wide-field checkbox-field">
+                <input name="enabled" type="checkbox" />
+                <span>Gerar transferencia automaticamente ao salvar laudo</span>
+              </label>
+              <label class="wide-field">Destinos e depositos do Bling
+                <textarea name="destinations" rows="5" placeholder="ECOMMERCE | Ecommerce | Ecommerce&#10;LOJA | Loja | Loja"></textarea>
+              </label>
+              <label class="wide-field">Opcoes de diagnostico
+                <textarea name="diagnosisOptions" rows="8" placeholder="OK_VENDA_INTERNET | OK venda internet | ECOMMERCE | Triagem | Ecommerce | sim&#10;OK_COM_DETALHES | OK com detalhes | LOJA | Triagem | Loja | sim"></textarea>
+              </label>
+              <div class="settings-actions">
+                <button type="submit">Salvar configuracao</button>
+              </div>
+            </form>
+            <p id="triageTransferSettingsMessage" class="message"></p>
           </section>
         </section>
 

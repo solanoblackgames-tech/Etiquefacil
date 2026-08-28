@@ -4616,7 +4616,8 @@ h3 {
   margin-top: 14px;
 }
 
-.admin-form.triage-rules-form {
+.admin-form.triage-rules-form,
+.settings-form.triage-rules-form {
   align-items: start;
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
 }
