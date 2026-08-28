@@ -3478,7 +3478,7 @@ function operationalTransfersMarkup(transfers = []) {
       ${transfers.map((transfer) => `
         <div class="operational-dashboard-row">
           <strong>${escapeHtml(transfer.name || "")}<small>${escapeHtml(transfer.depositoOrigem || "")} -> ${escapeHtml(transfer.depositoDestino || "")}</small></strong>
-          <span>${escapeHtml(transferStatusLabel(transfer.status))}<small>${formatDate(transfer.createdAt)}</small></span>
+          <span>${escapeHtml(transferStatusLabel(transfer.status, transfer))}<small>${formatDate(transfer.createdAt)}</small></span>
           <span>${transfer.received || 0}<small>de ${transfer.planned || 0} planejadas</small></span>
           <span>${money(transfer.receivedValue || 0)}</span>
           <span>${money(transfer.receivedCost || 0)}</span>
@@ -5472,8 +5472,8 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
         <div class="transfer-status-group">
-          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
-          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+          ${transferReleasedIconMarkup(lot)}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status, lot)}</span>
         </div>
       </div>
       <div class="summary-grid">
@@ -5534,8 +5534,8 @@ function renderTransferReceiveCompletePage(lot) {
           <p>Todas as quantidades desta remessa foram conferidas.</p>
         </div>
         <div class="transfer-status-group">
-          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
-          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+          ${transferReleasedIconMarkup(lot)}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status, lot)}</span>
         </div>
       </div>
       <div class="summary-grid">
@@ -6064,14 +6064,14 @@ function renderTransferLots() {
     <article class="lot-card ${lot.id === state.selectedTransferLotId ? "active" : ""} ${isTransferReleasedForStore(lot.status) ? "transfer-released" : ""} ${matches.has(lot.id) ? "transfer-search-match" : ""}" data-transfer-lot="${escapeHtml(lot.id)}">
       <div class="transfer-card-title">
         <strong>${escapeHtml(lot.name)}</strong>
-        ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
+        ${transferReleasedIconMarkup(lot)}
       </div>
       ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
       ${lot.source === "triage" ? `<span class="muted">Origem: Triagem${lot.diagnosisCondition ? ` - ${escapeHtml(triageDiagnosisConditionLabel(lot.diagnosisCondition))}` : ""}</span>` : ""}
       ${lot.divergenceCount ? `<span class="transfer-error-count">${lot.divergenceCount} erro${lot.divergenceCount === 1 ? "" : "s"} producao</span>` : ""}
-      <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+      <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status, lot)}</span>
     </article>
   `).join("");
 }
@@ -6130,7 +6130,7 @@ function transferProductSearchResult(match) {
     <article class="transfer-search-result">
       <div>
         <strong>${escapeHtml(lot.name)}</strong>
-        <span>${escapeHtml(lot.depositoOrigem)} -> ${escapeHtml(lot.depositoDestino)} - ${transferStatusLabel(lot.status)}</span>
+        <span>${escapeHtml(lot.depositoOrigem)} -> ${escapeHtml(lot.depositoDestino)} - ${transferStatusLabel(lot.status, lot)}</span>
       </div>
       <button type="button" class="ghost" data-open-transfer-match="${escapeHtml(lot.id)}">Abrir</button>
       <div class="transfer-search-items">
@@ -6193,6 +6193,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
   const canSync = state.user?.role !== "operator";
   const synced = lot.status === "synced";
   const cdLocked = lot.status !== "open";
+  const receivedMetricLabel = lot.source === "triage" ? "Aceite estoque" : "Conferido loja";
   const displayItems = prioritizeTransferItems(lot.items || [], lastCode);
   const detail = $("#transferDetail");
   detail.classList.remove("empty");
@@ -6205,8 +6206,8 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
         <div class="transfer-status-group">
-          ${isTransferReleasedForStore(lot.status) ? '<span class="transfer-store-check" aria-label="Liberada para loja" title="Liberada para loja">&#10003;</span>' : ""}
-          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status)}</span>
+          ${transferReleasedIconMarkup(lot)}
+          <span class="badge ${transferStatusClass(lot.status)}">${transferStatusLabel(lot.status, lot)}</span>
         </div>
       </div>
       <form id="transferScanForm" class="search-bar">
@@ -6217,7 +6218,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
       <div class="summary-grid">
         ${metric("SKUs", lot.totalSkus)}
         ${metric("Planejado CD", lot.totalPlanned ?? lot.totalQty)}
-        ${metric("Conferido loja", lot.totalReceived || 0)}
+        ${metric(receivedMetricLabel, lot.totalReceived || 0)}
         ${metric("Falta", lot.totalPending ?? 0)}
       </div>
       <div class="summary-grid">
@@ -6227,7 +6228,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
       ${transferDivergenceReportsList(lot)}
       <div class="actions">
         <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da remessa</button>
-        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>Liberar para loja</button>
+        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
         <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.source === "triage" ? "Aceitar transferencia de estoque" : "Abrir conferencia da loja"}</a>
       </div>
       <div class="actions ${canSync ? "" : "hidden"}">
@@ -6318,7 +6319,17 @@ function transferItemRow(item, synced) {
   `;
 }
 
-function transferStatusLabel(status) {
+function transferStatusLabel(status, lot = {}) {
+  if (lot?.source === "triage") {
+    return ({
+      open: "Aguardando transferencia",
+      waiting_store: "Aguardando aceite de estoque",
+      checking: "Aceite em andamento",
+      ready_sync: "Aceite concluido",
+      divergent: "Aceite divergente",
+      synced: "Enviada"
+    })[status] || "Aberta";
+  }
   return ({
     open: "CD montando",
     waiting_store: "Liberada para loja",
@@ -6331,6 +6342,12 @@ function transferStatusLabel(status) {
 
 function isTransferReleasedForStore(status) {
   return ["waiting_store", "checking", "ready_sync", "divergent"].includes(status);
+}
+
+function transferReleasedIconMarkup(lot = {}) {
+  if (!isTransferReleasedForStore(lot.status)) return "";
+  const label = lot.source === "triage" ? "Aguardando aceite de estoque" : "Liberada para loja";
+  return `<span class="transfer-store-check" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">&#10003;</span>`;
 }
 
 function transferStatusClass(status) {
@@ -6418,14 +6435,16 @@ async function handleTransferDetailClick(event) {
 }
 
 async function releaseTransferLot(transferLotId, button) {
-  if (!confirm("Liberar esta remessa para conferencia na loja?")) return;
+  const lot = state.transferLots.find((item) => item.id === transferLotId);
+  const triageTransfer = lot?.source === "triage";
+  if (!confirm(triageTransfer ? "Liberar esta transferencia para aceite de estoque?" : "Liberar esta remessa para conferencia na loja?")) return;
   button.disabled = true;
   try {
     const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/release`, { method: "POST" });
     renderTransferDetail(response.lot);
     await loadTransferLots(transferLotId);
     $("#transferScanMessage").style.color = "#0f766e";
-    $("#transferScanMessage").textContent = "Remessa liberada para a loja.";
+    $("#transferScanMessage").textContent = triageTransfer ? "Transferencia liberada para aceite de estoque." : "Remessa liberada para a loja.";
   } catch (error) {
     $("#transferScanMessage").style.color = "";
     $("#transferScanMessage").textContent = error.message;
@@ -9529,7 +9548,7 @@ function triageTransferSummaryMarkup(transfer) {
       <div>
         <span class="muted">Transferencia gerada pela triagem</span>
         <strong>${escapeHtml(transfer.depositoOrigem || "-")} -> ${escapeHtml(transfer.depositoDestino || "-")}</strong>
-        <small>${escapeHtml(transferStatusLabel(transfer.status))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} recebido</small>
+        <small>${escapeHtml(transferStatusLabel(transfer.status, transfer))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} recebido</small>
       </div>
       ${action}
     </section>
