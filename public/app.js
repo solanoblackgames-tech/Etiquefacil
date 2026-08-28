@@ -9388,6 +9388,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           ${item.diagnosisCondition ? `<div><dt>Diagnostico</dt><dd>${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}</dd></div>` : ""}
           ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
+        ${triageTransferSummaryMarkup(item.triageTransfer)}
         <div class="settings-actions">
           <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
           ${printButton}
@@ -9441,6 +9442,7 @@ function renderTriageItemView(item) {
         <h2>${escapeHtml(item.code)}</h2>
       </div>
       ${triageDiagnosisFormMarkup(item, { qrMode: true })}
+      ${triageTransferSummaryMarkup(item.triageTransfer)}
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
       <dl class="triage-fields">
         <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
@@ -9459,6 +9461,22 @@ function renderTriageItemView(item) {
         ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         ${item.diagnosis ? `<div class="wide-field"><dt>Descricao do diagnostico</dt><dd>${escapeHtml(item.diagnosis)}</dd></div>` : ""}
       </dl>
+    </section>
+  `;
+}
+
+function triageTransferSummaryMarkup(transfer) {
+  if (!transfer?.id) return "";
+  const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
+  const actionLabel = complete ? "Ver aceite" : "Aceitar entrada";
+  return `
+    <section class="triage-transfer-summary">
+      <div>
+        <span class="muted">Transferencia gerada pela triagem</span>
+        <strong>${escapeHtml(transfer.depositoOrigem || "-")} -> ${escapeHtml(transfer.depositoDestino || "-")}</strong>
+        <small>${escapeHtml(transferStatusLabel(transfer.status))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} recebido</small>
+      </div>
+      <a class="button-link primary-action" href="/transferencias/${encodeURIComponent(transfer.id)}/loja">${actionLabel}</a>
     </section>
   `;
 }

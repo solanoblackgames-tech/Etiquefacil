@@ -3050,6 +3050,33 @@ export async function getTransferLotDetail(userId, transferLotId) {
   return summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || []);
 }
 
+export async function getTriageTransferLot(userId, triageItemId) {
+  await ensureStore();
+  const normalizedTriageItemId = String(triageItemId || "").trim();
+  if (!normalizedTriageItemId) return null;
+
+  if (hasPostgres()) {
+    await ensureTransferLotTriageColumnsPg();
+    const lotResult = await query(
+      "select * from transfer_lots where user_id = $1 and source = 'triage' and triage_item_id = $2 order by created_at desc limit 1",
+      [userId, normalizedTriageItemId]
+    );
+    const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
+    if (!lot) return null;
+    const [items, reports] = await Promise.all([
+      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
+    ]);
+    return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
+  }
+
+  const db = await readDb();
+  const lot = (db.transferLots || [])
+    .filter((item) => item.userId === userId && item.source === "triage" && item.triageItemId === normalizedTriageItemId)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
+  return lot ? summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || []) : null;
+}
+
 export async function getPublicTransferLotDetail(transferLotId) {
   await ensureStore();
   if (hasPostgres()) {

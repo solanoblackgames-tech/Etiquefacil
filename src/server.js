@@ -75,6 +75,7 @@ import {
   listTriageStatsRows,
   getOperationalDashboardStats,
   getTransferLotDetail,
+  getTriageTransferLot,
   getPublicUserById,
   getUserProductWithLot,
   getUserBlingCredentials,
@@ -663,7 +664,7 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
     const triageItem = await lookupTriageItemByScan(userId, code);
     if (triageItem) {
       return res.json({
-        item: await withTriageQrData(req, triageItem, { includeHistory: isOwnerSession(req) })
+        item: await withTriageQrData(req, triageItem, { includeHistory: isOwnerSession(req), includeTransfer: true })
       });
     }
 
@@ -705,7 +706,7 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
 
 app.get("/api/triage/items/:code", requireAuth, requireTriageAccess, async (req, res) => {
   try {
-    res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code), { includeHistory: isOwnerSession(req) }) });
+    res.json({ item: await withTriageQrData(req, await getTriageItem(workspaceUserId(req), req.params.code), { includeHistory: isOwnerSession(req), includeTransfer: true }) });
   } catch (error) {
     sendError(res, error);
   }
@@ -722,7 +723,7 @@ app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, a
     await updateProductRegistrationFromTriage({ userId, item });
     const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_details_update", { code: item.code });
-    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }), bling });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req), includeTransfer: true }), bling });
   } catch (error) {
     sendError(res, error);
   }
@@ -743,7 +744,7 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
       createdByUserId: req.session.user?.id
     });
     await recordOperatorActivity(req.session.user, "triage_diagnosis", { code: item.code, destination: item.destination, diagnosisCondition: item.diagnosisCondition });
-    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req) }), transfer });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req), includeTransfer: true }), transfer });
   } catch (error) {
     sendError(res, error);
   }
@@ -2404,8 +2405,8 @@ async function publicUserForId(userId) {
   }
 }
 
-async function withTriageQrData(req, value, { includeHistory = false } = {}) {
-  if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item, { includeHistory })));
+async function withTriageQrData(req, value, { includeHistory = false, includeTransfer = false } = {}) {
+  if (Array.isArray(value)) return Promise.all(value.map((item) => withTriageQrData(req, item, { includeHistory, includeTransfer })));
   const statusUrl = triageStatusUrl(req, value.code);
   const [operatorUser, createdByUser, diagnosedByUser] = await Promise.all([
     publicUserForId(value.operatorUserId),
@@ -2426,6 +2427,7 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
         }))
       )
     : undefined;
+  const triageTransfer = includeTransfer ? await getTriageTransferLot(workspaceUserId(req), value.id) : undefined;
   return {
     ...value,
     operatorUser,
@@ -2433,6 +2435,7 @@ async function withTriageQrData(req, value, { includeHistory = false } = {}) {
     diagnosedByUser,
     canDelete,
     ...(includeHistory ? { diagnosisHistory } : {}),
+    ...(includeTransfer ? { triageTransfer } : {}),
     statusUrl,
     qrDataUrl: await QRCode.toDataURL(statusUrl, { margin: 1, width: 220 })
   };

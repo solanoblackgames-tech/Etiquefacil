@@ -2442,6 +2442,36 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.triage-transfer-summary {
+  align-items: center;
+  background: #eef8f6;
+  border: 1px solid #b8dcd6;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 10px 0 12px;
+  padding: 12px;
+}
+
+.triage-transfer-summary div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.triage-transfer-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.triage-transfer-summary small {
+  color: var(--muted);
+}
+
+.triage-transfer-summary .button-link {
+  flex: 0 0 auto;
+}
+
 .triage-edit-form {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -5894,6 +5924,16 @@ h3 {
 
   .triage-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .triage-transfer-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .triage-transfer-summary .button-link {
+    justify-content: center;
+    width: 100%;
   }
 
   .triage-detail-grid > .triage-diagnosis-form {
