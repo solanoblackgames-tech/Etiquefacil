@@ -52,6 +52,7 @@ const state = {
   blingAlertRefreshInFlight: false,
   scanOnly: false,
   transferReceiveOnly: false,
+  transferReceivePublic: true,
   transferCameraStream: null,
   transferCameraTimer: null,
   lastCameraCode: "",
@@ -297,7 +298,7 @@ async function bootstrap() {
   }
   const transferReceiveRequest = getTransferReceiveRequest();
   if (transferReceiveRequest) {
-    await showTransferReceiveOnly(transferReceiveRequest);
+    await showTransferReceiveOnly({ ...transferReceiveRequest, publicAccess: true });
     return;
   }
   const scanRequest = getScanRequest();
@@ -365,8 +366,13 @@ function bindEvents() {
 
   window.addEventListener("popstate", () => {
     if (state.transferReceiveOnly) {
+      const route = parseRoute(window.location.pathname);
+      if (route.view === "transferAccept") {
+        showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
+        return;
+      }
       const transferReceiveRequest = getTransferReceiveRequest();
-      if (transferReceiveRequest) showTransferReceiveOnly(transferReceiveRequest);
+      if (transferReceiveRequest) showTransferReceiveOnly({ ...transferReceiveRequest, publicAccess: state.transferReceivePublic });
       else window.location.href = "/";
       return;
     }
@@ -4299,6 +4305,17 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
+  if (route.view === "transferAccept") {
+    if (!state.user?.transferAccess) {
+      setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+      if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+      return;
+    }
+    await showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
+    if (replace) updateRoute(`/transferencias/${encodeURIComponent(route.transferLotId)}/aceite`, { replace: true });
+    return;
+  }
+
   if (route.view === "triage") applyTriageFiltersFromQuery();
   setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
   if (route.view === "triage" && route.triageCode) {
@@ -4312,6 +4329,7 @@ function parseRoute(pathname) {
   const parts = String(pathname || "/").split("/").filter(Boolean).map(decodeURIComponent);
   if (!parts.length || parts[0] === "entradas" || parts[0] === "perfil" || parts[0] === "bling") return { view: "profile" };
   if (parts[0] === "busca") return { view: "search" };
+  if (parts[0] === "transferencias" && parts[1] && parts[2] === "aceite") return { view: "transferAccept", transferLotId: parts[1] };
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
@@ -5373,8 +5391,9 @@ async function handleAdminCatalogProductsClick(event) {
   }
 }
 
-async function showTransferReceiveOnly({ transferLotId }) {
+async function showTransferReceiveOnly({ transferLotId, publicAccess = true }) {
   state.transferReceiveOnly = true;
+  state.transferReceivePublic = Boolean(publicAccess);
   state.selectedTransferLotId = transferLotId;
   document.body.classList.add("scan-only");
   $("#auth").classList.add("hidden");
@@ -5399,7 +5418,7 @@ async function showTransferReceiveOnly({ transferLotId }) {
 }
 
 function transferReceiveApiBase(transferLotId) {
-  const prefix = state.transferReceiveOnly ? "/api/public/transfer-lots" : "/api/transfer-lots";
+  const prefix = state.transferReceiveOnly && state.transferReceivePublic ? "/api/public/transfer-lots" : "/api/transfer-lots";
   return `${prefix}/${encodeURIComponent(transferLotId)}`;
 }
 
@@ -5411,6 +5430,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
     return;
   }
   const expected = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
+  const finishLabel = lot.source === "triage" ? "Aceitar transferencia de estoque" : "Finalizar transferencia";
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -5437,7 +5457,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
         <label>Operador
           <input name="reporterName" maxlength="120" autocomplete="name" placeholder="Nome de quem recebeu" />
         </label>
-        <button type="submit">Finalizar transferencia</button>
+        <button type="submit">${finishLabel}</button>
       </form>
       <div id="transferReceiveMessage" class="message"></div>
       ${transferDivergenceReportPanel(lot)}
@@ -6177,7 +6197,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
       <div class="actions">
         <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da remessa</button>
         <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>Liberar para loja</button>
-        <a class="button-link" href="/transferencias/${encodeURIComponent(lot.id)}/loja">Abrir conferencia da loja</a>
+        <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.source === "triage" ? "Aceitar transferencia de estoque" : "Abrir conferencia da loja"}</a>
       </div>
       <div class="actions ${canSync ? "" : "hidden"}">
         <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar CSV</a>
@@ -6385,7 +6405,7 @@ async function releaseTransferLot(transferLotId, button) {
 
 function showTransferQrLabel(transferLotId) {
   const lot = state.transferLots.find((item) => item.id === transferLotId);
-  const receiveUrl = `${window.location.origin}/transferencias/${encodeURIComponent(transferLotId)}/loja`;
+  const receiveUrl = `${window.location.origin}${transferReceivePath(lot || { id: transferLotId })}`;
   state.labelProduct = null;
   state.labelMeta = null;
   state.labelQuantity = 1;
@@ -9468,7 +9488,10 @@ function renderTriageItemView(item) {
 function triageTransferSummaryMarkup(transfer) {
   if (!transfer?.id) return "";
   const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
-  const actionLabel = complete ? "Ver aceite" : "Aceitar entrada";
+  const actionLabel = complete ? "Ver transferencia de estoque" : "Aceitar transferencia de estoque";
+  const action = state.user?.transferAccess
+    ? `<a class="button-link primary-action" href="${escapeHtml(transferReceivePath(transfer))}">${actionLabel}</a>`
+    : "";
   return `
     <section class="triage-transfer-summary">
       <div>
@@ -9476,9 +9499,14 @@ function triageTransferSummaryMarkup(transfer) {
         <strong>${escapeHtml(transfer.depositoOrigem || "-")} -> ${escapeHtml(transfer.depositoDestino || "-")}</strong>
         <small>${escapeHtml(transferStatusLabel(transfer.status))} - ${Number(transfer.totalReceived || 0)}/${Number(transfer.totalPlanned ?? transfer.totalQty ?? 0)} recebido</small>
       </div>
-      <a class="button-link primary-action" href="/transferencias/${encodeURIComponent(transfer.id)}/loja">${actionLabel}</a>
+      ${action}
     </section>
   `;
+}
+
+function transferReceivePath(lot) {
+  const suffix = lot?.source === "triage" ? "aceite" : "loja";
+  return `/transferencias/${encodeURIComponent(lot?.id || "")}/${suffix}`;
 }
 
 function triageDiagnosisPhotoFormMarkup(item) {

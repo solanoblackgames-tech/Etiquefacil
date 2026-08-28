@@ -841,7 +841,7 @@ app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferAccess,
   res.json({ lot });
 });
 
-app.get("/api/public/transfer-lots/:transferLotId", async (req, res) => {
+app.get("/api/public/transfer-lots/:transferLotId", requirePublicTransferReceiveAllowed, async (req, res) => {
   const lot = await getPublicTransferLotDetail(req.params.transferLotId);
   if (!lot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
   res.json({ lot });
@@ -905,7 +905,7 @@ app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, re
   }
 });
 
-app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, res) => {
+app.post("/api/public/transfer-lots/:transferLotId/receive-scan", requirePublicTransferReceiveAllowed, async (req, res) => {
   let result = null;
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
@@ -936,7 +936,7 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", async (req, re
   }
 });
 
-app.post("/api/public/transfer-lots/:transferLotId/confirm-total", async (req, res) => {
+app.post("/api/public/transfer-lots/:transferLotId/confirm-total", requirePublicTransferReceiveAllowed, async (req, res) => {
   let result = null;
   try {
     result = await confirmPublicTransferLotTotal({
@@ -968,7 +968,7 @@ app.post("/api/public/transfer-lots/:transferLotId/confirm-total", async (req, r
   }
 });
 
-app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", async (req, res) => {
+app.post("/api/public/transfer-lots/:transferLotId/force-receive-scan", requirePublicTransferReceiveAllowed, async (req, res) => {
   let result = null;
   try {
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
@@ -1021,7 +1021,7 @@ app.delete("/api/transfer-lots/:transferLotId/items/:itemId", requireAuth, requi
   }
 });
 
-app.post("/api/public/transfer-lots/:transferLotId/divergence-reports", async (req, res) => {
+app.post("/api/public/transfer-lots/:transferLotId/divergence-reports", requirePublicTransferReceiveAllowed, async (req, res) => {
   try {
     const result = await reportTransferLotDivergence({
       transferLotId: req.params.transferLotId,
@@ -2327,6 +2327,19 @@ async function requireTransferOrTriageAccess(req, res, next) {
     const freshUser = await refreshSessionUser(req);
     if (freshUser?.transferAccess || freshUser?.triageAccess) return next();
     return res.status(403).json({ error: "Modulo de transferencia ou triagem nao liberado para este usuario." });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+async function requirePublicTransferReceiveAllowed(req, res, next) {
+  try {
+    const lot = await getPublicTransferLotDetail(req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    if (lot.source === "triage") {
+      return res.status(403).json({ error: "Transferencia gerada pela triagem exige operador autorizado." });
+    }
+    return next();
   } catch (error) {
     sendError(res, error);
   }
