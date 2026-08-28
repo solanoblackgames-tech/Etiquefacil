@@ -545,7 +545,15 @@ export function buildBlingStockEntryCsv(items, { deposito = "Geral", observacao 
 }
 
 export function buildBlingStockTransferCsv(items, { depositoOrigem = "", depositoDestino = "", observacao = "" } = {}) {
-  const rows = items.map((item) => ({
+  const rows = buildBlingStockTransferRows(items, { depositoOrigem, depositoDestino, observacao });
+
+  return [BLING_STOCK_TRANSFER_HEADERS, ...rows.map((row) => BLING_STOCK_TRANSFER_HEADERS.map((header) => row[header]))]
+    .map((row) => row.map(csvQuotedCell).join(","))
+    .join("\r\n");
+}
+
+export function buildBlingStockTransferRows(items, { depositoOrigem = "", depositoDestino = "", observacao = "" } = {}) {
+  return items.map((item) => ({
     "Codigo SKU*": item.sku || "",
     "GTIN/EAN": item.ean || "",
     "Nome do Produto": item.descricao || "",
@@ -554,10 +562,6 @@ export function buildBlingStockTransferCsv(items, { depositoOrigem = "", deposit
     "Quantidade*": String(Number(item.qtdConferida || item.quantidadeConferida || item.quantidade || 0)),
     Observacao: observacao
   }));
-
-  return [BLING_STOCK_TRANSFER_HEADERS, ...rows.map((row) => BLING_STOCK_TRANSFER_HEADERS.map((header) => row[header]))]
-    .map((row) => row.map(csvQuotedCell).join(","))
-    .join("\r\n");
 }
 
 export function roundMoney(value) {

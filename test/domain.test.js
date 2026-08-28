@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import XLSX from "xlsx";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, formatSku, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "../src/domain.js";
+import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, buildBlingStockTransferRows, formatSku, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "../src/domain.js";
 
 test("formatSku uses uppercase prefix and four digit sequence", () => {
   assert.equal(formatSku("amz04l", 1), "AMZ04L0001");
@@ -80,6 +80,33 @@ test("specialist import sums Saldo 1 to Saldo 4 when quantity column is absent",
   assert.equal(result.products[0].qtdTotal, 8);
   assert.equal(result.items[0].qtdEsperada, 6);
   assert.equal(result.items[1].qtdEsperada, 2);
+});
+
+test("Bling stock transfer rows map origin destination and quantity for Excel", () => {
+  const rows = buildBlingStockTransferRows(
+    [
+      {
+        sku: "AMZ04L0001",
+        ean: "789123",
+        descricao: "Alternador Lifan",
+        quantidadeConferida: 2,
+        quantidade: 3
+      }
+    ],
+    { depositoOrigem: "Deposito Geral", depositoDestino: "Picking", observacao: "Transferencia do dia" }
+  );
+
+  assert.deepEqual(rows, [
+    {
+      "Codigo SKU*": "AMZ04L0001",
+      "GTIN/EAN": "789123",
+      "Nome do Produto": "Alternador Lifan",
+      "Deposito origem*": "Deposito Geral",
+      "Deposito destino*": "Picking",
+      "Quantidade*": "2",
+      Observacao: "Transferencia do dia"
+    }
+  ]);
 });
 
 test("specialist import uses explicit product cost when provided", async () => {

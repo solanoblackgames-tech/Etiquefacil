@@ -6576,7 +6576,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
         <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.wmsEnabled ? "Alocar produto" : lot.source === "triage" ? "Aceitar transferencia de estoque" : "Abrir conferencia da loja"}</a>
       </div>
       <div class="actions ${canSync ? "" : "hidden"}">
-        <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar CSV</a>
+        <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar Excel</a>
         <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length || !(lot.totalReceived || 0) ? "disabled" : ""}>Enviar transferencia ao Bling</button>
       </div>
       <div class="diverse-table transfer-table">

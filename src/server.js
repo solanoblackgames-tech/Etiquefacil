@@ -26,7 +26,7 @@ import {
   updateExistingBlingProducts,
   updateBlingProductFromTriage
 } from "./bling-api.js";
-import { buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferCsv, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
+import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferRows, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
@@ -1162,14 +1162,18 @@ app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, requireTransferA
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
     if (!lot.items.length) return res.status(404).json({ error: "Nenhum item bipado neste lote." });
-    const csv = buildBlingStockTransferCsv(transferItemsForBling(lot), {
+    const rows = buildBlingStockTransferRows(transferItemsForBling(lot), {
       depositoOrigem: lot.depositoOrigem,
       depositoDestino: lot.depositoDestino,
       observacao: `Transferencia ${lot.name}`
     });
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    const worksheet = XLSX.utils.json_to_sheet(rows, { header: BLING_STOCK_TRANSFER_HEADERS });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Transferencia");
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${transferFileName(lot)}"`);
-    res.send(`\uFEFF${csv}`);
+    res.send(buffer);
   } catch (error) {
     sendError(res, error);
   }
@@ -2953,7 +2957,7 @@ function rzStockEntryFileName(lot, codigoRz) {
 }
 
 function transferFileName(lot) {
-  return `${safeFileName(lot.name)}-transferencia-bling.csv`;
+  return `${safeFileName(lot.name)}-transferencia-bling.xlsx`;
 }
 
 async function getRzBlingData(userId, lotId, codigoRz) {
