@@ -5278,12 +5278,13 @@ h3 {
   border: 1px solid #cfd6dc;
   box-sizing: border-box;
   color: #111;
+  align-content: start;
   display: grid;
-  gap: 0.7mm;
-  grid-template-rows: 8.4mm 13mm 3.3mm 6mm;
+  gap: 0.45mm;
+  grid-template-rows: 11.2mm 12.2mm 3mm 6.4mm;
   height: 40mm;
   overflow: hidden;
-  padding: 2.3mm 2mm 1.6mm;
+  padding: 1.8mm 2mm 1.3mm;
   width: 60mm;
 }
 
@@ -5438,33 +5439,33 @@ h3 {
 }
 
 .label-print.has-note {
-  grid-template-rows: 8mm 10.5mm 3mm 5mm 4.5mm;
-  padding-bottom: 1.5mm;
+  grid-template-rows: 10mm 9.8mm 2.8mm 4.8mm 4.2mm;
+  padding-bottom: 1.2mm;
 }
 
 .label-print.has-meta {
-  grid-template-rows: 8.2mm 11.5mm 3mm 5.5mm 2.5mm;
+  grid-template-rows: 10.8mm 10.8mm 2.8mm 6mm 2.2mm;
 }
 
 .label-print.has-note.has-meta {
-  grid-template-rows: 7.6mm 9.8mm 3mm 4.5mm 3.6mm 2.4mm;
+  grid-template-rows: 9.4mm 9mm 2.6mm 4.5mm 3.4mm 2.2mm;
 }
 
 .label-print.has-club-price {
-  grid-template-rows: 7.8mm 10.2mm 2.6mm 12.2mm;
+  grid-template-rows: 9.6mm 9.4mm 2.5mm 11.8mm;
 }
 
 .label-print.has-club-price.has-meta {
-  grid-template-rows: 7.4mm 9.8mm 2.4mm 12.1mm 1.8mm;
+  grid-template-rows: 9.2mm 8.8mm 2.4mm 11.5mm 1.8mm;
 }
 
 .label-print.has-club-price.has-note {
-  grid-template-rows: 7.2mm 9.6mm 2.4mm 11.8mm 3.2mm;
+  grid-template-rows: 8.8mm 8.5mm 2.3mm 11.2mm 3mm;
 }
 
 .label-print.has-club-price.has-note.has-meta {
-  grid-template-rows: 6.8mm 9.2mm 2.3mm 11.6mm 2.7mm 1.8mm;
-  padding-bottom: 1.2mm;
+  grid-template-rows: 8.2mm 8mm 2.2mm 10.8mm 2.5mm 1.7mm;
+  padding-bottom: 1mm;
 }
 
 .label-desc {

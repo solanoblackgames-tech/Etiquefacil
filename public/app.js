@@ -8307,7 +8307,7 @@ function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
   const hasClubPrice = label.classList.contains("has-club-price");
-  const maxSize = hasClubPrice ? 26 : 42;
+  const maxSize = hasClubPrice ? 34 : 52;
   const minSize = 5.2;
   const lineHeight = hasClubPrice ? 1.04 : 1.02;
   element.style.fontSize = `${maxSize}px`;
