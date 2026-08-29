@@ -8306,9 +8306,10 @@ function fitLabelDescriptions(root = document) {
 function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
-  const maxSize = label.classList.contains("has-club-price") ? 10.8 : 14;
-  const minSize = 5.2;
-  const lineHeight = label.classList.contains("has-club-price") ? 1.08 : 1.1;
+  const computedStyle = window.getComputedStyle(element);
+  const maxSize = Number.parseFloat(computedStyle.fontSize) || (label.classList.contains("has-club-price") ? 7.6 : 8.5);
+  const minSize = 4.6;
+  const lineHeight = Number.parseFloat(computedStyle.lineHeight) / maxSize || (label.classList.contains("has-club-price") ? 1.08 : 1.12);
   element.style.fontSize = `${maxSize}px`;
   element.style.lineHeight = String(lineHeight);
   if (labelDescriptionFits(element)) return;
@@ -8328,7 +8329,9 @@ function fitLabelDescription(element) {
 }
 
 function labelDescriptionFits(element) {
-  return element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1;
+  const barcode = element.closest(".label-print")?.querySelector(".label-barcode");
+  const hasRoomBeforeBarcode = !barcode || element.getBoundingClientRect().bottom <= barcode.getBoundingClientRect().top + 0.5;
+  return hasRoomBeforeBarcode && element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1;
 }
 
 function code39Svg(value) {
@@ -8584,10 +8587,34 @@ async function printCurrentLabel() {
   document.body.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   document.documentElement.classList.toggle("printing-large-qr-label", isLargeQrLabel);
   if (isLargeQrLabel) appendLargeQrPrintStyle();
-  fitLabelDescriptions(printRoot);
+  measurePrintableLabelRoot(printRoot, () => fitLabelDescriptions(printRoot));
   await waitForPrintableImages(printRoot);
   window.print();
   labelPrintFallbackTimer = setTimeout(finishLabelPrint, LABEL_PRINT_FALLBACK_MS);
+}
+
+function measurePrintableLabelRoot(printRoot, callback) {
+  const previous = {
+    display: printRoot.style.display,
+    left: printRoot.style.left,
+    position: printRoot.style.position,
+    top: printRoot.style.top,
+    visibility: printRoot.style.visibility
+  };
+  printRoot.style.display = "block";
+  printRoot.style.left = "-10000px";
+  printRoot.style.position = "absolute";
+  printRoot.style.top = "0";
+  printRoot.style.visibility = "hidden";
+  try {
+    callback();
+  } finally {
+    printRoot.style.display = previous.display;
+    printRoot.style.left = previous.left;
+    printRoot.style.position = previous.position;
+    printRoot.style.top = previous.top;
+    printRoot.style.visibility = previous.visibility;
+  }
 }
 
 function waitForPrintableImages(root, timeoutMs = 1500) {
