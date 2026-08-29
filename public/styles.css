@@ -5468,7 +5468,7 @@ h3 {
 }
 
 .label-desc {
-  align-self: stretch;
+  align-self: end;
   box-sizing: border-box;
   font-family: Arial, sans-serif;
   font-size: 8.5px;
