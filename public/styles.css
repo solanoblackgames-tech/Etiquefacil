@@ -5468,12 +5468,15 @@ h3 {
 }
 
 .label-desc {
-  align-self: end;
+  align-content: center;
+  align-self: stretch;
   box-sizing: border-box;
+  display: grid;
   font-family: Arial Black, Arial, sans-serif;
   font-size: 8.5px;
   font-weight: 900;
   justify-self: center;
+  justify-items: center;
   line-height: 1.02;
   margin: 0;
   overflow: hidden;
