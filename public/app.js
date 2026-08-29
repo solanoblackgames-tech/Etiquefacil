@@ -8307,7 +8307,9 @@ function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
   const hasClubPrice = label.classList.contains("has-club-price");
-  const maxSize = hasClubPrice ? 9.4 : 11.2;
+  const textLength = element.textContent.trim().length;
+  const baseMaxSize = labelDescriptionMaxFontSize(textLength);
+  const maxSize = hasClubPrice ? Math.min(baseMaxSize, 9.4) : baseMaxSize;
   const minSize = 5.2;
   const lineHeight = hasClubPrice ? 1.08 : 1.1;
   element.style.fontSize = `${maxSize}px`;
@@ -8326,6 +8328,14 @@ function fitLabelDescription(element) {
     }
   }
   element.style.fontSize = `${Math.max(minSize, low).toFixed(2)}px`;
+}
+
+function labelDescriptionMaxFontSize(textLength) {
+  if (textLength <= 28) return 12.8;
+  if (textLength <= 42) return 11.4;
+  if (textLength <= 58) return 10.2;
+  if (textLength <= 76) return 9;
+  return 7.8;
 }
 
 function labelDescriptionFits(element) {
