@@ -8311,7 +8311,7 @@ function fitLabelDescription(element) {
   const baseMaxSize = labelDescriptionMaxFontSize(textLength);
   const maxSize = hasClubPrice ? Math.min(baseMaxSize, 20) : baseMaxSize;
   const minSize = 5.2;
-  const lineHeight = hasClubPrice ? 1.08 : 1.1;
+  const lineHeight = hasClubPrice ? 1.04 : 1.02;
   element.style.fontSize = `${maxSize}px`;
   element.style.lineHeight = String(lineHeight);
   if (labelDescriptionFits(element)) return;
