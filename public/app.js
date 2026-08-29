@@ -8306,10 +8306,10 @@ function fitLabelDescriptions(root = document) {
 function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
-  const computedStyle = window.getComputedStyle(element);
-  const maxSize = Number.parseFloat(computedStyle.fontSize) || (label.classList.contains("has-club-price") ? 7.6 : 8.5);
-  const minSize = 4.6;
-  const lineHeight = Number.parseFloat(computedStyle.lineHeight) / maxSize || (label.classList.contains("has-club-price") ? 1.08 : 1.12);
+  const hasClubPrice = label.classList.contains("has-club-price");
+  const maxSize = hasClubPrice ? 9.4 : 11.2;
+  const minSize = 5.2;
+  const lineHeight = hasClubPrice ? 1.08 : 1.1;
   element.style.fontSize = `${maxSize}px`;
   element.style.lineHeight = String(lineHeight);
   if (labelDescriptionFits(element)) return;
