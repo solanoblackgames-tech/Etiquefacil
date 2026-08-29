@@ -8331,11 +8331,12 @@ function fitLabelDescription(element) {
 }
 
 function labelDescriptionMaxFontSize(textLength) {
-  if (textLength <= 28) return 12.8;
-  if (textLength <= 42) return 11.4;
-  if (textLength <= 58) return 10.2;
-  if (textLength <= 76) return 9;
-  return 7.8;
+  if (textLength <= 16) return 15;
+  if (textLength <= 28) return 13.6;
+  if (textLength <= 42) return 12.2;
+  if (textLength <= 58) return 10.8;
+  if (textLength <= 76) return 9.4;
+  return 8.2;
 }
 
 function labelDescriptionFits(element) {
