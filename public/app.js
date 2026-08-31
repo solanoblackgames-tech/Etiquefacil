@@ -453,6 +453,7 @@ function bindEvents() {
   });
   document.addEventListener("input", handleCodigoMlInput);
   document.addEventListener("change", handleNoSheetCostModeChange);
+  document.addEventListener("click", handleLabelNameFontControlClick);
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
   $("#labelCloseButton").addEventListener("click", () => hideLabelPreview());
@@ -1998,6 +1999,7 @@ function diverseLabelOptionsMarkup() {
       ${largeQrLabelOptionMarkup("diverseLargeQrLabelToggle")}
       <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
+      ${labelNameFontControlsMarkup()}
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
         <label>Texto que sera impresso abaixo do preco
           <input id="diverseCustomTextInput" maxlength="48" value="${escapeHtml(state.labelOptions.customText)}" placeholder="Ex: CONFERIDO - SEM TROCA" />
@@ -7598,6 +7600,7 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         ${labelClubPriceOptionMarkup()}
         ${largeQrLabelOptionMarkup()}
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
+        ${labelNameFontControlsMarkup()}
         ${labelTextControls()}
       </div>
       <div class="summary-grid" id="scanSummary">${scanSummaryMarkup(rz)}</div>
@@ -8334,8 +8337,22 @@ function clampLabelNameFontSize(value) {
 function adjustLabelNameFontSize(delta) {
   const next = clampLabelNameFontSize(labelNameFontSize() + delta);
   localStorage.setItem(labelNameFontStorageKey(), String(next));
-  updateLabelFontControls();
+  updateLabelNameFontControls();
   fitLabelDescriptions($("#labelPreview"));
+}
+
+function handleLabelNameFontControlClick(event) {
+  const button = event.target.closest("[data-label-name-font-delta]");
+  if (!button) return;
+  event.preventDefault();
+  adjustLabelNameFontSize(Number(button.dataset.labelNameFontDelta || 0));
+}
+
+function updateLabelNameFontControls() {
+  updateLabelFontControls();
+  document.querySelectorAll("[data-label-name-font-value]").forEach((element) => {
+    element.textContent = `${labelNameFontSize()}px`;
+  });
 }
 
 function updateLabelFontControls() {
@@ -8922,6 +8939,17 @@ function scanItemsTable(items) {
         <span class="diverse-actions-cell">Acoes</span>
       </div>
       ${items.map(scanItemTableRow).join("")}
+    </div>
+  `;
+}
+
+function labelNameFontControlsMarkup() {
+  return `
+    <div class="label-font-controls inline-label-font-controls">
+      <span>Fonte nome em uso</span>
+      <button type="button" class="ghost" data-label-name-font-delta="${-LABEL_NAME_FONT_STEP}" aria-label="Diminuir fonte do nome">-</button>
+      <output data-label-name-font-value>${labelNameFontSize()}px</output>
+      <button type="button" class="ghost" data-label-name-font-delta="${LABEL_NAME_FONT_STEP}" aria-label="Aumentar fonte do nome">+</button>
     </div>
   `;
 }

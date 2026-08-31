@@ -3194,19 +3194,25 @@ h3 {
 }
 
 .scan-box {
+  align-items: center;
   background: #eef4f6;
   border: 1px solid #d8e4e9;
   border-radius: 8px;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
-  grid-template-columns: minmax(220px, 1fr) repeat(6, auto);
   margin: 18px 0;
   padding: 14px;
+}
+
+.scan-box input {
+  flex: 1 1 320px;
 }
 
 .check-option {
   align-items: center;
   color: var(--ink);
+  flex: 0 0 auto;
   display: flex;
   font-size: 14px;
   gap: 8px;
@@ -3381,6 +3387,10 @@ h3 {
   grid-template-columns: 1fr auto;
   margin-top: 10px;
   padding: 12px;
+}
+
+.scan-box .custom-text-row {
+  flex: 1 0 100%;
 }
 
 .search-product-summary {
@@ -5797,6 +5807,28 @@ h3 {
   font-weight: 900;
   min-width: 44px;
   text-align: center;
+}
+
+.inline-label-font-controls {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  flex: 0 0 auto;
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  padding: 8px 10px;
+  width: auto;
+}
+
+.inline-label-font-controls span {
+  color: var(--ink);
+}
+
+.inline-label-font-controls output {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
 }
 
 #labelPrintRoot {
