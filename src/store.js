@@ -84,7 +84,8 @@ const PRICE_DISPLAY_DEFAULTS = Object.freeze({
   enabled: false,
   discountPercent: 30,
   discountLabel: "CLIENTE CLUBE PAGA",
-  regularLabel: "DEMAIS CLIENTES"
+  regularLabel: "DEMAIS CLIENTES",
+  labelNameMaxFontSize: 52
 });
 
 const DEFAULT_TRIAGE_TRANSFER_SETTINGS = Object.freeze({
@@ -9642,11 +9643,15 @@ function normalizePriceDisplaySettings(input = {}) {
     : PRICE_DISPLAY_DEFAULTS.discountPercent;
   const discountLabel = String(input.discountLabel ?? input.discount_label ?? PRICE_DISPLAY_DEFAULTS.discountLabel).trim();
   const regularLabel = String(input.regularLabel ?? input.regular_label ?? PRICE_DISPLAY_DEFAULTS.regularLabel).trim();
+  const labelNameMaxFontSize = Number(input.labelNameMaxFontSize ?? input.label_name_max_font_size ?? PRICE_DISPLAY_DEFAULTS.labelNameMaxFontSize);
   return {
     enabled: Boolean(input.enabled),
     discountPercent: boundedDiscount,
     discountLabel: discountLabel || PRICE_DISPLAY_DEFAULTS.discountLabel,
-    regularLabel: regularLabel || PRICE_DISPLAY_DEFAULTS.regularLabel
+    regularLabel: regularLabel || PRICE_DISPLAY_DEFAULTS.regularLabel,
+    labelNameMaxFontSize: Number.isFinite(labelNameMaxFontSize)
+      ? Math.min(72, Math.max(8, Math.round(labelNameMaxFontSize * 10) / 10))
+      : PRICE_DISPLAY_DEFAULTS.labelNameMaxFontSize
   };
 }
 

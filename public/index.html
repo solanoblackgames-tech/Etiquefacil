@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260829-label-layout-v4" />
+    <link rel="stylesheet" href="/styles.css?v=20260831-label-font-setting" />
   </head>
   <body>
     <main id="auth" class="auth auth-login">
@@ -287,7 +287,7 @@
           <section class="entry-panel">
             <div class="panel-heading">
               <span class="muted">Perfil</span>
-              <h3>Preco clube na etiqueta</h3>
+              <h3>Preco e etiqueta</h3>
             </div>
             <form id="priceDisplaySettingsForm" class="settings-form price-display-settings-form">
               <label class="check-option"><input name="enabled" type="checkbox" /> Usar preco clube nas etiquetas</label>
@@ -299,6 +299,9 @@
               </label>
               <label>Texto do preco normal
                 <input name="regularLabel" maxlength="32" required />
+              </label>
+              <label>Fonte maxima do nome 60x40 (px)
+                <input name="labelNameMaxFontSize" type="number" min="8" max="72" step="0.5" required />
               </label>
               <div class="settings-actions">
                 <button type="submit">Salvar configuracao</button>
@@ -805,6 +808,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20260829-label-layout-v4" type="module"></script>
+    <script src="/app.js?v=20260831-label-font-setting" type="module"></script>
   </body>
 </html>

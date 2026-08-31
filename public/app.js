@@ -169,7 +169,8 @@ function defaultPriceDisplaySettings() {
     enabled: false,
     discountPercent: 30,
     discountLabel: "CLIENTE CLUBE PAGA",
-    regularLabel: "DEMAIS CLIENTES"
+    regularLabel: "DEMAIS CLIENTES",
+    labelNameMaxFontSize: 52
   };
 }
 
@@ -849,11 +850,15 @@ function suggestionPriceValue(suggestion) {
 function normalizePriceDisplaySettings(settings = {}) {
   const defaults = defaultPriceDisplaySettings();
   const discountPercent = Number(settings.discountPercent ?? settings.discount_percent ?? defaults.discountPercent);
+  const labelNameMaxFontSize = Number(settings.labelNameMaxFontSize ?? settings.label_name_max_font_size ?? defaults.labelNameMaxFontSize);
   return {
     enabled: Boolean(settings.enabled),
     discountPercent: Number.isFinite(discountPercent) ? Math.min(95, Math.max(0, discountPercent)) : defaults.discountPercent,
     discountLabel: String(settings.discountLabel || defaults.discountLabel).trim() || defaults.discountLabel,
-    regularLabel: String(settings.regularLabel || defaults.regularLabel).trim() || defaults.regularLabel
+    regularLabel: String(settings.regularLabel || defaults.regularLabel).trim() || defaults.regularLabel,
+    labelNameMaxFontSize: Number.isFinite(labelNameMaxFontSize)
+      ? Math.min(72, Math.max(8, Math.round(labelNameMaxFontSize * 10) / 10))
+      : defaults.labelNameMaxFontSize
   };
 }
 
@@ -3360,6 +3365,7 @@ function renderPriceDisplaySettings() {
   form.elements.discountPercent.value = String(settings.discountPercent);
   form.elements.discountLabel.value = settings.discountLabel;
   form.elements.regularLabel.value = settings.regularLabel;
+  form.elements.labelNameMaxFontSize.value = String(settings.labelNameMaxFontSize);
 }
 
 async function savePriceDisplaySettings(event) {
@@ -3367,10 +3373,17 @@ async function savePriceDisplaySettings(event) {
   const form = event.currentTarget;
   const message = $("#priceDisplaySettingsMessage");
   const discountPercent = parseMoneyInput(form.elements.discountPercent.value);
+  const labelNameMaxFontSize = parseMoneyInput(form.elements.labelNameMaxFontSize.value);
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 95) {
     message.style.color = "";
     message.textContent = "Informe um desconto entre 0 e 95%.";
     form.elements.discountPercent.focus();
+    return;
+  }
+  if (!Number.isFinite(labelNameMaxFontSize) || labelNameMaxFontSize < 8 || labelNameMaxFontSize > 72) {
+    message.style.color = "";
+    message.textContent = "Informe uma fonte entre 8 e 72px.";
+    form.elements.labelNameMaxFontSize.focus();
     return;
   }
   try {
@@ -3381,13 +3394,14 @@ async function savePriceDisplaySettings(event) {
         enabled: Boolean(form.elements.enabled.checked),
         discountPercent,
         discountLabel: form.elements.discountLabel.value,
-        regularLabel: form.elements.regularLabel.value
+        regularLabel: form.elements.regularLabel.value,
+        labelNameMaxFontSize
       })
     });
     state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
     await refreshPriceDisplaySettingsForm();
     message.style.color = "#0f766e";
-    message.textContent = "Configuracao de preco clube salva.";
+    message.textContent = "Configuracao de preco e etiqueta salva.";
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -8307,7 +8321,8 @@ function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
   const hasClubPrice = label.classList.contains("has-club-price");
-  const maxSize = hasClubPrice ? 34 : 52;
+  const configuredMaxSize = normalizePriceDisplaySettings(state.priceDisplaySettings).labelNameMaxFontSize;
+  const maxSize = configuredMaxSize;
   const minSize = 5.2;
   const lineHeight = hasClubPrice ? 1.04 : 1.02;
   element.style.fontSize = `${maxSize}px`;
