@@ -5768,6 +5768,37 @@ h3 {
   flex-wrap: wrap;
 }
 
+.label-font-controls {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.label-font-controls.hidden {
+  display: none;
+}
+
+.label-font-controls span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.label-font-controls button {
+  min-height: 34px;
+  min-width: 42px;
+  padding: 6px 10px;
+}
+
+.label-font-controls output {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  min-width: 44px;
+  text-align: center;
+}
+
 #labelPrintRoot {
   display: none;
 }

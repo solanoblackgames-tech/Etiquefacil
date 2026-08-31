@@ -96,6 +96,9 @@ const addClass = (selector, className) => toggleClass(selector, className, true)
 const removeClass = (selector, className) => toggleClass(selector, className, false);
 const LABEL_PRINT_FALLBACK_MS = 15000;
 const LABEL_MARKUP_CACHE_LIMIT = 180;
+const LABEL_NAME_FONT_MIN = 8;
+const LABEL_NAME_FONT_MAX = 72;
+const LABEL_NAME_FONT_STEP = 2;
 let labelPrintFallbackTimer = null;
 const labelMarkupCache = new Map();
 const CONFERENCE_FIELDS = [
@@ -453,8 +456,11 @@ function bindEvents() {
 
   $("#labelPrintButton").addEventListener("click", printCurrentLabel);
   $("#labelCloseButton").addEventListener("click", () => hideLabelPreview());
+  $("#labelFontDecreaseButton")?.addEventListener("click", () => adjustLabelNameFontSize(-LABEL_NAME_FONT_STEP));
+  $("#labelFontIncreaseButton")?.addEventListener("click", () => adjustLabelNameFontSize(LABEL_NAME_FONT_STEP));
   $("#labelModal").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
+      if (event.target.closest?.("#labelFontControls")) return;
       event.preventDefault();
       printCurrentLabel();
     }
@@ -1672,6 +1678,7 @@ async function showRzQrLabel(lot, codigoRz, name = codigoRz, { autoPrint = false
     </section>
   `;
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
+  updateLabelFontControls();
   $("#labelPrintButton").textContent = "Imprimir Pallet";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
@@ -3372,7 +3379,6 @@ function renderPriceDisplaySettings() {
   form.elements.discountPercent.value = String(settings.discountPercent);
   form.elements.discountLabel.value = settings.discountLabel;
   form.elements.regularLabel.value = settings.regularLabel;
-  form.elements.labelNameMaxFontSize.value = String(settings.labelNameMaxFontSize);
 }
 
 async function savePriceDisplaySettings(event) {
@@ -3380,17 +3386,10 @@ async function savePriceDisplaySettings(event) {
   const form = event.currentTarget;
   const message = $("#priceDisplaySettingsMessage");
   const discountPercent = parseMoneyInput(form.elements.discountPercent.value);
-  const labelNameMaxFontSize = parseMoneyInput(form.elements.labelNameMaxFontSize.value);
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 95) {
     message.style.color = "";
     message.textContent = "Informe um desconto entre 0 e 95%.";
     form.elements.discountPercent.focus();
-    return;
-  }
-  if (!Number.isFinite(labelNameMaxFontSize) || labelNameMaxFontSize < 8 || labelNameMaxFontSize > 72) {
-    message.style.color = "";
-    message.textContent = "Informe uma fonte entre 8 e 72px.";
-    form.elements.labelNameMaxFontSize.focus();
     return;
   }
   try {
@@ -3401,14 +3400,13 @@ async function savePriceDisplaySettings(event) {
         enabled: Boolean(form.elements.enabled.checked),
         discountPercent,
         discountLabel: form.elements.discountLabel.value,
-        regularLabel: form.elements.regularLabel.value,
-        labelNameMaxFontSize
+        regularLabel: form.elements.regularLabel.value
       })
     });
     state.priceDisplaySettings = normalizePriceDisplaySettings(response.settings);
     await refreshPriceDisplaySettingsForm();
     message.style.color = "#0f766e";
-    message.textContent = "Configuracao de preco e etiqueta salva.";
+    message.textContent = "Configuracao de preco clube salva.";
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;
@@ -6863,6 +6861,7 @@ function showTransferQrLabel(transferLotId) {
     </section>
   `;
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
+  updateLabelFontControls();
   $("#labelPrintButton").textContent = "Imprimir QR";
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
@@ -8310,10 +8309,44 @@ async function showLabel(product, { autoPrint = false, meta = null, quantity = 1
   state.labelReturnFocusSelectors = returnFocusSelectors || currentLabelReturnFocusSelectors();
   $("#labelPreview").innerHTML = state.labelPrintMarkup;
   $("#labelPrintButton").textContent = "Imprimir etiqueta";
+  updateLabelFontControls();
   $("#labelModal").classList.remove("hidden");
   $("#labelModal").focus();
   scheduleLabelDescriptionFit($("#labelPreview"));
   if (autoPrint) setTimeout(printCurrentLabel, 120);
+}
+
+function labelNameFontStorageKey() {
+  const userKey = state.user?.id || state.user?.operatorCode || "default";
+  return `etiquefacil.labelNameFontSize.${userKey}`;
+}
+
+function labelNameFontSize() {
+  const saved = Number(localStorage.getItem(labelNameFontStorageKey()));
+  if (Number.isFinite(saved)) return clampLabelNameFontSize(saved);
+  return defaultPriceDisplaySettings().labelNameMaxFontSize;
+}
+
+function clampLabelNameFontSize(value) {
+  return Math.min(LABEL_NAME_FONT_MAX, Math.max(LABEL_NAME_FONT_MIN, Math.round(Number(value || 0) * 10) / 10));
+}
+
+function adjustLabelNameFontSize(delta) {
+  const next = clampLabelNameFontSize(labelNameFontSize() + delta);
+  localStorage.setItem(labelNameFontStorageKey(), String(next));
+  updateLabelFontControls();
+  fitLabelDescriptions($("#labelPreview"));
+}
+
+function updateLabelFontControls() {
+  const controls = $("#labelFontControls");
+  if (!controls) return;
+  const showControls = Boolean($("#labelPreview .label-print:not(.label-print-large-qr) .label-desc"));
+  controls.classList.toggle("hidden", !showControls);
+  const value = labelNameFontSize();
+  $("#labelFontSizeValue").textContent = `${value}px`;
+  $("#labelFontDecreaseButton").disabled = value <= LABEL_NAME_FONT_MIN;
+  $("#labelFontIncreaseButton").disabled = value >= LABEL_NAME_FONT_MAX;
 }
 
 function scheduleLabelDescriptionFit(root = document) {
@@ -8328,7 +8361,7 @@ function fitLabelDescription(element) {
   const label = element.closest(".label-print");
   if (!label || !element.textContent.trim()) return;
   const hasClubPrice = label.classList.contains("has-club-price");
-  const configuredMaxSize = normalizePriceDisplaySettings(state.priceDisplaySettings).labelNameMaxFontSize;
+  const configuredMaxSize = labelNameFontSize();
   const maxSize = configuredMaxSize;
   const minSize = 5.2;
   const lineHeight = hasClubPrice ? 1.04 : 1.02;
@@ -8702,6 +8735,7 @@ function cleanupLabelPrintRoot() {
 function hideLabelPreview() {
   $("#labelModal").classList.add("hidden");
   $("#labelPreview").innerHTML = "";
+  $("#labelFontControls")?.classList.add("hidden");
   state.labelProduct = null;
   state.labelMeta = null;
   state.labelPrintMarkup = "";
