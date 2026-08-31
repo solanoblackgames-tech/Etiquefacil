@@ -3722,13 +3722,23 @@ function parseNoSheetSuggestionRows(rows) {
   const start = headerIndex >= 0 ? headerIndex + 1 : 0;
   const column = nameColumn >= 0 ? nameColumn : 0;
   return usefulRows.slice(start)
-    .map((row) => buildNoSheetSuggestion(row[column], noSheetSuggestionPriceCell(row, column, priceColumn), quantityColumn >= 0 ? row[quantityColumn] : ""))
+    .map((row) => {
+      const priceIndex = noSheetSuggestionPriceIndex(row, column, priceColumn);
+      return buildNoSheetSuggestion(row[column], priceIndex >= 0 ? row[priceIndex] : "", noSheetSuggestionQuantityCell(row, priceIndex, quantityColumn));
+    })
     .filter((suggestion) => suggestion.descricao);
 }
 
-function noSheetSuggestionPriceCell(row, nameColumn, priceColumn) {
-  if (priceColumn >= 0) return row[priceColumn];
-  return row.slice(nameColumn + 1).find((cell) => looksLikeMoney(cell)) || "";
+function noSheetSuggestionPriceIndex(row, nameColumn, priceColumn) {
+  if (priceColumn >= 0) return priceColumn;
+  const offset = row.slice(nameColumn + 1).findIndex((cell) => looksLikeMoney(cell));
+  return offset >= 0 ? nameColumn + 1 + offset : -1;
+}
+
+function noSheetSuggestionQuantityCell(row, priceIndex, quantityColumn) {
+  if (quantityColumn >= 0) return row[quantityColumn];
+  const candidate = priceIndex >= 0 ? row[priceIndex + 1] : "";
+  return looksLikeQuantity(candidate) ? candidate : "";
 }
 
 function findNoSheetNameColumn(header) {
@@ -3783,6 +3793,13 @@ function parseNoSheetSuggestionLine(line) {
   );
   const quantity = lastLooksLikeQuantity ? valueParts.pop() : "";
   return buildNoSheetSuggestion(parts[0], valueParts.join(","), quantity);
+}
+
+function looksLikeQuantity(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (typeof value === "number") return Number.isInteger(value) && value > 0;
+  return /^\d+$/.test(text);
 }
 
 function buildNoSheetSuggestion(descricao, valorUnit = "", quantidade = "") {

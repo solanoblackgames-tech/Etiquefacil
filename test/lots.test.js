@@ -640,6 +640,7 @@ test("manual no-sheet product uses suggestion quantity as expected quantity", as
 
     assert.equal(product.qtdTotal, 4);
     assert.equal(rzItem.qtdEsperada, 4);
+    assert.equal(rzItem.qtdConferida, 1);
     assert.equal(rzItem.valorTotal, 200);
   } finally {
     process.chdir(originalCwd);

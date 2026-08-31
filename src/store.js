@@ -3980,9 +3980,10 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     const item = db.rzItems.find((candidate) => candidate.productId === existing.id && candidate.codigoRz === normalizedRz);
     if (item) {
       item.qtdEsperada += expectedQuantity;
+      item.qtdConferida += 1;
       item.valorTotal = roundMoney(item.qtdEsperada * existing.valorUnit);
     } else {
-      db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz, { quantidade: expectedQuantity }));
+      db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz, { quantidade: expectedQuantity, qtdConferida: 1 }));
     }
     existing.qtdTotal += expectedQuantity;
     await writeDb(db);
@@ -3997,7 +3998,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
   if (previousHistory) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+    const { product, item } = buildDiverseLotRecords(lot, previousHistory, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -4007,7 +4008,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
   if (!history && source) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+    const { product, item } = buildDiverseLotRecords(lot, source, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -4018,7 +4019,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+    const { product, item } = buildDiverseLotRecords(lot, sourceManual, normalizedMl, normalizedRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
     consumeSkuReservationInDb(reservation, product.id);
     db.products.push(product);
     db.rzItems.push(item);
@@ -4036,7 +4037,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   }
 
   const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+  const { product, item } = buildDiverseLotRecords(lot, history, normalizedMl, normalizedRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
   consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
@@ -6474,13 +6475,14 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
           `
             update rz_items
             set qtd_esperada = qtd_esperada + $3,
+                qtd_conferida = qtd_conferida + 1,
                 valor_total = valor_total + $2
             where id = $1
           `,
           [existingItem.id, roundMoney(Number(existing.valorUnit || 0) * expectedQuantity), expectedQuantity]
         );
       } else {
-        await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity })] });
+        await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity, qtdConferida: 1 })] });
       }
       await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
       result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: expectedQuantity };
@@ -6496,7 +6498,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       if (!history && manualProduct) {
         const source = normalizeManualProduct(manualProduct, codigoMl);
         const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+        const records = buildDiverseLotRecords(lot, source, codigoMl, codigoRz, { origem: "lote_sem_planilha_manual", createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
         await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
@@ -6514,7 +6516,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       }
 
       const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity });
+      const records = buildDiverseLotRecords(lot, history, codigoMl, codigoRz, { valorUnitOverride, createdByUserId, operatorUserId, sku: reservation.sku, quantidade: expectedQuantity, qtdConferida: 1 });
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
       await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
@@ -7195,7 +7197,7 @@ function buildDiverseLotRecords(lot, history, codigoMl, codigoRz, options = {}) 
     origem: options.origem || "lote_sem_planilha",
     createdAt: new Date().toISOString()
   };
-  const item = buildDiverseRzItem(lot, product, codigoRz, { quantidade });
+  const item = buildDiverseRzItem(lot, product, codigoRz, { quantidade, qtdConferida: options.qtdConferida });
   return { product, item };
 }
 
@@ -7208,6 +7210,7 @@ function noSheetProductCost(lot, history, valorUnit) {
 
 function buildDiverseRzItem(lot, product, codigoRz, options = {}) {
   const quantidade = normalizeExpectedQuantity(options.quantidade);
+  const qtdConferida = Math.min(quantidade, Math.max(0, requiredInt(options.qtdConferida ?? 0)));
   return {
     id: randomUUID(),
     lotId: lot.id,
@@ -7215,7 +7218,7 @@ function buildDiverseRzItem(lot, product, codigoRz, options = {}) {
     codigoRz,
     enderecoWms: "",
     qtdEsperada: quantidade,
-    qtdConferida: 0,
+    qtdConferida,
     condicaoGrade: "",
     valorTotal: roundMoney(Number(product.valorUnit || 0) * quantidade),
     tipoItem: "lote_sem_planilha",
