@@ -85,7 +85,7 @@ const PRICE_DISPLAY_DEFAULTS = Object.freeze({
   discountPercent: 30,
   discountLabel: "CLIENTE CLUBE PAGA",
   regularLabel: "DEMAIS CLIENTES",
-  labelNameMaxFontSize: 52
+  labelNameMaxFontSize: 72
 });
 
 const DEFAULT_TRIAGE_TRANSFER_SETTINGS = Object.freeze({

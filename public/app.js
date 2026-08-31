@@ -170,7 +170,7 @@ function defaultPriceDisplaySettings() {
     discountPercent: 30,
     discountLabel: "CLIENTE CLUBE PAGA",
     regularLabel: "DEMAIS CLIENTES",
-    labelNameMaxFontSize: 52
+    labelNameMaxFontSize: 72
   };
 }
 
