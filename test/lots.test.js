@@ -648,3 +648,66 @@ test("manual no-sheet product uses suggestion quantity as expected quantity", as
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("no-sheet duplicate quantity requires explicit confirmation", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-no-sheet-duplicate-confirmation-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-no-sheet-duplicate-confirmation`;
+    const { addDiverseLotItem, createDiverseLot, readDb } = await import(storeUrl.href);
+
+    const lot = await createDiverseLot({
+      userId: "user-1",
+      name: "Lote sem planilha",
+      fornecedor: "Fornecedor",
+      skuPrefix: "DIV",
+      startSequence: 1,
+      averageCost: 10
+    });
+
+    const created = await addDiverseLotItem({
+      userId: "user-1",
+      lotId: lot.id,
+      codigoMl: "ML-DUP",
+      codigoRz: "PALLET-1",
+      manualProduct: { descricao: "Produto duplicado", valorUnit: 50 }
+    });
+
+    await assert.rejects(
+      addDiverseLotItem({
+        userId: "user-1",
+        lotId: lot.id,
+        codigoMl: "ML-DUP",
+        codigoRz: "PALLET-1"
+      }),
+      (error) => error.code === "duplicate_requires_confirmation"
+    );
+
+    const duplicated = await addDiverseLotItem({
+      userId: "user-1",
+      lotId: lot.id,
+      codigoMl: "ML-DUP",
+      codigoRz: "PALLET-1",
+      allowDuplicate: true
+    });
+
+    const db = await readDb();
+    const product = db.products.find((item) => item.id === created.product.id);
+    const rzItem = db.rzItems.find((item) => item.productId === created.product.id);
+
+    assert.equal(duplicated.status, "duplicado_rz");
+    assert.equal(product.qtdTotal, 2);
+    assert.equal(rzItem.qtdEsperada, 2);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

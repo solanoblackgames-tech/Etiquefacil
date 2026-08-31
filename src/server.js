@@ -2210,7 +2210,8 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
       manualProduct: req.body.manualProduct,
       valorUnitOverride: req.body.valorUnitOverride,
       quantidade: req.body.quantidade ?? req.body.manualProduct?.quantidade,
-      preview
+      preview,
+      allowDuplicate: Boolean(req.body.allowDuplicate)
     });
 
     if (!preview && result?.product?.id) {
@@ -2232,11 +2233,12 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
         });
       }
       await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
-      await enqueueStockBalanceSync({
+      await enqueueStockMovementSync({
         userId,
-        lot: result.lot,
-        items: [stockMovementItemFromProduct(result.lot, result.product, result.product.qtdTotal)],
-        observacao: `Entrada automatica pendente por bipagem RZ ${codigoRz}`,
+        lotId: req.params.lotId,
+        codigoRz,
+        item: stockMovementItemFromProduct(result.lot, result.product, result.quantityApplied || 1),
+        operation: "entry",
         errorMessage: "Entrada de estoque aguardando envio ao Bling."
       });
       result.lot = await getUserLotDetail(userId, req.params.lotId);
@@ -3924,10 +3926,11 @@ async function processBlingSyncQueue() {
         }
 
         if (job.type === "stock_entry") {
-          await syncBlingStockBalances({
+          await syncBlingStockMovement({
             integration,
-            items: [job.payload?.item].filter(Boolean),
+            item: job.payload?.item,
             depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
+            operation: "entry",
             observacao: job.payload?.observacao || "Entrada pendente da fila Etiquefacil",
             saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
           });

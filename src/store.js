@@ -3954,14 +3954,14 @@ export async function deleteExternalExcess({ userId, lotId, codigoRz, codigoMl }
   return { product, lot: summarizeLot(db, lot, true) };
 }
 
-export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false }) {
+export async function addDiverseLotItem({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false, allowDuplicate = false }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
   const normalizedRz = String(codigoRz || "").trim().toUpperCase();
   if (!normalizedMl) throw new Error("Informe o CÃƒÂ³digo ML.");
   if (!normalizedRz) throw new Error("Informe o RZ.");
   const expectedQuantity = normalizeExpectedQuantity(quantidade);
-  if (hasPostgres()) return addDiverseLotItemPg({ userId, createdByUserId, operatorUserId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, quantidade: expectedQuantity, preview });
+  if (hasPostgres()) return addDiverseLotItemPg({ userId, createdByUserId, operatorUserId, lotId, codigoMl: normalizedMl, codigoRz: normalizedRz, manualProduct, valorUnitOverride, quantidade: expectedQuantity, preview, allowDuplicate });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -3971,6 +3971,12 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   const existing = db.products.find((product) => product.lotId === lot.id && product.codigoMl === normalizedMl);
   if (existing && preview) return { status: "preview_existing", product: existing, lot: summarizeLot(db, lot, true) };
   if (existing) {
+    if (!allowDuplicate) {
+      const error = new Error("SKU ja cadastrado neste lote. Confirme que deseja somar quantidade antes de continuar.");
+      error.status = 409;
+      error.code = "duplicate_requires_confirmation";
+      throw error;
+    }
     const item = db.rzItems.find((candidate) => candidate.productId === existing.id && candidate.codigoRz === normalizedRz);
     if (item) {
       item.qtdEsperada += expectedQuantity;
@@ -3980,7 +3986,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     }
     existing.qtdTotal += expectedQuantity;
     await writeDb(db);
-    return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, lot: summarizeLot(db, lot, true) };
+    return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
   }
 
   const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
@@ -3997,7 +4003,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     db.rzItems.push(item);
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "criado", product, parent: previousHistory, source: "historico", lot: summarizeLot(db, lot, true) };
+    return { status: "criado", product, parent: previousHistory, source: "historico", quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
   }
   if (!history && source) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
@@ -4007,7 +4013,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     db.rzItems.push(item);
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "criado", product, parent: null, source: "catalogo_oculto", lot: summarizeLot(db, lot, true) };
+    return { status: "criado", product, parent: null, source: "catalogo_oculto", quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
   }
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
@@ -4019,7 +4025,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "cadastro_manual", product, lot: summarizeLot(db, lot, true) };
+    return { status: "cadastro_manual", product, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
   }
 
   if (!history) {
@@ -4036,7 +4042,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   db.rzItems.push(item);
   ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   await writeDb(db);
-  return { status: "criado", product, parent: history, lot: summarizeLot(db, lot, true) };
+  return { status: "criado", product, parent: history, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
 }
 
 export async function suggestCatalogUpdate({ userId, createdByUserId = userId, operatorUserId = null, lotId, productId, payload }) {
@@ -6436,7 +6442,7 @@ async function deleteExternalExcessPg({ userId, lotId, codigoRz, codigoMl }) {
   return { product, lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false }) {
+async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade = 1, preview = false, allowDuplicate = false }) {
   const client = await getPgPool().connect();
   let result;
   try {
@@ -6455,6 +6461,12 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       return { status: "preview_existing", product: existing, lot: await getUserLotDetail(userId, lotId) };
     }
     if (existing) {
+      if (!allowDuplicate) {
+        const error = new Error("SKU ja cadastrado neste lote. Confirme que deseja somar quantidade antes de continuar.");
+        error.status = 409;
+        error.code = "duplicate_requires_confirmation";
+        throw error;
+      }
       const itemResult = await client.query("select * from rz_items where product_id = $1 and codigo_rz = $2 limit 1 for update", [existing.id, codigoRz]);
       const existingItem = itemResult.rows[0];
       if (existingItem) {
@@ -6471,7 +6483,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity })] });
       }
       await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
-      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity } };
+      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: expectedQuantity };
     } else {
       const approvedHistory = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
       const previousHistory = approvedHistory ? null : (await findPgPreviousProductHistory(client, userId, lot.id, codigoMl, 1))[0];
@@ -6489,7 +6501,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
         await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-        result = { status: "cadastro_manual", product: records.product, parent: null };
+        result = { status: "cadastro_manual", product: records.product, parent: null, quantityApplied: expectedQuantity };
         await client.query("commit");
         return { ...result, lot: await getUserLotDetail(userId, lotId) };
       }
@@ -6506,7 +6518,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
       await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-      result = { status: "criado", product: records.product, parent: history };
+      result = { status: "criado", product: records.product, parent: history, quantityApplied: expectedQuantity };
     }
 
     await client.query("commit");

@@ -14,6 +14,7 @@ import {
   runBlingHomologation,
   syncBlingProducts,
   syncBlingStockBalances,
+  syncBlingStockMovement,
   updateExistingBlingProducts
 } from "../src/bling-api.js";
 
@@ -384,7 +385,50 @@ test("Bling stock payloads preserve explicit zero quantity", () => {
   assert.equal(transfer.entrada.quantidade, 0);
 });
 
-test("Bling stock balance sync corrects duplicated queued entry instead of adding another entry", async () => {
+test("Bling stock movement sync posts incremental no-sheet entry quantity", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 456, descricao: "Geral" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "LV010027" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, codigo: "LV010027", tributacao: { origem: 0, ncm: "85258929" } } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123 } }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 999 } }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const result = await syncBlingStockMovement({
+      integration: { accessToken: "token" },
+      depositoName: "Geral",
+      operation: "entry",
+      observacao: "Entrada automatica pendente por bipagem RZ LV01-1001-001",
+      item: {
+        sku: "LV010027",
+        descricao: "Camera",
+        valorUnit: 150,
+        precoCusto: 45,
+        quantidade: 1,
+        qtdConferida: 1
+      }
+    });
+
+    const balanceCalls = calls.filter((call) => call.url.includes("/estoques/saldos"));
+    const movement = calls.find((call) => call.method === "POST" && call.url.endsWith("/estoques"));
+    assert.equal(result.operation, "entry");
+    assert.equal(balanceCalls.length, 0);
+    assert.equal(movement.body.operacao, "E");
+    assert.equal(movement.body.quantidade, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Bling stock balance sync reduces stock when target is below current balance", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   const responses = [
@@ -428,7 +472,7 @@ test("Bling stock balance sync corrects duplicated queued entry instead of addin
   }
 });
 
-test("Bling stock balance sync adds only the missing quantity for repeated no-sheet entry", async () => {
+test("Bling stock balance sync adds only the missing quantity for balance correction", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   const responses = [

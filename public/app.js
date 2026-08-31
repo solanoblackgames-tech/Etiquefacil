@@ -731,9 +731,12 @@ async function addDiverseItem(event) {
   button.disabled = true;
   try {
     let valorUnitOverride;
+    let quantidade = 1;
     const preview = await previewDiverseItem(codigoMl, codigoRz);
+    const suggestedLotItem = await findNoSheetSuggestionForProduct(preview.product || {}).catch(() => null);
+    quantidade = manualSuggestionQuantityValue(suggestedLotItem);
     if (preview.status === "preview_existing") {
-      const action = await askProductAlreadyRegistered(preview.product, { sameCode: true });
+      const action = await askProductAlreadyRegistered(preview.product, { sameCode: true, quantidade });
       if (action !== "use_existing") {
         input.select();
         return;
@@ -742,13 +745,13 @@ async function addDiverseItem(event) {
     if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
       if (preview.status === "preview") {
         const product = preview.product || {};
-        const suggestedPrice = await findNoSheetSuggestedPriceForProduct(product);
+        const suggestedPrice = suggestionPriceValue(suggestedLotItem) || await findNoSheetSuggestedPriceForProduct(product);
         valorUnitOverride = await askPriceSuggestion({ codigoMl, product, suggestedPrice });
         if (valorUnitOverride === null) return;
       }
     }
 
-    const response = await createDiverseItem({ codigoMl, codigoRz, valorUnitOverride });
+    const response = await createDiverseItem({ codigoMl, codigoRz, valorUnitOverride, quantidade, allowDuplicate: preview.status === "preview_existing" });
     input.value = "";
     renderDiverseLot(response.lot);
     const parent = response.parent?.lot?.nomeArquivo ? ` Pai: ${response.parent.lot.nomeArquivo}.` : "";
@@ -778,7 +781,7 @@ async function addDiverseItem(event) {
             targetManualProduct = undefined;
           }
         }
-        const response = await createDiverseItem({ codigoMl: targetCodigoMl, codigoRz, manualProduct: targetManualProduct, quantidade: manualProduct.quantidade });
+        const response = await createDiverseItem({ codigoMl: targetCodigoMl, codigoRz, manualProduct: targetManualProduct, quantidade: manualProduct.quantidade, allowDuplicate: !targetManualProduct });
         input.value = "";
         renderDiverseLot(response.lot);
         await refreshLotsList(response.lot.id);
@@ -894,7 +897,7 @@ function askProductAlreadyRegistered(product = {}, { sameCode = false, quantidad
       ["Quantidade a aplicar", String(quantity)]
     ],
     actions: [
-      { id: "use", label: "Usar SKU vigente", primary: true, value: "use_existing" },
+      { id: "use", label: "Somar quantidade", primary: true, value: "use_existing" },
       sameCode
         ? { id: "cancel", label: "Cancelar", value: null }
         : { id: "new", label: "Novo cadastro", value: "new_registration" }
@@ -904,19 +907,23 @@ function askProductAlreadyRegistered(product = {}, { sameCode = false, quantidad
 }
 
 async function findNoSheetSuggestedPriceForProduct(product = {}) {
+  const matchedSuggestion = await findNoSheetSuggestionForProduct(product);
+  const price = suggestionPriceValue(matchedSuggestion);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+async function findNoSheetSuggestionForProduct(product = {}) {
   const descricao = String(product.descricao || "").trim();
   if (!descricao) return null;
   const localSuggestion = findNoSheetSuggestionByDescription(descricao);
-  let price = suggestionPriceValue(localSuggestion);
-  if (Number.isFinite(price) && price > 0) return price;
+  if (localSuggestion) return localSuggestion;
 
   const matches = await loadNoSheetSuggestionMatches(descricao).catch(() => []);
   const key = normalizeSearchText(descricao);
   const matchedSuggestion = matches.find((suggestion) => normalizeSearchText(suggestion.descricao) === key)
     || matches.find((suggestion) => suggestion.source === "lista_lote" && suggestionPriceValue(suggestion) > 0)
     || matches.find((suggestion) => suggestionPriceValue(suggestion) > 0);
-  price = suggestionPriceValue(matchedSuggestion);
-  return Number.isFinite(price) && price > 0 ? price : null;
+  return matchedSuggestion || null;
 }
 
 function findNoSheetSuggestionByDescription(description) {
@@ -1044,11 +1051,11 @@ async function previewDiverseItem(codigoMl, codigoRz) {
   });
 }
 
-async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade }) {
+async function createDiverseItem({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade, allowDuplicate = false }) {
   return api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/diverse-items`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade })
+    body: JSON.stringify({ codigoMl, codigoRz, manualProduct, valorUnitOverride, quantidade, allowDuplicate })
   });
 }
 
@@ -1740,7 +1747,7 @@ async function addDiverseQuantity(lotId, codigoRz, codigoMl, button) {
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}/diverse-items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl, codigoRz })
+      body: JSON.stringify({ codigoMl, codigoRz, allowDuplicate: true })
     });
     renderDiverseLot(response.lot);
     $("#diverseScanMessage").style.color = "#0f766e";
