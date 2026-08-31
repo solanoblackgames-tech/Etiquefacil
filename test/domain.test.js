@@ -187,7 +187,7 @@ test("unified import treats rows with quantity but no Codigo ML as suggestions",
     auctionPercent: 0
   });
 
-  assert.deepEqual(result.suggestions, [{ descricao: "Produto aguardando bipagem", valorUnit: 89.9 }]);
+  assert.deepEqual(result.suggestions, [{ descricao: "Produto aguardando bipagem", valorUnit: 89.9, quantidade: 3 }]);
   assert.deepEqual(result.products.map((product) => product.codigoMl), ["ML-OK"]);
   assert.equal(result.items.length, 1);
 });

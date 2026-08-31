@@ -310,7 +310,11 @@ export async function importUnifiedLotWorkbook(buffer, lotInput) {
     const codigoMl = String(get(row, "codigoMl") || "").trim().toUpperCase();
     const qtd = hasQuantityColumn(indexByColumn) ? readQuantity(row, indexByColumn, get) : 0;
     if (!qtd || !codigoMl) {
-      suggestions.push({ descricao, valorUnit: roundMoney(valorUnit) });
+      suggestions.push({
+        descricao,
+        valorUnit: roundMoney(valorUnit),
+        ...(qtd > 0 ? { quantidade: qtd } : {})
+      });
       continue;
     }
 
