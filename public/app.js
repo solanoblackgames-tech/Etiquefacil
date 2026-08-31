@@ -8338,7 +8338,7 @@ function adjustLabelNameFontSize(delta) {
   const next = clampLabelNameFontSize(labelNameFontSize() + delta);
   localStorage.setItem(labelNameFontStorageKey(), String(next));
   updateLabelNameFontControls();
-  fitLabelDescriptions($("#labelPreview"));
+  fitLabelDescriptions();
 }
 
 function handleLabelNameFontControlClick(event) {
@@ -8375,35 +8375,13 @@ function fitLabelDescriptions(root = document) {
 }
 
 function fitLabelDescription(element) {
+  if (!element.textContent.trim()) return;
   const label = element.closest(".label-print");
-  if (!label || !element.textContent.trim()) return;
+  if (!label) return;
   const hasClubPrice = label.classList.contains("has-club-price");
-  const configuredMaxSize = labelNameFontSize();
-  const maxSize = configuredMaxSize;
-  const minSize = 5.2;
   const lineHeight = hasClubPrice ? 1.04 : 1.02;
-  element.style.fontSize = `${maxSize}px`;
+  element.style.fontSize = `${labelNameFontSize()}px`;
   element.style.lineHeight = String(lineHeight);
-  if (labelDescriptionFits(element)) return;
-
-  let low = minSize;
-  let high = maxSize;
-  for (let i = 0; i < 8; i += 1) {
-    const mid = (low + high) / 2;
-    element.style.fontSize = `${mid}px`;
-    if (labelDescriptionFits(element)) {
-      low = mid;
-    } else {
-      high = mid;
-    }
-  }
-  element.style.fontSize = `${Math.max(minSize, low).toFixed(2)}px`;
-}
-
-function labelDescriptionFits(element) {
-  const barcode = element.closest(".label-print")?.querySelector(".label-barcode");
-  const hasRoomBeforeBarcode = !barcode || element.getBoundingClientRect().bottom <= barcode.getBoundingClientRect().top + 0.5;
-  return hasRoomBeforeBarcode && element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1;
 }
 
 function code39Svg(value) {
@@ -8497,7 +8475,7 @@ async function labelMarkup(product, meta = null) {
   const sku = code39BarcodeValue(product.sku);
   return `
     <section class="label-print ${hasNote ? "has-note" : ""} ${hasMeta ? "has-meta" : ""} ${hasClubPrice ? "has-club-price" : ""}">
-      <p class="label-desc">${escapeHtml(product.descricao)}</p>
+      <p class="label-desc" style="font-size: ${labelNameFontSize()}px;">${escapeHtml(product.descricao)}</p>
       ${code39Svg(sku)}
       <strong class="label-sku">${escapeHtml(sku)}</strong>
       ${priceMarkup}
