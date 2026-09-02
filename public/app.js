@@ -635,6 +635,7 @@ async function handleLotDetailSubmit(event) {
 async function updateLotDescription(event) {
   event.preventDefault();
   const form = event.target;
+  updateLotCostFields(form, "fixed");
   const lotId = form.dataset.lotId || state.selectedLotId || state.previewLotId;
   const button = form.querySelector("button[type='submit']");
   const message = $("#lotDescriptionMessage");
@@ -654,8 +655,15 @@ async function updateLotDescription(event) {
     renderLots();
     if (state.previewLotId === response.lot.id) renderLotPreview(response.lot);
     else renderLotDetail(response.lot);
-    $("#lotDescriptionMessage").style.color = "#0f766e";
-    $("#lotDescriptionMessage").textContent = "Descricao do lote atualizada.";
+    const targetMessage = $("#lotDescriptionMessage");
+    const bling = response.bling || {};
+    const changed = Number(response.changedProducts || 0);
+    if (targetMessage) {
+      targetMessage.style.color = bling.ok === false ? "" : "#0f766e";
+      targetMessage.textContent = changed
+        ? `Lote salvo. Custos recalculados: ${changed}. Bling: ${bling.updated || 0} atualizado(s), ${bling.missing || 0} nao encontrado(s).${bling.queued ? ` ${bling.queued} produto(s) na fila.` : ""}${bling.error ? ` ${bling.error}` : ""}`
+        : "Lote salvo.";
+    }
   } catch (error) {
     if (message) message.textContent = error.message;
   } finally {
@@ -7062,6 +7070,9 @@ function renderLotPreview(lot) {
 }
 
 function bulkLotEditorMarkup(lot, { includeDescription = false } = {}) {
+  const costMode = lot.tipoCusto === "variable" ? "variable" : "fixed";
+  const averageCostValue = Number(lot.custoMedioUnitario || 0) > 0 ? String(lot.custoMedioUnitario).replace(".", ",") : "";
+  const costPercentValue = Number(lot.percentualCusto || 0) > 0 ? String(lot.percentualCusto).replace(".", ",") : "";
   return `
     <details class="bulk-lot-editor">
       <summary>Editar lote em massa</summary>
@@ -7071,7 +7082,19 @@ function bulkLotEditorMarkup(lot, { includeDescription = false } = {}) {
             <label>Descricao do lote
               <input name="descricao" maxlength="140" value="${escapeHtml(lot.nomeArquivo)}" required />
             </label>
-            <button type="submit">Salvar descricao</button>
+            <label>Tipo de custo
+              <select name="costMode">
+                <option value="fixed" ${costMode === "fixed" ? "selected" : ""}>Custo fixo</option>
+                <option value="variable" ${costMode === "variable" ? "selected" : ""}>Valor de mercado (%)</option>
+              </select>
+            </label>
+            <label data-cost-field="fixed" class="${costMode === "fixed" ? "" : "hidden"}">Custo fixo unitario
+              <input name="averageCost" inputmode="decimal" value="${escapeHtml(averageCostValue)}" ${costMode === "fixed" ? "required" : ""} />
+            </label>
+            <label data-cost-field="variable" class="${costMode === "variable" ? "" : "hidden"}">% do valor de mercado
+              <input name="costPercent" inputmode="decimal" value="${escapeHtml(costPercentValue)}" ${costMode === "variable" ? "required" : ""} />
+            </label>
+            <button type="submit">Salvar lote</button>
             <p id="lotDescriptionMessage" class="message"></p>
           </form>
         ` : ""}
@@ -7099,6 +7122,9 @@ function bindBulkLotEditor(lot, root = document) {
   });
   root.querySelectorAll("button[data-sync-products]").forEach((button) => {
     button.addEventListener("click", () => syncBlingProducts(lot.id, button.dataset.syncProducts, button));
+  });
+  root.querySelector("#lotDescriptionForm")?.addEventListener("change", (event) => {
+    if (event.target?.name === "costMode") updateLotCostFields(event.currentTarget, "fixed");
   });
   root.querySelector("#lotPriceImportForm")?.addEventListener("submit", (event) => importLotPrices(event, lot.id));
   root.querySelector("#deleteLotButton")?.addEventListener("click", () => deleteLot(lot, root.querySelector("#deleteLotButton")));

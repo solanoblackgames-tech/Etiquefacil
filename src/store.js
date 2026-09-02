@@ -1919,25 +1919,90 @@ export async function deleteUserLot(userId, lotId) {
 }
 
 export async function updateUserLotDescription(userId, lotId, description) {
+  return updateUserLotDetails(userId, lotId, { descricao: description });
+}
+
+export async function updateUserLotDetails(userId, lotId, payload = {}) {
   await ensureStore();
-  const nomeArquivo = String(description || "").trim().slice(0, 140);
+  const nomeArquivo = String(payload.descricao ?? payload.nomeArquivo ?? "").trim().slice(0, 140);
   if (!nomeArquivo) throw new Error("Informe a descricao do lote.");
+  const costUpdate = normalizeLotCostUpdate(payload);
+  let changedProducts = [];
 
   if (hasPostgres()) {
-    const result = await query(
-      "update lots set nome_arquivo = $3 where id = $1 and user_id = $2 returning id",
-      [lotId, userId, nomeArquivo]
-    );
-    if (!result.rows.length) throw notFound("Lote nao encontrado.");
-    return { lot: await getUserLotDetail(userId, lotId) };
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      const result = await client.query(
+        `
+          update lots
+          set nome_arquivo = $3,
+              tipo_custo = coalesce($4, tipo_custo),
+              custo_medio_unitario = case when $4 is null then custo_medio_unitario else $5 end,
+              percentual_custo = case when $4 is null then percentual_custo else $6 end
+          where id = $1
+            and user_id = $2
+          returning *
+        `,
+        [
+          lotId,
+          userId,
+          nomeArquivo,
+          costUpdate?.tipoCusto || null,
+          costUpdate?.custoMedioUnitario ?? null,
+          costUpdate?.percentualCusto ?? null
+        ]
+      );
+      if (!result.rows.length) throw notFound("Lote nao encontrado.");
+      if (costUpdate) {
+        const productsResult = await client.query(
+          `
+            update products
+            set preco_custo = case
+              when $3 = 'variable' then round((valor_unit * ($4::numeric / 100))::numeric, 2)
+              else $5::numeric
+            end
+            where lot_id = $1
+              and exists (select 1 from lots where id = $1 and user_id = $2)
+              and preco_custo is distinct from case
+                when $3 = 'variable' then round((valor_unit * ($4::numeric / 100))::numeric, 2)
+                else $5::numeric
+              end
+            returning *
+          `,
+          [lotId, userId, costUpdate.tipoCusto, costUpdate.percentualCusto, costUpdate.custoMedioUnitario]
+        );
+        changedProducts = productsResult.rows.map(productFromRow);
+      }
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { lot: await getUserLotDetail(userId, lotId), changedProducts };
   }
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
   if (!lot) throw notFound("Lote nao encontrado.");
   lot.nomeArquivo = nomeArquivo;
+  if (costUpdate) {
+    lot.tipoCusto = costUpdate.tipoCusto;
+    lot.custoMedioUnitario = costUpdate.custoMedioUnitario;
+    lot.percentualCusto = costUpdate.percentualCusto;
+    for (const product of db.products || []) {
+      if (product.lotId !== lot.id) continue;
+      const nextCost = lotCostForProduct(lot, product);
+      if (nextCost !== Number(product.precoCusto || 0)) {
+        product.precoCusto = nextCost;
+        changedProducts.push(product);
+      }
+    }
+  }
   await writeDb(db);
-  return { lot: summarizeLot(db, lot, true) };
+  return { lot: summarizeLot(db, lot, true), changedProducts };
 }
 
 export async function getStoreHealth() {
@@ -2871,6 +2936,15 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
       ]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
+    await query(
+      `
+        update rz_items
+        set valor_total = round((qtd_esperada * $3)::numeric, 2)
+        where lot_id = $1
+          and product_id = $2
+      `,
+      [lotId, productId, normalized.valorUnit]
+    );
     return { product: productFromRow(result.rows[0]), lot: await getUserLotDetail(userId, lotId) };
   }
 
@@ -2941,15 +3015,6 @@ export async function dismissLotProductBlingAlert({ userId, lotId, productId }) 
       [productId, lotId, userId]
     );
     if (!result.rows.length) throw notFound("Produto nao encontrado neste lote.");
-    await query(
-      `
-        update rz_items
-        set valor_total = round((qtd_esperada * $3)::numeric, 2)
-        where lot_id = $1
-          and product_id = $2
-      `,
-      [lotId, productId, normalized.valorUnit]
-    );
     return { product: productFromRow(result.rows[0]), lot: await getUserLotDetail(userId, lotId) };
   }
 
@@ -9305,6 +9370,37 @@ function userSettingFromRow(row) {
 
 function decimalMoney(value) {
   return roundMoney(parseNumber(value));
+}
+
+function normalizeLotCostUpdate(input = {}) {
+  const hasCostMode = input.tipoCusto !== undefined || input.costMode !== undefined;
+  const hasFixedCost = input.custoMedioUnitario !== undefined || input.averageCost !== undefined;
+  const hasVariableCost = input.percentualCusto !== undefined || input.costPercent !== undefined;
+  if (!hasCostMode && !hasFixedCost && !hasVariableCost) return null;
+
+  const tipoCusto = String(input.tipoCusto ?? input.costMode ?? "fixed").trim() === "variable" ? "variable" : "fixed";
+  const custoMedioUnitario = tipoCusto === "fixed"
+    ? decimalMoney(input.custoMedioUnitario ?? input.averageCost)
+    : 0;
+  const percentualCusto = tipoCusto === "variable"
+    ? decimalMoney(input.percentualCusto ?? input.costPercent)
+    : 0;
+
+  if (tipoCusto === "fixed" && (!Number.isFinite(custoMedioUnitario) || custoMedioUnitario <= 0)) {
+    throw new Error("Informe um custo fixo unitario valido.");
+  }
+  if (tipoCusto === "variable" && (!Number.isFinite(percentualCusto) || percentualCusto <= 0)) {
+    throw new Error("Informe um percentual de custo valido.");
+  }
+
+  return { tipoCusto, custoMedioUnitario, percentualCusto };
+}
+
+function lotCostForProduct(lot, product) {
+  if (lot?.tipoCusto === "variable") {
+    return roundMoney(Number(product?.valorUnit || 0) * (Number(lot.percentualCusto || 0) / 100));
+  }
+  return roundMoney(Number(lot?.custoMedioUnitario || 0));
 }
 
 function requiredInt(value) {

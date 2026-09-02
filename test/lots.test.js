@@ -384,6 +384,64 @@ test("owner can update description for an existing lot", async () => {
   }
 });
 
+test("owner can update lot cost rule and recalculate product costs", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-lot-cost-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-lot-cost`;
+    const { updateUserLotDetails, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [{ id: "lot-1", userId: "user-1", nomeArquivo: "Lote", fornecedor: "FORN", prefixoSku: "SKU", percentualArremate: 0, custoMedioUnitario: 10, tipoCusto: "fixed", percentualCusto: 0, proximoSequencialSku: 1, createdAt: "2026-07-03T00:00:00.000Z" }],
+      products: [
+        { id: "product-1", lotId: "lot-1", codigoMl: "ML1", sku: "SKU1", descricao: "Produto 1", valorUnit: 100, precoCusto: 10, qtdTotal: 1, createdAt: "2026-07-03T00:00:00.000Z" },
+        { id: "product-2", lotId: "lot-1", codigoMl: "ML2", sku: "SKU2", descricao: "Produto 2", valorUnit: 50, precoCusto: 10, qtdTotal: 1, createdAt: "2026-07-03T00:00:00.000Z" }
+      ],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await updateUserLotDetails("user-1", "lot-1", {
+      descricao: "Lote atualizado",
+      costMode: "variable",
+      costPercent: "25"
+    });
+    const db = await readDb();
+
+    assert.equal(result.lot.nomeArquivo, "Lote atualizado");
+    assert.equal(result.lot.tipoCusto, "variable");
+    assert.equal(result.changedProducts.length, 2);
+    assert.deepEqual(db.products.map((product) => product.precoCusto), [25, 12.5]);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

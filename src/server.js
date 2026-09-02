@@ -119,7 +119,7 @@ import {
   updateLotProductBlingAlerts,
   updateNoSheetSuggestions,
   updateLotProduct,
-  updateUserLotDescription,
+  updateUserLotDetails,
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStockTransferAcceptanceAccess,
@@ -1448,7 +1448,30 @@ app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
 
 app.patch("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json(await updateUserLotDescription(workspaceUserId(req), req.params.lotId, req.body?.descricao || req.body?.nomeArquivo));
+    const userId = workspaceUserId(req);
+    const result = await updateUserLotDetails(userId, req.params.lotId, req.body || {});
+    const changedProducts = result.changedProducts || [];
+    let lot = result.lot;
+    let bling = { ok: true, skipped: true, updated: 0, missing: 0, alerted: 0, results: [] };
+
+    if (changedProducts.length) {
+      try {
+        const integration = await getRequiredBlingCredentials(userId);
+        bling = await updateExistingBlingProducts({
+          integration,
+          products: withLotSupplier(changedProducts, lot),
+          saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+        });
+        const alertLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: bling });
+        if (alertLot) lot = alertLot;
+      } catch (blingError) {
+        await enqueueProductSyncs({ userId, lot, products: changedProducts, errorMessage: blingError.message });
+        lot = await getUserLotDetail(userId, req.params.lotId);
+        bling = { ok: false, queued: changedProducts.length, error: blingError.message, updated: 0, missing: 0, alerted: 0, results: [] };
+      }
+    }
+
+    res.json({ lot, changedProducts: changedProducts.length, bling });
   } catch (error) {
     sendError(res, error);
   }
