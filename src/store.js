@@ -2939,7 +2939,7 @@ export async function updateLotProduct({ userId, lotId, productId, payload }) {
     await query(
       `
         update rz_items
-        set valor_total = round((qtd_esperada * $3)::numeric, 2)
+        set valor_total = round((qtd_esperada * $3::numeric)::numeric, 2)
         where lot_id = $1
           and product_id = $2
       `,
