@@ -2721,7 +2721,7 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
 
 export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost, costMode = "fixed", costPercent = 0, suggestions = [] }) {
   await ensureStore();
-  const sequence = Math.max(1, Number.parseInt(startSequence, 10) || 1);
+  const sequence = normalizeStartSequence(startSequence);
   const tipoCusto = costMode === "variable" ? "variable" : "fixed";
   const percentualCusto = tipoCusto === "variable" ? roundMoney(Number(costPercent || 0)) : 0;
   const custoMedioUnitario = tipoCusto === "fixed" ? roundMoney(Number(averageCost || 0)) : 0;
@@ -5490,7 +5490,7 @@ async function insertLotRows(client, { lots = [], products = [], rzItems = [] })
       lot.percentualCusto || 0,
       lot.fornecedor,
       lot.prefixoSku,
-      lot.proximoSequencialSku,
+      requiredInt(lot.proximoSequencialSku),
       JSON.stringify(normalizeNoSheetSuggestions(lot.noSheetSuggestions)),
       lot.createdAt
     ])
@@ -7294,6 +7294,12 @@ function buildDiverseRzItem(lot, product, codigoRz, options = {}) {
 function normalizeExpectedQuantity(value) {
   const quantity = requiredInt(value ?? 1);
   return quantity > 0 ? quantity : 1;
+}
+
+function normalizeStartSequence(value) {
+  const sequence = requiredInt(value ?? 1);
+  if (sequence < 1) throw new Error("Informe o sequencial inicial do SKU sem casas decimais.");
+  return sequence;
 }
 
 function normalizeNoSheetSuggestions(input) {

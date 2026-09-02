@@ -1331,14 +1331,13 @@ app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), 
     const name = String(req.body.name || "").trim() || `Lote de entrada ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
-    const startSequence = Number(req.body.startSequence);
+    const startSequence = parsePositiveInteger(req.body.startSequence, "Informe o sequencial inicial do SKU sem casas decimais.");
     const costMode = String(req.body.costMode || "variable").trim() === "fixed" ? "fixed" : "variable";
     const averageCost = Number(req.body.averageCost);
     const costPercent = Number(req.body.costPercent);
     const auctionPercent = costMode === "variable" ? costPercent : 0;
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
-    if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
 
     if (costMode === "variable") {
       if (!Number.isFinite(costPercent) || costPercent <= 0) throw new Error("Informe o percentual do valor de mercado.");
@@ -1490,14 +1489,13 @@ app.post("/api/diverse-lots", requireAuth, requireOwner, upload.single("suggesti
     const name = String(req.body.name || "").trim() || `Lote sem planilha ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
-    const startSequence = Number(req.body.startSequence);
+    const startSequence = parsePositiveInteger(req.body.startSequence, "Informe o sequencial inicial do SKU sem casas decimais.");
     const costMode = String(req.body.costMode || "fixed").trim();
     const averageCost = Number(req.body.averageCost);
     const costPercent = Number(req.body.costPercent);
     const suggestions = req.file ? parseNoSheetSuggestionFile(req.file) : parseNoSheetSuggestions(req.body.suggestions || req.body.suggestionList || "");
     if (!fornecedor) throw new Error("Informe o fornecedor do lote.");
     if (!skuPrefix) throw new Error("Informe o prefixo do SKU.");
-    if (!Number.isFinite(startSequence) || startSequence < 1) throw new Error("Informe o sequencial inicial do SKU.");
     if (req.file && !suggestions.length) throw new Error("Nenhuma sugestao valida encontrada. Use uma planilha com as colunas Produto e Preco.");
     if (req.file && !suggestions.some((suggestion) => Number(suggestion.valorUnit || 0) > 0)) {
       throw new Error("A planilha foi lida, mas nenhum preco foi encontrado. Use a coluna Preco.");
@@ -2672,6 +2670,12 @@ async function scanTransferLotWithBlingFallback({ userId, transferLotId, code })
 
 function isAdminLogin(email, password) {
   return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
+}
+
+function parsePositiveInteger(value, message) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1 || !Number.isInteger(number)) throw new Error(message);
+  return number;
 }
 
 function hashInviteToken(token) {

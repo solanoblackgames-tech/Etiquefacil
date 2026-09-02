@@ -470,13 +470,22 @@ function hasQuantityColumn(indexByColumn) {
 }
 
 function readQuantity(row, indexByColumn, get) {
-  if (indexByColumn.has("qtd")) return Math.max(0, Math.round(parseNumber(get(row, "qtd"))));
+  if (indexByColumn.has("qtd")) return parseQuantityCell(get(row, "qtd"), "Qtd");
 
   const total = ["saldo1", "saldo2", "saldo3", "saldo4"].reduce((sum, column) => {
     if (!indexByColumn.has(column)) return sum;
-    return sum + parseNumber(row[indexByColumn.get(column)]);
+    return sum + parseQuantityCell(row[indexByColumn.get(column)], labelForColumn(column));
   }, 0);
-  return Math.max(0, Math.round(total));
+  return total;
+}
+
+function parseQuantityCell(value, label) {
+  const quantity = parseNumber(value);
+  if (!Number.isFinite(quantity) || quantity <= 0) return 0;
+  if (!Number.isInteger(quantity)) {
+    throw new Error(`${label} deve ser um numero inteiro. Valor recebido: ${String(value).trim() || quantity}.`);
+  }
+  return quantity;
 }
 
 export function buildBlingCsv(products, lot) {

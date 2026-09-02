@@ -82,6 +82,44 @@ test("specialist import sums Saldo 1 to Saldo 4 when quantity column is absent",
   assert.equal(result.items[1].qtdEsperada, 2);
 });
 
+test("specialist import rejects decimal quantity values", async () => {
+  const rows = [
+    ["Codigo ML", "Codigo RZ", "Qtd", "Descricao", "Valor Unit", "Valor Total"],
+    ["ML-1", "RZ-1", 26.21, "Produto com quantidade decimal", 10, 262.1]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Itens");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  await assert.rejects(
+    () => importSpecialistWorkbook(buffer, { skuPrefix: "qtd", auctionPercent: 20 }),
+    /Qtd deve ser um numero inteiro/
+  );
+});
+
+test("unified import rejects decimal balance quantities", async () => {
+  const rows = [
+    ["Codigo ML", "Descricao", "Preco de venda", "Saldo 1", "Saldo 2"],
+    ["ML-1", "Produto com saldo decimal", 10, 26.21, 0]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
+  const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+
+  await assert.rejects(
+    () => importUnifiedLotWorkbook(buffer, {
+      skuPrefix: "qtd",
+      startSequence: 1,
+      costMode: "fixed",
+      averageCost: 12.5,
+      auctionPercent: 0
+    }),
+    /Saldo 1 deve ser um numero inteiro/
+  );
+});
+
 test("Bling stock transfer rows map origin destination and quantity for Excel", () => {
   const rows = buildBlingStockTransferRows(
     [
