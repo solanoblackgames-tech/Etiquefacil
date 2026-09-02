@@ -662,6 +662,164 @@ test("no-sheet lot suggestions keep suggested sale price", async () => {
   }
 });
 
+test("imported RZs can be added to an existing lot", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-add-imported-rzs-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-add-imported-rzs`;
+    const { addImportedRzsToLot, createLotFromImport, readDb } = await import(storeUrl.href);
+
+    const lot = await createLotFromImport({
+      userId: "user-1",
+      originalName: "Lote base",
+      auctionPercent: 20,
+      fornecedor: "Fornecedor",
+      skuPrefix: "TST",
+      imported: {
+        nextSequence: 2,
+        suggestions: [],
+        products: [
+          baseImportedProduct("temp-existing", "ML-1", "TST0001", "Produto existente", 100, 1)
+        ],
+        items: [
+          baseImportedRzItem("item-existing", "temp-existing", "PALLET-1", 1, 100)
+        ]
+      }
+    });
+
+    const updatedLot = await addImportedRzsToLot({
+      userId: "user-1",
+      lotId: lot.id,
+      imported: {
+        products: [
+          baseImportedProduct("temp-reused", "ML-1", "IGNORADO", "Produto existente", 100, 2),
+          baseImportedProduct("temp-new", "ML-2", "IGNORADO", "Produto novo", 80, 3)
+        ],
+        items: [
+          baseImportedRzItem("item-reused", "temp-reused", "PALLET-2", 2, 200),
+          baseImportedRzItem("item-new", "temp-new", "PALLET-3", 3, 240)
+        ]
+      }
+    });
+    const db = await readDb();
+    const existingProduct = db.products.find((product) => product.codigoMl === "ML-1");
+    const newProduct = db.products.find((product) => product.codigoMl === "ML-2");
+
+    assert.equal(existingProduct.sku, "TST0001");
+    assert.equal(existingProduct.qtdTotal, 3);
+    assert.equal(newProduct.sku, "TST0002");
+    assert.equal(newProduct.qtdTotal, 3);
+    assert.equal(db.lots[0].proximoSequencialSku, 3);
+    assert.deepEqual(updatedLot.rzs.map((rz) => rz.codigoRz).sort(), ["PALLET-1", "PALLET-2", "PALLET-3"]);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("imported RZs reject items already present in the same pallet", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-add-imported-rzs-duplicate-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-add-imported-rzs-duplicate`;
+    const { addImportedRzsToLot, createLotFromImport, readDb } = await import(storeUrl.href);
+
+    const lot = await createLotFromImport({
+      userId: "user-1",
+      originalName: "Lote base",
+      auctionPercent: 20,
+      fornecedor: "Fornecedor",
+      skuPrefix: "TST",
+      imported: {
+        nextSequence: 2,
+        suggestions: [],
+        products: [
+          baseImportedProduct("temp-existing", "ML-1", "TST0001", "Produto existente", 100, 1)
+        ],
+        items: [
+          baseImportedRzItem("item-existing", "temp-existing", "PALLET-1", 1, 100)
+        ]
+      }
+    });
+
+    await assert.rejects(
+      addImportedRzsToLot({
+        userId: "user-1",
+        lotId: lot.id,
+        imported: {
+          products: [
+            baseImportedProduct("temp-reused", "ML-1", "IGNORADO", "Produto existente", 100, 2)
+          ],
+          items: [
+            baseImportedRzItem("item-duplicate", "temp-reused", "PALLET-1", 2, 200)
+          ]
+        }
+      }),
+      /ja existem neste lote\/Pallet/
+    );
+
+    const db = await readDb();
+    assert.equal(db.products.length, 1);
+    assert.equal(db.rzItems.length, 1);
+    assert.equal(db.products[0].qtdTotal, 1);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+function baseImportedProduct(id, codigoMl, sku, descricao, valorUnit, qtdTotal) {
+  return {
+    id,
+    codigoMl,
+    sku,
+    descricao,
+    valorUnit,
+    precoCusto: 20,
+    qtdTotal,
+    categoria: "",
+    subcategoria: "",
+    ncm: "",
+    ean: "",
+    dataValidade: "",
+    foto: "",
+    link: "",
+    origem: "planilha",
+    createdAt: "2026-09-02T00:00:00.000Z"
+  };
+}
+
+function baseImportedRzItem(id, productTempId, codigoRz, qtdEsperada, valorTotal) {
+  return {
+    id,
+    productTempId,
+    codigoRz,
+    enderecoWms: "",
+    qtdEsperada,
+    qtdConferida: 0,
+    condicaoGrade: "",
+    valorTotal,
+    tipoItem: "esperado",
+    createdAt: "2026-09-02T00:00:00.000Z"
+  };
+}
+
 test("manual no-sheet product uses suggestion quantity as expected quantity", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

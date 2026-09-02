@@ -7111,6 +7111,12 @@ function bulkLotEditorMarkup(lot, { includeDescription = false } = {}) {
           </label>
           <button type="submit">Subir precos</button>
         </form>
+        <form class="inline-upload-form bulk-rz-import-form" id="lotRzImportForm">
+          <label>Adicionar Pallets por planilha
+            <input name="file" type="file" accept=".xlsx,.xls" required />
+          </label>
+          <button type="submit">Adicionar Pallets</button>
+        </form>
       </div>
     </details>
   `;
@@ -7127,6 +7133,7 @@ function bindBulkLotEditor(lot, root = document) {
     if (event.target?.name === "costMode") updateLotCostFields(event.currentTarget, "fixed");
   });
   root.querySelector("#lotPriceImportForm")?.addEventListener("submit", (event) => importLotPrices(event, lot.id));
+  root.querySelector("#lotRzImportForm")?.addEventListener("submit", (event) => importLotRzs(event, lot.id));
   root.querySelector("#deleteLotButton")?.addEventListener("click", () => deleteLot(lot, root.querySelector("#deleteLotButton")));
 }
 
@@ -7451,6 +7458,46 @@ async function importLotPrices(event, lotId, messageSelector = "#downloadMessage
     const bling = payload.bling || {};
     targetMessage.style.color = bling.ok === false ? "" : "#0f766e";
     targetMessage.textContent = `Precos atualizados: ${payload.changed || 0}. Bling: ${bling.updated || 0} atualizado(s), ${bling.missing || 0} nao encontrado(s).${bling.alerted ? " Ha produto com alerta de EAN/NCM." : ""}${bling.error ? ` ${bling.error}` : ""}`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importLotRzs(event, lotId, messageSelector = "#downloadMessage") {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = $(messageSelector);
+  const button = form.querySelector("button[type='submit']");
+  const file = form.querySelector("input[type='file']")?.files?.[0];
+  if (!file) {
+    message.style.color = "";
+    message.textContent = "Selecione a planilha com os novos Pallets.";
+    return;
+  }
+  if (!confirm("Adicionar os Pallets desta planilha ao lote atual? Os itens ja conferidos serao mantidos.")) return;
+
+  message.textContent = "";
+  button.disabled = true;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(`/api/lots/${encodeURIComponent(lotId)}/rzs/import`, {
+      method: "POST",
+      body
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Nao foi possivel adicionar os Pallets.");
+    form.reset();
+    if (payload.lot) {
+      if (state.selectedLotId === lotId) renderLotDetail(payload.lot);
+      if (state.selectedDiverseLotId === lotId) renderDiverseLot(payload.lot);
+    }
+    const targetMessage = $(messageSelector) || message;
+    targetMessage.style.color = "#0f766e";
+    targetMessage.textContent = "Pallets adicionados ao lote.";
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;

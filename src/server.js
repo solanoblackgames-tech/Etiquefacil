@@ -32,6 +32,7 @@ import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
 import { buildWmsLocationLabelsPdf, buildWmsPositionCodes, normalizeWmsDeposit } from "./wms-labels.js";
 import {
+  addImportedRzsToLot,
   addDiverseLotItem,
   canDeleteTriageItem,
   confirmPublicTransferLotTotal,
@@ -1439,6 +1440,42 @@ app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
     await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
+    res.json({ lot });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/lots/:lotId/rzs/import", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) throw new Error("Envie uma planilha .xlsx com os novos Pallets.");
+    const userId = workspaceUserId(req);
+    const currentLot = await getUserLotDetail(userId, req.params.lotId);
+    if (!currentLot) return res.status(404).json({ error: "Lote nao encontrado." });
+
+    const fixedCost = Number(currentLot.custoMedioUnitario || 0);
+    const variablePercent = Number(currentLot.percentualCusto || currentLot.percentualArremate || 0);
+    const costMode = currentLot.tipoCusto === "fixed" && fixedCost > 0 ? "fixed" : "variable";
+    const imported = await importUnifiedLotWorkbook(req.file.buffer, {
+      auctionPercent: variablePercent,
+      averageCost: fixedCost,
+      costMode,
+      costPercent: variablePercent,
+      fornecedor: currentLot.fornecedor,
+      skuPrefix: currentLot.prefixoSku,
+      startSequence: currentLot.proximoSequencialSku || 1
+    });
+
+    if (!imported.products.length) {
+      throw new Error("Nenhum item com Codigo ML, Pallet e quantidade foi encontrado na planilha.");
+    }
+
+    applyNcmByCategory(imported, await getUserConferenceSettings(userId));
+    const lot = await addImportedRzsToLot({
+      userId,
+      lotId: req.params.lotId,
+      imported
+    });
     res.json({ lot });
   } catch (error) {
     sendError(res, error);

@@ -2719,6 +2719,60 @@ export async function createLotFromImport({ userId, originalName, auctionPercent
   return summarizeLot(db, lot);
 }
 
+export async function addImportedRzsToLot({ userId, lotId, imported }) {
+  await ensureStore();
+  if (!imported?.products?.length) throw new Error("Nenhum item com Codigo ML, Pallet e quantidade foi encontrado na planilha.");
+
+  if (hasPostgres()) {
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1 for update", [lotId, userId]);
+      if (!lotResult.rows.length) throw notFound("Lote nao encontrado.");
+      const lot = lotFromRow(lotResult.rows[0]);
+      const existingProducts = (await client.query("select * from products where lot_id = $1 for update", [lot.id])).rows.map(productFromRow);
+      const existingItems = (await client.query("select * from rz_items where lot_id = $1", [lot.id])).rows.map(rzItemFromRow);
+      const prepared = prepareImportedRzsForLot({ lot, existingProducts, existingItems, imported });
+
+      await insertLotRows(client, { products: prepared.productsToInsert, rzItems: prepared.rzItemsToInsert });
+      for (const update of prepared.productQuantityUpdates) {
+        await client.query("update products set qtd_total = qtd_total + $1 where id = $2", [update.quantity, update.productId]);
+      }
+      await client.query("update lots set proximo_sequencial_sku = $2 where id = $1", [lot.id, prepared.nextSequence]);
+      for (const product of prepared.productsToInsert) {
+        await mergePendingCatalogRequestPg(client, await buildLotCatalogRequestPg(client, { userId, lot, product }));
+      }
+      await client.query("commit");
+      return await getUserLotDetail(userId, lot.id);
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  const existingProducts = db.products.filter((product) => product.lotId === lot.id);
+  const existingItems = db.rzItems.filter((item) => item.lotId === lot.id);
+  const prepared = prepareImportedRzsForLot({ lot, existingProducts, existingItems, imported });
+
+  db.products.push(...prepared.productsToInsert);
+  db.rzItems.push(...prepared.rzItemsToInsert);
+  for (const update of prepared.productQuantityUpdates) {
+    const product = db.products.find((item) => item.id === update.productId);
+    if (product) product.qtdTotal = requiredInt(product.qtdTotal) + update.quantity;
+  }
+  lot.proximoSequencialSku = prepared.nextSequence;
+  for (const product of prepared.productsToInsert) {
+    mergePendingCatalogRequest(db.catalogRequests, buildLotCatalogRequest(db, { userId, lot, product }));
+  }
+  await writeDb(db);
+  return getUserLotDetail(userId, lot.id);
+}
+
 export async function createDiverseLot({ userId, name, fornecedor, skuPrefix, startSequence, averageCost, costMode = "fixed", costPercent = 0, suggestions = [] }) {
   await ensureStore();
   const sequence = normalizeStartSequence(startSequence);
@@ -7294,6 +7348,80 @@ function buildDiverseRzItem(lot, product, codigoRz, options = {}) {
 function normalizeExpectedQuantity(value) {
   const quantity = requiredInt(value ?? 1);
   return quantity > 0 ? quantity : 1;
+}
+
+function prepareImportedRzsForLot({ lot, existingProducts, existingItems, imported }) {
+  const productByCode = new Map(existingProducts.map((product) => [normalizeCode(product.codigoMl), product]));
+  const productById = new Map(existingProducts.map((product) => [product.id, product]));
+  const importedByTempId = new Map((imported.products || []).map((product) => [product.id, product]));
+  const existingPairs = new Set();
+  for (const item of existingItems || []) {
+    const product = productById.get(item.productId);
+    if (product) existingPairs.add(importedRzPairKey(product.codigoMl, item.codigoRz));
+  }
+
+  const duplicatePairs = [];
+  for (const item of imported.items || []) {
+    const product = importedByTempId.get(item.productTempId);
+    if (product && existingPairs.has(importedRzPairKey(product.codigoMl, item.codigoRz))) {
+      duplicatePairs.push(`${normalizeCode(product.codigoMl)} em ${normalizeCode(item.codigoRz)}`);
+    }
+  }
+  if (duplicatePairs.length) {
+    const uniquePairs = [...new Set(duplicatePairs)];
+    const sample = uniquePairs.slice(0, 5).join(", ");
+    const suffix = uniquePairs.length > 5 ? ` e mais ${uniquePairs.length - 5}` : "";
+    throw new Error(`A planilha tem itens que ja existem neste lote/Pallet: ${sample}${suffix}. Remova os duplicados ou use outro Pallet.`);
+  }
+
+  const productsToInsert = [];
+  const tempProductToProductId = new Map();
+  const quantityByExistingProductId = new Map();
+  let nextSequence = normalizeStartSequence(lot.proximoSequencialSku || 1);
+
+  for (const product of imported.products || []) {
+    const code = normalizeCode(product.codigoMl);
+    const existing = productByCode.get(code);
+    if (existing) {
+      tempProductToProductId.set(product.id, existing.id);
+      quantityByExistingProductId.set(existing.id, (quantityByExistingProductId.get(existing.id) || 0) + requiredInt(product.qtdTotal));
+      continue;
+    }
+
+    const newProduct = {
+      ...product,
+      codigoMl: code,
+      sku: formatSku(lot.prefixoSku, nextSequence++),
+      lotId: lot.id
+    };
+    if (!Number.isFinite(Number(newProduct.precoCusto)) || Number(newProduct.precoCusto) <= 0) {
+      throw new Error("Informe o custo do lote ou preencha Preco de custo nos produtos novos da planilha.");
+    }
+    productsToInsert.push(newProduct);
+    productByCode.set(code, newProduct);
+    tempProductToProductId.set(product.id, newProduct.id);
+  }
+
+  const rzItemsToInsert = (imported.items || []).map((item) => {
+    const { productTempId, ...cleanItem } = item;
+    return {
+      ...cleanItem,
+      codigoRz: normalizeCode(cleanItem.codigoRz),
+      lotId: lot.id,
+      productId: tempProductToProductId.get(productTempId)
+    };
+  }).filter((item) => item.productId);
+
+  return {
+    nextSequence,
+    productsToInsert,
+    rzItemsToInsert,
+    productQuantityUpdates: [...quantityByExistingProductId.entries()].map(([productId, quantity]) => ({ productId, quantity }))
+  };
+}
+
+function importedRzPairKey(codigoMl, codigoRz) {
+  return `${normalizeCode(codigoMl)}\u0000${normalizeCode(codigoRz)}`;
 }
 
 function normalizeStartSequence(value) {
