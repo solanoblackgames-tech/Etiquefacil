@@ -2375,17 +2375,17 @@ h3 {
 .triage-label-preview {
   align-content: start;
   align-items: stretch;
-  aspect-ratio: 60 / 40;
+  aspect-ratio: 40 / 60;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
-  gap: 0.65mm;
-  grid-template-rows: 10.8mm 8.35mm 8.35mm 8.35mm;
+  gap: 1.8mm;
+  grid-template-rows: 11.6mm 13.6mm 13.6mm 13.6mm;
   justify-items: stretch;
-  max-width: 60mm;
+  max-width: 40mm;
   overflow: hidden;
-  padding: 1mm 1.4mm;
+  padding: 1.2mm 1.4mm;
   text-align: left;
   width: 100%;
 }
@@ -2423,10 +2423,10 @@ h3 {
 
 .triage-label-preview .triage-label-qr {
   align-self: start;
-  height: 11mm;
+  height: 10mm;
   image-rendering: pixelated;
   justify-self: end;
-  width: 11mm;
+  width: 10mm;
 }
 
 .triage-label-qr-box small {
@@ -2461,7 +2461,7 @@ h3 {
 
 .triage-label-preview .label-barcode {
   align-self: stretch;
-  height: 7.8mm;
+  height: 13mm;
   justify-self: stretch;
   margin: 0;
   width: 100%;
@@ -2469,7 +2469,7 @@ h3 {
 
 .triage-label-empty-barcode {
   border-bottom: 0.25mm solid #111;
-  height: 7.8mm;
+  height: 13mm;
   opacity: 0.25;
 }
 
@@ -6430,12 +6430,16 @@ h3 {
     box-shadow: none;
     box-sizing: border-box;
     display: grid;
-    gap: 0.65mm;
-    grid-template-rows: 10.8mm 8.35mm 8.35mm 8.35mm;
+    gap: 1.8mm;
+    grid-template-rows: 11.6mm 13.6mm 13.6mm 13.6mm;
+    height: 60mm;
     justify-items: stretch;
     overflow: hidden;
-    padding: 1mm 1.4mm;
+    padding: 1.2mm 1.4mm;
     text-align: left;
+    transform: translateX(60mm) rotate(90deg);
+    transform-origin: top left;
+    width: 40mm;
   }
 
   #triageLabelPrintable .triage-label-heading {
@@ -6471,10 +6475,10 @@ h3 {
 
   #triageLabelPrintable .triage-label-qr {
     align-self: start;
-    height: 11mm;
+    height: 10mm;
     image-rendering: pixelated;
     justify-self: end;
-    width: 11mm;
+    width: 10mm;
   }
 
   #triageLabelPrintable .triage-label-barcode-row {
@@ -6499,7 +6503,7 @@ h3 {
   #triageLabelPrintable .label-barcode,
   #triageLabelPrintable .triage-label-empty-barcode {
     align-self: stretch;
-    height: 7.8mm;
+    height: 13mm;
     justify-self: stretch;
     margin: 0;
     width: 100%;
