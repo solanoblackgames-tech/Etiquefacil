@@ -8935,6 +8935,82 @@ function code39BarcodeValue(value) {
   return String(value || "").trim().toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "-");
 }
 
+function ean13Svg(value) {
+  const raw = String(value || "").replace(/\D/g, "");
+  if (!/^\d{13}$/.test(raw)) return code39Svg(value);
+  const leftOdd = {
+    0: "0001101",
+    1: "0011001",
+    2: "0010011",
+    3: "0111101",
+    4: "0100011",
+    5: "0110001",
+    6: "0101111",
+    7: "0111011",
+    8: "0110111",
+    9: "0001011"
+  };
+  const leftEven = {
+    0: "0100111",
+    1: "0110011",
+    2: "0011011",
+    3: "0100001",
+    4: "0011101",
+    5: "0111001",
+    6: "0000101",
+    7: "0010001",
+    8: "0001001",
+    9: "0010111"
+  };
+  const right = {
+    0: "1110010",
+    1: "1100110",
+    2: "1101100",
+    3: "1000010",
+    4: "1011100",
+    5: "1001110",
+    6: "1010000",
+    7: "1000100",
+    8: "1001000",
+    9: "1110100"
+  };
+  const parity = {
+    0: "OOOOOO",
+    1: "OOEOEE",
+    2: "OOEEOE",
+    3: "OOEEEO",
+    4: "OEOOEE",
+    5: "OEEOOE",
+    6: "OEEEOO",
+    7: "OEOEOE",
+    8: "OEOEEO",
+    9: "OEEOEO"
+  };
+  const first = Number(raw[0]);
+  const leftDigits = raw.slice(1, 7);
+  const rightDigits = raw.slice(7);
+  let bits = "101";
+  for (let index = 0; index < leftDigits.length; index += 1) {
+    const digit = leftDigits[index];
+    bits += parity[first][index] === "E" ? leftEven[digit] : leftOdd[digit];
+  }
+  bits += "01010";
+  for (const digit of rightDigits) bits += right[digit];
+  bits += "101";
+
+  const barWidth = 2;
+  const height = 78;
+  const quietZone = 18;
+  let x = quietZone;
+  const bars = [...bits].map((bit) => {
+    const rect = bit === "1" ? `<rect x="${x}" y="0" width="${barWidth}" height="${height}" />` : "";
+    x += barWidth;
+    return rect;
+  }).join("");
+  x += quietZone;
+  return `<svg class="label-barcode triage-ean-barcode" viewBox="0 0 ${x} ${height}" preserveAspectRatio="xMidYMid meet" data-barcode-value="${escapeHtml(raw)}" role="img" aria-label="Codigo de barras EAN">${bars}</svg>`;
+}
+
 async function labelMarkup(product, meta = null) {
   if (labelUsesLargeQr()) return largeQrLabelMarkup(product, meta);
   const priceMarkup = labelPriceMarkup(product);
@@ -10366,12 +10442,13 @@ function canPrintTriageLabel(item = {}) {
   return item.status === "diagnosticado";
 }
 
-function triageLabelBarcode(label, value) {
+function triageLabelBarcode(label, value, { format = "code39" } = {}) {
   const barcodeValue = code39BarcodeValue(value);
+  const barcodeMarkup = format === "ean13" ? ean13Svg(value) : code39Svg(barcodeValue);
   return `
     <div class="triage-label-barcode-row ${barcodeValue ? "" : "is-empty"}">
       <span>${escapeHtml(label)}</span>
-      ${barcodeValue ? code39Svg(barcodeValue) : '<div class="triage-label-empty-barcode"></div>'}
+      ${barcodeValue ? barcodeMarkup : '<div class="triage-label-empty-barcode"></div>'}
       <strong>${escapeHtml(barcodeValue || "-")}</strong>
     </div>
   `;
@@ -10391,7 +10468,7 @@ function triageLabelMarkup(item = {}) {
       </div>
     </div>
     ${triageLabelBarcode("SKU", item.sku)}
-    ${triageLabelBarcode("EAN", item.ean)}
+    ${triageLabelBarcode("EAN", item.ean, { format: "ean13" })}
     ${triageLabelBarcode("COD ML", triageLabelCodigoMl(item))}
   `;
 }
