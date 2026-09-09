@@ -2373,39 +2373,104 @@ h3 {
 }
 
 .triage-label-preview {
-  align-items: center;
+  align-content: start;
+  align-items: stretch;
   aspect-ratio: 60 / 40;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
-  gap: 4px;
-  grid-template-rows: 112px 22px 12px;
-  justify-items: center;
+  gap: 1.1mm;
+  grid-template-rows: 9.8mm 8.6mm 8.2mm 7.8mm 2.2mm;
+  justify-items: stretch;
   max-width: 60mm;
-  padding: 10px 12px;
-  text-align: center;
+  overflow: hidden;
+  padding: 2mm;
+  text-align: left;
   width: 100%;
 }
 
-.triage-label-preview img {
-  height: 112px;
-  image-rendering: pixelated;
-  width: 112px;
+.triage-label-heading {
+  display: grid;
+  gap: 1.6mm;
+  grid-template-columns: minmax(0, 1fr) 15mm;
+  min-width: 0;
 }
 
-.triage-label-preview span {
-  font-size: 18px;
+.triage-label-heading p {
+  align-self: start;
+  color: #111;
+  display: -webkit-box;
+  font-family: Arial Black, Arial, sans-serif;
+  font-size: 7.8px;
+  font-weight: 900;
+  line-height: 1.08;
+  margin: 0;
+  max-height: 9.5mm;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.triage-label-preview .triage-label-qr {
+  align-self: start;
+  height: 15mm;
+  image-rendering: pixelated;
+  justify-self: end;
+  width: 15mm;
+}
+
+.triage-label-barcode-row {
+  display: grid;
+  gap: 0.2mm;
+  min-width: 0;
+}
+
+.triage-label-barcode-row span {
+  color: #111;
+  font-size: 6px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.triage-label-preview .label-barcode {
+  align-self: stretch;
+  height: 4.9mm;
+  justify-self: stretch;
+  margin: 0;
+  width: 100%;
+}
+
+.triage-label-barcode-row strong {
+  color: #111;
+  font-family: Arial, sans-serif;
+  font-size: 6.2px;
   font-weight: 800;
+  letter-spacing: 0.7px;
+  line-height: 1;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-label-empty-barcode {
+  border-bottom: 0.25mm solid #111;
+  height: 4.9mm;
+  opacity: 0.25;
 }
 
 .triage-label-preview small {
-  color: var(--muted);
-  font-size: 10px;
+  align-self: end;
+  color: #555;
+  font-size: 5.2px;
   font-weight: 700;
   line-height: 1;
   max-width: 100%;
   overflow: hidden;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

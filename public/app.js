@@ -10366,6 +10366,35 @@ function canPrintTriageLabel(item = {}) {
   return item.status === "diagnosticado";
 }
 
+function triageLabelBarcode(label, value) {
+  const barcodeValue = code39BarcodeValue(value);
+  return `
+    <div class="triage-label-barcode-row ${barcodeValue ? "" : "is-empty"}">
+      <span>${escapeHtml(label)}</span>
+      ${barcodeValue ? code39Svg(barcodeValue) : '<div class="triage-label-empty-barcode"></div>'}
+      <strong>${escapeHtml(barcodeValue || "-")}</strong>
+    </div>
+  `;
+}
+
+function triageLabelCodigoMl(item = {}) {
+  return item.asin || item.productCode || "";
+}
+
+function triageLabelMarkup(item = {}) {
+  const footer = labelFooterText(labelMeta(item.createdAt));
+  return `
+    <div class="triage-label-heading">
+      <p>${escapeHtml(item.descricao || "Produto sem descricao")}</p>
+      <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+    </div>
+    ${triageLabelBarcode("SKU", item.sku)}
+    ${triageLabelBarcode("EAN", item.ean)}
+    ${triageLabelBarcode("COD ML", triageLabelCodigoMl(item))}
+    <small>${escapeHtml(footer || item.code || "")}</small>
+  `;
+}
+
 function printTriageLabel() {
   if (!$("#triageLabelPrintable")) return;
   document.body.classList.add("printing-triage-label");
@@ -10375,7 +10404,6 @@ function printTriageLabel() {
 
 function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
   const detail = $("#triageDetail");
-  const footer = labelFooterText(labelMeta(item.createdAt));
   const deleteButton = item.canDelete
     ? `<button type="button" class="danger ghost" data-delete-triage-item>Excluir etiqueta</button>`
     : "";
@@ -10386,9 +10414,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
   detail.innerHTML = `
     <section class="triage-detail-grid">
       <div class="triage-label-preview" id="triageLabelPrintable">
-        <img src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
-        <span>${escapeHtml(item.code)}</span>
-        <small>${escapeHtml(footer)}</small>
+        ${triageLabelMarkup(item)}
       </div>
       <div class="triage-info">
         <div class="detail-heading">
