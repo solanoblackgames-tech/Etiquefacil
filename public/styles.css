@@ -2380,8 +2380,8 @@ h3 {
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
-  gap: 0.7mm;
-  grid-template-rows: 12.4mm 7.8mm 7.8mm 7.8mm;
+  gap: 0.65mm;
+  grid-template-rows: 10.8mm 8.35mm 8.35mm 8.35mm;
   justify-items: stretch;
   max-width: 60mm;
   overflow: hidden;
@@ -2393,7 +2393,7 @@ h3 {
 .triage-label-heading {
   display: grid;
   gap: 1mm;
-  grid-template-columns: minmax(0, 1fr) 13mm;
+  grid-template-columns: minmax(0, 1fr) 12mm;
   min-width: 0;
 }
 
@@ -2402,16 +2402,16 @@ h3 {
   color: #111;
   display: -webkit-box;
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 7px;
+  font-size: 7.2px;
   font-weight: 900;
   line-height: 1.08;
   margin: 0;
-  max-height: 12mm;
+  max-height: 10.5mm;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-transform: uppercase;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .triage-label-qr-box {
@@ -2423,10 +2423,10 @@ h3 {
 
 .triage-label-preview .triage-label-qr {
   align-self: start;
-  height: 12mm;
+  height: 11mm;
   image-rendering: pixelated;
   justify-self: end;
-  width: 12mm;
+  width: 11mm;
 }
 
 .triage-label-qr-box small {
@@ -2434,7 +2434,7 @@ h3 {
   font-size: 3px;
   font-weight: 700;
   line-height: 1;
-  max-width: 15mm;
+  max-width: 12mm;
   overflow: hidden;
   text-align: center;
   text-overflow: ellipsis;
@@ -2461,7 +2461,7 @@ h3 {
 
 .triage-label-preview .label-barcode {
   align-self: stretch;
-  height: 7.2mm;
+  height: 7.8mm;
   justify-self: stretch;
   margin: 0;
   width: 100%;
@@ -2469,7 +2469,7 @@ h3 {
 
 .triage-label-empty-barcode {
   border-bottom: 0.25mm solid #111;
-  height: 7.2mm;
+  height: 7.8mm;
   opacity: 0.25;
 }
 
