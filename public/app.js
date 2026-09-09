@@ -10382,16 +10382,17 @@ function triageLabelCodigoMl(item = {}) {
 }
 
 function triageLabelMarkup(item = {}) {
-  const footer = labelFooterText(labelMeta(item.createdAt));
   return `
     <div class="triage-label-heading">
       <p>${escapeHtml(item.descricao || "Produto sem descricao")}</p>
-      <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+      <div class="triage-label-qr-box">
+        <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+        <small>${escapeHtml(item.code || "")}</small>
+      </div>
     </div>
     ${triageLabelBarcode("SKU", item.sku)}
     ${triageLabelBarcode("EAN", item.ean)}
     ${triageLabelBarcode("COD ML", triageLabelCodigoMl(item))}
-    <small>${escapeHtml(footer || item.code || "")}</small>
   `;
 }
 
