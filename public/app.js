@@ -19,6 +19,8 @@ const state = {
   transferLots: [],
   selectedTransferLotId: null,
   transferSearchQuery: "",
+  expedition: { orders: [], stock: [], totalStock: 0 },
+  selectedExpeditionOrderId: null,
   triageItems: [],
   triageFilters: {
     operator: "",
@@ -59,6 +61,7 @@ const state = {
   lastCameraScanAt: 0,
   pendingTransferReceive: false,
   pendingTransferConfirmation: null,
+  pendingExpeditionPick: false,
   operatorInviteToken: null,
   pendingScan: false,
   pendingDecrement: false,
@@ -402,6 +405,10 @@ function bindEvents() {
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
+  $("#expeditionOrderForm")?.addEventListener("submit", createExpeditionOrder);
+  $("#expeditionOrders")?.addEventListener("click", handleExpeditionOrdersClick);
+  $("#expeditionDetail")?.addEventListener("submit", handleExpeditionDetailSubmit);
+  $("#expeditionDetail")?.addEventListener("click", handleExpeditionDetailClick);
   $("#triageCreateForm").addEventListener("submit", createTriageItem);
   $("#securitySealsForm").addEventListener("submit", generateSecuritySealsPdf);
   $("#triageCreateForm input[name='lookupCode']").addEventListener("change", lookupTriageCode);
@@ -756,6 +763,11 @@ async function addDiverseItem(event) {
         input.select();
         return;
       }
+      input.value = "";
+      await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, codigoMl);
+      await refreshLotsList(state.selectedDiverseLotId);
+      schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
+      return;
     }
     if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
       if (preview.status === "preview") {
@@ -792,8 +804,11 @@ async function addDiverseItem(event) {
             return;
           }
           if (action === "use_existing") {
-            targetCodigoMl = existingByDescription.codigoMl;
-            targetManualProduct = undefined;
+            input.value = "";
+            await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, existingByDescription.codigoMl);
+            await refreshLotsList(state.selectedDiverseLotId);
+            schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
+            return;
           }
         }
         const response = await createDiverseItem({ codigoMl: targetCodigoMl, codigoRz, manualProduct: targetManualProduct, quantidade: manualProduct.quantidade, allowDuplicate: !targetManualProduct });
@@ -901,18 +916,16 @@ function findExistingDiverseProductByDescription(description) {
   return (state.selectedDiverseLot?.products || []).find((product) => normalizeSearchText(product.descricao) === key) || null;
 }
 
-function askProductAlreadyRegistered(product = {}, { sameCode = false, quantidade = 1 } = {}) {
-  const quantity = Number.isInteger(Number(quantidade)) && Number(quantidade) > 1 ? Number(quantidade) : 1;
+function askProductAlreadyRegistered(product = {}, { sameCode = false } = {}) {
   return openDecisionModal({
     title: "SKU ja cadastrado",
     rows: [
       ["Produto vigente", product.descricao || "-"],
       ["SKU vigente", product.sku || "-"],
-      ["Codigo ML vigente", product.codigoMl || "-"],
-      ["Quantidade a aplicar", String(quantity)]
+      ["Codigo ML vigente", product.codigoMl || "-"]
     ],
     actions: [
-      { id: "use", label: "Somar quantidade", primary: true, value: "use_existing" },
+      { id: "use", label: sameCode ? "Conferir unidade" : "Usar SKU existente", primary: true, value: "use_existing" },
       sameCode
         ? { id: "cancel", label: "Cancelar", value: null }
         : { id: "new", label: "Novo cadastro", value: "new_registration" }
@@ -1760,15 +1773,29 @@ async function addDiverseQuantity(lotId, codigoRz, codigoMl, button) {
   if (!lotId || !codigoRz || !codigoMl) return;
   try {
     if (button) button.disabled = true;
-    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/diverse-items`, {
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl, codigoRz, allowDuplicate: true })
+      body: JSON.stringify({ codigoMl, autoStockEntry: true })
     });
-    renderDiverseLot(response.lot);
+    if (response.scan?.status && !["ok", "excedente"].includes(response.scan.status)) {
+      throw new Error(response.scan.status === "outro_rz" ? "Este Codigo ML pertence a outro pallet." : "Produto nao encontrado neste pallet.");
+    }
+    const refreshed = await api(`/api/lots/${encodeURIComponent(lotId)}`);
+    const lot = refreshed.lot || response.lot;
+    renderDiverseLot(lot);
     $("#diverseScanMessage").style.color = "#0f766e";
-    $("#diverseScanMessage").textContent = "Quantidade aumentada e etiqueta gerada.";
-    if (response.product) await printProductLabel(response.product, { lotId: response.lot.id, autoPrint: true, meta: labelMeta() });
+    $("#diverseScanMessage").textContent = response.bling?.queued
+      ? "Bipagem registrada. Entrada no Bling sincronizando em segundo plano."
+      : "Bipagem registrada e entrada lancada no Bling.";
+    const item = (lot.items || []).find((candidate) => {
+      const product = candidate.product || {};
+      return candidate.codigoRz === codigoRz && (
+        normalizeCodigoMl(product.codigoMl) === normalizeCodigoMl(codigoMl) ||
+        normalizeCodigoMl(product.sku) === normalizeCodigoMl(codigoMl)
+      );
+    });
+    if (item?.product) await printProductLabel(item.product, { lotId: lot.id, autoPrint: true, meta: labelMeta() });
   } catch (error) {
     if (button) button.disabled = false;
     $("#diverseScanMessage").style.color = "";
@@ -1992,6 +2019,7 @@ async function downloadDiverseRzBling(lotId, codigoRz) {
 }
 
 function diverseScanStatusMessage(response, codigoRz, parent) {
+  if (response.status === "conferido_rz") return `Bipagem registrada no Pallet ${codigoRz}.`;
   if (response.status === "duplicado_rz") return `Quantidade somada no Pallet ${codigoRz}.`;
   if (response.status === "mesmo_sku_novo_rz") return `SKU ${response.product.sku} reutilizado no Pallet ${codigoRz}.`;
   if (response.status === "cadastro_manual") return `SKU ${response.product.sku} gerado e enviado para sugestao do banco historico.`;
@@ -2558,6 +2586,7 @@ function applyUserPermissions(user) {
   const operator = user.role === "operator";
   document.querySelector('#app [data-tab="profile"]')?.classList.remove("hidden");
   document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
+  document.querySelector('#app [data-tab="expedition"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
   document.querySelector('[data-profile-section="help"]')?.classList.remove("hidden");
@@ -2824,6 +2853,7 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
   const depositName = String(wms.depositName || "").trim();
   const prefix = String(wms.prefix || depositName || "WMS").trim().toUpperCase();
   const rowsConfig = normalizeWmsRowsConfig(wms.rowsConfig || wms.rows_config, wms);
+  const stores = normalizeWmsStores(wms.stores || wms.lojas || wms.blingStores || wms.bling_stores);
   const total = wmsTotalLabels(rowsConfig);
   const preview = wmsPositionPreview(prefix, rowsConfig);
   const depositOptions = deposits.length
@@ -2840,6 +2870,13 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
       <div class="triage-wms-rows" data-wms-row-list>
         ${rowsConfig.map((row) => triageWmsRow(row)).join("")}
       </div>
+      <div class="triage-wms-stores" data-wms-store-list>
+        <div class="triage-wms-subheading">
+          <strong>Lojas que expedem por este deposito</strong>
+          <button type="button" class="ghost" data-add-wms-store>Adicionar loja</button>
+        </div>
+        ${stores.length ? stores.map((store) => triageWmsStoreRow(store)).join("") : '<p class="muted transfer-empty">Nenhuma loja configurada para este deposito.</p>'}
+      </div>
       <div class="triage-wms-preview">
         <span>Ruas ${escapeHtml(preview.rowsLabel)}</span>
         <strong>${escapeHtml(preview.firstCode)} ate ${escapeHtml(preview.lastCode)}</strong>
@@ -2851,6 +2888,20 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
         <button type="button" class="ghost danger" data-remove-wms-deposit>Remover</button>
       </div>
     </article>
+  `;
+}
+
+function triageWmsStoreRow(store = {}) {
+  return `
+    <div class="triage-wms-store-row" data-wms-store>
+      <label>Nome da loja
+        <input name="wmsStoreName" value="${escapeHtml(store.name || "")}" placeholder="Ex: Mercado Livre" />
+      </label>
+      <label>ID da loja no Bling
+        <input name="wmsStoreId" value="${escapeHtml(store.blingStoreId || "")}" placeholder="Opcional" />
+      </label>
+      <button type="button" class="ghost danger" data-remove-wms-store>Remover loja</button>
+    </div>
   `;
 }
 
@@ -2869,6 +2920,14 @@ function triageWmsRow(row = {}) {
       <button type="button" class="ghost danger" data-remove-wms-row>Remover rua</button>
     </div>
   `;
+}
+
+function normalizeWmsStores(input = []) {
+  const rows = Array.isArray(input) ? input : [];
+  return rows.map((store) => ({
+    name: String(store.name || store.nome || store.lojaNome || "").trim(),
+    blingStoreId: String(store.blingStoreId || store.idLoja || store.id || "").trim()
+  })).filter((store) => store.name || store.blingStoreId);
 }
 
 function positiveInteger(value, fallback = 1) {
@@ -2923,6 +2982,13 @@ function readWmsRowsConfig(card) {
     columns: positiveInteger(row.querySelector('[name="wmsRowColumns"]')?.value, 1),
     positions: positiveInteger(row.querySelector('[name="wmsRowPositions"]')?.value, 1)
   })).filter((row) => row.label);
+}
+
+function readWmsStores(card) {
+  return [...card.querySelectorAll("[data-wms-store]")].map((row) => ({
+    name: String(row.querySelector('[name="wmsStoreName"]')?.value || "").trim(),
+    blingStoreId: String(row.querySelector('[name="wmsStoreId"]')?.value || "").trim()
+  })).filter((store) => store.name || store.blingStoreId);
 }
 
 function normalizeWmsRowLabel(value) {
@@ -3004,6 +3070,7 @@ function profileTriageRulesPayload(form) {
   const wmsDeposits = [...form.querySelectorAll("[data-wms-deposit-card]")].map((card) => ({
     depositName: String(card.querySelector('[name="wmsDepositName"]')?.value || "").trim(),
     prefix: normalizeWmsPrefix(card.querySelector('[name="wmsPrefix"]')?.value),
+    stores: readWmsStores(card),
     rowsConfig: readWmsRowsConfig(card)
   })).filter((item) => item.depositName);
   return { destinations, diagnosisOptions, wmsDeposits };
@@ -3050,6 +3117,19 @@ function handleTriageRulesClick(event) {
   }
   if (event.target.closest("[data-add-wms-row]")) {
     addTriageWmsRow(event.target.closest("[data-wms-deposit-card]"));
+    return;
+  }
+  if (event.target.closest("[data-add-wms-store]")) {
+    addTriageWmsStore(event.target.closest("[data-wms-deposit-card]"));
+    return;
+  }
+  const removeWmsStoreButton = event.target.closest("[data-remove-wms-store]");
+  if (removeWmsStoreButton) {
+    const list = removeWmsStoreButton.closest("[data-wms-store-list]");
+    removeWmsStoreButton.closest("[data-wms-store]")?.remove();
+    if (list && !list.querySelector("[data-wms-store]")) {
+      list.insertAdjacentHTML("beforeend", '<p class="muted transfer-empty">Nenhuma loja configurada para este deposito.</p>');
+    }
     return;
   }
   const removeWmsRowButton = event.target.closest("[data-remove-wms-row]");
@@ -3142,6 +3222,14 @@ function addTriageWmsRow(card) {
   list.insertAdjacentHTML("beforeend", triageWmsRow({ label, columns: previous.columns, positions: previous.positions }));
   updateWmsCardPreview(card);
   list.querySelector("[data-wms-row]:last-child input")?.select();
+}
+
+function addTriageWmsStore(card) {
+  const list = card?.querySelector("[data-wms-store-list]");
+  if (!list) return;
+  list.querySelector(".transfer-empty")?.remove();
+  list.insertAdjacentHTML("beforeend", triageWmsStoreRow({ name: "", blingStoreId: "" }));
+  list.querySelector("[data-wms-store]:last-child input")?.focus();
 }
 
 function nextWmsRowLabel(rowsConfig) {
@@ -4588,6 +4676,12 @@ async function applyRouteFromLocation({ replace = false } = {}) {
     return;
   }
 
+  if (route.view === "expedition" && !state.user?.transferAccess) {
+    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    return;
+  }
+
   if (route.view === "transferAccept") {
     if (!state.user?.stockTransferAcceptanceAccess) {
       setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
@@ -4615,6 +4709,7 @@ function parseRoute(pathname) {
   if (parts[0] === "transferencias" && parts[1] && (parts[2] === "aceite" || parts[2] === "wms")) return { view: "transferAccept", transferLotId: parts[1], transferMode: parts[2] };
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
+  if (parts[0] === "expedicao") return { view: "expedition" };
   if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
   if (parts[0] === "triagem" && parts[1]) return { view: "triage", triageCode: parts[1] };
   if (parts[0] === "triagem") return { view: "triage" };
@@ -4628,6 +4723,7 @@ function routePathForView(view) {
   if (view === "lots") return "/lotes";
   if (view === "search") return "/busca";
   if (view === "transfers") return "/transferencias";
+  if (view === "expedition") return "/expedicao";
   if (view === "triage") return "/triagem";
   if (view === "profile") return "/perfil";
   return "/perfil";
@@ -4650,15 +4746,18 @@ function updateRoute(path, { replace = false } = {}) {
 function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
   let target = tab || "profile";
   if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
+  if (target === "expedition" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "triage" && !state.user?.triageAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {
     state.selectedLotId = null;
     state.previewLotId = null;
     state.selectedRz = null;
     state.selectedTransferLotId = null;
+    state.selectedExpeditionOrderId = null;
     state.selectedTriageCode = null;
     renderLots();
     renderTransferLots();
+    renderExpeditionOrders();
     renderTriageItems();
     clearLotDetail();
     clearTransferDetail();
@@ -4671,6 +4770,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   toggleClass("#lotsTab", "hidden", target !== "lots");
   toggleClass("#searchTab", "hidden", target !== "search");
   toggleClass("#transfersTab", "hidden", target !== "transfers");
+  toggleClass("#expeditionTab", "hidden", target !== "expedition");
   toggleClass("#triageTab", "hidden", target !== "triage");
   toggleClass("#triageTab", "triage-view-only", target === "triage" && triageViewOnly);
   toggleClass("#profileTab", "hidden", target !== "profile");
@@ -4681,6 +4781,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
     loadBlingDeposits();
     loadTransferLots(state.selectedTransferLotId);
   }
+  if (target === "expedition") loadExpedition(state.selectedExpeditionOrderId);
   if (target === "triage" && !triageViewOnly) loadTriageItems(state.selectedTriageCode);
   schedulePrimaryInputFocus();
 }
@@ -6335,6 +6436,267 @@ function stopTransferCamera() {
   state.transferCameraStream = null;
   state.lastCameraCode = "";
   state.lastCameraScanAt = 0;
+}
+
+async function loadExpedition(selectId = state.selectedExpeditionOrderId) {
+  try {
+    const response = await api("/api/wms/expedition");
+    state.expedition = {
+      orders: response.orders || [],
+      stock: response.stock || [],
+      totalStock: response.totalStock || 0
+    };
+    renderExpeditionDepositSelect();
+    renderExpeditionOrders();
+    if (selectId && state.expedition.orders.some((order) => order.id === selectId)) {
+      state.selectedExpeditionOrderId = selectId;
+      renderExpeditionDetail(state.expedition.orders.find((order) => order.id === selectId));
+    } else {
+      clearExpeditionDetail();
+    }
+  } catch (error) {
+    $("#expeditionMessage").textContent = error.message;
+  }
+}
+
+function renderExpeditionDepositSelect() {
+  const select = $("#expeditionOrderForm select[name='wmsDepositName']");
+  if (!select) return;
+  const current = select.value;
+  const deposits = expeditionWmsDepositNames();
+  select.innerHTML = '<option value="">Qualquer deposito WMS</option>' + deposits.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+  if (deposits.includes(current)) select.value = current;
+}
+
+function expeditionWmsDepositNames() {
+  const fromSettings = (state.triageTransferSettings?.wmsDeposits || []).map((deposit) => deposit.depositName);
+  const fromStock = (state.expedition?.stock || []).map((item) => item.depositoDestino);
+  return [...new Set([...fromSettings, ...fromStock].map((name) => String(name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+async function createExpeditionOrder(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const message = $("#expeditionMessage");
+  const payload = Object.fromEntries(new FormData(form).entries());
+  button.disabled = true;
+  message.style.color = "";
+  message.textContent = "Criando pedido...";
+  try {
+    const response = await api("/api/wms/expedition/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pedidoNumero: payload.pedidoNumero,
+        lojaNome: payload.lojaNome,
+        wmsDepositName: payload.wmsDepositName,
+        items: [{
+          sku: payload.sku,
+          codigoMl: payload.sku,
+          descricao: payload.descricao,
+          quantidade: Number(payload.quantidade || 1)
+        }]
+      })
+    });
+    form.reset();
+    form.elements.quantidade.value = 1;
+    message.style.color = "#0f766e";
+    message.textContent = "Pedido criado para expedicao.";
+    await loadExpedition(response.order?.id);
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderExpeditionOrders() {
+  const wrapper = $("#expeditionOrders");
+  if (!wrapper) return;
+  const orders = state.expedition?.orders || [];
+  if (!orders.length) {
+    wrapper.innerHTML = '<p class="muted">Nenhum pedido em expedicao.</p>';
+    return;
+  }
+  wrapper.innerHTML = orders.map((order) => `
+    <article class="lot-card ${order.id === state.selectedExpeditionOrderId ? "active" : ""}" data-expedition-order="${escapeHtml(order.id)}">
+      <div class="transfer-card-title">
+        <strong>Pedido ${escapeHtml(order.pedidoNumero)}</strong>
+      </div>
+      ${order.lojaNome ? `<span class="muted">${escapeHtml(order.lojaNome)}</span>` : ""}
+      ${order.wmsDepositName ? `<span class="muted">Deposito WMS: ${escapeHtml(order.wmsDepositName)}</span>` : ""}
+      <span class="muted">${order.totalPicked || 0}/${order.totalQty || 0} produto(s) separado(s)</span>
+      <span class="badge ${expeditionStatusClass(order.status)}">${expeditionStatusLabel(order.status)}</span>
+    </article>
+  `).join("");
+}
+
+function handleExpeditionOrdersClick(event) {
+  const card = event.target.closest("[data-expedition-order]");
+  if (!card) return;
+  state.selectedExpeditionOrderId = card.dataset.expeditionOrder;
+  renderExpeditionOrders();
+  renderExpeditionDetail((state.expedition.orders || []).find((order) => order.id === state.selectedExpeditionOrderId));
+}
+
+function clearExpeditionDetail() {
+  const detail = $("#expeditionDetail");
+  if (!detail) return;
+  detail.classList.add("empty");
+  detail.textContent = "Selecione um pedido para separar.";
+}
+
+function renderExpeditionDetail(order) {
+  const detail = $("#expeditionDetail");
+  if (!detail) return;
+  if (!order) {
+    clearExpeditionDetail();
+    return;
+  }
+  const completed = order.status === "completed";
+  detail.classList.remove("empty");
+  detail.innerHTML = `
+    <section class="transfer-panel expedition-panel">
+      <div class="work-heading">
+        <div>
+          <span class="muted">${escapeHtml(order.lojaNome || "Pedido WMS")}</span>
+          <h2>Pedido ${escapeHtml(order.pedidoNumero)}</h2>
+          ${order.wmsDepositName ? `<p class="muted transfer-description">Deposito WMS: ${escapeHtml(order.wmsDepositName)}</p>` : ""}
+        </div>
+        <span class="badge ${expeditionStatusClass(order.status)}">${expeditionStatusLabel(order.status)}</span>
+      </div>
+      <div class="summary-grid">
+        ${metric("Itens", order.totalQty || 0)}
+        ${metric("Separado", order.totalPicked || 0)}
+        ${metric("Falta", order.totalPending || 0)}
+        ${metric("Saldo WMS", state.expedition?.totalStock || 0)}
+      </div>
+      <form id="expeditionPickForm" class="transfer-total-form wms-entry-form">
+        <label>Posicao WMS
+          <input name="positionCode" placeholder="Bipe a posicao" autocomplete="off" ${completed ? "disabled" : "autofocus"} required />
+        </label>
+        <label>Etiqueta/produto
+          <input name="productCode" placeholder="Bipe etiqueta da triagem, SKU, ASIN ou Cod ML" autocomplete="off" ${completed ? "disabled" : ""} required />
+        </label>
+        <button type="submit" ${completed ? "disabled" : ""}>Coletar produto</button>
+      </form>
+      <p id="expeditionPickMessage" class="message"></p>
+      <div class="actions">
+        <button type="button" data-complete-expedition="${escapeHtml(order.id)}" ${completed || Number(order.totalPending || 0) > 0 ? "disabled" : ""}>Finalizar pedido</button>
+        <button type="button" class="ghost" data-refresh-expedition>Atualizar rota</button>
+      </div>
+      <section class="expedition-route">
+        <div class="transfer-divergence-list-heading">
+          <strong>Rota de coleta</strong>
+          <span>${(order.route || []).length} posicao(oes)</span>
+        </div>
+        ${expeditionRouteMarkup(order)}
+      </section>
+      <section class="expedition-route">
+        <div class="transfer-divergence-list-heading">
+          <strong>Itens do pedido</strong>
+          <span>${(order.items || []).length}</span>
+        </div>
+        ${expeditionItemsMarkup(order)}
+      </section>
+    </section>
+  `;
+  schedulePrimaryInputFocus(["#expeditionPickForm input[name='positionCode']"]);
+}
+
+function expeditionRouteMarkup(order) {
+  const route = order.route || [];
+  if (!route.length) return '<p class="muted transfer-empty">Sem rota disponivel para os itens pendentes.</p>';
+  return route.map((step) => `
+    <article class="diverse-row transfer-row expedition-row">
+      <strong>${escapeHtml(step.wmsLocation)}</strong>
+      <span>${escapeHtml(step.sku || step.codigoMl || "")}</span>
+      <span>${escapeHtml(step.descricao || "")}</span>
+      <span>Qtd ${Number(step.quantidade || 0)}</span>
+    </article>
+  `).join("");
+}
+
+function expeditionItemsMarkup(order) {
+  return (order.items || []).map((item) => `
+    <article class="diverse-row transfer-row expedition-row">
+      <strong>${escapeHtml(item.sku || item.codigoMl || "")}</strong>
+      <span>${escapeHtml(item.codigoMl || "")}</span>
+      <span>${escapeHtml(item.descricao || "")}</span>
+      <span>${Number(item.quantidadeSeparada || 0)}/${Number(item.quantidade || 0)}</span>
+    </article>
+  `).join("");
+}
+
+async function handleExpeditionDetailSubmit(event) {
+  if (event.target.id !== "expeditionPickForm") return;
+  event.preventDefault();
+  if (!state.selectedExpeditionOrderId || state.pendingExpeditionPick) return;
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const message = $("#expeditionPickMessage");
+  const payload = Object.fromEntries(new FormData(form).entries());
+  state.pendingExpeditionPick = true;
+  button.disabled = true;
+  try {
+    const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(state.selectedExpeditionOrderId)}/pick`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    state.expedition = response.expedition;
+    const order = (state.expedition.orders || []).find((candidate) => candidate.id === state.selectedExpeditionOrderId);
+    renderExpeditionOrders();
+    renderExpeditionDetail(order);
+    $("#expeditionPickMessage").style.color = "#0f766e";
+    $("#expeditionPickMessage").textContent = `${response.pick?.code || "Produto"} coletado em ${response.pick?.wmsLocation || ""}.`;
+  } catch (error) {
+    message.style.color = "";
+    message.textContent = error.message;
+    form.querySelector("input[name='positionCode']")?.select();
+  } finally {
+    state.pendingExpeditionPick = false;
+    button.disabled = false;
+  }
+}
+
+async function handleExpeditionDetailClick(event) {
+  const refresh = event.target.closest("[data-refresh-expedition]");
+  if (refresh) {
+    await loadExpedition(state.selectedExpeditionOrderId);
+    return;
+  }
+  const complete = event.target.closest("[data-complete-expedition]");
+  if (!complete) return;
+  complete.disabled = true;
+  try {
+    const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(complete.dataset.completeExpedition)}/complete`, { method: "POST" });
+    state.expedition = response.expedition;
+    const order = (state.expedition.orders || []).find((candidate) => candidate.id === complete.dataset.completeExpedition);
+    renderExpeditionOrders();
+    renderExpeditionDetail(order);
+    $("#expeditionPickMessage").style.color = "#0f766e";
+    $("#expeditionPickMessage").textContent = "Pedido finalizado. Proxima etapa: impressao da etiqueta Bling/DANFE.";
+  } catch (error) {
+    $("#expeditionPickMessage").textContent = error.message;
+  } finally {
+    complete.disabled = false;
+  }
+}
+
+function expeditionStatusLabel(status) {
+  return ({
+    open: "Aberto",
+    picking: "Separando",
+    ready_print: "Pronto para etiqueta",
+    completed: "Finalizado"
+  })[status] || "Aberto";
+}
+
+function expeditionStatusClass(status) {
+  if (status === "completed" || status === "ready_print") return "";
+  return "excess";
 }
 
 async function loadTransferLots(selectId = state.selectedTransferLotId) {
@@ -9149,7 +9511,7 @@ function diverseItemRow(item, startsRz = false) {
     : `
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${expectedQuantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${checkedQuantity}/${expectedQuantity}</strong>
-        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Aumentar quantidade">+</button>
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${checkedQuantity >= expectedQuantity ? "disabled" : ""} aria-label="Conferir mais uma unidade">+</button>
       `;
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Pallet ${escapeHtml(item.codigoRz || "")}</div>` : ""}

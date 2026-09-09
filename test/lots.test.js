@@ -893,7 +893,8 @@ test("no-sheet duplicate quantity requires explicit confirmation", async () => {
       lotId: lot.id,
       codigoMl: "ML-DUP",
       codigoRz: "PALLET-1",
-      manualProduct: { descricao: "Produto duplicado", valorUnit: 50 }
+      manualProduct: { descricao: "Produto duplicado", valorUnit: 50 },
+      quantidade: 2
     });
 
     await assert.rejects(
@@ -918,9 +919,11 @@ test("no-sheet duplicate quantity requires explicit confirmation", async () => {
     const product = db.products.find((item) => item.id === created.product.id);
     const rzItem = db.rzItems.find((item) => item.productId === created.product.id);
 
-    assert.equal(duplicated.status, "duplicado_rz");
+    assert.equal(duplicated.status, "conferido_rz");
+    assert.equal(duplicated.stockEntryRequired, false);
     assert.equal(product.qtdTotal, 2);
     assert.equal(rzItem.qtdEsperada, 2);
+    assert.equal(rzItem.qtdConferida, 2);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

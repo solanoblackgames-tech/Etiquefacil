@@ -12,11 +12,27 @@ export function normalizeWmsDeposit(input = {}) {
   return {
     depositName,
     prefix,
+    stores: normalizeWmsStores(input.stores || input.lojas || input.blingStores || input.bling_stores),
     rowsConfig: rows,
     rows: rows.length,
     columns: Math.max(...rows.map((row) => row.columns)),
     positions: Math.max(...rows.map((row) => row.positions))
   };
+}
+
+function normalizeWmsStores(input = []) {
+  const rows = Array.isArray(input) ? input : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const name = String(row?.name ?? row?.nome ?? row?.lojaNome ?? row?.loja_nome ?? "").trim();
+    const blingStoreId = String(row?.blingStoreId ?? row?.bling_store_id ?? row?.idLoja ?? row?.id_loja ?? row?.id ?? "").trim();
+    const key = normalizeWmsPrefix(blingStoreId || name);
+    if (!key || seen.has(key)) continue;
+    normalized.push({ name, blingStoreId });
+    seen.add(key);
+  }
+  return normalized;
 }
 
 export function normalizeWmsDeposits(input = []) {

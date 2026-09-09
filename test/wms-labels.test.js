@@ -26,11 +26,30 @@ test("normalizeWmsDeposit sanitizes dimensions and prefix", () => {
   assert.deepEqual(normalizeWmsDeposit({ depositName: "Ecommerce", prefix: " Écom ", rows: 0, columns: 3, positions: 4 }), {
     depositName: "Ecommerce",
     prefix: "ECOM",
+    stores: [],
     rowsConfig: [{ label: "A", columns: 3, positions: 4 }],
     rows: 1,
     columns: 3,
     positions: 4
   });
+});
+
+test("normalizeWmsDeposit keeps stores configured for expedition", () => {
+  assert.deepEqual(normalizeWmsDeposit({
+    depositName: "Ecommerce",
+    prefix: "ECOM",
+    rows: 1,
+    columns: 1,
+    positions: 1,
+    stores: [
+      { name: "Mercado Livre", blingStoreId: "203" },
+      { nome: "Mercado Livre", idLoja: "203" },
+      { nome: "Shopee" }
+    ]
+  }).stores, [
+    { name: "Mercado Livre", blingStoreId: "203" },
+    { name: "Shopee", blingStoreId: "" }
+  ]);
 });
 
 test("buildWmsLocationLabelsPdf creates a 100x150 QR label PDF", async () => {

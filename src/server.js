@@ -36,9 +36,11 @@ import {
   addDiverseLotItem,
   canDeleteTriageItem,
   confirmPublicTransferLotTotal,
+  completeWmsExpeditionOrder,
   createExternalExcess,
   createDiverseLot,
   createLabel,
+  createWmsExpeditionOrder,
   createTriageItem,
   createOrUpdateTriageTransfer,
   createTransferLot,
@@ -90,6 +92,7 @@ import {
   hasPostgres,
   listDueBlingSyncJobs,
   listTransferLots,
+  listWmsExpedition,
   markBlingSyncJobFailed,
   markBlingSyncJobSucceeded,
   markTransferLotSynced,
@@ -112,6 +115,7 @@ import {
   reviewCatalogRequest,
   scanLotRz,
   scanTransferLot,
+  scanWmsExpeditionPick,
   searchProducts,
   splitLotProduct,
   suggestNoSheetProducts,
@@ -847,6 +851,60 @@ app.get("/api/bling/deposits", requireAuth, requireTransferOrTriageAccess, async
       saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
     res.json({ deposits });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/wms/expedition", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    res.json(await listWmsExpedition(workspaceUserId(req)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/wms/expedition/orders", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const result = await createWmsExpeditionOrder({
+      userId: workspaceUserId(req),
+      pedidoNumero: req.body?.pedidoNumero || req.body?.numero,
+      lojaNome: req.body?.lojaNome,
+      blingPedidoId: req.body?.blingPedidoId,
+      wmsDepositName: req.body?.wmsDepositName || req.body?.depositoWms,
+      items: req.body?.items || []
+    });
+    await recordOperatorActivity(req.session.user, "create_wms_expedition_order", { orderId: result.order?.id, pedidoNumero: result.order?.pedidoNumero });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/wms/expedition/orders/:orderId/pick", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const result = await scanWmsExpeditionPick({
+      userId: workspaceUserId(req),
+      orderId: req.params.orderId,
+      positionCode: req.body?.positionCode || req.body?.posicaoWms,
+      productCode: req.body?.productCode || req.body?.code
+    });
+    await recordOperatorActivity(req.session.user, "pick_wms_expedition", {
+      orderId: req.params.orderId,
+      positionCode: result.pick?.wmsLocation,
+      code: result.pick?.code
+    });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/wms/expedition/orders/:orderId/complete", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const result = await completeWmsExpeditionOrder({ userId: workspaceUserId(req), orderId: req.params.orderId });
+    await recordOperatorActivity(req.session.user, "complete_wms_expedition_order", { orderId: req.params.orderId });
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -2116,10 +2174,21 @@ app.post("/api/lots/:lotId/rz/:codigoRz/stock-exit/sync-one", requireAuth, async
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     if (!codigoMl) throw new Error("Informe o SKU da etiqueta ou Codigo ML.");
     await recordOperatorActivity(req.session.user, "scan_ml", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    res.json(await scanLotRz({ userId: workspaceUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    const result = await scanLotRz({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    if (req.body?.autoStockEntry === true && ["ok", "excedente"].includes(result.scan?.status)) {
+      result.bling = await syncNoSheetScanStockEntry({
+        userId,
+        lotId: req.params.lotId,
+        codigoRz: req.params.codigoRz,
+        codigoMl
+      });
+      if (result.bling?.lot) result.lot = result.bling.lot;
+    }
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -2172,9 +2241,23 @@ app.delete("/api/lots/:lotId/rz/:codigoRz/items/:itemId", requireAuth, async (re
 
 app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (req, res) => {
   try {
+    const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "create_external_excess", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    res.json(await createExternalExcess({ userId: workspaceUserId(req), operatorUserId: operatorUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl }));
+    const result = await createExternalExcess({ userId, operatorUserId: operatorUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    result.lot = await getUserLotDetail(userId, req.params.lotId);
+    await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
+    await enqueueStockMovementSync({
+      userId,
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      item: stockMovementItemFromProduct(result.lot, result.product),
+      operation: "entry",
+      errorMessage: "Entrada de estoque aguardando envio ao Bling."
+    });
+    result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
+    scheduleBlingSyncQueue();
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -2195,6 +2278,14 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess/manual", requireAuth, as
       manualProduct: req.body.manualProduct
     });
     await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
+    await enqueueStockMovementSync({
+      userId,
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      item: stockMovementItemFromProduct(result.lot, result.product),
+      operation: "entry",
+      errorMessage: "Entrada de estoque aguardando envio ao Bling."
+    });
     result.lot = await getUserLotDetail(userId, req.params.lotId);
     result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
     scheduleBlingSyncQueue();
@@ -2290,18 +2381,22 @@ app.post("/api/lots/:lotId/diverse-items", requireAuth, async (req, res) => {
           source: "diverse_lot"
         });
       }
-      await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
-      await enqueueStockMovementSync({
-        userId,
-        lotId: req.params.lotId,
-        codigoRz,
-        item: stockMovementItemFromProduct(result.lot, result.product, result.quantityApplied || 1),
-        operation: "entry",
-        errorMessage: "Entrada de estoque aguardando envio ao Bling."
-      });
       result.lot = await getUserLotDetail(userId, req.params.lotId);
-      result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
-      scheduleBlingSyncQueue();
+      if (result.stockEntryRequired === false || Number(result.quantityApplied || 0) <= 0) {
+        result.bling = { ok: true, skipped: true, status: "not_needed", sku: result.product.sku };
+      } else {
+        await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz,
+          item: stockMovementItemFromProduct(result.lot, result.product, result.quantityApplied || 1),
+          operation: "entry",
+          errorMessage: "Entrada de estoque aguardando envio ao Bling."
+        });
+        result.bling = { ok: false, queued: true, status: "queued", sku: result.product.sku };
+        scheduleBlingSyncQueue();
+      }
     }
 
     res.json(result);
@@ -3157,9 +3252,53 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
     fornecedor: lot.fornecedor || "",
     link: item.product.link || "",
     foto: item.product.foto || "",
+    origem: item.product.origem || "",
+    tipoItem: item.tipoItem || "",
     quantidade: 1,
     qtdConferida: 1
   };
+}
+
+async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) {
+  const item = await getRzStockMovementItem(userId, lotId, codigoRz, codigoMl);
+  if (!item || !isNoSheetStockEntryItem(item)) return { ok: true, skipped: true, status: "not_needed" };
+
+  try {
+    const integration = await getRequiredBlingCredentials(userId);
+    const result = await syncBlingStockMovement({
+      integration,
+      item,
+      depositoName: BLING_STOCK_DEPOSIT,
+      operation: "entry",
+      observacao: `Entrada automatica por bipagem RZ ${codigoRz}`,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId, syncResult: result });
+    return updatedLot ? { ...result, lot: updatedLot } : result;
+  } catch (error) {
+    await enqueueStockMovementSync({
+      userId,
+      lotId,
+      codigoRz,
+      item,
+      operation: "entry",
+      errorMessage: error.message
+    });
+    scheduleBlingSyncQueue();
+    const lot = await getUserLotDetail(userId, lotId);
+    return {
+      ok: false,
+      queued: true,
+      status: "queued",
+      error: `Entrada no Bling ficou na fila para tentar novamente: ${error.message}`,
+      lot
+    };
+  }
+}
+
+function isNoSheetStockEntryItem(item = {}) {
+  return ["lote_sem_planilha", "lote_sem_planilha_manual", "entrada_diversos"].includes(item.origem)
+    || ["lote_sem_planilha", "lote_sem_planilha_manual", "entrada_diversos"].includes(item.tipoItem);
 }
 
 function buildStockEntryCsvForRz(data) {

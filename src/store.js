@@ -57,6 +57,10 @@ const emptyDb = () => ({
   transferItems: [],
   transferForcedOccurrences: [],
   transferDivergenceReports: [],
+  wmsExpeditionOrders: [],
+  wmsExpeditionItems: [],
+  wmsExpeditionReservations: [],
+  wmsExpeditionPicks: [],
   operatorActivities: [],
   operatorInvites: [],
   catalogProducts: [],
@@ -3270,6 +3274,260 @@ export async function getPublicTransferLotDetail(transferLotId) {
   return summarizeTransferLot(lot, db.transferItems || [], db.transferDivergenceReports || []);
 }
 
+export async function listWmsExpedition(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    await ensureWmsExpeditionTablesPg();
+    const [orders, items, reservations, picks, stockLots, stockItems] = await Promise.all([
+      query("select * from wms_expedition_orders where user_id = $1 order by created_at desc", [userId]),
+      query(
+        `select i.*
+         from wms_expedition_items i
+         join wms_expedition_orders o on o.id = i.order_id
+         where o.user_id = $1
+         order by i.created_at asc`,
+        [userId]
+      ),
+      query(
+        `select r.*
+         from wms_expedition_reservations r
+         join wms_expedition_orders o on o.id = r.order_id
+         where o.user_id = $1
+         order by r.created_at asc`,
+        [userId]
+      ),
+      query(
+        `select p.*
+         from wms_expedition_picks p
+         join wms_expedition_orders o on o.id = p.order_id
+         where o.user_id = $1
+         order by p.created_at asc`,
+        [userId]
+      ),
+      query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]),
+      query(
+        `select ti.*
+         from transfer_items ti
+         join transfer_lots tl on tl.id = ti.transfer_lot_id
+         where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
+        [userId]
+      )
+    ]);
+    const stock = buildWmsStock(
+      stockLots.rows.map(transferLotFromRow),
+      stockItems.rows.map(transferItemFromRow),
+      picks.rows.map(wmsExpeditionPickFromRow),
+      reservations.rows.map(wmsExpeditionReservationFromRow)
+    );
+    return summarizeWmsExpedition(
+      orders.rows.map(wmsExpeditionOrderFromRow),
+      items.rows.map(wmsExpeditionItemFromRow),
+      reservations.rows.map(wmsExpeditionReservationFromRow),
+      picks.rows.map(wmsExpeditionPickFromRow),
+      stock
+    );
+  }
+
+  const db = await readDb();
+  const orders = (db.wmsExpeditionOrders || []).filter((order) => order.userId === userId).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const orderIds = new Set(orders.map((order) => order.id));
+  const items = (db.wmsExpeditionItems || []).filter((item) => orderIds.has(item.orderId));
+  const reservations = (db.wmsExpeditionReservations || []).filter((reservation) => orderIds.has(reservation.orderId));
+  const picks = (db.wmsExpeditionPicks || []).filter((pick) => orderIds.has(pick.orderId));
+  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
+  return summarizeWmsExpedition(orders, items, reservations, picks, buildWmsStock(lots, stockItems, picks, reservations));
+}
+
+export async function createWmsExpeditionOrder({ userId, pedidoNumero, lojaNome = "", blingPedidoId = "", wmsDepositName = "", items = [] }) {
+  await ensureStore();
+  const settings = await getUserTriageTransferSettings(userId);
+  const order = normalizeWmsExpeditionOrder({
+    userId,
+    pedidoNumero,
+    lojaNome,
+    blingPedidoId,
+    wmsDepositName: wmsDepositName || resolveWmsDepositForStore(settings, { lojaNome, blingStoreId: blingPedidoId })
+  });
+  const normalizedItems = normalizeWmsExpeditionItems(order.id, items);
+  if (!normalizedItems.length) throw new Error("Adicione pelo menos um produto ao pedido.");
+
+  if (hasPostgres()) {
+    await ensureWmsExpeditionTablesPg();
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      await insertWmsExpeditionOrderRows(client, [order]);
+      await insertWmsExpeditionItemRows(client, normalizedItems);
+      const [lotRows, stockItemRows, pickRows, reservationRows] = await Promise.all([
+        client.query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]),
+        client.query(
+          `select ti.*
+           from transfer_items ti
+           join transfer_lots tl on tl.id = ti.transfer_lot_id
+           where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
+          [userId]
+        ),
+        client.query(
+          `select p.*
+           from wms_expedition_picks p
+           join wms_expedition_orders o on o.id = p.order_id
+           where o.user_id = $1`,
+          [userId]
+        ),
+        client.query(
+          `select r.*
+           from wms_expedition_reservations r
+           join wms_expedition_orders o on o.id = r.order_id
+           where o.user_id = $1 and r.status = 'active'`,
+          [userId]
+        )
+      ]);
+      const stock = filterWmsStockForOrder(
+        buildWmsStock(
+          lotRows.rows.map(transferLotFromRow),
+          stockItemRows.rows.map(transferItemFromRow),
+          pickRows.rows.map(wmsExpeditionPickFromRow),
+          reservationRows.rows.map(wmsExpeditionReservationFromRow)
+        ),
+        order
+      );
+      await insertWmsExpeditionReservationRows(client, buildWmsReservationsForOrder(order, normalizedItems, stock));
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { order: (await listWmsExpedition(userId)).orders.find((candidate) => candidate.id === order.id) };
+  }
+
+  const db = await readDb();
+  db.wmsExpeditionOrders = db.wmsExpeditionOrders || [];
+  db.wmsExpeditionItems = db.wmsExpeditionItems || [];
+  db.wmsExpeditionReservations = db.wmsExpeditionReservations || [];
+  db.wmsExpeditionPicks = db.wmsExpeditionPicks || [];
+  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
+  const stock = filterWmsStockForOrder(buildWmsStock(lots, stockItems, db.wmsExpeditionPicks || [], db.wmsExpeditionReservations || []), order);
+  const reservations = buildWmsReservationsForOrder(order, normalizedItems, stock);
+  db.wmsExpeditionOrders.push(order);
+  db.wmsExpeditionItems.push(...normalizedItems);
+  db.wmsExpeditionReservations.push(...reservations);
+  await writeDb(db);
+  return { order: (await listWmsExpedition(userId)).orders.find((candidate) => candidate.id === order.id) };
+}
+
+export async function scanWmsExpeditionPick({ userId, orderId, positionCode, productCode }) {
+  await ensureStore();
+  const normalizedPosition = normalizeWmsPositionCode(positionCode);
+  const normalizedProductCode = normalizeCode(productCode);
+  if (!normalizedPosition) throw new Error("Bipe a posicao WMS.");
+  if (!normalizedProductCode) throw new Error("Bipe a etiqueta ou codigo do produto.");
+
+  if (hasPostgres()) {
+    await ensureWmsExpeditionTablesPg();
+    const client = await getPgPool().connect();
+    let pick;
+    try {
+      await client.query("begin");
+      const orderResult = await client.query("select * from wms_expedition_orders where id = $1 and user_id = $2 limit 1 for update", [orderId, userId]);
+      const order = orderResult.rows[0] && wmsExpeditionOrderFromRow(orderResult.rows[0]);
+      if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+      if (order.status === "completed") throw new Error("Este pedido ja foi finalizado.");
+      const itemRows = await client.query("select * from wms_expedition_items where order_id = $1 order by created_at asc for update", [order.id]);
+      const reservationRows = await client.query("select * from wms_expedition_reservations where order_id = $1 order by created_at asc for update", [order.id]);
+      const pickRows = await client.query("select * from wms_expedition_picks where order_id = $1 order by created_at asc", [order.id]);
+      const stockLots = await client.query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]);
+      const stockItems = await client.query(
+        `select ti.*
+         from transfer_items ti
+         join transfer_lots tl on tl.id = ti.transfer_lot_id
+         where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
+        [userId]
+      );
+      const items = itemRows.rows.map(wmsExpeditionItemFromRow);
+      const reservations = reservationRows.rows.map(wmsExpeditionReservationFromRow);
+      const picks = pickRows.rows.map(wmsExpeditionPickFromRow);
+      const stock = filterWmsStockForOrder(buildWmsStock(stockLots.rows.map(transferLotFromRow), stockItems.rows.map(transferItemFromRow), picks), order);
+      const result = buildWmsPick({ order, items, reservations, picks, stock, positionCode: normalizedPosition, productCode: normalizedProductCode });
+      pick = result.pick;
+      await insertWmsExpeditionPickRows(client, [pick]);
+      if (result.reservation.id) {
+        await client.query("update wms_expedition_reservations set status = 'picked', picked_at = $2 where id = $1", [result.reservation.id, pick.createdAt]);
+      }
+      await client.query("update wms_expedition_items set quantidade_separada = quantidade_separada + 1 where id = $1", [pick.itemId]);
+      await client.query("update wms_expedition_orders set status = $2 where id = $1", [order.id, result.nextStatus]);
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { pick, expedition: await listWmsExpedition(userId) };
+  }
+
+  const db = await readDb();
+  const order = (db.wmsExpeditionOrders || []).find((candidate) => candidate.id === orderId && candidate.userId === userId);
+  if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+  if (order.status === "completed") throw new Error("Este pedido ja foi finalizado.");
+  const items = (db.wmsExpeditionItems || []).filter((item) => item.orderId === order.id);
+  const reservations = (db.wmsExpeditionReservations || []).filter((reservation) => reservation.orderId === order.id);
+  const picks = (db.wmsExpeditionPicks || []).filter((pick) => pick.orderId === order.id);
+  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
+  const result = buildWmsPick({
+    order,
+    items,
+    reservations,
+    picks,
+    stock: filterWmsStockForOrder(buildWmsStock(lots, stockItems, db.wmsExpeditionPicks || []), order),
+    positionCode: normalizedPosition,
+    productCode: normalizedProductCode
+  });
+  db.wmsExpeditionPicks = db.wmsExpeditionPicks || [];
+  db.wmsExpeditionPicks.push(result.pick);
+  const reservation = (db.wmsExpeditionReservations || []).find((candidate) => candidate.id === result.reservation.id);
+  if (reservation) {
+    reservation.status = "picked";
+    reservation.pickedAt = result.pick.createdAt;
+  }
+  const item = (db.wmsExpeditionItems || []).find((candidate) => candidate.id === result.pick.itemId);
+  if (item) item.quantidadeSeparada = Number(item.quantidadeSeparada || 0) + 1;
+  order.status = result.nextStatus;
+  await writeDb(db);
+  return { pick: result.pick, expedition: await listWmsExpedition(userId) };
+}
+
+export async function completeWmsExpeditionOrder({ userId, orderId }) {
+  await ensureStore();
+  const completedAt = new Date().toISOString();
+  if (hasPostgres()) {
+    await ensureWmsExpeditionTablesPg();
+    const detail = await listWmsExpedition(userId);
+    const order = detail.orders.find((candidate) => candidate.id === orderId);
+    if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+    if (Number(order.totalPending || 0) > 0) throw new Error("Separe todos os produtos antes de finalizar.");
+    await query("update wms_expedition_orders set status = 'completed', completed_at = $3 where id = $1 and user_id = $2", [orderId, userId, completedAt]);
+    return { expedition: await listWmsExpedition(userId) };
+  }
+
+  const db = await readDb();
+  const order = (db.wmsExpeditionOrders || []).find((candidate) => candidate.id === orderId && candidate.userId === userId);
+  if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+  const items = (db.wmsExpeditionItems || []).filter((item) => item.orderId === order.id);
+  if (items.some((item) => Number(item.quantidadeSeparada || 0) < Number(item.quantidade || 0))) throw new Error("Separe todos os produtos antes de finalizar.");
+  order.status = "completed";
+  order.completedAt = completedAt;
+  await writeDb(db);
+  return { expedition: await listWmsExpedition(userId) };
+}
+
 export async function reportTransferLotDivergence({ userId = null, transferLotId, type, description, code = "", reporterName = "", reporterUserId = null }) {
   await ensureStore();
   const report = buildTransferDivergenceReport({ transferLotId, type, description, code, reporterName, reporterUserId });
@@ -4098,9 +4356,12 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     }
     const item = db.rzItems.find((candidate) => candidate.productId === existing.id && candidate.codigoRz === normalizedRz);
     if (item) {
-      item.qtdEsperada += expectedQuantity;
+      if (Number(item.qtdConferida || 0) >= Number(item.qtdEsperada || 0)) {
+        throw new Error("Quantidade prevista ja conferida para este SKU.");
+      }
       item.qtdConferida += 1;
-      item.valorTotal = roundMoney(item.qtdEsperada * existing.valorUnit);
+      await writeDb(db);
+      return { status: "conferido_rz", product: existing, quantityApplied: 0, stockEntryRequired: false, lot: summarizeLot(db, lot, true) };
     } else {
       db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz, { quantidade: expectedQuantity, qtdConferida: 1 }));
     }
@@ -4757,6 +5018,53 @@ async function ensurePgStore() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists wms_expedition_orders (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      pedido_numero text not null,
+      loja_nome text not null default '',
+      bling_pedido_id text not null default '',
+      wms_deposit_name text not null default '',
+      status text not null default 'open',
+      created_at timestamptz not null default now(),
+      completed_at timestamptz
+    );
+
+    create table if not exists wms_expedition_items (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      sku text not null,
+      codigo_ml text not null default '',
+      descricao text not null default '',
+      ean text not null default '',
+      quantidade integer not null default 1,
+      quantidade_separada integer not null default 0,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists wms_expedition_reservations (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      item_id text not null references wms_expedition_items(id) on delete cascade,
+      wms_location text not null,
+      sku text not null default '',
+      codigo_ml text not null default '',
+      ean text not null default '',
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      picked_at timestamptz,
+      released_at timestamptz
+    );
+
+    create table if not exists wms_expedition_picks (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      item_id text not null references wms_expedition_items(id) on delete cascade,
+      wms_location text not null,
+      code text not null,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists operator_activities (
       id text primary key,
       owner_user_id text not null references users(id) on delete cascade,
@@ -5251,7 +5559,8 @@ async function backfillPgCatalogLotSuggestions() {
 }
 
 async function readPgDb() {
-  const [users, lots, products, rzItems, scans, labels, skuReservations, blingIntegrations, blingSyncJobs, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
+  await ensureWmsExpeditionTablesPg();
+  const [users, lots, products, rzItems, scans, labels, skuReservations, blingIntegrations, blingSyncJobs, userSettings, transferLots, transferItems, transferForcedOccurrences, transferDivergenceReports, wmsExpeditionOrders, wmsExpeditionItems, wmsExpeditionReservations, wmsExpeditionPicks, operatorActivities, triageItems, triageEvents, catalogProducts, catalogRequests, catalogRejectedRequests] = await Promise.all([
     query("select * from users order by created_at asc"),
     query("select * from lots order by created_at asc"),
     query("select * from products order by created_at asc"),
@@ -5266,6 +5575,10 @@ async function readPgDb() {
     query("select * from transfer_items order by created_at asc"),
     query("select * from transfer_forced_occurrences order by created_at asc"),
     query("select * from transfer_divergence_reports order by created_at asc"),
+    query("select * from wms_expedition_orders order by created_at asc"),
+    query("select * from wms_expedition_items order by created_at asc"),
+    query("select * from wms_expedition_reservations order by created_at asc"),
+    query("select * from wms_expedition_picks order by created_at asc"),
     query("select * from operator_activities order by created_at asc"),
     query("select * from triage_items order by created_at asc"),
     query("select * from triage_events order by created_at asc"),
@@ -5289,6 +5602,10 @@ async function readPgDb() {
     transferItems: transferItems.rows.map(transferItemFromRow),
     transferForcedOccurrences: transferForcedOccurrences.rows.map(transferForcedOccurrenceFromRow),
     transferDivergenceReports: transferDivergenceReports.rows.map(transferDivergenceReportFromRow),
+    wmsExpeditionOrders: wmsExpeditionOrders.rows.map(wmsExpeditionOrderFromRow),
+    wmsExpeditionItems: wmsExpeditionItems.rows.map(wmsExpeditionItemFromRow),
+    wmsExpeditionReservations: wmsExpeditionReservations.rows.map(wmsExpeditionReservationFromRow),
+    wmsExpeditionPicks: wmsExpeditionPicks.rows.map(wmsExpeditionPickFromRow),
     operatorActivities: operatorActivities.rows.map(operatorActivityFromRow),
     triageItems: triageItems.rows.map(triageItemFromRow),
     triageEvents: triageEvents.rows.map(triageEventFromRow),
@@ -5307,6 +5624,10 @@ async function writePgDb(db) {
     await client.query("delete from triage_events");
     await client.query("delete from triage_items");
     await client.query("delete from operator_activities");
+    await client.query("delete from wms_expedition_picks");
+    await client.query("delete from wms_expedition_reservations");
+    await client.query("delete from wms_expedition_items");
+    await client.query("delete from wms_expedition_orders");
     await client.query("delete from transfer_divergence_reports");
     await client.query("delete from transfer_forced_occurrences");
     await client.query("delete from transfer_items");
@@ -5452,6 +5773,10 @@ async function writePgDb(db) {
     await insertTransferItemRows(client, db.transferItems || []);
     await insertTransferForcedOccurrenceRows(client, db.transferForcedOccurrences || []);
     await insertTransferDivergenceReportRows(client, db.transferDivergenceReports || []);
+    await insertWmsExpeditionOrderRows(client, db.wmsExpeditionOrders || []);
+    await insertWmsExpeditionItemRows(client, db.wmsExpeditionItems || []);
+    await insertWmsExpeditionReservationRows(client, db.wmsExpeditionReservations || []);
+    await insertWmsExpeditionPickRows(client, db.wmsExpeditionPicks || []);
     await insertOperatorActivityRows(client, db.operatorActivities || []);
     await insertTriageItemRows(client, db.triageItems || []);
     await insertTriageEventRows(client, db.triageEvents || []);
@@ -5806,6 +6131,143 @@ async function insertTransferDivergenceReportRows(client, reports = []) {
       report.createdAt
     ])
   );
+}
+
+async function insertWmsExpeditionOrderRows(client, orders = []) {
+  const target = client || { query };
+  await ensureWmsExpeditionTablesPg(target);
+  await insertRows(
+    target,
+    "wms_expedition_orders",
+    ["id", "user_id", "pedido_numero", "loja_nome", "bling_pedido_id", "wms_deposit_name", "status", "created_at", "completed_at"],
+    orders.map((order) => [
+      order.id,
+      order.userId,
+      order.pedidoNumero,
+      order.lojaNome || "",
+      order.blingPedidoId || "",
+      order.wmsDepositName || "",
+      order.status || "open",
+      order.createdAt,
+      order.completedAt || null
+    ])
+  );
+}
+
+async function insertWmsExpeditionItemRows(client, items = []) {
+  const target = client || { query };
+  await ensureWmsExpeditionTablesPg(target);
+  await insertRows(
+    target,
+    "wms_expedition_items",
+    ["id", "order_id", "sku", "codigo_ml", "descricao", "ean", "quantidade", "quantidade_separada", "created_at"],
+    items.map((item) => [
+      item.id,
+      item.orderId,
+      item.sku,
+      item.codigoMl || "",
+      item.descricao || "",
+      item.ean || "",
+      requiredInt(item.quantidade),
+      requiredInt(item.quantidadeSeparada),
+      item.createdAt
+    ])
+  );
+}
+
+async function insertWmsExpeditionReservationRows(client, reservations = []) {
+  const target = client || { query };
+  await ensureWmsExpeditionTablesPg(target);
+  await insertRows(
+    target,
+    "wms_expedition_reservations",
+    ["id", "order_id", "item_id", "wms_location", "sku", "codigo_ml", "ean", "status", "created_at", "picked_at", "released_at"],
+    reservations.map((reservation) => [
+      reservation.id,
+      reservation.orderId,
+      reservation.itemId,
+      reservation.wmsLocation,
+      reservation.sku || "",
+      reservation.codigoMl || "",
+      reservation.ean || "",
+      reservation.status || "active",
+      reservation.createdAt,
+      reservation.pickedAt || null,
+      reservation.releasedAt || null
+    ])
+  );
+}
+
+async function insertWmsExpeditionPickRows(client, picks = []) {
+  const target = client || { query };
+  await ensureWmsExpeditionTablesPg(target);
+  await insertRows(
+    target,
+    "wms_expedition_picks",
+    ["id", "order_id", "item_id", "wms_location", "code", "created_at"],
+    picks.map((pick) => [
+      pick.id,
+      pick.orderId,
+      pick.itemId,
+      pick.wmsLocation,
+      pick.code,
+      pick.createdAt
+    ])
+  );
+}
+
+async function ensureWmsExpeditionTablesPg(target = { query }) {
+  if (!hasPostgres()) return;
+  await target.query(`
+    create table if not exists wms_expedition_orders (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      pedido_numero text not null,
+      loja_nome text not null default '',
+      bling_pedido_id text not null default '',
+      wms_deposit_name text not null default '',
+      status text not null default 'open',
+      created_at timestamptz not null default now(),
+      completed_at timestamptz
+    );
+
+    alter table wms_expedition_orders add column if not exists wms_deposit_name text not null default '';
+
+    create table if not exists wms_expedition_items (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      sku text not null,
+      codigo_ml text not null default '',
+      descricao text not null default '',
+      ean text not null default '',
+      quantidade integer not null default 1,
+      quantidade_separada integer not null default 0,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists wms_expedition_reservations (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      item_id text not null references wms_expedition_items(id) on delete cascade,
+      wms_location text not null,
+      sku text not null default '',
+      codigo_ml text not null default '',
+      ean text not null default '',
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      picked_at timestamptz,
+      released_at timestamptz
+    );
+
+    create table if not exists wms_expedition_picks (
+      id text primary key,
+      order_id text not null references wms_expedition_orders(id) on delete cascade,
+      item_id text not null references wms_expedition_items(id) on delete cascade,
+      wms_location text not null,
+      code text not null,
+      created_at timestamptz not null default now()
+    );
+  `);
 }
 
 async function insertOperatorActivityRows(client, activities = []) {
@@ -6590,21 +7052,23 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       const itemResult = await client.query("select * from rz_items where product_id = $1 and codigo_rz = $2 limit 1 for update", [existing.id, codigoRz]);
       const existingItem = itemResult.rows[0];
       if (existingItem) {
+        if (Number(existingItem.qtd_conferida || 0) >= Number(existingItem.qtd_esperada || 0)) {
+          throw new Error("Quantidade prevista ja conferida para este SKU.");
+        }
         await client.query(
           `
             update rz_items
-            set qtd_esperada = qtd_esperada + $3,
-                qtd_conferida = qtd_conferida + 1,
-                valor_total = valor_total + $2
+            set qtd_conferida = qtd_conferida + 1
             where id = $1
           `,
-          [existingItem.id, roundMoney(Number(existing.valorUnit || 0) * expectedQuantity), expectedQuantity]
+          [existingItem.id]
         );
+        result = { status: "conferido_rz", product: existing, quantityApplied: 0, stockEntryRequired: false };
       } else {
         await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity, qtdConferida: 1 })] });
+        await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
+        result = { status: "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: expectedQuantity };
       }
-      await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
-      result = { status: existingItem ? "duplicado_rz" : "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: expectedQuantity };
     } else {
       const approvedHistory = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
       const previousHistory = approvedHistory ? null : (await findPgPreviousProductHistory(client, userId, lot.id, codigoMl, 1))[0];
@@ -8040,6 +8504,275 @@ function transferItemReceiveStatus(item) {
   return "sobra";
 }
 
+function summarizeWmsExpedition(orders, items, reservations, picks, stock) {
+  const summarizedOrders = (orders || []).map((order) => summarizeWmsExpeditionOrder(order, items, reservations, picks, stock));
+  return {
+    stock,
+    totalStock: stock.reduce((sum, item) => sum + Number(item.balance || 0), 0),
+    orders: summarizedOrders
+  };
+}
+
+function summarizeWmsExpeditionOrder(order, items, reservations, picks, stock) {
+  const orderItems = (items || []).filter((item) => item.orderId === order.id);
+  const orderReservations = (reservations || []).filter((reservation) => reservation.orderId === order.id);
+  const orderPicks = (picks || []).filter((pick) => pick.orderId === order.id);
+  const scopedStock = filterWmsStockForOrder(stock, order);
+  const route = orderReservations.length ? buildWmsRouteFromReservations(orderItems, orderReservations) : buildWmsExpeditionRoute(orderItems, scopedStock);
+  const totalQty = orderItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
+  const totalPicked = orderItems.reduce((sum, item) => sum + Number(item.quantidadeSeparada || 0), 0);
+  return {
+    ...order,
+    totalQty,
+    totalPicked,
+    totalPending: Math.max(0, totalQty - totalPicked),
+    items: orderItems.map((item) => ({
+      ...item,
+      falta: Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeSeparada || 0)),
+      route: route.filter((step) => step.itemId === item.id)
+    })),
+    reservations: orderReservations.sort(compareWmsReservedRouteSteps),
+    picks: orderPicks.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
+    route
+  };
+}
+
+function filterWmsStockForOrder(stock, order = {}) {
+  const expected = normalizeText(order.wmsDepositName);
+  if (!expected) return stock || [];
+  return (stock || []).filter((item) => normalizeText(item.depositoDestino) === expected);
+}
+
+function buildWmsStock(lots, items, picks = [], reservations = []) {
+  const rowsByKey = new Map();
+  for (const item of items || []) {
+    const qty = Number(item.quantidadeConferida || 0);
+    const location = normalizeWmsPositionCode(item.wmsLocation);
+    if (!qty || !location) continue;
+    const lot = (lots || []).find((candidate) => candidate.id === item.transferLotId);
+    const key = [location, normalizeCode(item.sku), normalizeCode(item.codigoMl), normalizeCode(item.ean)].join("|");
+    const current = rowsByKey.get(key) || {
+      wmsLocation: location,
+      depositoDestino: lot?.depositoDestino || "",
+      sku: normalizeCode(item.sku),
+      codigoMl: normalizeCode(item.codigoMl),
+      ean: normalizeCode(item.ean),
+      descricao: item.descricao || "",
+      received: 0,
+      reserved: 0,
+      picked: 0,
+      balance: 0
+    };
+    current.received += qty;
+    rowsByKey.set(key, current);
+  }
+  const rows = [...rowsByKey.values()];
+  for (const pick of picks || []) {
+    const location = normalizeWmsPositionCode(pick.wmsLocation);
+    const row = rows.find((candidate) => candidate.wmsLocation === location && wmsStockMatchesCode(candidate, pick.code));
+    if (row) row.picked += 1;
+  }
+  for (const reservation of reservations || []) {
+    if (reservation.status !== "active") continue;
+    const location = normalizeWmsPositionCode(reservation.wmsLocation);
+    const row = rows.find((candidate) => candidate.wmsLocation === location && wmsStockMatchesReservation(candidate, reservation));
+    if (row) row.reserved += 1;
+  }
+  return rows
+    .map((row) => ({ ...row, balance: Math.max(0, Number(row.received || 0) - Number(row.picked || 0) - Number(row.reserved || 0)) }))
+    .filter((row) => row.balance > 0)
+    .sort((a, b) => a.wmsLocation.localeCompare(b.wmsLocation) || a.sku.localeCompare(b.sku));
+}
+
+function buildWmsReservationsForOrder(order, items, stock) {
+  const reservations = [];
+  const route = buildWmsExpeditionRoute(items, stock);
+  const now = new Date().toISOString();
+  const pendingByItem = new Map((items || []).map((item) => [item.id, Number(item.quantidade || 0)]));
+  for (const step of route) {
+    for (let index = 0; index < Number(step.quantidade || 0); index += 1) {
+      if (Number(pendingByItem.get(step.itemId) || 0) <= 0) continue;
+      reservations.push({
+        id: randomUUID(),
+        orderId: order.id,
+        itemId: step.itemId,
+        wmsLocation: step.wmsLocation,
+        sku: step.sku || "",
+        codigoMl: step.codigoMl || "",
+        ean: step.ean || "",
+        status: "active",
+        createdAt: now,
+        pickedAt: null,
+        releasedAt: null
+      });
+      pendingByItem.set(step.itemId, Number(pendingByItem.get(step.itemId) || 0) - 1);
+    }
+  }
+  const missing = [...pendingByItem.entries()].find(([, quantity]) => Number(quantity || 0) > 0);
+  if (missing) {
+    const item = (items || []).find((candidate) => candidate.id === missing[0]);
+    throw new Error(`Saldo WMS insuficiente para o produto ${item?.sku || item?.codigoMl || ""}.`);
+  }
+  return reservations;
+}
+
+function buildWmsRouteFromReservations(items, reservations) {
+  const itemsById = new Map((items || []).map((item) => [item.id, item]));
+  const activeReservations = (reservations || []).filter((reservation) => reservation.status === "active");
+  const grouped = new Map();
+  for (const reservation of activeReservations) {
+    const item = itemsById.get(reservation.itemId);
+    const key = [reservation.itemId, reservation.wmsLocation].join("|");
+    const current = grouped.get(key) || {
+      itemId: reservation.itemId,
+      sku: item?.sku || reservation.sku || "",
+      codigoMl: item?.codigoMl || reservation.codigoMl || "",
+      ean: item?.ean || reservation.ean || "",
+      descricao: item?.descricao || "",
+      wmsLocation: reservation.wmsLocation,
+      quantidade: 0
+    };
+    current.quantidade += 1;
+    grouped.set(key, current);
+  }
+  return [...grouped.values()].sort(compareWmsRouteSteps);
+}
+
+function buildWmsExpeditionRoute(items, stock) {
+  const route = [];
+  const simulatedBalance = new Map(stock.map((row, index) => [index, Number(row.balance || 0)]));
+  for (const item of items || []) {
+    let pending = Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeSeparada || 0));
+    if (!pending) continue;
+    for (const [index, row] of stock.entries()) {
+      if (!wmsStockMatchesExpeditionItem(row, item)) continue;
+      const available = Math.min(pending, Number(simulatedBalance.get(index) || 0));
+      if (!available) continue;
+      route.push({
+        itemId: item.id,
+        sku: item.sku,
+        codigoMl: item.codigoMl,
+        ean: item.ean,
+        descricao: item.descricao,
+        wmsLocation: row.wmsLocation,
+        quantidade: available
+      });
+      simulatedBalance.set(index, Number(simulatedBalance.get(index) || 0) - available);
+      pending -= available;
+      if (!pending) break;
+    }
+  }
+  return route.sort(compareWmsRouteSteps);
+}
+
+function buildWmsPick({ order, items, reservations = [], picks, stock, positionCode, productCode }) {
+  const item = (items || []).find((candidate) => {
+    const pending = Number(candidate.quantidade || 0) - Number(candidate.quantidadeSeparada || 0);
+    return pending > 0 && wmsExpeditionItemMatchesCode(candidate, productCode);
+  });
+  if (!item) throw notFound("Produto nao esta pendente neste pedido.");
+
+  let reservation = (reservations || []).find((candidate) => (
+    candidate.status === "active" &&
+    candidate.itemId === item.id &&
+    normalizeWmsPositionCode(candidate.wmsLocation) === positionCode &&
+    wmsReservationMatchesCode(candidate, productCode)
+  ));
+  if (!reservation && !(reservations || []).length) {
+    const stockRow = (stock || []).find((candidate) => candidate.wmsLocation === positionCode && wmsStockMatchesExpeditionItem(candidate, item));
+    if (!stockRow || Number(stockRow.balance || 0) <= 0) throw new Error("Produto nao possui saldo nesta posicao WMS.");
+    reservation = {
+      id: "",
+      orderId: order.id,
+      itemId: item.id,
+      wmsLocation: positionCode,
+      sku: item.sku,
+      codigoMl: item.codigoMl,
+      ean: item.ean,
+      status: "active",
+      createdAt: new Date().toISOString()
+    };
+  }
+  if (!reservation) throw new Error("Produto nao esta reservado para esta posicao WMS neste pedido.");
+
+  const expectedLocations = (reservations || []).length
+    ? buildWmsRouteFromReservations(items, reservations)
+    : buildWmsExpeditionRoute(items, stock);
+  const expectedItemLocations = expectedLocations
+    .filter((step) => step.itemId === item.id)
+    .map((step) => step.wmsLocation);
+  if (expectedItemLocations.length && expectedItemLocations[0] !== positionCode) {
+    throw new Error(`Colete primeiro na posicao ${expectedItemLocations[0]}.`);
+  }
+
+  const pick = {
+    id: randomUUID(),
+    orderId: order.id,
+    itemId: item.id,
+    wmsLocation: positionCode,
+    code: productCode,
+    createdAt: new Date().toISOString()
+  };
+  const nextItems = items.map((candidate) => candidate.id === item.id ? { ...candidate, quantidadeSeparada: Number(candidate.quantidadeSeparada || 0) + 1 } : candidate);
+  const nextStatus = nextItems.every((candidate) => Number(candidate.quantidadeSeparada || 0) >= Number(candidate.quantidade || 0)) ? "ready_print" : "picking";
+  return { pick, reservation, nextStatus };
+}
+
+function wmsStockMatchesExpeditionItem(stockItem, item) {
+  return (
+    (normalizeCode(item.sku) && normalizeCode(stockItem.sku) === normalizeCode(item.sku)) ||
+    (normalizeCode(item.codigoMl) && normalizeCode(stockItem.codigoMl) === normalizeCode(item.codigoMl)) ||
+    (normalizeCode(item.ean) && normalizeCode(stockItem.ean) === normalizeCode(item.ean))
+  );
+}
+
+function wmsExpeditionItemMatchesCode(item, code) {
+  return [item.sku, item.codigoMl, item.ean, code39BarcodeValue(item.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
+}
+
+function wmsStockMatchesCode(stockItem, code) {
+  return [stockItem.sku, stockItem.codigoMl, stockItem.ean, code39BarcodeValue(stockItem.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
+}
+
+function wmsStockMatchesReservation(stockItem, reservation) {
+  return (
+    (normalizeCode(reservation.sku) && normalizeCode(stockItem.sku) === normalizeCode(reservation.sku)) ||
+    (normalizeCode(reservation.codigoMl) && normalizeCode(stockItem.codigoMl) === normalizeCode(reservation.codigoMl)) ||
+    (normalizeCode(reservation.ean) && normalizeCode(stockItem.ean) === normalizeCode(reservation.ean))
+  );
+}
+
+function wmsReservationMatchesCode(reservation, code) {
+  return [reservation.sku, reservation.codigoMl, reservation.ean, code39BarcodeValue(reservation.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
+}
+
+function compareWmsRouteSteps(a, b) {
+  return compareWmsPosition(a.wmsLocation, b.wmsLocation) || String(a.sku || "").localeCompare(String(b.sku || ""));
+}
+
+function compareWmsReservedRouteSteps(a, b) {
+  return compareWmsPosition(a.wmsLocation, b.wmsLocation) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+}
+
+function compareWmsPosition(a, b) {
+  const left = parseWmsPosition(a);
+  const right = parseWmsPosition(b);
+  return left.prefix.localeCompare(right.prefix) || left.row.localeCompare(right.row) || left.column - right.column || left.position - right.position || String(a || "").localeCompare(String(b || ""));
+}
+
+function parseWmsPosition(value) {
+  const parts = normalizeWmsPositionCode(value).split("-");
+  const position = Number(parts.pop() || 0);
+  const column = Number(parts.pop() || 0);
+  const row = parts.pop() || "";
+  return {
+    prefix: parts.join("-"),
+    row,
+    column: Number.isFinite(column) ? column : 0,
+    position: Number.isFinite(position) ? position : 0
+  };
+}
+
 function findTransferItemForReceive(items, transferLotId, code) {
   const normalized = normalizeCode(code);
   const matches = (items || []).filter((item) => {
@@ -9294,6 +10027,61 @@ function transferDivergenceReportFromRow(row) {
   };
 }
 
+function wmsExpeditionOrderFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    pedidoNumero: row.pedido_numero,
+    lojaNome: row.loja_nome || "",
+    blingPedidoId: row.bling_pedido_id || "",
+    wmsDepositName: row.wms_deposit_name || "",
+    status: row.status || "open",
+    createdAt: iso(row.created_at),
+    completedAt: row.completed_at ? iso(row.completed_at) : null
+  };
+}
+
+function wmsExpeditionItemFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    sku: row.sku,
+    codigoMl: row.codigo_ml || "",
+    descricao: row.descricao || "",
+    ean: row.ean || "",
+    quantidade: Number(row.quantidade || 0),
+    quantidadeSeparada: Number(row.quantidade_separada || 0),
+    createdAt: iso(row.created_at)
+  };
+}
+
+function wmsExpeditionReservationFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    itemId: row.item_id,
+    wmsLocation: row.wms_location,
+    sku: row.sku || "",
+    codigoMl: row.codigo_ml || "",
+    ean: row.ean || "",
+    status: row.status || "active",
+    createdAt: iso(row.created_at),
+    pickedAt: row.picked_at ? iso(row.picked_at) : null,
+    releasedAt: row.released_at ? iso(row.released_at) : null
+  };
+}
+
+function wmsExpeditionPickFromRow(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    itemId: row.item_id,
+    wmsLocation: row.wms_location,
+    code: row.code,
+    createdAt: iso(row.created_at)
+  };
+}
+
 function operatorActivityFromRow(row) {
   return {
     id: row.id,
@@ -9567,6 +10355,67 @@ function normalizeTransferReceivedTotal(value) {
   if (rounded !== quantity) throw new Error("Informe o total recebido sem casas decimais.");
   if (rounded < 0) throw new Error("O total recebido nao pode ser negativo.");
   return rounded;
+}
+
+function normalizeWmsExpeditionOrder({ userId, pedidoNumero, lojaNome = "", blingPedidoId = "", wmsDepositName = "" }) {
+  const normalizedPedido = String(pedidoNumero || "").trim();
+  if (!userId) throw new Error("Usuario nao informado.");
+  if (!normalizedPedido) throw new Error("Informe o numero do pedido.");
+  return {
+    id: randomUUID(),
+    userId,
+    pedidoNumero: normalizedPedido,
+    lojaNome: String(lojaNome || "").trim().slice(0, 120),
+    blingPedidoId: String(blingPedidoId || "").trim(),
+    wmsDepositName: String(wmsDepositName || "").trim(),
+    status: "open",
+    createdAt: new Date().toISOString(),
+    completedAt: null
+  };
+}
+
+function resolveWmsDepositForStore(settings = {}, { lojaNome = "", blingStoreId = "" } = {}) {
+  const storeNameKey = normalizeText(lojaNome);
+  const storeIdKey = normalizeWmsLocationPrefix(blingStoreId);
+  for (const deposit of normalizeWmsDeposits(settings.wmsDeposits || [])) {
+    const stores = Array.isArray(deposit.stores) ? deposit.stores : [];
+    const match = stores.some((store) => {
+      const nameMatches = storeNameKey && normalizeText(store.name) === storeNameKey;
+      const idMatches = storeIdKey && normalizeWmsLocationPrefix(store.blingStoreId) === storeIdKey;
+      return nameMatches || idMatches;
+    });
+    if (match) return deposit.depositName;
+  }
+  return "";
+}
+
+function normalizeWmsExpeditionItems(orderId, items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const sku = normalizeCode(item.sku || item.codigo || item.productCode);
+      const codigoMl = normalizeCode(item.codigoMl || item.asin || item.codigoBling2 || item.productCode || sku);
+      const ean = normalizeCode(item.ean);
+      const quantidade = requiredInt(item.quantidade || item.qtd || 1);
+      const descricao = String(item.descricao || item.nome || sku || codigoMl || ean || "").trim();
+      if (!sku && !codigoMl && !ean) return null;
+      if (quantidade <= 0) throw new Error("A quantidade do item precisa ser maior que zero.");
+      return {
+        id: randomUUID(),
+        orderId,
+        sku: sku || codigoMl || ean,
+        codigoMl: codigoMl || sku || "",
+        descricao: descricao || sku || codigoMl || ean,
+        ean,
+        quantidade,
+        quantidadeSeparada: 0,
+        createdAt: new Date().toISOString()
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeWmsPositionCode(value) {
+  return normalizeWmsLocationPrefix(value);
 }
 
 function normalizeTransferWmsLocation(lot, value) {

@@ -128,6 +128,7 @@
           <button data-tab="lots" type="button">Conferencia</button>
           <button data-tab="search" type="button">Busca Produtos</button>
           <button data-tab="transfers" type="button">Transferencias</button>
+          <button data-tab="expedition" type="button">Expedicao</button>
           <button data-tab="triage" class="hidden" type="button">Triagem</button>
           <button data-tab="profile" class="active" type="button">Perfil</button>
         </nav>
@@ -461,6 +462,35 @@
             <div id="transferLots"></div>
           </aside>
           <section id="transferDetail" class="detail empty">Crie ou selecione um lote de transferencia.</section>
+        </section>
+      </section>
+
+      <section id="expeditionTab" class="transfer-shell hidden">
+        <section class="entry-panel expedition-create-panel">
+          <div class="panel-heading">
+            <span class="muted">WMS</span>
+            <h3>Expedicao de pedidos</h3>
+          </div>
+          <form id="expeditionOrderForm" class="transfer-form expedition-order-form">
+            <label>Numero do pedido<input name="pedidoNumero" placeholder="Ex: 12345" required /></label>
+            <label>Loja<input name="lojaNome" placeholder="Ex: Mercado Livre" /></label>
+            <label>Deposito WMS<select name="wmsDepositName"><option value="">Qualquer deposito WMS</option></select></label>
+            <label>SKU ou codigo do produto<input name="sku" placeholder="Bipe SKU, ASIN ou Cod ML" required /></label>
+            <label>Quantidade<input name="quantidade" type="number" min="1" step="1" value="1" required /></label>
+            <label class="wide-field">Descricao<input name="descricao" placeholder="Opcional" /></label>
+            <button type="submit">Criar pedido</button>
+          </form>
+          <p id="expeditionMessage" class="message"></p>
+        </section>
+        <section class="layout transfer-layout expedition-layout">
+          <aside class="lot-list">
+            <div class="aside-heading">
+              <span class="muted">Expedicao</span>
+              <h2>Pedidos</h2>
+            </div>
+            <div id="expeditionOrders"></div>
+          </aside>
+          <section id="expeditionDetail" class="detail empty">Selecione um pedido para separar.</section>
         </section>
       </section>
 

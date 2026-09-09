@@ -4606,6 +4606,24 @@ h3 {
   padding: 14px;
 }
 
+.expedition-order-form {
+  align-items: end;
+}
+
+.expedition-panel .summary-grid {
+  margin-bottom: 12px;
+}
+
+.expedition-route {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.expedition-row {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(130px, 0.9fr) minmax(180px, 1.5fr) minmax(70px, 0.45fr);
+}
+
 .admin-shell {
   display: grid;
   flex: 1 1 auto;
@@ -4759,6 +4777,32 @@ h3 {
   display: grid;
   gap: 8px;
   grid-column: 1 / -1;
+}
+
+.triage-wms-stores {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+  padding-top: 10px;
+}
+
+.triage-wms-subheading {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.triage-wms-subheading strong {
+  font-size: 13px;
+}
+
+.triage-wms-store-row {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.65fr) auto;
 }
 
 .triage-wms-row {
