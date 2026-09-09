@@ -2380,8 +2380,8 @@ h3 {
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
-  gap: 0.45mm;
-  grid-template-rows: 15.7mm 6.6mm 6.6mm 6.6mm;
+  gap: 0.7mm;
+  grid-template-rows: 12.4mm 7.8mm 7.8mm 7.8mm;
   justify-items: stretch;
   max-width: 60mm;
   overflow: hidden;
@@ -2393,7 +2393,7 @@ h3 {
 .triage-label-heading {
   display: grid;
   gap: 1mm;
-  grid-template-columns: minmax(0, 1fr) 15mm;
+  grid-template-columns: minmax(0, 1fr) 13mm;
   min-width: 0;
 }
 
@@ -2402,16 +2402,16 @@ h3 {
   color: #111;
   display: -webkit-box;
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 7.4px;
+  font-size: 7px;
   font-weight: 900;
   line-height: 1.08;
   margin: 0;
-  max-height: 14.5mm;
+  max-height: 12mm;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-transform: uppercase;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
 }
 
 .triage-label-qr-box {
@@ -2423,15 +2423,15 @@ h3 {
 
 .triage-label-preview .triage-label-qr {
   align-self: start;
-  height: 14.8mm;
+  height: 12mm;
   image-rendering: pixelated;
   justify-self: end;
-  width: 14.8mm;
+  width: 12mm;
 }
 
 .triage-label-qr-box small {
   color: #555;
-  font-size: 3.5px;
+  font-size: 3px;
   font-weight: 700;
   line-height: 1;
   max-width: 15mm;
@@ -2443,41 +2443,33 @@ h3 {
 
 .triage-label-barcode-row {
   display: grid;
-  gap: 0.1mm;
+  align-items: center;
+  gap: 0.8mm;
+  grid-template-columns: 8mm minmax(0, 1fr);
   min-width: 0;
 }
 
 .triage-label-barcode-row span {
   color: #111;
-  font-size: 4.8px;
+  font-size: 5.2px;
   font-weight: 900;
   line-height: 1;
+  overflow: hidden;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .triage-label-preview .label-barcode {
   align-self: stretch;
-  height: 4.1mm;
+  height: 7.2mm;
   justify-self: stretch;
   margin: 0;
   width: 100%;
 }
 
-.triage-label-barcode-row strong {
-  color: #111;
-  font-family: Arial, sans-serif;
-  font-size: 4.7px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  line-height: 1;
-  overflow: hidden;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .triage-label-empty-barcode {
   border-bottom: 0.25mm solid #111;
-  height: 4.1mm;
+  height: 7.2mm;
   opacity: 0.25;
 }
 

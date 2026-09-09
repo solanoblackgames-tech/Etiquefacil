@@ -10446,10 +10446,9 @@ function triageLabelBarcode(label, value, { format = "code39" } = {}) {
   const barcodeValue = code39BarcodeValue(value);
   const barcodeMarkup = format === "ean13" ? ean13Svg(value) : code39Svg(barcodeValue);
   return `
-    <div class="triage-label-barcode-row ${barcodeValue ? "" : "is-empty"}">
+    <div class="triage-label-barcode-row ${barcodeValue ? "" : "is-empty"}" title="${escapeHtml(`${label}: ${barcodeValue || "-"}`)}">
       <span>${escapeHtml(label)}</span>
       ${barcodeValue ? barcodeMarkup : '<div class="triage-label-empty-barcode"></div>'}
-      <strong>${escapeHtml(barcodeValue || "-")}</strong>
     </div>
   `;
 }
