@@ -406,6 +406,7 @@ function bindEvents() {
   $("#transferDetail").addEventListener("submit", handleTransferDetailSubmit);
   $("#transferDetail").addEventListener("click", handleTransferDetailClick);
   $("#expeditionOrderForm")?.addEventListener("submit", createExpeditionOrder);
+  $("#expeditionOrderForm select[name='storeKey']")?.addEventListener("change", handleExpeditionStoreChange);
   $("#expeditionOrders")?.addEventListener("click", handleExpeditionOrdersClick);
   $("#expeditionDetail")?.addEventListener("submit", handleExpeditionDetailSubmit);
   $("#expeditionDetail")?.addEventListener("click", handleExpeditionDetailClick);
@@ -6460,18 +6461,45 @@ async function loadExpedition(selectId = state.selectedExpeditionOrderId) {
 }
 
 function renderExpeditionDepositSelect() {
-  const select = $("#expeditionOrderForm select[name='wmsDepositName']");
+  const select = $("#expeditionOrderForm select[name='storeKey']");
+  const depositInput = $("#expeditionOrderForm input[name='wmsDepositName']");
   if (!select) return;
   const current = select.value;
-  const deposits = expeditionWmsDepositNames();
-  select.innerHTML = '<option value="">Qualquer deposito WMS</option>' + deposits.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
-  if (deposits.includes(current)) select.value = current;
+  const stores = expeditionWmsStores();
+  select.innerHTML = '<option value="">Escolha uma loja</option>' + stores.map((store) => `
+    <option value="${escapeHtml(store.key)}" ${store.key === current ? "selected" : ""}>
+      ${escapeHtml(store.name || store.blingStoreId)} - ${escapeHtml(store.wmsDepositName)}
+    </option>
+  `).join("");
+  if (depositInput) {
+    const selected = stores.find((store) => store.key === select.value);
+    depositInput.value = selected?.wmsDepositName || "";
+  }
 }
 
-function expeditionWmsDepositNames() {
-  const fromSettings = (state.triageTransferSettings?.wmsDeposits || []).map((deposit) => deposit.depositName);
-  const fromStock = (state.expedition?.stock || []).map((item) => item.depositoDestino);
-  return [...new Set([...fromSettings, ...fromStock].map((name) => String(name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+function expeditionWmsStores() {
+  const stores = [];
+  for (const deposit of state.triageTransferSettings?.wmsDeposits || []) {
+    const wmsDepositName = String(deposit.depositName || "").trim();
+    for (const store of normalizeWmsStores(deposit.stores || deposit.lojas || deposit.blingStores || deposit.bling_stores)) {
+      const name = String(store.name || "").trim();
+      const blingStoreId = String(store.blingStoreId || "").trim();
+      const key = [wmsDepositName, blingStoreId || name].join("|");
+      stores.push({ key, name, blingStoreId, wmsDepositName });
+    }
+  }
+  return stores.sort((a, b) => (a.name || a.blingStoreId).localeCompare(b.name || b.blingStoreId, "pt-BR"));
+}
+
+function selectedExpeditionWmsStore(form) {
+  return expeditionWmsStores().find((store) => store.key === form.elements.storeKey?.value) || null;
+}
+
+function handleExpeditionStoreChange(event) {
+  const form = event.currentTarget.closest("form");
+  const store = form ? selectedExpeditionWmsStore(form) : null;
+  const depositInput = form?.elements?.wmsDepositName;
+  if (depositInput) depositInput.value = store?.wmsDepositName || "";
 }
 
 async function createExpeditionOrder(event) {
@@ -6479,36 +6507,47 @@ async function createExpeditionOrder(event) {
   const form = event.currentTarget;
   const button = form.querySelector("button");
   const message = $("#expeditionMessage");
-  const payload = Object.fromEntries(new FormData(form).entries());
+  const store = selectedExpeditionWmsStore(form);
+  if (!store) {
+    message.textContent = "Escolha uma loja vinculada a um deposito WMS.";
+    return;
+  }
   button.disabled = true;
   message.style.color = "";
-  message.textContent = "Criando pedido...";
+  message.textContent = "Buscando pedidos no Bling...";
   try {
-    const response = await api("/api/wms/expedition/orders", {
+    const response = await api("/api/wms/expedition/bling-orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pedidoNumero: payload.pedidoNumero,
-        lojaNome: payload.lojaNome,
-        wmsDepositName: payload.wmsDepositName,
-        items: [{
-          sku: payload.sku,
-          codigoMl: payload.sku,
-          descricao: payload.descricao,
-          quantidade: Number(payload.quantidade || 1)
-        }]
+        lojaNome: store.name,
+        blingStoreId: store.blingStoreId,
+        wmsDepositName: store.wmsDepositName
       })
     });
-    form.reset();
-    form.elements.quantidade.value = 1;
+    state.expedition = response.expedition;
+    renderExpeditionOrders();
+    renderExpeditionDepositSelect();
     message.style.color = "#0f766e";
-    message.textContent = "Pedido criado para expedicao.";
-    await loadExpedition(response.order?.id);
+    message.textContent = expeditionBlingSyncMessage(response);
+    const firstImported = response.imported?.[0]?.id;
+    await loadExpedition(firstImported || state.selectedExpeditionOrderId);
   } catch (error) {
     message.textContent = error.message;
   } finally {
     button.disabled = false;
   }
+}
+
+function expeditionBlingSyncMessage(response = {}) {
+  const imported = Number(response.imported?.length || 0);
+  const pending = Number(response.pending?.length || 0);
+  const skipped = Number(response.skipped?.length || 0);
+  const parts = [];
+  if (imported) parts.push(`${imported} pedido(s) puxado(s) para expedicao`);
+  if (pending) parts.push(`${pending} sem saldo WMS`);
+  if (skipped) parts.push(`${skipped} ja estava(m) na lista`);
+  return parts.length ? `${parts.join(". ")}.` : "Nenhum pedido novo encontrado no Bling para esta loja.";
 }
 
 function renderExpeditionOrders() {

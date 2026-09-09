@@ -15,6 +15,7 @@ import "dotenv/config";
 import {
   deleteBlingProductBySku,
   listBlingDeposits,
+  listBlingSalesOrdersForStore,
   lookupBlingProductForTriage,
   refreshBlingIntegrationToken,
   revokeBlingIntegrationTokens,
@@ -876,6 +877,67 @@ app.post("/api/wms/expedition/orders", requireAuth, requireTransferAccess, async
     });
     await recordOperatorActivity(req.session.user, "create_wms_expedition_order", { orderId: result.order?.id, pedidoNumero: result.order?.pedidoNumero });
     res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/wms/expedition/bling-orders", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const lojaNome = String(req.body?.lojaNome || "").trim();
+    const blingStoreId = String(req.body?.blingStoreId || "").trim();
+    const wmsDepositName = String(req.body?.wmsDepositName || req.body?.depositoWms || "").trim();
+    if (!lojaNome && !blingStoreId) throw new Error("Escolha uma loja para puxar os pedidos do Bling.");
+    if (!wmsDepositName) throw new Error("Esta loja nao esta vinculada a um deposito WMS.");
+
+    const integration = await getRequiredBlingCredentials(userId);
+    const blingOrders = await listBlingSalesOrdersForStore({
+      integration,
+      storeName: lojaNome,
+      storeId: blingStoreId,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    const current = await listWmsExpedition(userId);
+    const existingKeys = new Set((current.orders || []).flatMap((order) => [
+      order.blingPedidoId ? `id:${order.blingPedidoId}` : "",
+      order.pedidoNumero ? `numero:${order.pedidoNumero}` : ""
+    ].filter(Boolean)));
+
+    const imported = [];
+    const skipped = [];
+    const pending = [];
+    for (const order of blingOrders) {
+      const key = order.blingPedidoId ? `id:${order.blingPedidoId}` : `numero:${order.pedidoNumero}`;
+      if (existingKeys.has(key)) {
+        skipped.push({ ...order, reason: "Pedido ja esta na expedicao." });
+        continue;
+      }
+      try {
+        const result = await createWmsExpeditionOrder({
+          userId,
+          pedidoNumero: order.pedidoNumero,
+          lojaNome: lojaNome || order.lojaNome,
+          blingPedidoId: order.blingPedidoId,
+          wmsDepositName,
+          items: order.items
+        });
+        imported.push(result.order);
+        existingKeys.add(key);
+      } catch (error) {
+        pending.push({ ...order, reason: error.message });
+      }
+    }
+
+    await recordOperatorActivity(req.session.user, "sync_wms_expedition_bling_orders", {
+      lojaNome,
+      blingStoreId,
+      wmsDepositName,
+      imported: imported.length,
+      pending: pending.length,
+      skipped: skipped.length
+    });
+    res.json({ imported, pending, skipped, expedition: await listWmsExpedition(userId) });
   } catch (error) {
     sendError(res, error);
   }

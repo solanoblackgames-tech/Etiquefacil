@@ -9,6 +9,7 @@ import {
   buildBlingStockTransferPayload,
   blingProductToTriageLookup,
   deleteBlingProductBySku,
+  listBlingSalesOrdersForStore,
   lookupBlingProductForTriage,
   revokeBlingIntegrationTokens,
   runBlingHomologation,
@@ -163,6 +164,51 @@ test("Bling product maps to triage lookup fields", () => {
     sourceLotId: "",
     sourceLotName: "Bling"
   });
+});
+
+test("Bling sales orders map store orders to WMS expedition items", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { data: [{ id: 101, numero: "PV-101", loja: { id: 203, nome: "Mercado Livre" } }] },
+    {
+      data: {
+        id: 101,
+        numero: "PV-101",
+        loja: { id: 203, nome: "Mercado Livre" },
+        itens: [
+          { quantidade: 2, descricao: "Produto ML", produto: { codigo: "SKU1", marca: "ML1", gtin: "789" } }
+        ]
+      }
+    }
+  ];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET" });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => responses.shift()
+    };
+  };
+
+  try {
+    const orders = await listBlingSalesOrdersForStore({
+      integration: { accessToken: "token" },
+      storeName: "Mercado Livre",
+      storeId: "203"
+    });
+
+    assert.equal(calls[0].url.includes("/pedidos/vendas?limite=50&idLoja=203"), true);
+    assert.equal(calls[1].url.includes("/pedidos/vendas/101"), true);
+    assert.equal(orders[0].pedidoNumero, "PV-101");
+    assert.equal(orders[0].lojaNome, "Mercado Livre");
+    assert.equal(orders[0].blingPedidoId, "101");
+    assert.deepEqual(orders[0].items, [
+      { sku: "SKU1", codigoMl: "ML1", ean: "789", descricao: "Produto ML", quantidade: 2 }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Bling triage lookup reads supplier cost relationship", async () => {

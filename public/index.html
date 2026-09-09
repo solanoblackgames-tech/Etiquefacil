@@ -472,13 +472,9 @@
             <h3>Expedicao de pedidos</h3>
           </div>
           <form id="expeditionOrderForm" class="transfer-form expedition-order-form">
-            <label>Numero do pedido<input name="pedidoNumero" placeholder="Ex: 12345" required /></label>
-            <label>Loja<input name="lojaNome" placeholder="Ex: Mercado Livre" /></label>
-            <label>Deposito WMS<select name="wmsDepositName"><option value="">Qualquer deposito WMS</option></select></label>
-            <label>SKU ou codigo do produto<input name="sku" placeholder="Bipe SKU, ASIN ou Cod ML" required /></label>
-            <label>Quantidade<input name="quantidade" type="number" min="1" step="1" value="1" required /></label>
-            <label class="wide-field">Descricao<input name="descricao" placeholder="Opcional" /></label>
-            <button type="submit">Criar pedido</button>
+            <label>Loja<select name="storeKey" required><option value="">Escolha uma loja</option></select></label>
+            <label>Deposito WMS<input name="wmsDepositName" placeholder="Vinculado a loja" readonly /></label>
+            <button type="submit">Puxar pedidos do Bling</button>
           </form>
           <p id="expeditionMessage" class="message"></p>
         </section>

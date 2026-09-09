@@ -426,6 +426,11 @@ export async function listBlingDeposits({ integration, saveIntegration }) {
   return client.listDeposits();
 }
 
+export async function listBlingSalesOrdersForStore({ integration, storeName = "", storeId = "", saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  return client.listSalesOrdersForStore({ storeName, storeId });
+}
+
 export async function deleteBlingProductBySku({ integration, sku, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   const product = await client.findProductBySku(sku);
@@ -662,6 +667,33 @@ class BlingApiClient {
     }));
   }
 
+  async listSalesOrdersForStore({ storeName = "", storeId = "" } = {}) {
+    const query = { limite: 50 };
+    if (storeId) query.idLoja = storeId;
+    const payload = await this.request("/pedidos/vendas", { query });
+    const rows = payload?.data || [];
+    const filtered = storeId
+      ? rows
+      : rows.filter((order) => blingOrderStoreMatches(order, { storeName }));
+
+    const orders = [];
+    for (const row of filtered) {
+      const id = row?.id;
+      let detail = row;
+      if (id) {
+        try {
+          const detailPayload = await this.request(`/pedidos/vendas/${encodeURIComponent(id)}`);
+          detail = detailPayload?.data || row;
+        } catch {
+          detail = row;
+        }
+      }
+      const order = blingSalesOrderToWmsOrder(detail, { fallbackStoreName: storeName, fallbackStoreId: storeId });
+      if (order.items.length) orders.push(order);
+    }
+    return orders;
+  }
+
   async createStockEntry(payload) {
     return this.request("/estoques", { method: "POST", body: payload });
   }
@@ -770,6 +802,48 @@ function summarizeSync(results) {
     transferred: results.filter((item) => item.status === "transferred").length,
     alerted: results.filter((item) => (item.alerts || []).length).length,
     results
+  };
+}
+
+function blingOrderStoreMatches(order = {}, { storeName = "" } = {}) {
+  const expected = normalizeText(storeName);
+  if (!expected) return true;
+  const candidates = [
+    order.loja?.nome,
+    order.loja?.descricao,
+    order.lojaNome,
+    order.nomeLoja,
+    order.ecommerce?.nome,
+    order.ecommerce?.descricao
+  ];
+  return candidates.some((value) => normalizeText(value) === expected);
+}
+
+function blingSalesOrderToWmsOrder(order = {}, { fallbackStoreName = "", fallbackStoreId = "" } = {}) {
+  const items = Array.isArray(order.itens) ? order.itens : [];
+  return {
+    pedidoNumero: String(order.numero || order.numeroPedidoLoja || order.id || "").trim(),
+    blingPedidoId: String(order.id || "").trim(),
+    lojaNome: String(order.loja?.nome || order.loja?.descricao || order.lojaNome || order.nomeLoja || fallbackStoreName || "").trim(),
+    blingStoreId: String(order.loja?.id || order.idLoja || order.ecommerce?.id || fallbackStoreId || "").trim(),
+    situacao: order.situacao?.descricao || order.situacao?.nome || order.situacao || "",
+    items: items.map(blingSalesOrderItemToWmsItem).filter(Boolean)
+  };
+}
+
+function blingSalesOrderItemToWmsItem(item = {}) {
+  const product = item.produto || {};
+  const sku = normalizeCode(product.codigo || item.codigo || item.sku);
+  const codigoMl = normalizeCode(product.marca || item.codigoMl || item.asin || sku);
+  const ean = normalizeCode(product.gtin || product.gtinEmbalagem || item.ean);
+  const quantidade = Math.max(1, Math.round(numberOrZero(item.quantidade || item.qtd || 1)));
+  if (!sku && !codigoMl && !ean) return null;
+  return {
+    sku: sku || codigoMl || ean,
+    codigoMl: codigoMl || sku || "",
+    ean,
+    descricao: item.descricao || product.nome || product.descricao || sku || codigoMl || ean,
+    quantidade
   };
 }
 
