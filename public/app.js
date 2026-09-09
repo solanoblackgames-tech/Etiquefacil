@@ -10463,7 +10463,6 @@ function triageLabelMarkup(item = {}) {
       <p>${escapeHtml(item.descricao || "Produto sem descricao")}</p>
       <div class="triage-label-qr-box">
         <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
-        <small>${escapeHtml(item.code || "")}</small>
       </div>
     </div>
     ${triageLabelBarcode("SKU", item.sku)}

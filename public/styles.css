@@ -6477,18 +6477,6 @@ h3 {
     width: 11mm;
   }
 
-  #triageLabelPrintable .triage-label-qr-box small {
-    color: #555;
-    font-size: 3px;
-    font-weight: 700;
-    line-height: 1;
-    max-width: 12mm;
-    overflow: hidden;
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   #triageLabelPrintable .triage-label-barcode-row {
     align-items: center;
     display: grid;
