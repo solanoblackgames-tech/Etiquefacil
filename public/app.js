@@ -1808,11 +1808,15 @@ async function decrementDiverseQuantity(lotId, codigoRz, codigoMl, button) {
   if (!lotId || !codigoRz || !codigoMl) return;
   const justificativa = requestDecrementJustification();
   if (!justificativa) return;
+  const isExternalExcess = button?.dataset.diverseExternalExcess === "true";
 
   try {
     if (button) button.disabled = true;
     const bling = await syncDiverseDecrementStockExit(lotId, codigoRz, codigoMl, justificativa);
-    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/items/decrement-quantity`, {
+    const path = isExternalExcess
+      ? `/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/scan/decrement`
+      : `/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/items/decrement-quantity`;
+    const response = await api(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ codigoMl, justificativa })
@@ -9618,15 +9622,16 @@ function diverseItemRow(item, startsRz = false) {
   const expectedQuantity = Number(item.qtdEsperada || 0);
   const checkedQuantity = Number(item.qtdConferida || 0);
   const isExternalExcess = item.tipoItem === "excedente_externo";
+  const canAddQuantity = isExternalExcess || checkedQuantity > expectedQuantity || checkedQuantity < expectedQuantity;
+  const canDecrementQuantity = isExternalExcess ? checkedQuantity > 0 : expectedQuantity > 0;
   const itemTypeLabel = isExternalExcess ? "excedente externo" : item.tipoItem || "";
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
-  const quantityCell = isExternalExcess
-    ? `<strong>${checkedQuantity}/${expectedQuantity}</strong>`
-    : `
-        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${expectedQuantity > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
+  const externalExcessData = isExternalExcess ? ' data-diverse-external-excess="true"' : "";
+  const quantityCell = `
+        <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}"${externalExcessData} ${canDecrementQuantity ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${checkedQuantity}/${expectedQuantity}</strong>
-        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${checkedQuantity >= expectedQuantity ? "disabled" : ""} aria-label="Conferir mais uma unidade">+</button>
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${canAddQuantity ? "" : "disabled"} aria-label="Conferir mais uma unidade">+</button>
       `;
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Pallet ${escapeHtml(item.codigoRz || "")}</div>` : ""}
