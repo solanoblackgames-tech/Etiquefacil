@@ -1077,7 +1077,9 @@ function compactObject(input) {
 }
 
 function buildBlingMediaPayload(photoUrls) {
-  const imagensURL = splitPhotoUrls(photoUrls).map((link) => ({ link }));
+  const imagensURL = splitPhotoUrls(photoUrls)
+    .filter(isDirectImageUrl)
+    .map((link) => ({ link }));
   if (!imagensURL.length) return undefined;
   return {
     video: { url: "" },
@@ -1090,6 +1092,18 @@ function splitPhotoUrls(value) {
     .split(/[\n\r,;|]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function isDirectImageUrl(value) {
+  const raw = String(value || "").trim();
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(raw)) return true;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function buildBlingTaxPayload(product = {}, existingTax = {}, { zeroNcm = false } = {}) {

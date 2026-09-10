@@ -135,6 +135,22 @@ test("Bling product payload keeps existing tax data while changing NCM", () => {
   });
 });
 
+test("Bling product payload ignores marketplace pages as media images", () => {
+  const marketplacePage = "https://www.mercadolivre.com.br/grill-e-sanduicheira-bgr28a/p/MLB63327642#polycard_client=search-desktop";
+  const payload = buildBlingProductPayload({
+    sku: "DIV-SORO-06PLTS0027",
+    codigoMl: "PHTZ34405",
+    descricao: "Grill E Sanduicheira BRITANIA",
+    valorUnit: 140,
+    precoCusto: 42,
+    foto: marketplacePage,
+    link: marketplacePage
+  });
+
+  assert.equal(payload.linkExterno, marketplacePage);
+  assert.equal(payload.midia, undefined);
+});
+
 test("Bling product maps to triage lookup fields", () => {
   const product = blingProductToTriageLookup(
     {
