@@ -9622,7 +9622,6 @@ function diverseItemRow(item, startsRz = false) {
   const expectedQuantity = Number(item.qtdEsperada || 0);
   const checkedQuantity = Number(item.qtdConferida || 0);
   const isExternalExcess = item.tipoItem === "excedente_externo";
-  const canAddQuantity = isExternalExcess || checkedQuantity > expectedQuantity || checkedQuantity < expectedQuantity;
   const canDecrementQuantity = isExternalExcess ? checkedQuantity > 0 : expectedQuantity > 0;
   const itemTypeLabel = isExternalExcess ? "excedente externo" : item.tipoItem || "";
   const code = product.codigoMl || product.sku || "";
@@ -9631,7 +9630,7 @@ function diverseItemRow(item, startsRz = false) {
   const quantityCell = `
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}"${externalExcessData} ${canDecrementQuantity ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${checkedQuantity}/${expectedQuantity}</strong>
-        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" ${canAddQuantity ? "" : "disabled"} aria-label="Conferir mais uma unidade">+</button>
+        <button type="button" class="ghost quantity-button" data-diverse-add-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}" aria-label="Conferir mais uma unidade">+</button>
       `;
   return `
     ${startsRz ? `<div class="diverse-rz-divider">Pallet ${escapeHtml(item.codigoRz || "")}</div>` : ""}
