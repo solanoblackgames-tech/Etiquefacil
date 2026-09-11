@@ -1553,16 +1553,20 @@ h3 {
 
 .triage-form {
   align-items: end;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 8px;
   flex: 1 1 auto;
+  grid-template-columns: minmax(260px, 0.7fr) minmax(420px, 1.3fr);
   min-width: 0;
 }
 
-.triage-form .wide-field {
-  flex: 1 1 260px;
-  min-width: 220px;
+.triage-form .triage-lookup-field {
+  grid-column: 1 / -1;
+  max-width: 560px;
+}
+
+.triage-form .triage-sku-field {
+  grid-column: 1 / -1;
 }
 
 .triage-form .triage-hidden-field {
@@ -1570,12 +1574,22 @@ h3 {
 }
 
 .triage-form input[name="lookupCode"],
-.triage-form input[name="sku"],
-.triage-form input[name="securitySealCode"] {
+.triage-form input[name="sku"] {
   font-size: 14px;
   font-weight: 700;
   min-height: 36px;
   padding: 0 12px;
+}
+
+.triage-form input[name="lookupCode"] {
+  background: #f8fafc;
+  font-size: 13px;
+  min-height: 32px;
+}
+
+.triage-form input[name="sku"] {
+  font-size: 18px;
+  min-height: 44px;
 }
 
 .security-seals-form {
@@ -1749,16 +1763,19 @@ h3 {
     font-size: 9px;
   }
 
-  .triage-form .wide-field {
-    flex: 1 1 240px;
-    min-width: 210px;
+  .triage-form {
+    grid-template-columns: 1fr;
   }
 
   .triage-form input[name="lookupCode"],
-  .triage-form input[name="sku"],
-  .triage-form input[name="securitySealCode"] {
+  .triage-form input[name="sku"] {
     min-height: 32px;
     padding: 0 10px;
+  }
+
+  .triage-form input[name="sku"] {
+    font-size: 16px;
+    min-height: 40px;
   }
 
   .triage-layout .lot-list {

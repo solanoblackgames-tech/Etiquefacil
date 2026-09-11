@@ -9343,6 +9343,7 @@ function primaryInputSelectors() {
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",
+    "#triageTab:not(.hidden) #triageCreateForm input[name='sku']",
     "#transferScanInput",
     "#transferLotForm input[name='descricao']",
     "#loginForm input[name='email']",
@@ -10210,15 +10211,16 @@ async function lookupTriageCode() {
     }
     if (!response.product) {
       renderTriageLookupPreview(null, "Etiqueta ou lacre nao encontrado.");
-      schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
       return null;
     }
     fillTriageProduct(response.product);
     renderTriageLookupPreview(response.product);
-    schedulePrimaryInputFocus(["#triageCreateForm input[name='lookupCode']"]);
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
     return response.product;
   } catch (error) {
     $("#triageMessage").textContent = error.message;
+    schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
     return null;
   }
 }
