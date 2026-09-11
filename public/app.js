@@ -10461,25 +10461,81 @@ function triageLabelCodigoMl(item = {}) {
   return item.asin || item.productCode || "";
 }
 
-function triageLabelMarkup(item = {}) {
+function triageLabelSimpleMarkup(item = {}) {
   return `
-    <div class="triage-label-heading">
-      <p>${escapeHtml(item.descricao || "Produto sem descricao")}</p>
-      <div class="triage-label-qr-box">
-        <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
-      </div>
+    <div class="triage-label-simple-inner">
+      <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+      <strong>${escapeHtml(item.sku || "-")}</strong>
     </div>
-    ${triageLabelBarcode("SKU", item.sku)}
-    ${triageLabelBarcode("EAN", item.ean, { format: "ean13" })}
-    ${triageLabelBarcode("COD ML", triageLabelCodigoMl(item))}
   `;
 }
 
-function printTriageLabel() {
+function triageCompleteInfoRows(item = {}) {
+  const rows = [
+    ["SKU", item.sku],
+    ["EAN", item.ean],
+    ["Preco", Number(item.valorUnit || 0) > 0 ? money(item.valorUnit) : ""],
+    ["COD ML", triageLabelCodigoMl(item)],
+    ["Cod. Bling 2", item.codigoBling2],
+    ["Serial", item.serial],
+    ["Lacre", item.securitySealCode],
+    ["Destino", triageDestinationLabel(item.destination)],
+    ["Diagnostico", item.diagnosisCondition ? triageDiagnosisConditionLabel(item.diagnosisCondition) : ""],
+    ["Caixa", boxDimensionsLabel(item)],
+    ["Peso", boxWeightLabel(item)]
+  ].filter(([, value]) => value && value !== "-");
+
+  return rows.map(([label, value]) => `
+    <div>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `).join("");
+}
+
+function triageLabelCompleteMarkup(item = {}) {
+  return `
+    <div class="triage-label-complete-inner">
+      <div class="triage-label-complete-head">
+        <span>Etiqueta completa</span>
+        <strong>${escapeHtml(item.code || "-")}</strong>
+      </div>
+      <p class="triage-label-complete-desc">${escapeHtml(item.descricao || "Produto sem descricao")}</p>
+      <div class="triage-label-complete-qr-row">
+        <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
+        <div>
+          <span>SKU</span>
+          <strong>${escapeHtml(item.sku || "-")}</strong>
+          ${Number(item.valorUnit || 0) > 0 ? `<small>${escapeHtml(money(item.valorUnit))}</small>` : ""}
+        </div>
+      </div>
+      <div class="triage-label-complete-info">
+        ${triageCompleteInfoRows(item)}
+      </div>
+    </div>
+  `;
+}
+
+function triageLabelMarkup(item = {}) {
+  return `
+    <div class="triage-label-simple">${triageLabelSimpleMarkup(item)}</div>
+    <div class="triage-label-complete">${triageLabelCompleteMarkup(item)}</div>
+  `;
+}
+
+function printTriageLabel(mode = "simple") {
   if (!$("#triageLabelPrintable")) return;
+  const complete = mode === "complete";
+  $("#triageLabelPrintable").classList.toggle("triage-label-mode-complete", complete);
   document.body.classList.add("printing-triage-label");
+  document.body.classList.toggle("printing-triage-label-complete", complete);
+  document.documentElement.classList.toggle("printing-triage-label-complete", complete);
   window.print();
-  setTimeout(() => document.body.classList.remove("printing-triage-label"), 1000);
+  setTimeout(() => {
+    document.body.classList.remove("printing-triage-label", "printing-triage-label-complete");
+    document.documentElement.classList.remove("printing-triage-label-complete");
+    $("#triageLabelPrintable")?.classList.remove("triage-label-mode-complete");
+  }, 1000);
 }
 
 function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
@@ -10488,7 +10544,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
     ? `<button type="button" class="danger ghost" data-delete-triage-item>Excluir etiqueta</button>`
     : "";
   const printButton = canPrintTriageLabel(item)
-    ? `<button type="button" data-print-triage-label>Imprimir etiqueta</button>`
+    ? `<button type="button" data-print-triage-label="simple">Simples 60x40</button><button type="button" data-print-triage-label="complete">Completa 100x150</button>`
     : "";
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -10993,8 +11049,9 @@ function handleTriageDetailClick(event) {
     return;
   }
 
-  if (!event.target.closest("[data-print-triage-label]")) return;
-  printTriageLabel();
+  const printButton = event.target.closest("[data-print-triage-label]");
+  if (!printButton) return;
+  printTriageLabel(printButton.dataset.printTriageLabel || "simple");
 }
 
 function triageStatusLabel(item) {
