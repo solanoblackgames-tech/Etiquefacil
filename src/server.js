@@ -672,7 +672,12 @@ app.get("/api/triage/stats/export.xlsx", requireAuth, requireTriageAccess, requi
 
 app.get("/api/dashboard/operations", requireAuth, requireOwner, async (req, res) => {
   try {
-    res.json({ stats: await getOperationalDashboardStats(workspaceUserId(req)) });
+    res.json({
+      stats: await getOperationalDashboardStats(workspaceUserId(req), {
+        startDate: req.query.startDate,
+        endDate: req.query.endDate
+      })
+    });
   } catch (error) {
     sendError(res, error);
   }

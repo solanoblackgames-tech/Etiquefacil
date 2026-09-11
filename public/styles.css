@@ -814,7 +814,16 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .operational-date-filter {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
   .triage-stats-filter-fields {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+
+  .operational-date-filter-fields {
     grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   }
 
@@ -1954,6 +1963,47 @@ h3 {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.operational-date-filter {
+  align-items: start;
+  background: #f8fafb;
+  border: 1px solid #dce5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(150px, 0.25fr) minmax(0, 1fr);
+  min-width: 0;
+  padding: 12px;
+}
+
+.operational-date-filter-title {
+  display: grid;
+  gap: 2px;
+}
+
+.operational-date-filter-fields {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  min-width: 0;
+}
+
+.operational-date-filter-fields label {
+  color: #34515c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.operational-date-filter-fields input,
+.operational-date-filter-fields button {
+  min-height: 38px;
+  width: 100%;
+}
+
+.operational-date-filter-fields button {
+  white-space: nowrap;
 }
 
 .operational-dashboard-hero {

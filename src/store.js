@@ -1314,7 +1314,7 @@ export async function listTriageStatsRows(userId, period = {}) {
     .filter((row) => !lotId || row.product?.lotId === lotId);
 }
 
-export async function getOperationalDashboardStats(userId) {
+export async function getOperationalDashboardStats(userId, period = {}) {
   await ensureStore();
   if (hasPostgres()) {
     const lotsDb = await readPgUserLotsDb(userId);
@@ -1341,11 +1341,11 @@ export async function getOperationalDashboardStats(userId) {
       transferDivergenceReports: reportsResult.rows.map(transferDivergenceReportFromRow),
       triageItems: triageResult.rows.map(triageItemFromRow)
     };
-    return buildOperationalDashboardStats(db, userId);
+    return buildOperationalDashboardStats(db, userId, period);
   }
 
   const db = await readDb();
-  return buildOperationalDashboardStats(db, userId);
+  return buildOperationalDashboardStats(db, userId, period);
 }
 
 export async function getTriageItem(userId, code) {
@@ -9331,25 +9331,34 @@ function buildSkuReservation({ userId, lot, operatorUserId, sequence }) {
   };
 }
 
-function buildOperationalDashboardStats(db, userId) {
+function buildOperationalDashboardStats(db, userId, period = {}) {
+  const range = normalizeOperatorActivityRange(period);
+  const periodDays = operationalDashboardPeriodDays(period, range);
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
   const owner = userMap.get(userId) || { id: userId, name: "Conta principal", email: "", role: "owner" };
   userMap.set(userId, owner);
 
-  const lots = (db.lots || []).filter((lot) => lot.userId === userId);
+  const allLots = (db.lots || []).filter((lot) => lot.userId === userId);
+  const allLotIds = new Set(allLots.map((lot) => lot.id));
+  const allProducts = (db.products || []).filter((product) => allLotIds.has(product.lotId));
+  const allRzItems = (db.rzItems || []).filter((item) => allLotIds.has(item.lotId));
+  const lots = allLots.filter((lot) => isOperationalDashboardDateInRange(lot.createdAt, range));
   const lotIds = new Set(lots.map((lot) => lot.id));
-  const products = (db.products || []).filter((product) => lotIds.has(product.lotId));
-  const rzItems = (db.rzItems || []).filter((item) => lotIds.has(item.lotId));
-  const transfers = (db.transferLots || []).filter((lot) => lot.userId === userId);
+  const products = allProducts.filter((product) => isOperationalDashboardDateInRange(product.createdAt || product.updatedAt, range));
+  const rzItems = allRzItems.filter((item) => isOperationalDashboardDateInRange(item.updatedAt || item.createdAt, range));
+  const transfers = (db.transferLots || []).filter((lot) => lot.userId === userId && isOperationalDashboardDateInRange(lot.createdAt, range));
   const transferIds = new Set(transfers.map((lot) => lot.id));
   const transferItems = (db.transferItems || []).filter((item) => transferIds.has(item.transferLotId));
   const reports = (db.transferDivergenceReports || []).filter((report) => transferIds.has(report.transferLotId));
-  const triageItems = (db.triageItems || []).filter((item) => item.userId === userId);
+  const triageItems = (db.triageItems || []).filter((item) => (
+    item.userId === userId
+    && isOperationalDashboardDateInRange(item.diagnosedAt || item.updatedAt || item.createdAt, range)
+  ));
 
-  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsById = new Map(allProducts.map((product) => [product.id, product]));
   const productsBySku = new Map();
   const productsByCode = new Map();
-  for (const product of products) {
+  for (const product of allProducts) {
     const sku = normalizeCode(product.sku);
     const code = normalizeCode(product.codigoMl);
     if (sku && !productsBySku.has(sku)) productsBySku.set(sku, product);
@@ -9396,20 +9405,23 @@ function buildOperationalDashboardStats(db, userId) {
 
   const qtyByProduct = new Map();
   const checkedByProduct = new Map();
+  const checkedProductIds = new Set();
   const rzKeys = new Set();
   for (const item of rzItems) {
     qtyByProduct.set(item.productId, Number(qtyByProduct.get(item.productId) || 0) + Number(item.qtdEsperada || 0));
     checkedByProduct.set(item.productId, Number(checkedByProduct.get(item.productId) || 0) + Number(item.qtdConferida || 0));
+    if (Number(item.qtdConferida || 0) > 0) checkedProductIds.add(item.productId);
     rzKeys.add(`${item.lotId}\u0000${item.codigoRz}`);
   }
 
+  const conferenceProducts = allProducts.filter((product) => products.includes(product) || checkedProductIds.has(product.id));
   let lotQty = 0;
   let lotCheckedQty = 0;
   let lotValue = 0;
   let lotCost = 0;
   let lotCheckedValue = 0;
   let lotCheckedCost = 0;
-  for (const product of products) {
+  for (const product of conferenceProducts) {
     const qty = Number(qtyByProduct.get(product.id) || product.qtdTotal || 0);
     const checked = Number(checkedByProduct.get(product.id) || 0);
     const value = roundMoney(qty * Number(product.valorUnit || 0));
@@ -9496,7 +9508,7 @@ function buildOperationalDashboardStats(db, userId) {
   let triageDiagnosedCost = 0;
   let triageDiagnosed = 0;
   for (const item of triageItems) {
-    const product = findTriageStatsProduct(products, lotIds, item);
+    const product = findTriageStatsProduct(allProducts, allLotIds, item);
     const value = triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(triageItems, item));
     const cost = triageStatMoney(item.precoCusto, product?.precoCusto);
     const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
@@ -9655,6 +9667,12 @@ function buildOperationalDashboardStats(db, userId) {
 
   return {
     generatedAt: new Date().toISOString(),
+    period: {
+      startDate: period.startDate || "",
+      endDate: period.endDate || "",
+      days: periodDays,
+      isPeriod: periodDays > 1
+    },
     lots: {
       total: lots.length,
       skus: products.length,
@@ -9685,6 +9703,24 @@ function buildOperationalDashboardStats(db, userId) {
     recentLots,
     recentTransfers
   };
+}
+
+function isOperationalDashboardDateInRange(value, range) {
+  if (!range.startAt && !range.endAt) return true;
+  return isWithinDateRange(value, range);
+}
+
+function operationalDashboardPeriodDays(period = {}) {
+  const normalized = {
+    startDate: String(period.startDate || "").trim(),
+    endDate: String(period.endDate || "").trim()
+  };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(normalized.endDate)) return 0;
+  if (normalized.startDate > normalized.endDate) [normalized.startDate, normalized.endDate] = [normalized.endDate, normalized.startDate];
+  const start = new Date(`${normalized.startDate}T00:00:00`);
+  const end = new Date(`${normalized.endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
 }
 
 function publicDashboardUser(user) {

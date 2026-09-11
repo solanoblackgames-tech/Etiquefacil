@@ -84,9 +84,9 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           status: "diagnosticado",
           destination: "LOJA",
           diagnosisCondition: "OK_FUNCIONANDO",
-          createdAt: "2026-07-05T00:00:00.000Z",
-          updatedAt: "2026-07-05T00:00:00.000Z",
-          diagnosedAt: "2026-07-05T00:10:00.000Z"
+          createdAt: "2026-07-05T12:00:00.000Z",
+          updatedAt: "2026-07-05T12:00:00.000Z",
+          diagnosedAt: "2026-07-05T12:10:00.000Z"
         },
         {
           id: "triage-3",
@@ -101,9 +101,9 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           status: "diagnosticado",
           destination: "VENDA_DIRETA",
           diagnosisCondition: "OK_VENDA_DIRETA",
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          diagnosedAt: "2026-07-06T00:10:00.000Z"
+          createdAt: "2026-07-06T12:00:00.000Z",
+          updatedAt: "2026-07-06T12:00:00.000Z",
+          diagnosedAt: "2026-07-06T12:10:00.000Z"
         }
       ],
       triageEvents: []
@@ -161,6 +161,19 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(ana.triageCost, 33);
     assert.equal(ana.totalValue, 379);
     assert.equal(ana.totalCost, 48);
+
+    const periodStats = await getOperationalDashboardStats("owner-1", { startDate: "2026-07-05", endDate: "2026-07-06" });
+    assert.equal(periodStats.period.days, 2);
+    assert.equal(periodStats.period.isPeriod, true);
+    assert.equal(periodStats.lots.skus, 0);
+    assert.equal(periodStats.lots.checkedQuantity, 0);
+    assert.equal(periodStats.triage.total, 2);
+    assert.equal(periodStats.triage.diagnosed, 2);
+    assert.equal(periodStats.triage.diagnosedValue, 250);
+    assert.deepEqual(periodStats.triage.destinations, [
+      { destination: "LOJA", total: 1, totalValue: 125, totalCost: 0 },
+      { destination: "VENDA_DIRETA", total: 1, totalValue: 125, totalCost: 0 }
+    ]);
 
     const triageStats = await getTriageStats("owner-1");
     const directSale = triageStats.destinations.find((destination) => destination.destination === "VENDA_DIRETA");

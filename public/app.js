@@ -33,6 +33,7 @@ const state = {
   selectedTriageCode: null,
   triageStats: null,
   triageStatsFilter: null,
+  operationalDateFilter: null,
   operationalStats: null,
   operationalOperatorSort: { key: "totalValue", direction: "desc" },
   blingDeposits: [],
@@ -452,6 +453,8 @@ function bindEvents() {
   $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
   $("#profileTriageRules").addEventListener("click", handleTriageRulesClick);
   $("#profileTriageRules").addEventListener("input", handleTriageRulesInput);
+  $("#profileOperationalDashboardPanel").addEventListener("submit", handleOperationalDashboardSubmit);
+  $("#profileOperationalDashboardPanel").addEventListener("change", handleOperationalDashboardChange);
   $("#profileOperationalDashboardPanel").addEventListener("click", handleOperationalDashboardClick);
   document.querySelectorAll("[data-profile-section]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3564,7 +3567,11 @@ async function loadOperationalDashboard() {
   if (!panel) return;
   panel.innerHTML = '<p class="muted">Carregando dashboard...</p>';
   try {
-    const response = await api("/api/dashboard/operations");
+    const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
+    const params = new URLSearchParams();
+    if (filter.startDate) params.set("startDate", filter.startDate);
+    if (filter.endDate) params.set("endDate", filter.endDate);
+    const response = await api(`/api/dashboard/operations?${params.toString()}`);
     state.operationalStats = response.stats || null;
     renderOperationalDashboard();
   } catch (error) {
@@ -3579,6 +3586,8 @@ function renderOperationalDashboard() {
   const lots = stats.lots || {};
   const transfers = stats.transfers || {};
   const triage = stats.triage || {};
+  const period = stats.period || {};
+  const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
   const totalOperationValue = Number(lots.checkedValue || 0) + Number(transfers.receivedValue || 0) + Number(triage.diagnosedValue || 0);
   const totalOperationCost = Number(lots.checkedCost || 0) + Number(transfers.receivedCost || 0) + Number(triage.diagnosedCost || 0);
   const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
@@ -3592,38 +3601,41 @@ function renderOperationalDashboard() {
       </div>
       <span class="operational-dashboard-updated">Atualizado em ${formatDateTime(stats.generatedAt)}</span>
     </div>
+    ${operationalDateFilterMarkup(filter)}
     <div class="operational-dashboard-hero">
       <section>
         <span class="muted">Visao geral</span>
         <strong>${money(totalOperationValue)}</strong>
-        <small>Venda movimentada. Custo: ${money(totalOperationCost)}.</small>
+        <small>Venda movimentada. Custo: ${money(totalOperationCost)}.${operationalAverageMoneyPairText(totalOperationValue, totalOperationCost, period)}</small>
       </section>
       <section>
         <span class="muted">Progresso conferencia</span>
         <strong>${lotProgress}%</strong>
         <div class="operational-progress"><span style="width: ${lotProgress}%"></span></div>
-        <small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small>
+        <small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas${operationalAverageText(lots.checkedQuantity || 0, period, "un./dia")}</small>
       </section>
       <section>
         <span class="muted">Progresso transferencias</span>
         <strong>${transferProgress}%</strong>
         <div class="operational-progress"><span style="width: ${transferProgress}%"></span></div>
-        <small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small>
+        <small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas${operationalAverageText(transfers.received || 0, period, "un./dia")}</small>
       </section>
       <section>
         <span class="muted">Progresso triagem</span>
         <strong>${triageProgress}%</strong>
         <div class="operational-progress"><span style="width: ${triageProgress}%"></span></div>
-        <small>${triage.diagnosed || 0}/${triage.total || 0} itens diagnosticados</small>
+        <small>${triage.diagnosed || 0}/${triage.total || 0} itens diagnosticados${operationalAverageText(triage.diagnosed || 0, period, "itens/dia")}</small>
       </section>
     </div>
     <div class="operational-dashboard-summary">
-      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.skus || 0} SKUs · ${lots.remessas || 0} Pallets/remessas</small></div>
-      <div class="metric"><span>Valor dos lotes</span><strong>${money(lots.value || 0)}</strong><small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas</small></div>
-      <div class="metric"><span>Custo dos lotes</span><strong>${money(lots.cost || 0)}</strong><small>${money(lots.checkedCost || 0)} ja conferido</small></div>
+      <div class="metric"><span>Conferencia</span><strong>${lots.skus || 0}/${lots.checkedQuantity || 0}</strong><small>cadastrados/bipados${operationalAverageText(lots.checkedQuantity || 0, period, "bipados/dia")}</small></div>
+      <div class="metric"><span>Venda conferencia</span><strong>${money(lots.checkedValue || 0)}</strong><small>Custo ${money(lots.checkedCost || 0)}${operationalAverageMoneyPairText(lots.checkedValue || 0, lots.checkedCost || 0, period)}</small></div>
+      <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.remessas || 0} Pallets/remessas</small></div>
       <div class="metric"><span>Remessas loja</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas</small></div>
       <div class="metric"><span>Valor das remessas</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
       <div class="metric"><span>Custo das remessas</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja recebido</small></div>
+      <div class="metric"><span>Triagem</span><strong>${triage.diagnosed || 0}</strong><small>itens triados${operationalAverageText(triage.diagnosed || 0, period, "triados/dia")}</small></div>
+      <div class="metric"><span>Venda triagem</span><strong>${money(triage.diagnosedValue || 0)}</strong><small>Custo ${money(triage.diagnosedCost || 0)}${operationalAverageMoneyPairText(triage.diagnosedValue || 0, triage.diagnosedCost || 0, period)}</small></div>
       <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
     </div>
     <div class="operational-dashboard-grid">
@@ -3679,6 +3691,81 @@ function operationalPercent(done, total) {
   return Math.max(0, Math.min(100, Math.round((Number(done || 0) / totalNumber) * 100)));
 }
 
+function defaultOperationalDateFilter() {
+  const today = new Date();
+  return {
+    startDate: formatInputDate(today),
+    endDate: formatInputDate(today)
+  };
+}
+
+function normalizeOperationalDateFilter(filter = {}) {
+  let startDate = filter.startDate || "";
+  let endDate = filter.endDate || "";
+  if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
+  state.operationalDateFilter = { startDate, endDate };
+  return state.operationalDateFilter;
+}
+
+function operationalDateFilterMarkup(filter) {
+  return `
+    <form class="operational-date-filter" id="operationalDateFilter">
+      <div class="operational-date-filter-title">
+        <strong>Filtro do dashboard</strong>
+        <span class="muted">${escapeHtml(operationalDateFilterLabel(filter))}</span>
+      </div>
+      <div class="operational-date-filter-fields">
+        <button type="button" class="ghost" data-operational-period="today">Hoje</button>
+        <button type="button" class="ghost" data-operational-period="7">7 dias</button>
+        <button type="button" class="ghost" data-operational-period="30">30 dias</button>
+        <label>Inicio<input type="date" name="startDate" value="${escapeHtml(filter.startDate)}" /></label>
+        <label>Fim<input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" /></label>
+        <button type="submit">Aplicar</button>
+      </div>
+    </form>
+  `;
+}
+
+function operationalDateFilterLabel(filter) {
+  if (!filter.startDate && !filter.endDate) return "Todo o historico";
+  if (filter.startDate === filter.endDate) return formatShortDate(filter.startDate);
+  return `${formatShortDate(filter.startDate)} ate ${formatShortDate(filter.endDate)}`;
+}
+
+function handleOperationalDashboardSubmit(event) {
+  if (!event.target.matches("#operationalDateFilter")) return;
+  event.preventDefault();
+  applyOperationalDateFilterFromForm(event.target);
+}
+
+function handleOperationalDashboardChange(event) {
+  if (!event.target.closest("#operationalDateFilter") || !event.target.matches('input[type="date"]')) return;
+  applyOperationalDateFilterFromForm(event.target.form);
+}
+
+function applyOperationalDateFilterFromForm(form) {
+  const data = new FormData(form);
+  state.operationalDateFilter = normalizeOperationalDateFilter({
+    startDate: data.get("startDate") || "",
+    endDate: data.get("endDate") || ""
+  });
+  loadOperationalDashboard();
+}
+
+function operationalAverageText(total, period = {}, label = "por dia") {
+  const days = Number(period.days || 0);
+  if (!period.isPeriod || days <= 1) return "";
+  const average = Number(total || 0) / days;
+  const formatted = label.includes("venda") ? money(average) : formatDecimal(average);
+  return ` - media ${formatted} ${label}`;
+}
+
+function operationalAverageMoneyPairText(value, cost, period = {}) {
+  const days = Number(period.days || 0);
+  if (!period.isPeriod || days <= 1) return "";
+  return ` - media ${money(Number(value || 0) / days)} venda/dia, ${money(Number(cost || 0) / days)} custo/dia`;
+}
+
 function operationalSectorsMarkup(sectors = []) {
   if (!sectors.length) return '<p class="muted">Sem setores com movimentacao.</p>';
   const maxValue = Math.max(...sectors.map((sector) => Number(sector.value || 0)), 1);
@@ -3694,7 +3781,7 @@ function operationalSectorsMarkup(sectors = []) {
               <span>${money(sector.value || 0)}</span>
             </div>
             <div class="operational-bar"><span style="width: ${valuePercent}%"></span></div>
-            <small>Custo ${money(sector.cost || 0)} - ${sector.completed || 0}/${sector.quantity || 0} concluidos - ${sector.pending || 0} pendentes - ${progress}%</small>
+            <small>Custo ${money(sector.cost || 0)} - ${sector.completed || 0}/${sector.quantity || 0} concluidos - ${sector.pending || 0} pendentes - ${progress}%${operationalAverageText(sector.completed || 0, state.operationalStats?.period || {}, "itens/dia")}${operationalAverageMoneyPairText(sector.value || 0, sector.cost || 0, state.operationalStats?.period || {})}</small>
           </article>
         `;
       }).join("")}
@@ -3716,7 +3803,7 @@ function operationalTriageDestinationsMarkup(destinations = []) {
               <span>${destination.total || 0} itens</span>
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
-            <small>Venda ${money(destination.totalValue || 0)} - Custo ${money(destination.totalCost || 0)}</small>
+            <small>Venda ${money(destination.totalValue || 0)} - Custo ${money(destination.totalCost || 0)}${operationalAverageText(destination.total || 0, state.operationalStats?.period || {}, "itens/dia")}${operationalAverageMoneyPairText(destination.totalValue || 0, destination.totalCost || 0, state.operationalStats?.period || {})}</small>
           </article>
         `;
       }).join("")}
@@ -3747,6 +3834,18 @@ function operationalTriageDiagnosisConditionsMarkup(conditions = []) {
 }
 
 function handleOperationalDashboardClick(event) {
+  const periodButton = event.target.closest("[data-operational-period]");
+  if (periodButton) {
+    const days = periodButton.dataset.operationalPeriod;
+    const today = new Date();
+    state.operationalDateFilter = {
+      startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
+      endDate: formatInputDate(today)
+    };
+    loadOperationalDashboard();
+    return;
+  }
+
   const button = event.target.closest("[data-operational-operator-sort]");
   if (!button) return;
   const key = button.dataset.operationalOperatorSort;
