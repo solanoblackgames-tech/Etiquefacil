@@ -16,7 +16,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-operational-dashboard`;
-    const { getOperationalDashboardStats, writeDb } = await import(storeUrl.href);
+    const { createTriageItem, getOperationalDashboardStats, getTriageStats, writeDb } = await import(storeUrl.href);
     const today = new Date().toISOString();
 
     await writeDb({
@@ -70,6 +70,40 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           createdAt: "2026-07-04T00:00:00.000Z",
           updatedAt: "2026-07-04T00:00:00.000Z",
           diagnosedAt: "2026-07-04T00:10:00.000Z"
+        },
+        {
+          id: "triage-2",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-2",
+          productCode: "ML-NO-LOT",
+          sku: "SKU-NO-LOT",
+          valorUnit: 125,
+          precoCusto: 0,
+          status: "diagnosticado",
+          destination: "LOJA",
+          diagnosisCondition: "OK_FUNCIONANDO",
+          createdAt: "2026-07-05T00:00:00.000Z",
+          updatedAt: "2026-07-05T00:00:00.000Z",
+          diagnosedAt: "2026-07-05T00:10:00.000Z"
+        },
+        {
+          id: "triage-3",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-3",
+          productCode: "ML-NO-LOT",
+          sku: "SKU-NO-LOT",
+          valorUnit: 0,
+          precoCusto: 0,
+          status: "diagnosticado",
+          destination: "VENDA_DIRETA",
+          diagnosisCondition: "OK_VENDA_DIRETA",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          diagnosedAt: "2026-07-06T00:10:00.000Z"
         }
       ],
       triageEvents: []
@@ -103,26 +137,43 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(ana.transferCost, 15);
     assert.equal(ana.transferReceivedValue, 20);
     assert.equal(ana.transferReceivedCost, 10);
-    assert.equal(stats.triage.total, 1);
-    assert.equal(stats.triage.diagnosed, 1);
-    assert.equal(stats.triage.value, 99);
+    assert.equal(stats.triage.total, 3);
+    assert.equal(stats.triage.diagnosed, 3);
+    assert.equal(stats.triage.value, 349);
     assert.equal(stats.triage.cost, 33);
-    assert.equal(stats.triage.diagnosedValue, 99);
+    assert.equal(stats.triage.diagnosedValue, 349);
     assert.equal(stats.triage.diagnosedCost, 33);
-    assert.deepEqual(stats.triage.diagnosisConditions, [{ condition: "NAO_LIGA", total: 1, totalValue: 99, totalCost: 33 }]);
+    assert.deepEqual(stats.triage.diagnosisConditions, [
+      { condition: "OK_FUNCIONANDO", total: 1, totalValue: 125, totalCost: 0 },
+      { condition: "OK_VENDA_DIRETA", total: 1, totalValue: 125, totalCost: 0 },
+      { condition: "NAO_LIGA", total: 1, totalValue: 99, totalCost: 33 }
+    ]);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").value, 30);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").cost, 13);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").value, 20);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").cost, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 99);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 349);
     assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 33);
     assert.equal(stats.recentTransfers[0].receivedValue, 20);
     assert.equal(stats.recentTransfers[0].receivedCost, 10);
-    assert.equal(ana.triageCount, 1);
-    assert.equal(ana.triageValue, 99);
+    assert.equal(ana.triageCount, 3);
+    assert.equal(ana.triageValue, 349);
     assert.equal(ana.triageCost, 33);
-    assert.equal(ana.totalValue, 129);
+    assert.equal(ana.totalValue, 379);
     assert.equal(ana.totalCost, 48);
+
+    const triageStats = await getTriageStats("owner-1");
+    const directSale = triageStats.destinations.find((destination) => destination.destination === "VENDA_DIRETA");
+    assert.equal(directSale.total, 1);
+    assert.equal(directSale.totalValue, 125);
+
+    const hydrated = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "operator-1",
+      operatorUserId: "operator-1",
+      payload: { productCode: "ML-NO-LOT", sku: "SKU-NO-LOT", descricao: "Produto sem valor digitado" }
+    });
+    assert.equal(hydrated.valorUnit, 125);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
