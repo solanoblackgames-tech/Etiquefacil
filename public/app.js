@@ -10563,35 +10563,66 @@ function triageLabelCodigoMl(item = {}) {
 }
 
 function triageLabelSimpleMarkup(item = {}) {
+  const sku = item.sku || "";
   return `
     <div class="triage-label-simple-inner">
       <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
-      <strong>${escapeHtml(item.sku || "-")}</strong>
+      ${sku ? code39Svg(sku) : '<div class="triage-label-empty-barcode"></div>'}
+      <strong>${escapeHtml(sku || "-")}</strong>
     </div>
   `;
 }
 
-function triageCompleteInfoRows(item = {}) {
-  const rows = [
-    ["SKU", item.sku],
-    ["EAN", item.ean],
-    ["Preco", Number(item.valorUnit || 0) > 0 ? money(item.valorUnit) : ""],
-    ["COD ML", triageLabelCodigoMl(item)],
-    ["Cod. Bling 2", item.codigoBling2],
-    ["Serial", item.serial],
-    ["Lacre", item.securitySealCode],
-    ["Destino", destinationLabel(item.destination)],
-    ["Diagnostico", item.diagnosisCondition ? triageDiagnosisConditionLabel(item.diagnosisCondition) : ""],
-    ["Caixa", boxDimensionsLabel(item)],
-    ["Peso", boxWeightLabel(item)]
-  ].filter(([, value]) => value && value !== "-");
+function triageLabelCompleteBarcodeBlock(label, value, { format = "code39" } = {}) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const barcodeMarkup = format === "ean13" ? ean13Svg(text) : code39Svg(text);
+  return `
+    <div class="triage-label-complete-barcode">
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(text)}</strong>
+      </div>
+      ${barcodeMarkup}
+    </div>
+  `;
+}
 
-  return rows.map(([label, value]) => `
+function triageLabelCompleteMeta(item = {}) {
+  const createdAt = item.createdAt ? new Date(item.createdAt) : null;
+  const date = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toLocaleDateString("pt-BR") : "-";
+  const time = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "-";
+  const responsible = triageResponsibleUser(item);
+  const operator = responsible?.operatorCode ? `#${responsible.operatorCode}` : triageOperatorLabel(item);
+  return [
+    ["Data", date],
+    ["Horario", time],
+    ["Cod. operador", operator],
+    ["Destino", item.destination ? destinationLabel(item.destination) : ""],
+    ["Diagnostico", item.diagnosisCondition ? triageDiagnosisConditionLabel(item.diagnosisCondition) : ""]
+  ].filter(([, value]) => value && value !== "-").map(([label, value]) => `
     <div>
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(String(value))}</strong>
     </div>
   `).join("");
+}
+
+function triageLabelCompleteBarcodes(item = {}) {
+  return [
+    triageLabelCompleteBarcodeBlock("SKU", item.sku),
+    triageLabelCompleteBarcodeBlock("EAN", item.ean, { format: "ean13" }),
+    triageLabelCompleteBarcodeBlock("ASIN/COD ML", triageLabelCodigoMl(item)),
+    triageLabelCompleteBarcodeBlock("N. serie", item.serial)
+  ].filter(Boolean).join("") || `
+    <div class="triage-label-complete-barcode is-empty">
+      <div>
+        <span>Codigo</span>
+        <strong>${escapeHtml(item.code || "-")}</strong>
+      </div>
+      ${code39Svg(item.code || "")}
+    </div>
+  `;
 }
 
 function triageLabelCompleteMarkup(item = {}) {
@@ -10602,16 +10633,11 @@ function triageLabelCompleteMarkup(item = {}) {
         <strong>${escapeHtml(item.code || "-")}</strong>
       </div>
       <p class="triage-label-complete-desc">${escapeHtml(item.descricao || "Produto sem descricao")}</p>
-      <div class="triage-label-complete-qr-row">
-        <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
-        <div>
-          <span>SKU</span>
-          <strong>${escapeHtml(item.sku || "-")}</strong>
-          ${Number(item.valorUnit || 0) > 0 ? `<small>${escapeHtml(money(item.valorUnit))}</small>` : ""}
-        </div>
+      <div class="triage-label-complete-meta">
+        ${triageLabelCompleteMeta(item)}
       </div>
-      <div class="triage-label-complete-info">
-        ${triageCompleteInfoRows(item)}
+      <div class="triage-label-complete-codes">
+        ${triageLabelCompleteBarcodes(item)}
       </div>
     </div>
   `;
@@ -10632,6 +10658,7 @@ function safeTriageLabelMarkup(item = {}) {
       <div class="triage-label-simple">
         <div class="triage-label-simple-inner">
           <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl || "")}" alt="QR Code ${escapeHtml(item.code || "")}" />
+          ${item.sku ? code39Svg(item.sku) : '<div class="triage-label-empty-barcode"></div>'}
           <strong>${escapeHtml(item.sku || "-")}</strong>
         </div>
       </div>

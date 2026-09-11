@@ -2468,20 +2468,28 @@ h3 {
 .triage-label-simple-inner {
   align-items: center;
   display: grid;
-  gap: 1.4mm;
+  gap: 1mm;
   justify-items: center;
 }
 
 .triage-label-simple-inner .triage-label-qr {
-  height: 26mm;
+  height: 21mm;
   image-rendering: pixelated;
-  width: 26mm;
+  width: 21mm;
+}
+
+.triage-label-simple-inner .label-barcode,
+.triage-label-simple-inner .triage-label-empty-barcode {
+  height: 8.5mm;
+  margin: 0;
+  max-width: 54mm;
+  width: 54mm;
 }
 
 .triage-label-simple-inner strong {
   color: #111;
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   max-width: 54mm;
@@ -2496,10 +2504,10 @@ h3 {
   color: #111;
   display: grid;
   font-family: Arial, sans-serif;
-  gap: 3mm;
+  gap: 2mm;
   height: 150mm;
   overflow: hidden;
-  padding: 6mm;
+  padding: 4.5mm 5mm;
   text-align: left;
   width: 100mm;
 }
@@ -2508,9 +2516,10 @@ h3 {
   align-items: end;
   border-bottom: 0.35mm solid #111;
   display: flex;
-  gap: 4mm;
+  gap: 3mm;
   justify-content: space-between;
-  padding-bottom: 3mm;
+  min-width: 0;
+  padding-bottom: 2mm;
 }
 
 .triage-label-complete-head span {
@@ -2521,89 +2530,96 @@ h3 {
 
 .triage-label-complete-head strong {
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 18px;
+  font-size: 14px;
   line-height: 1;
+  max-width: 46mm;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
 }
 
 .triage-label-complete-desc {
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 16px;
+  font-size: 11px;
   font-weight: 900;
-  line-height: 1.12;
+  line-height: 1.08;
   margin: 0;
-  max-height: 27mm;
+  max-height: 24mm;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-transform: uppercase;
 }
 
-.triage-label-complete-qr-row {
-  align-items: center;
+.triage-label-complete-meta {
+  border-bottom: 0.3mm solid #111;
+  border-top: 0.3mm solid #111;
   display: grid;
-  gap: 5mm;
-  grid-template-columns: 42mm minmax(0, 1fr);
+  gap: 1.2mm 2mm;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  padding: 2mm 0;
 }
 
-.triage-label-complete-qr-row .triage-label-qr {
-  height: 42mm;
-  image-rendering: pixelated;
-  width: 42mm;
-}
-
-.triage-label-complete-qr-row div {
+.triage-label-complete-meta div {
   display: grid;
-  gap: 2mm;
+  gap: 0.6mm;
   min-width: 0;
 }
 
-.triage-label-complete-qr-row span,
-.triage-label-complete-info span {
+.triage-label-complete-meta span,
+.triage-label-complete-barcode span {
   color: #333;
-  font-size: 9px;
+  font-size: 7px;
   font-weight: 900;
   line-height: 1;
   text-transform: uppercase;
 }
 
-.triage-label-complete-qr-row strong {
-  font-family: Arial Black, Arial, sans-serif;
-  font-size: 24px;
-  line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.triage-label-complete-qr-row small {
-  font-family: Arial Black, Arial, sans-serif;
-  font-size: 22px;
+.triage-label-complete-meta strong {
+  font-size: 8.6px;
   font-weight: 900;
   line-height: 1;
-}
-
-.triage-label-complete-info {
-  border-top: 0.35mm solid #111;
-  display: grid;
-  gap: 1.9mm;
-  padding-top: 3mm;
-}
-
-.triage-label-complete-info div {
-  align-items: baseline;
-  border-bottom: 0.2mm solid #cbd5e1;
-  display: grid;
-  gap: 3mm;
-  grid-template-columns: 24mm minmax(0, 1fr);
-  padding-bottom: 1.4mm;
-}
-
-.triage-label-complete-info strong {
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1.05;
   overflow: hidden;
   overflow-wrap: anywhere;
-  text-align: right;
+}
+
+.triage-label-complete-codes {
+  display: grid;
+  gap: 1.6mm;
+  min-width: 0;
+}
+
+.triage-label-complete-barcode {
+  border-bottom: 0.2mm solid #cbd5e1;
+  display: grid;
+  gap: 0.8mm;
+  min-width: 0;
+  padding-bottom: 1.2mm;
+}
+
+.triage-label-complete-barcode div {
+  align-items: baseline;
+  display: grid;
+  gap: 2mm;
+  grid-template-columns: 22mm minmax(0, 1fr);
+  min-width: 0;
+}
+
+.triage-label-complete-barcode strong {
+  font-family: Arial Black, Arial, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.triage-label-complete-barcode .label-barcode,
+.triage-label-complete-barcode .triage-ean-barcode {
+  height: 12.5mm;
+  margin: 0;
+  width: 100%;
 }
 
 .triage-label-heading {
@@ -6699,8 +6715,14 @@ h3 {
   }
 
   #triageLabelPrintable .triage-label-simple-inner .triage-label-qr {
-    height: 26mm;
-    width: 26mm;
+    height: 21mm;
+    width: 21mm;
+  }
+
+  #triageLabelPrintable .triage-label-simple-inner .label-barcode,
+  #triageLabelPrintable .triage-label-simple-inner .triage-label-empty-barcode {
+    height: 8.5mm;
+    width: 54mm;
   }
 
   .label-print:not(:last-of-type),
