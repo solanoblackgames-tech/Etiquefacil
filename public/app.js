@@ -10481,7 +10481,7 @@ function triageCompleteInfoRows(item = {}) {
     ["Cod. Bling 2", item.codigoBling2],
     ["Serial", item.serial],
     ["Lacre", item.securitySealCode],
-    ["Destino", triageDestinationLabel(item.destination)],
+    ["Destino", destinationLabel(item.destination)],
     ["Diagnostico", item.diagnosisCondition ? triageDiagnosisConditionLabel(item.diagnosisCondition) : ""],
     ["Caixa", boxDimensionsLabel(item)],
     ["Peso", boxWeightLabel(item)]
@@ -10525,6 +10525,22 @@ function triageLabelMarkup(item = {}) {
   `;
 }
 
+function safeTriageLabelMarkup(item = {}) {
+  try {
+    return triageLabelMarkup(item);
+  } catch (error) {
+    return `
+      <div class="triage-label-simple">
+        <div class="triage-label-simple-inner">
+          <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl || "")}" alt="QR Code ${escapeHtml(item.code || "")}" />
+          <strong>${escapeHtml(item.sku || "-")}</strong>
+        </div>
+      </div>
+      <div class="triage-label-complete"></div>
+    `;
+  }
+}
+
 function printTriageLabel(mode = "simple") {
   if (!$("#triageLabelPrintable")) return;
   const complete = mode === "complete";
@@ -10552,7 +10568,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
   detail.innerHTML = `
     <section class="triage-detail-grid">
       <div class="triage-label-preview" id="triageLabelPrintable">
-        ${triageLabelMarkup(item)}
+        ${safeTriageLabelMarkup(item)}
       </div>
       <div class="triage-info">
         <div class="detail-heading">
