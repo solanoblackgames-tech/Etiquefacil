@@ -265,6 +265,31 @@ test("Bling triage lookup reads supplier cost relationship", async () => {
   }
 });
 
+test("Bling triage lookup keeps list fields when detail response is partial", async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 123, codigo: "SKU-1", nome: "Produto da lista", preco: 99.9, precoCusto: 44.4 }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { id: 123, categoria: { descricao: "Eletronicos" } } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) }
+  ];
+
+  globalThis.fetch = async () => responses.shift();
+
+  try {
+    const product = await lookupBlingProductForTriage({
+      integration: { accessToken: "token" },
+      code: "SKU-1"
+    });
+
+    assert.equal(product.descricao, "Produto da lista");
+    assert.equal(product.valorUnit, 99.9);
+    assert.equal(product.precoCusto, 44.4);
+    assert.equal(product.categoria, "Eletronicos");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Bling product deletion reports validation failures without throwing", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

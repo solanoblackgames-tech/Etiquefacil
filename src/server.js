@@ -711,6 +711,7 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
       });
     }
 
+    const localProduct = await lookupTriageProduct(userId, code);
     const integration = await getUserBlingCredentials(userId);
     if (integration?.accessToken && integration?.refreshToken) {
       const blingApp = await getBlingAppCredentials(userId);
@@ -719,10 +720,9 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
         code,
         saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
       });
-      if (product) return res.json({ product });
+      if (product) return res.json({ product: mergeTriageProductLookup(product, localProduct) });
     }
 
-    const localProduct = await lookupTriageProduct(userId, code);
     res.json({ product: localProduct || null });
   } catch (error) {
     sendError(res, error);
@@ -754,6 +754,25 @@ app.get("/api/triage/items/:code", requireAuth, requireTriageViewOrStockTransfer
     sendError(res, error);
   }
 });
+
+function mergeTriageProductLookup(primary = {}, fallback = null) {
+  if (!fallback) return primary;
+  const merged = { ...primary };
+  for (const field of ["descricao", "ean", "asin", "categoria", "subcategoria", "alturaCaixa", "larguraCaixa", "comprimentoCaixa", "pesoCaixa"]) {
+    if (!hasLookupValue(merged[field]) && hasLookupValue(fallback[field])) merged[field] = fallback[field];
+  }
+  for (const field of ["valorUnit", "precoCusto"]) {
+    if (Number(merged[field] || 0) <= 0 && Number(fallback[field] || 0) > 0) merged[field] = fallback[field];
+  }
+  if (!hasLookupValue(merged.productCode) && hasLookupValue(fallback.productCode)) merged.productCode = fallback.productCode;
+  if (!hasLookupValue(merged.codigoBling2) && hasLookupValue(fallback.codigoBling2)) merged.codigoBling2 = fallback.codigoBling2;
+  if (!hasLookupValue(merged.sku) && hasLookupValue(fallback.sku)) merged.sku = fallback.sku;
+  return merged;
+}
+
+function hasLookupValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
 
 app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, async (req, res) => {
   try {

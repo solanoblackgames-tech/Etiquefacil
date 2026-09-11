@@ -552,7 +552,7 @@ class BlingApiClient {
     const product = (payload?.data || []).find((candidate) => normalizeCode(candidate.codigo) === normalizeCode(sku));
     if (!detail || !product?.id) return product || null;
     const detailPayload = await this.request(`/produtos/${encodeURIComponent(product.id)}`);
-    const detailedProduct = detailPayload?.data || product;
+    const detailedProduct = { ...product, ...(detailPayload?.data || {}) };
     const supplierCost = includeSupplierCost ? await this.findProductSupplierCost(product.id) : 0;
     return supplierCost > 0 ? { ...detailedProduct, precoCusto: supplierCost, precoCompra: supplierCost } : detailedProduct;
   }
