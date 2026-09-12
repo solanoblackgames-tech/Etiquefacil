@@ -2570,6 +2570,7 @@ async function showApp(user) {
   $("#app").classList.remove("hidden");
   $("#app .app-nav")?.classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
+  state.blingIntegration = null;
   applyUserPermissions(user);
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
@@ -2619,6 +2620,7 @@ function applyUserPermissions(user) {
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector(".transfer-search-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
+  updateBlingShortcutLabel();
   updateBlingGlobalAlert();
 }
 
@@ -2700,7 +2702,15 @@ function renderBlingIntegration(integration) {
   $("#blingIntegrationDelete").disabled = !connected;
   $("#blingIntegrationStatus").style.color = connected ? "#0f766e" : "";
   $("#blingIntegrationStatus").textContent = getBlingCallbackMessage() || "";
+  updateBlingShortcutLabel();
   updateBlingGlobalAlert();
+}
+
+function updateBlingShortcutLabel() {
+  const connected = Boolean(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
+  document.querySelectorAll('.sync-shortcut[data-profile-section="sync"]').forEach((button) => {
+    button.textContent = connected ? "BLING INTEGRADO" : "Integre ao Bling";
+  });
 }
 
 function updateBlingGlobalAlert() {
