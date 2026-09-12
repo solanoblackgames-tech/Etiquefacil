@@ -2504,10 +2504,11 @@ h3 {
   color: #111;
   display: grid;
   font-family: Arial, sans-serif;
-  gap: 2mm;
+  gap: 3mm;
+  grid-template-rows: auto minmax(18mm, auto) auto 1fr;
   height: 150mm;
   overflow: hidden;
-  padding: 4.5mm 5mm;
+  padding: 6mm;
   text-align: left;
   width: 100mm;
 }
@@ -2523,14 +2524,14 @@ h3 {
 }
 
 .triage-label-complete-head span {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .triage-label-complete-head strong {
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1;
   max-width: 46mm;
   overflow: hidden;
@@ -2540,11 +2541,11 @@ h3 {
 
 .triage-label-complete-desc {
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 900;
-  line-height: 1.08;
+  line-height: 1.12;
   margin: 0;
-  max-height: 24mm;
+  max-height: 30mm;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-transform: uppercase;
@@ -2554,10 +2555,10 @@ h3 {
   border-bottom: 0.3mm solid #111;
   border-top: 0.3mm solid #111;
   display: grid;
-  gap: 1.2mm 2mm;
+  gap: 2mm 3mm;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
-  padding: 2mm 0;
+  padding: 3mm 0;
 }
 
 .triage-label-complete-meta div {
@@ -2569,14 +2570,14 @@ h3 {
 .triage-label-complete-meta span,
 .triage-label-complete-barcode span {
   color: #333;
-  font-size: 7px;
+  font-size: 8.5px;
   font-weight: 900;
   line-height: 1;
   text-transform: uppercase;
 }
 
 .triage-label-complete-meta strong {
-  font-size: 8.6px;
+  font-size: 11px;
   font-weight: 900;
   line-height: 1;
   overflow: hidden;
@@ -2584,17 +2585,18 @@ h3 {
 }
 
 .triage-label-complete-codes {
+  align-content: space-evenly;
   display: grid;
-  gap: 1.6mm;
+  gap: 2.4mm;
   min-width: 0;
 }
 
 .triage-label-complete-barcode {
   border-bottom: 0.2mm solid #cbd5e1;
   display: grid;
-  gap: 0.8mm;
+  gap: 1.2mm;
   min-width: 0;
-  padding-bottom: 1.2mm;
+  padding-bottom: 1.8mm;
 }
 
 .triage-label-complete-barcode div {
@@ -2607,7 +2609,7 @@ h3 {
 
 .triage-label-complete-barcode strong {
   font-family: Arial Black, Arial, sans-serif;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   overflow: hidden;
@@ -2617,7 +2619,7 @@ h3 {
 
 .triage-label-complete-barcode .label-barcode,
 .triage-label-complete-barcode .triage-ean-barcode {
-  height: 12.5mm;
+  height: 17mm;
   margin: 0;
   width: 100%;
 }
@@ -2697,6 +2699,11 @@ h3 {
   justify-self: stretch;
   margin: 0;
   width: 100%;
+}
+
+.triage-label-preview .triage-label-complete-barcode .label-barcode,
+.triage-label-preview .triage-label-complete-barcode .triage-ean-barcode {
+  height: 17mm;
 }
 
 .triage-label-empty-barcode {
@@ -6561,6 +6568,7 @@ h3 {
 
   body.printing-triage-label-complete {
     min-height: 150mm;
+    page: triage-complete-label;
   }
 
   body:not(.printing-triage-label) > :not(#labelModal) {
@@ -6696,6 +6704,11 @@ h3 {
     border: 0;
     page: triage-complete-label;
     padding: 0;
+  }
+
+  body.printing-triage-label-complete #triageLabelPrintable .triage-label-complete-inner {
+    height: 150mm;
+    width: 100mm;
   }
 
   #triageLabelPrintable .triage-label-simple {

@@ -104,6 +104,7 @@ const LABEL_NAME_FONT_MIN = 8;
 const LABEL_NAME_FONT_MAX = 72;
 const LABEL_NAME_FONT_STEP = 2;
 let labelPrintFallbackTimer = null;
+let triageLabelPrintFallbackTimer = null;
 const labelMarkupCache = new Map();
 const CONFERENCE_FIELDS = [
   { key: "ean", label: "EAN", formNames: ["ean"] },
@@ -482,6 +483,7 @@ function bindEvents() {
     }
   });
   window.addEventListener("afterprint", finishLabelPrint);
+  window.addEventListener("afterprint", finishTriageLabelPrint);
   bindPrintCloseFallback();
 }
 
@@ -4351,6 +4353,7 @@ function operatorViewModel(operator) {
     name: operator.name || "Operador",
     email: operator.email || "",
     operatorCode: operator.operatorCode || "",
+    acceptedDeposits: normalizeAcceptedDeposits(operator.acceptedDeposits || []),
     triageAccess: Boolean(operator.triageAccess),
     transferAccess: Boolean(operator.transferAccess),
     stockTransferAcceptanceAccess: Boolean(operator.stockTransferAcceptanceAccess),
@@ -4475,11 +4478,17 @@ function openOperatorPermissionsModal(operator) {
   const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel"]
     .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
     .filter((permission) => permission.kind !== "largeQrLabel" || state.user?.largeQrLabelAccess || permission.enabled);
+  const knownDeposits = [...new Set([
+    ...triageAvailableDepositNames(),
+    ...(operator.acceptedDeposits || [])
+  ].map((name) => String(name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const acceptedDepositKeys = new Set(normalizeAcceptedDeposits(operator.acceptedDeposits || []).map(normalizeLooseText));
 
   const cleanup = () => {
     modal.classList.add("hidden");
     modal.onkeydown = null;
     fieldsEl.onclick = null;
+    fieldsEl.onsubmit = null;
     actionsEl.onclick = null;
     titleEl.textContent = "";
     bodyEl.innerHTML = "";
@@ -4510,6 +4519,28 @@ function openOperatorPermissionsModal(operator) {
         </div>
       `).join("")}
     </div>
+    <form class="operator-permissions-list" data-operator-deposits-form>
+      <div class="operator-permission-row">
+        <div>
+          <strong>Depositos de aceite</strong>
+          <span>${operator.acceptedDeposits?.length ? operator.acceptedDeposits.join(", ") : "Nenhum deposito liberado"}</span>
+        </div>
+        <button type="submit" class="ghost access-toggle">Salvar depositos</button>
+      </div>
+      ${knownDeposits.length ? `
+        <div class="triage-deposit-choices">
+          ${knownDeposits.map((deposit) => `
+            <label class="triage-deposit-chip ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "selected" : ""}">
+              <input type="checkbox" name="acceptedDeposits" value="${escapeHtml(deposit)}" ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "checked" : ""} />
+              ${escapeHtml(deposit)}
+            </label>
+          `).join("")}
+        </div>
+      ` : ""}
+      <label>Outros depositos
+        <textarea name="extraAcceptedDeposits" rows="3" placeholder="Um deposito por linha">${escapeHtml((operator.acceptedDeposits || []).filter((deposit) => !knownDeposits.some((known) => normalizeLooseText(known) === normalizeLooseText(deposit))).join("\n"))}</textarea>
+      </label>
+    </form>
     <p class="message" data-permission-message></p>
   `;
   actionsEl.innerHTML = '<button type="button" class="ghost" data-close-operator-permissions>Fechar</button>';
@@ -4526,6 +4557,36 @@ function openOperatorPermissionsModal(operator) {
       await updateOperatorPermission(operator.id, permission, button.dataset.permissionValue === "true");
       message.style.color = "#0f766e";
       message.textContent = "Permissao atualizada.";
+      await loadOperators();
+      const updated = state.operators.map(operatorViewModel).find((item) => item.id === operator.id);
+      if (updated) openOperatorPermissionsModal(updated);
+    } catch (error) {
+      message.style.color = "";
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+  fieldsEl.onsubmit = async (event) => {
+    const form = event.target.closest("[data-operator-deposits-form]");
+    if (!form) return;
+    event.preventDefault();
+    const button = form.querySelector("button[type='submit']");
+    const message = fieldsEl.querySelector("[data-permission-message]");
+    const formData = new FormData(form);
+    const checked = formData.getAll("acceptedDeposits");
+    const extra = String(formData.get("extraAcceptedDeposits") || "").split(/\n|,|;/);
+    const acceptedDeposits = normalizeAcceptedDeposits([...checked, ...extra]);
+    button.disabled = true;
+    message.textContent = "";
+    try {
+      await api(`/api/operators/${encodeURIComponent(operator.id)}/accepted-deposits`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ acceptedDeposits })
+      });
+      message.style.color = "#0f766e";
+      message.textContent = "Depositos de aceite atualizados.";
       await loadOperators();
       const updated = state.operators.map(operatorViewModel).find((item) => item.id === operator.id);
       if (updated) openOperatorPermissionsModal(updated);
@@ -6122,10 +6183,11 @@ function renderTransferReceiveCompletePage(lot) {
 
 function transferDivergenceReportPanel(lot) {
   const disabled = false;
+  const triageTransfer = lot?.source === "triage";
   return `
     <details class="transfer-divergence-panel">
       <summary>
-        <span>Reportar divergencia</span>
+        <span>${triageTransfer ? "Rejeitar transferencia" : "Reportar divergencia"}</span>
         <strong>${lot.divergenceCount || 0} reportes</strong>
       </summary>
       <form id="transferDivergenceForm" class="transfer-divergence-form">
@@ -6145,9 +6207,9 @@ function transferDivergenceReportPanel(lot) {
           <input name="reporterName" placeholder="Nome de quem esta conferindo" maxlength="120" autocomplete="name" ${disabled ? "disabled" : ""} />
         </label>
         <label class="transfer-divergence-description">Descricao
-          <textarea name="description" rows="4" maxlength="1000" placeholder="Descreva o que foi encontrado na remessa" ${disabled ? "disabled" : ""} required></textarea>
+          <textarea name="description" rows="4" maxlength="1000" placeholder="${triageTransfer ? "Justifique por que a transferencia esta sendo rejeitada" : "Descreva o que foi encontrado na remessa"}" ${disabled ? "disabled" : ""} required></textarea>
         </label>
-        <button type="submit" ${disabled ? "disabled" : ""}>Enviar reporte</button>
+        <button type="submit" ${disabled ? "disabled" : ""}>${triageTransfer ? "Enviar rejeicao" : "Enviar reporte"}</button>
       </form>
     </details>
   `;
@@ -9342,6 +9404,13 @@ function appendLargeQrPrintStyle() {
   document.head.appendChild(style);
 }
 
+function appendTriageCompletePrintStyle() {
+  const style = document.createElement("style");
+  style.id = "triageLabelPrintPageStyle";
+  style.textContent = "@media print { @page { margin: 0; size: 100mm 150mm; } }";
+  document.head.appendChild(style);
+}
+
 function currentLabelPreviewPrintMarkup() {
   const printMarkup = $("#labelPreview").innerHTML;
   return Array.from({ length: state.labelQuantity }, () => printMarkup).join("");
@@ -9352,7 +9421,10 @@ function bindPrintCloseFallback() {
   if (!printMedia) return;
 
   const handleChange = (event) => {
-    if (!event.matches) finishLabelPrint();
+    if (!event.matches) {
+      finishLabelPrint();
+      finishTriageLabelPrint();
+    }
   };
 
   if (printMedia.addEventListener) {
@@ -9378,6 +9450,17 @@ function cleanupLabelPrintRoot() {
   document.documentElement.classList.remove("printing-large-qr-label");
   $("#labelPrintPageStyle")?.remove();
   $("#labelPrintRoot")?.remove();
+}
+
+function finishTriageLabelPrint() {
+  if (triageLabelPrintFallbackTimer) {
+    clearTimeout(triageLabelPrintFallbackTimer);
+    triageLabelPrintFallbackTimer = null;
+  }
+  document.body.classList.remove("printing-triage-label", "printing-triage-label-complete");
+  document.documentElement.classList.remove("printing-triage-label-complete");
+  $("#triageLabelPrintPageStyle")?.remove();
+  $("#triageLabelPrintable")?.classList.remove("triage-label-mode-complete");
 }
 
 function hideLabelPreview() {
@@ -10667,19 +10750,18 @@ function safeTriageLabelMarkup(item = {}) {
   }
 }
 
-function printTriageLabel(mode = "simple") {
+async function printTriageLabel(mode = "simple") {
   if (!$("#triageLabelPrintable")) return;
   const complete = mode === "complete";
+  finishTriageLabelPrint();
   $("#triageLabelPrintable").classList.toggle("triage-label-mode-complete", complete);
   document.body.classList.add("printing-triage-label");
   document.body.classList.toggle("printing-triage-label-complete", complete);
   document.documentElement.classList.toggle("printing-triage-label-complete", complete);
+  if (complete) appendTriageCompletePrintStyle();
+  await waitForPrintableImages($("#triageLabelPrintable"));
   window.print();
-  setTimeout(() => {
-    document.body.classList.remove("printing-triage-label", "printing-triage-label-complete");
-    document.documentElement.classList.remove("printing-triage-label-complete");
-    $("#triageLabelPrintable")?.classList.remove("triage-label-mode-complete");
-  }, 1000);
+  triageLabelPrintFallbackTimer = setTimeout(finishTriageLabelPrint, LABEL_PRINT_FALLBACK_MS);
 }
 
 function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {}) {
@@ -10801,7 +10883,7 @@ function triageTransferSummaryMarkup(transfer) {
   if (!transfer?.id) return "";
   const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
   const actionLabel = transfer.wmsEnabled ? complete ? "Ver entrada WMS" : "Alocar produto" : complete ? "Ver transferencia de estoque" : "Aceitar transferencia de estoque";
-  const action = state.user?.stockTransferAcceptanceAccess
+  const action = userCanAcceptTransfer(transfer)
     ? `<a class="button-link primary-action" href="${escapeHtml(transferReceivePath(transfer))}">${actionLabel}</a>`
     : "";
   return `
@@ -11263,6 +11345,35 @@ function escapeHtml(value) {
 
 function normalizeCode(value) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+function normalizeLooseText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeAcceptedDeposits(values = []) {
+  const list = Array.isArray(values) ? values : String(values || "").split(/\n|,|;/);
+  const seen = new Set();
+  const normalized = [];
+  for (const value of list) {
+    const deposit = String(value || "").trim();
+    const key = normalizeLooseText(deposit);
+    if (!deposit || seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(deposit);
+  }
+  return normalized;
+}
+
+function userCanAcceptTransfer(transfer) {
+  if (!state.user?.stockTransferAcceptanceAccess) return false;
+  if (isOwnerUser() || state.user?.role === "admin") return true;
+  const expected = normalizeLooseText(transfer?.depositoDestino);
+  return Boolean(expected && normalizeAcceptedDeposits(state.user?.acceptedDeposits || []).some((deposit) => normalizeLooseText(deposit) === expected));
 }
 
 function normalizeFilterText(value) {

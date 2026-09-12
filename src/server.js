@@ -129,6 +129,7 @@ import {
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStockTransferAcceptanceAccess,
+  updateOperatorAcceptedDeposits,
   updateOperatorStatsAccess,
   updateOperatorLargeQrLabelAccess,
   updateOperatorForOwner,
@@ -147,7 +148,8 @@ import {
   saveUserTriageTransferSettings,
   saveBlingAppConfig,
   acceptOperatorInvite,
-  verifyUser
+  verifyUser,
+  userCanAcceptDeposit
 } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -492,6 +494,18 @@ app.patch("/api/operators/:operatorUserId/stock-transfer-acceptance-access", req
       ownerUserId: workspaceUserId(req),
       operatorUserId: req.params.operatorUserId,
       stockTransferAcceptanceAccess: Boolean(req.body?.stockTransferAcceptanceAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/accepted-deposits", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorAcceptedDeposits({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      acceptedDeposits: req.body?.acceptedDeposits || req.body?.depositos || []
     }));
   } catch (error) {
     sendError(res, error);
@@ -1018,8 +1032,9 @@ app.post("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, r
 });
 
 app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
-  const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+  let lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
   if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+  if (!req.session.user?.transferAccess) lot = await requireTransferLotAcceptanceDeposit(req, res, lot);
   res.json({ lot });
 });
 
@@ -1055,6 +1070,7 @@ app.post("/api/transfer-lots/:transferLotId/release", requireAuth, requireTransf
 
 app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
   try {
+    await requireTransferLotAcceptanceDeposit(req, res);
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
     await recordOperatorActivity(req.session.user, "receive_transfer", { transferLotId: req.params.transferLotId, code, wmsLocation });
@@ -1066,6 +1082,7 @@ app.post("/api/transfer-lots/:transferLotId/receive-scan", requireAuth, requireS
 
 app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
   try {
+    await requireTransferLotAcceptanceDeposit(req, res);
     const payload = {
       userId: workspaceUserId(req),
       transferLotId: req.params.transferLotId,
@@ -1094,6 +1111,7 @@ app.post("/api/transfer-lots/:transferLotId/confirm-total", requireAuth, require
     const userId = workspaceUserId(req);
     const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
     if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    await requireTransferLotAcceptanceDeposit(req, res, existingLot);
     result = await confirmPublicTransferLotTotal({
       transferLotId: req.params.transferLotId,
       receivedTotal: req.body?.receivedTotal,
@@ -1132,6 +1150,7 @@ app.post("/api/transfer-lots/:transferLotId/force-receive-scan", requireAuth, re
     const userId = workspaceUserId(req);
     const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
     if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    await requireTransferLotAcceptanceDeposit(req, res, existingLot);
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const reason = normalizeRequiredJustification(req.body.reason || req.body.justificativa);
     const wmsLocation = String(req.body.wmsLocation || req.body.posicaoWms || "").trim();
@@ -2694,6 +2713,17 @@ async function requireStockTransferAcceptanceAccess(req, res, next) {
   } catch (error) {
     sendError(res, error);
   }
+}
+
+async function requireTransferLotAcceptanceDeposit(req, res, lot = null) {
+  const currentLot = lot || await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+  if (!currentLot) return null;
+  if (req.session.user?.role === "admin") return currentLot;
+  const freshUser = await refreshSessionUser(req);
+  if (userCanAcceptDeposit(freshUser, currentLot.depositoDestino)) return currentLot;
+  const error = new Error(`Operador nao autorizado a aceitar entradas no deposito ${currentLot.depositoDestino || "destino"}.`);
+  error.status = 403;
+  throw error;
 }
 
 async function requireTransferViewOrAcceptanceAccess(req, res, next) {

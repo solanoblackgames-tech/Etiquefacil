@@ -243,6 +243,7 @@ export async function createUser({ name, email, password, parentUserId = null })
     parentUserId: owner?.id || null,
     role: owner ? "operator" : "owner",
     operatorCode,
+    acceptedDeposits: [],
     triageAccess: false,
     transferAccess: false,
     stockTransferAcceptanceAccess: false,
@@ -257,10 +258,11 @@ export async function createUser({ name, email, password, parentUserId = null })
   if (hasPostgres()) {
     try {
       await ensureUserStockTransferAcceptanceColumnPg();
+      await ensureUserAcceptedDepositsColumnPg();
       await query(
-        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, triage_access, transfer_access, stock_transfer_acceptance_access, operator_stats_access, large_qr_label_access, name, email, password_hash, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, user.triageAccess, user.transferAccess, user.stockTransferAcceptanceAccess, user.operatorStatsAccess, user.largeQrLabelAccess, user.name, user.email, user.passwordHash, user.createdAt]
+        `insert into users (id, tenant_id, tenant_name, parent_user_id, role, operator_code, accepted_deposits, triage_access, transfer_access, stock_transfer_acceptance_access, operator_stats_access, large_qr_label_access, name, email, password_hash, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        [user.id, user.tenantId, user.tenantName, user.parentUserId, user.role, user.operatorCode, JSON.stringify(user.acceptedDeposits), user.triageAccess, user.transferAccess, user.stockTransferAcceptanceAccess, user.operatorStatsAccess, user.largeQrLabelAccess, user.name, user.email, user.passwordHash, user.createdAt]
       );
     } catch (error) {
       if (error.code === "23505") throw new Error("E-mail jÃ¡ cadastrado.");
@@ -507,6 +509,7 @@ export async function saveUserTriageTransferSettings(userId, payload = {}) {
 export function sanitizeUser(user) {
   if (!user) return null;
   const role = user.role || (user.parentUserId ? "operator" : "owner");
+  const acceptedDeposits = normalizeAcceptedDeposits(user.acceptedDeposits || user.accepted_deposits || []);
   const sanitized = {
     id: user.id,
     tenantId: user.tenantId || user.id,
@@ -518,6 +521,7 @@ export function sanitizeUser(user) {
     name: user.name,
     email: user.email
   };
+  if (acceptedDeposits.length) sanitized.acceptedDeposits = acceptedDeposits;
   if (user.triageAccess) sanitized.triageAccess = true;
   if (user.transferAccess) sanitized.transferAccess = true;
   if (user.stockTransferAcceptanceAccess) sanitized.stockTransferAcceptanceAccess = true;
@@ -562,6 +566,7 @@ export async function updateUserStockTransferAcceptanceAccessForAdmin(userId, st
   await ensureStore();
   if (hasPostgres()) {
     await ensureUserStockTransferAcceptanceColumnPg();
+    await ensureUserAcceptedDepositsColumnPg();
     const result = await query("update users set stock_transfer_acceptance_access = $2 where id = $1 returning *", [userId, Boolean(stockTransferAcceptanceAccess)]);
     if (!result.rows.length) throw notFound("Usuario nao encontrado.");
     return { user: sanitizeUser(userFromRow(result.rows[0])) };
@@ -645,6 +650,27 @@ export async function updateOperatorStockTransferAcceptanceAccess({ ownerUserId,
   const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
   if (!user) throw notFound("Operador nao encontrado.");
   user.stockTransferAcceptanceAccess = Boolean(stockTransferAcceptanceAccess);
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
+}
+
+export async function updateOperatorAcceptedDeposits({ ownerUserId, operatorUserId, acceptedDeposits }) {
+  await ensureStore();
+  const deposits = normalizeAcceptedDeposits(acceptedDeposits);
+  if (hasPostgres()) {
+    await ensureUserAcceptedDepositsColumnPg();
+    const result = await query(
+      "update users set accepted_deposits = $3 where id = $2 and parent_user_id = $1 returning *",
+      [ownerUserId, operatorUserId, JSON.stringify(deposits)]
+    );
+    if (!result.rows.length) throw notFound("Operador nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === operatorUserId && item.parentUserId === ownerUserId);
+  if (!user) throw notFound("Operador nao encontrado.");
+  user.acceptedDeposits = deposits;
   await writeDb(db);
   return { user: sanitizeUser(user) };
 }
@@ -847,6 +873,7 @@ export async function listUsersForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
     await ensureUserStockTransferAcceptanceColumnPg();
+    await ensureUserAcceptedDepositsColumnPg();
     const result = await query(
       `
         select
@@ -856,6 +883,7 @@ export async function listUsersForAdmin() {
           u.parent_user_id,
           u.role,
           u.operator_code,
+          u.accepted_deposits,
           u.triage_access,
           u.transfer_access,
           u.stock_transfer_acceptance_access,
@@ -880,6 +908,7 @@ export async function listUsersForAdmin() {
       parentUserId: row.parent_user_id || null,
       role: row.role || (row.parent_user_id ? "operator" : "owner"),
       operatorCode: row.operator_code ? Number(row.operator_code) : null,
+      acceptedDeposits: normalizeAcceptedDeposits(row.accepted_deposits || []),
       triageAccess: Boolean(row.triage_access),
       transferAccess: Boolean(row.transfer_access),
       stockTransferAcceptanceAccess: Boolean(row.stock_transfer_acceptance_access),
@@ -914,6 +943,7 @@ export async function listBlingIntegrationsForAdmin() {
   await ensureStore();
   if (hasPostgres()) {
     await ensureUserStockTransferAcceptanceColumnPg();
+    await ensureUserAcceptedDepositsColumnPg();
     const result = await query(
       `
         select
@@ -929,6 +959,7 @@ export async function listBlingIntegrationsForAdmin() {
           u.parent_user_id,
           u.role,
           u.operator_code,
+          u.accepted_deposits,
           u.triage_access,
           u.transfer_access,
           u.stock_transfer_acceptance_access,
@@ -4837,6 +4868,7 @@ async function ensurePgStore() {
       parent_user_id text references users(id) on delete cascade,
       role text not null default 'owner',
       operator_code integer,
+      accepted_deposits jsonb not null default '[]'::jsonb,
       triage_access boolean not null default false,
       transfer_access boolean not null default false,
       stock_transfer_acceptance_access boolean not null default false,
@@ -5240,6 +5272,7 @@ async function ensurePgStore() {
     alter table users add column if not exists parent_user_id text references users(id) on delete cascade;
     alter table users add column if not exists role text not null default 'owner';
     alter table users add column if not exists operator_code integer;
+    alter table users add column if not exists accepted_deposits jsonb not null default '[]'::jsonb;
     alter table users add column if not exists triage_access boolean not null default false;
     alter table users add column if not exists transfer_access boolean not null default false;
     alter table users add column if not exists stock_transfer_acceptance_access boolean not null default false;
@@ -5692,7 +5725,7 @@ async function writePgDb(db) {
     await insertRows(
       client,
       "users",
-      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "triage_access", "transfer_access", "stock_transfer_acceptance_access", "operator_stats_access", "large_qr_label_access", "name", "email", "password_hash", "created_at"],
+      ["id", "tenant_id", "tenant_name", "parent_user_id", "role", "operator_code", "accepted_deposits", "triage_access", "transfer_access", "stock_transfer_acceptance_access", "operator_stats_access", "large_qr_label_access", "name", "email", "password_hash", "created_at"],
       (db.users || []).map((user) => [
         user.id,
         user.tenantId || user.id,
@@ -5700,6 +5733,7 @@ async function writePgDb(db) {
         user.parentUserId || null,
         user.role || (user.parentUserId ? "operator" : "owner"),
         optionalInt(user.operatorCode) || null,
+        JSON.stringify(normalizeAcceptedDeposits(user.acceptedDeposits || [])),
         Boolean(user.triageAccess),
         Boolean(user.transferAccess),
         Boolean(user.stockTransferAcceptanceAccess),
@@ -6109,6 +6143,10 @@ async function ensureTransferLotTriageColumnsPg(target = { query }) {
 
 async function ensureUserStockTransferAcceptanceColumnPg(target = { query }) {
   await target.query("alter table users add column if not exists stock_transfer_acceptance_access boolean not null default false");
+}
+
+async function ensureUserAcceptedDepositsColumnPg(target = { query }) {
+  await target.query("alter table users add column if not exists accepted_deposits jsonb not null default '[]'::jsonb");
 }
 
 async function insertTransferItemRows(client, items = []) {
@@ -9026,6 +9064,7 @@ function userFromRow(row) {
     parentUserId: row.parent_user_id || null,
     role: row.role || (row.parent_user_id ? "operator" : "owner"),
     operatorCode: row.operator_code ? Number(row.operator_code) : null,
+    acceptedDeposits: normalizeAcceptedDeposits(row.accepted_deposits || []),
     triageAccess: Boolean(row.triage_access),
     transferAccess: Boolean(row.transfer_access),
     stockTransferAcceptanceAccess: Boolean(row.stock_transfer_acceptance_access),
@@ -10649,6 +10688,34 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function normalizeAcceptedDeposits(input = []) {
+  const values = Array.isArray(input)
+    ? input
+    : String(input || "")
+      .split(/[,\n;]/)
+      .map((item) => item.trim());
+  const seen = new Set();
+  const normalized = [];
+  for (const value of values) {
+    const deposit = String(value || "").trim();
+    const key = normalizeText(deposit);
+    if (!deposit || seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(deposit);
+  }
+  return normalized;
+}
+
+export function userCanAcceptDeposit(user, depositName) {
+  if (!user) return false;
+  const role = user.role || (user.parentUserId ? "operator" : "owner");
+  if (role === "admin" || role === "owner") return true;
+  if (!user.stockTransferAcceptanceAccess) return false;
+  const allowed = normalizeAcceptedDeposits(user.acceptedDeposits || user.accepted_deposits || []);
+  const expected = normalizeText(depositName);
+  return Boolean(expected && allowed.some((deposit) => normalizeText(deposit) === expected));
+}
+
 function normalizeDbTenants(db) {
   let changed = false;
   for (const user of db.users || []) {
@@ -10678,6 +10745,10 @@ function normalizeDbTenants(db) {
     }
     if (user.stockTransferAcceptanceAccess === undefined) {
       user.stockTransferAcceptanceAccess = false;
+      changed = true;
+    }
+    if (!Array.isArray(user.acceptedDeposits)) {
+      user.acceptedDeposits = normalizeAcceptedDeposits(user.acceptedDeposits || []);
       changed = true;
     }
     if (user.operatorStatsAccess === undefined) {
