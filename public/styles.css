@@ -2508,6 +2508,7 @@ h3 {
   grid-template-rows: auto minmax(12mm, auto) auto 1fr;
   height: 150mm;
   overflow: hidden;
+  overflow-wrap: anywhere;
   padding: 4mm;
   text-align: left;
   width: 100mm;
@@ -2549,6 +2550,8 @@ h3 {
   overflow: hidden;
   overflow-wrap: anywhere;
   text-transform: uppercase;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .triage-label-complete-meta {
@@ -2616,6 +2619,8 @@ h3 {
   overflow: hidden;
   overflow-wrap: anywhere;
   text-align: left;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .triage-label-complete-barcode .label-barcode,
@@ -6698,11 +6703,7 @@ h3 {
     width: 100mm;
   }
 
-  body:not(.printing-triage-label):not(.printing-triage-complete-root) > :not(#labelModal) {
-    display: none !important;
-  }
-
-  body.printing-triage-complete-root > :not(#triageLabelPrintRoot) {
+  body:not(.printing-triage-label) > :not(#labelModal) {
     display: none !important;
   }
 
@@ -6838,15 +6839,15 @@ h3 {
   }
 
   body.printing-triage-label-complete #triageLabelPrintable {
-    align-content: stretch;
+    align-content: center;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     display: grid !important;
-    justify-items: stretch;
+    justify-items: center;
     margin: 0;
     page: triage-complete-label;
-    padding: 0;
+    padding: 3mm 2mm;
     page-break-after: avoid;
     page-break-before: avoid;
     page-break-inside: avoid;
@@ -6854,40 +6855,11 @@ h3 {
 
   body.printing-triage-label-complete #triageLabelPrintable .triage-label-complete-inner {
     align-self: center;
-    height: 136mm;
+    height: 144mm;
     justify-self: center;
-    max-height: 136mm;
-    max-width: 86mm;
-    width: 86mm;
-  }
-
-  body.printing-triage-complete-root,
-  body.printing-triage-complete-root #triageLabelPrintRoot {
-    display: grid !important;
-    height: 150mm;
-    margin: 0;
-    overflow: hidden;
-    padding: 0;
-    place-items: center;
-    width: 100mm;
-  }
-
-  body.printing-triage-complete-root #triageLabelPrintRoot {
-    page: triage-complete-label;
-    page-break-after: avoid;
-    page-break-before: avoid;
-    page-break-inside: avoid;
-  }
-
-  body.printing-triage-complete-root #triageLabelPrintRoot .triage-label-complete {
-    display: block;
-  }
-
-  body.printing-triage-complete-root #triageLabelPrintRoot .triage-label-complete-inner {
-    height: 138mm;
-    max-height: 138mm;
-    max-width: 88mm;
-    width: 88mm;
+    max-height: 144mm;
+    max-width: 96mm;
+    width: 96mm;
   }
 
   #triageLabelPrintable .triage-label-simple {
