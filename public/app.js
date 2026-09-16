@@ -10719,11 +10719,20 @@ function triageLabelCompleteBarcodes(item = {}) {
 }
 
 function triageLabelCompleteMarkup(item = {}) {
+  const qr = item.qrDataUrl
+    ? `<div class="triage-label-complete-qr-box">
+        <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code do laudo ${escapeHtml(item.code || "")}" />
+        <small>Laudo</small>
+      </div>`
+    : "";
   return `
     <div class="triage-label-complete-inner">
       <div class="triage-label-complete-head">
-        <span>Etiqueta completa</span>
-        <strong>${escapeHtml(item.code || "-")}</strong>
+        <div class="triage-label-complete-head-main">
+          <span>Etiqueta completa</span>
+          <strong>${escapeHtml(item.code || "-")}</strong>
+        </div>
+        ${qr}
       </div>
       <p class="triage-label-complete-desc">${escapeHtml(item.descricao || "Produto sem descricao")}</p>
       <div class="triage-label-complete-meta">

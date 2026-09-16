@@ -2515,13 +2515,19 @@ h3 {
 }
 
 .triage-label-complete-head {
-  align-items: end;
+  align-items: center;
   border-bottom: 0.35mm solid #111;
-  display: flex;
-  gap: 2mm;
-  justify-content: space-between;
+  display: grid;
+  gap: 3mm;
+  grid-template-columns: minmax(0, 1fr) 19mm;
   min-width: 0;
   padding-bottom: 1.5mm;
+}
+
+.triage-label-complete-head-main {
+  display: grid;
+  gap: 1.2mm;
+  min-width: 0;
 }
 
 .triage-label-complete-head span {
@@ -2534,10 +2540,29 @@ h3 {
   font-family: Arial Black, Arial, sans-serif;
   font-size: 16px;
   line-height: 1;
-  max-width: 52mm;
   overflow: hidden;
-  text-align: right;
   text-overflow: ellipsis;
+}
+
+.triage-label-complete-qr-box {
+  display: grid;
+  gap: 0.6mm;
+  justify-items: center;
+  min-width: 0;
+}
+
+.triage-label-complete-qr-box .triage-label-qr {
+  height: 18mm;
+  image-rendering: pixelated;
+  width: 18mm;
+}
+
+.triage-label-complete-qr-box small {
+  color: #333;
+  font-size: 6px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .triage-label-complete-desc {
