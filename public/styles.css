@@ -2468,19 +2468,20 @@ h3 {
 .triage-label-simple-inner {
   align-items: center;
   display: grid;
-  gap: 1mm;
+  gap: 0.6mm;
   justify-items: center;
+  width: 54mm;
 }
 
 .triage-label-simple-inner .triage-label-qr {
-  height: 21mm;
+  height: 18mm;
   image-rendering: pixelated;
-  width: 21mm;
+  width: 18mm;
 }
 
 .triage-label-simple-inner .label-barcode,
 .triage-label-simple-inner .triage-label-empty-barcode {
-  height: 8.5mm;
+  height: 7mm;
   margin: 0;
   max-width: 54mm;
   width: 54mm;
@@ -2496,6 +2497,29 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.triage-label-simple-destination,
+.triage-label-simple-footer {
+  color: #111;
+  display: block;
+  font-family: Arial, sans-serif;
+  line-height: 1;
+  max-width: 54mm;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-label-simple-destination {
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.triage-label-simple-footer {
+  font-size: 7px;
+  font-weight: 700;
 }
 
 .triage-label-complete-inner {
@@ -6904,13 +6928,13 @@ h3 {
   }
 
   #triageLabelPrintable .triage-label-simple-inner .triage-label-qr {
-    height: 21mm;
-    width: 21mm;
+    height: 18mm;
+    width: 18mm;
   }
 
   #triageLabelPrintable .triage-label-simple-inner .label-barcode,
   #triageLabelPrintable .triage-label-simple-inner .triage-label-empty-barcode {
-    height: 8.5mm;
+    height: 7mm;
     width: 54mm;
   }
 

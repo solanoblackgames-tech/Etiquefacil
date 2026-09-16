@@ -10655,13 +10655,28 @@ function triageLabelCodigoMl(item = {}) {
   return item.asin || item.productCode || "";
 }
 
+function triageLabelSimpleDestination(item = {}) {
+  return item.destination ? destinationLabel(item.destination) : "Nao definido";
+}
+
+function triageLabelSimpleFooter(item = {}) {
+  const responsible = triageResponsibleUser(item);
+  const operator = responsible?.operatorCode || triageOperatorLabel(item);
+  const date = formatLabelDateTime(item.createdAt);
+  return [operator, date].filter(Boolean).join(" ");
+}
+
 function triageLabelSimpleMarkup(item = {}) {
   const sku = item.sku || "";
+  const destination = triageLabelSimpleDestination(item);
+  const footer = triageLabelSimpleFooter(item);
   return `
     <div class="triage-label-simple-inner">
       <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
       ${sku ? code39Svg(sku) : '<div class="triage-label-empty-barcode"></div>'}
       <strong>${escapeHtml(sku || "-")}</strong>
+      <span class="triage-label-simple-destination">Destino: ${escapeHtml(destination)}</span>
+      <span class="triage-label-simple-footer">${escapeHtml(footer)}</span>
     </div>
   `;
 }
@@ -10756,12 +10771,16 @@ function safeTriageLabelMarkup(item = {}) {
   try {
     return triageLabelMarkup(item);
   } catch (error) {
+    const destination = triageLabelSimpleDestination(item);
+    const footer = triageLabelSimpleFooter(item);
     return `
       <div class="triage-label-simple">
         <div class="triage-label-simple-inner">
           <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl || "")}" alt="QR Code ${escapeHtml(item.code || "")}" />
           ${item.sku ? code39Svg(item.sku) : '<div class="triage-label-empty-barcode"></div>'}
           <strong>${escapeHtml(item.sku || "-")}</strong>
+          <span class="triage-label-simple-destination">Destino: ${escapeHtml(destination)}</span>
+          <span class="triage-label-simple-footer">${escapeHtml(footer)}</span>
         </div>
       </div>
       <div class="triage-label-complete"></div>
