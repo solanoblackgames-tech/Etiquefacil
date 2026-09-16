@@ -9426,6 +9426,11 @@ function currentLabelPreviewPrintMarkup() {
   return Array.from({ length: state.labelQuantity }, () => printMarkup).join("");
 }
 
+function triageCompletePrintMarkup() {
+  const completeMarkup = $("#triageLabelPrintable .triage-label-complete")?.innerHTML || "";
+  return `<div class="triage-label-complete triage-label-complete-print-sheet">${completeMarkup}</div>`;
+}
+
 function bindPrintCloseFallback() {
   const printMedia = window.matchMedia?.("print");
   if (!printMedia) return;
@@ -9467,9 +9472,10 @@ function finishTriageLabelPrint() {
     clearTimeout(triageLabelPrintFallbackTimer);
     triageLabelPrintFallbackTimer = null;
   }
-  document.body.classList.remove("printing-triage-label", "printing-triage-label-complete");
+  document.body.classList.remove("printing-triage-label", "printing-triage-label-complete", "printing-triage-complete-root");
   document.documentElement.classList.remove("printing-triage-label-complete");
   $("#triageLabelPrintPageStyle")?.remove();
+  $("#triageLabelPrintRoot")?.remove();
   $("#triageLabelPrintable")?.classList.remove("triage-label-mode-complete");
 }
 
@@ -10764,6 +10770,19 @@ async function printTriageLabel(mode = "simple") {
   if (!$("#triageLabelPrintable")) return;
   const complete = mode === "complete";
   finishTriageLabelPrint();
+  if (complete) {
+    const printRoot = document.createElement("div");
+    printRoot.id = "triageLabelPrintRoot";
+    printRoot.innerHTML = triageCompletePrintMarkup();
+    document.body.appendChild(printRoot);
+    document.body.classList.add("printing-triage-complete-root", "printing-triage-label-complete");
+    document.documentElement.classList.add("printing-triage-label-complete");
+    appendTriageCompletePrintStyle();
+    await waitForPrintableImages(printRoot);
+    window.print();
+    triageLabelPrintFallbackTimer = setTimeout(finishTriageLabelPrint, LABEL_PRINT_FALLBACK_MS);
+    return;
+  }
   $("#triageLabelPrintable").classList.toggle("triage-label-mode-complete", complete);
   document.body.classList.add("printing-triage-label");
   document.body.classList.toggle("printing-triage-label-complete", complete);
