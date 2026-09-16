@@ -36,7 +36,7 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
         { id: "rz-2", lotId: "lot-1", productId: "product-2", codigoRz: "RZ-2", qtdEsperada: 1, qtdConferida: 1, tipoItem: "esperado", valorTotal: 20, createdAt: "2026-07-02T00:01:00.000Z" }
       ],
       transferLots: [
-        { id: "transfer-1", userId: "owner-1", name: "TRF-1", descricao: "", depositoOrigem: "CD", depositoDestino: "Loja", status: "checking", createdByUserId: "operator-1", createdAt: "2026-07-03T00:00:00.000Z" }
+        { id: "transfer-1", userId: "owner-1", name: "TRF-1", descricao: "", depositoOrigem: "CD", depositoDestino: "Loja", status: "checking", createdByUserId: "operator-1", source: "triage", triageItemId: "triage-4", createdAt: "2026-07-03T00:00:00.000Z" }
       ],
       transferItems: [
         { id: "transfer-item-1", transferLotId: "transfer-1", sourceLotId: "lot-1", productId: "product-1", codigoMl: "ML1", sku: "SKU1", descricao: "Produto 1", ean: "", quantidade: 3, quantidadeConferida: 2, createdAt: "2026-07-03T00:00:00.000Z" }
@@ -104,6 +104,23 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
           createdAt: "2026-07-06T12:00:00.000Z",
           updatedAt: "2026-07-06T12:00:00.000Z",
           diagnosedAt: "2026-07-06T12:10:00.000Z"
+        },
+        {
+          id: "triage-4",
+          userId: "owner-1",
+          createdByUserId: "operator-1",
+          operatorUserId: "operator-1",
+          code: "TRIAGE-4",
+          productCode: "ML-STORE",
+          sku: "SKU-STORE",
+          valorUnit: 50,
+          precoCusto: 20,
+          status: "aguardando_teste",
+          destination: "LOJA",
+          diagnosisCondition: "",
+          createdAt: "2026-07-04T12:00:00.000Z",
+          updatedAt: "2026-07-04T12:00:00.000Z",
+          diagnosedAt: null
         }
       ],
       triageEvents: []
@@ -137,12 +154,12 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(ana.transferCost, 15);
     assert.equal(ana.transferReceivedValue, 20);
     assert.equal(ana.transferReceivedCost, 10);
-    assert.equal(stats.triage.total, 3);
-    assert.equal(stats.triage.diagnosed, 3);
-    assert.equal(stats.triage.value, 349);
-    assert.equal(stats.triage.cost, 33);
-    assert.equal(stats.triage.diagnosedValue, 349);
-    assert.equal(stats.triage.diagnosedCost, 33);
+    assert.equal(stats.triage.total, 4);
+    assert.equal(stats.triage.diagnosed, 4);
+    assert.equal(stats.triage.value, 399);
+    assert.equal(stats.triage.cost, 53);
+    assert.equal(stats.triage.diagnosedValue, 399);
+    assert.equal(stats.triage.diagnosedCost, 53);
     assert.deepEqual(stats.triage.diagnosisConditions, [
       { condition: "OK_FUNCIONANDO", total: 1, totalValue: 125, totalCost: 0 },
       { condition: "OK_VENDA_DIRETA", total: 1, totalValue: 125, totalCost: 0 },
@@ -152,15 +169,15 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").cost, 13);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").value, 20);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").cost, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 349);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 33);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 399);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 53);
     assert.equal(stats.recentTransfers[0].receivedValue, 20);
     assert.equal(stats.recentTransfers[0].receivedCost, 10);
-    assert.equal(ana.triageCount, 3);
-    assert.equal(ana.triageValue, 349);
-    assert.equal(ana.triageCost, 33);
-    assert.equal(ana.totalValue, 379);
-    assert.equal(ana.totalCost, 48);
+    assert.equal(ana.triageCount, 4);
+    assert.equal(ana.triageValue, 399);
+    assert.equal(ana.triageCost, 53);
+    assert.equal(ana.totalValue, 429);
+    assert.equal(ana.totalCost, 68);
 
     const periodStats = await getOperationalDashboardStats("owner-1", { startDate: "2026-07-05", endDate: "2026-07-06" });
     assert.equal(periodStats.period.days, 2);

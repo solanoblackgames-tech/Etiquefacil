@@ -1241,6 +1241,13 @@ export async function listTriageStatsRows(userId, period = {}) {
           l.proximo_sequencial_sku as lot__proximo_sequencial_sku,
           l.no_sheet_suggestions as lot__no_sheet_suggestions,
           l.created_at as lot__created_at,
+          exists (
+            select 1
+            from transfer_lots tl
+            where tl.user_id = t.user_id
+              and tl.source = 'triage'
+              and tl.triage_item_id = t.id
+          ) as triage_transferred,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -1309,6 +1316,7 @@ export async function listTriageStatsRows(userId, period = {}) {
         destination: row.destination || "",
         diagnosisCondition: row.diagnosis_condition || "",
         diagnosis: row.diagnosis || "",
+        triageTransferred: Boolean(row.triage_transferred),
         createdAt: iso(row.created_at),
         updatedAt: iso(row.updated_at || row.created_at),
         diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
@@ -1326,6 +1334,7 @@ export async function listTriageStatsRows(userId, period = {}) {
   const lotIds = new Set(userLots.map((lot) => lot.id));
   const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
+  const transferredTriageItemIds = transferredTriageIdsFromLots((db.transferLots || []).filter((lot) => lot.userId === userId));
   return (db.triageItems || [])
     .filter((item) => item.userId === userId)
     .filter((item) => isWithinDateRange(item.createdAt, range))
@@ -1334,7 +1343,7 @@ export async function listTriageStatsRows(userId, period = {}) {
       const product = findTriageStatsProduct(db.products || [], scopedLotIds, item);
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
-        item,
+        item: { ...item, triageTransferred: transferredTriageItemIds.has(item.id) },
         salePrice: triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(db.triageItems || [], item)),
         costPrice: triageStatMoney(item.precoCusto, product?.precoCusto),
         product,
@@ -9393,6 +9402,7 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     item.userId === userId
     && isOperationalDashboardDateInRange(item.diagnosedAt || item.updatedAt || item.createdAt, range)
   ));
+  const transferredTriageItemIds = transferredTriageIdsFromLots(transfers);
 
   const productsById = new Map(allProducts.map((product) => [product.id, product]));
   const productsBySku = new Map();
@@ -9566,7 +9576,7 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     }
     triageValue = roundMoney(triageValue + value);
     triageCost = roundMoney(triageCost + cost);
-    if (item.status === "diagnosticado") {
+    if (isTriageItemCompleted(item, transferredTriageItemIds)) {
       triageDiagnosed += 1;
       triageDiagnosedValue = roundMoney(triageDiagnosedValue + value);
       triageDiagnosedCost = roundMoney(triageDiagnosedCost + cost);
@@ -9785,7 +9795,7 @@ function buildTriageStatsFromRows(rows = []) {
     const costPrice = Number(row.costPrice || 0);
     totalValue += salePrice;
     totalCost += costPrice;
-    if (item.status === "diagnosticado") diagnosedTotal += 1;
+    if (isTriageItemCompleted(item)) diagnosedTotal += 1;
     if (item.destination) {
       const destination = String(item.destination).trim().toUpperCase();
       const destinationStats = destinations.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
@@ -9819,7 +9829,7 @@ function buildTriageStatsFromRows(rows = []) {
     current.total += 1;
     current.totalValue = roundMoney(current.totalValue + salePrice);
     current.totalCost = roundMoney(current.totalCost + costPrice);
-    if (item.status === "diagnosticado") current.diagnosed += 1;
+    if (isTriageItemCompleted(item)) current.diagnosed += 1;
     else current.pending += 1;
     byOperator.set(operatorId, current);
   }
@@ -9840,6 +9850,16 @@ function buildTriageStatsFromRows(rows = []) {
     diagnosisConditions: diagnosisConditionRows,
     operators: [...byOperator.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   };
+}
+
+function transferredTriageIdsFromLots(transferLots = []) {
+  return new Set((transferLots || [])
+    .filter((lot) => lot?.source === "triage" && lot.triageItemId)
+    .map((lot) => lot.triageItemId));
+}
+
+function isTriageItemCompleted(item = {}, transferredTriageItemIds = null) {
+  return item.status === "diagnosticado" || Boolean(item.triageTransferred) || Boolean(transferredTriageItemIds?.has(item.id));
 }
 
 function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
