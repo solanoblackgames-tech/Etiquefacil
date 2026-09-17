@@ -91,7 +91,7 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
   }
 });
 
-test("updateTriageDiagnosis blocks diagnosis when triage item data is incomplete", async () => {
+test("updateTriageDiagnosis allows diagnosis when logistics data is incomplete", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-required-data-"));
@@ -133,15 +133,16 @@ test("updateTriageDiagnosis blocks diagnosis when triage item data is incomplete
       payload: { sku: "SKU-1" }
     });
 
-    await assert.rejects(
-      () => updateTriageDiagnosis({
-        userId: "owner-1",
-        code: item.code,
-        operatorUserId: "owner-1",
-        payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Laudo aprovado", destination: "VENDA_DIRETA" }
-      }),
-      /Complete os dados do item antes de diagnosticar: descricao, EAN, dimensoes da caixa, peso da caixa\./
-    );
+    const diagnosed = await updateTriageDiagnosis({
+      userId: "owner-1",
+      code: item.code,
+      operatorUserId: "owner-1",
+      payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Laudo aprovado", destination: "VENDA_DIRETA" }
+    });
+
+    assert.equal(diagnosed.status, "diagnosticado");
+    assert.equal(diagnosed.diagnosisCondition, "OK_FUNCIONANDO");
+    assert.equal(diagnosed.destination, "LOJA");
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

@@ -11024,8 +11024,6 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
   const selectedRule = triageDiagnosisRule(item.diagnosisCondition);
   const automaticDestination = selectedRule?.destination || item.destination || "";
   const automaticDestinationLabel = automaticDestination ? destinationLabel(automaticDestination) : "Selecione um diagnostico";
-  const missingData = triageMissingRequiredItemData(item);
-  const missingDataMessage = missingData.length ? `Complete os dados do item antes de diagnosticar: ${missingData.join(", ")}.` : "";
   return `
     <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}">
       <div class="panel-heading">
@@ -11044,7 +11042,6 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         <span>Destino automatico</span>
         <strong>${escapeHtml(automaticDestinationLabel)}</strong>
       </div>
-      ${missingDataMessage ? `<p class="message">${escapeHtml(missingDataMessage)}</p>` : ""}
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
       <label>Foto do laudo
         <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" />
@@ -11054,27 +11051,9 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
         <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
       </div>
-      <button type="submit" ${missingData.length ? "disabled" : ""}>${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
+      <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
     </form>
   `;
-}
-
-function triageMissingRequiredItemData(item = {}) {
-  const missing = [];
-  if (!String(item.descricao || "").trim()) missing.push("descricao");
-  if (!String(item.sku || "").trim()) missing.push("SKU");
-  if (!String(item.ean || "").trim()) missing.push("EAN");
-  if (!hasPositiveItemNumber(item.alturaCaixa) || !hasPositiveItemNumber(item.larguraCaixa) || !hasPositiveItemNumber(item.comprimentoCaixa)) {
-    missing.push("dimensoes da caixa");
-  }
-  if (!hasPositiveItemNumber(item.pesoCaixa)) missing.push("peso da caixa");
-  return missing;
-}
-
-function hasPositiveItemNumber(value) {
-  if (value === undefined || value === null || value === "") return false;
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0;
 }
 
 function triageDiagnosisRule(condition) {

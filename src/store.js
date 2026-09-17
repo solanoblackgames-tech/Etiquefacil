@@ -1523,7 +1523,6 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
         [userId, normalizeCode(code)]
       );
       if (!current.rows.length) throw notFound("Item de triagem nao encontrado.");
-      assertTriageReadyForDiagnosis(triageItemFromRow(current.rows[0]));
       const result = await client.query(
         `update triage_items
          set status = 'diagnosticado',
@@ -1567,7 +1566,6 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const db = await readDb();
   const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalizeCode(code));
   if (!item) throw notFound("Item de triagem nao encontrado.");
-  assertTriageReadyForDiagnosis(item);
   item.status = "diagnosticado";
   item.destination = destination;
   item.diagnosisCondition = diagnosisCondition;
@@ -1591,26 +1589,6 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   });
   await writeDb(db);
   return item;
-}
-
-function assertTriageReadyForDiagnosis(item = {}) {
-  const missing = [];
-  if (!String(item.descricao || "").trim()) missing.push("descricao");
-  if (!String(item.sku || "").trim()) missing.push("SKU");
-  if (!String(item.ean || "").trim()) missing.push("EAN");
-  if (!hasPositiveTriageNumber(item.alturaCaixa) || !hasPositiveTriageNumber(item.larguraCaixa) || !hasPositiveTriageNumber(item.comprimentoCaixa)) {
-    missing.push("dimensoes da caixa");
-  }
-  if (!hasPositiveTriageNumber(item.pesoCaixa)) missing.push("peso da caixa");
-  if (missing.length) {
-    throw new Error(`Complete os dados do item antes de diagnosticar: ${missing.join(", ")}.`);
-  }
-}
-
-function hasPositiveTriageNumber(value) {
-  if (value === undefined || value === null || value === "") return false;
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0;
 }
 
 export async function listTriageDiagnosisHistory({ userId, code }) {
