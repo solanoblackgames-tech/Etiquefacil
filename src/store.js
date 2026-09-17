@@ -3665,7 +3665,7 @@ export async function reportTransferLotDivergence({ userId = null, transferLotId
   return { report, lot: userId ? await getTransferLotDetail(userId, transferLotId) : await getPublicTransferLotDetail(transferLotId) };
 }
 
-async function buildTransferLotWithAutomaticNamePg({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
+async function buildTransferLotWithAutomaticNamePg({ userId, descricao = "", depositoOrigem, depositoDestino, type = "transferencia", createdByUserId = null }) {
   const creatorId = createdByUserId || userId;
   const [creatorResult, sequenceResult] = await Promise.all([
     query("select * from users where id = $1 limit 1", [creatorId]),
@@ -3680,13 +3680,14 @@ async function buildTransferLotWithAutomaticNamePg({ userId, descricao = "", dep
     descricao,
     depositoOrigem,
     depositoDestino,
+    type,
     createdByUserId,
     creator,
     sequence: Number(sequenceResult.rows[0]?.total || 0) + 1
   });
 }
 
-function buildTransferLotWithAutomaticName(db, { userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
+function buildTransferLotWithAutomaticName(db, { userId, descricao = "", depositoOrigem, depositoDestino, type = "transferencia", createdByUserId = null }) {
   const creatorId = createdByUserId || userId;
   const creator = (db.users || []).find((user) => user.id === creatorId) || null;
   const existingCount = (db.transferLots || []).filter((lot) => (
@@ -3697,6 +3698,7 @@ function buildTransferLotWithAutomaticName(db, { userId, descricao = "", deposit
     descricao,
     depositoOrigem,
     depositoDestino,
+    type,
     createdByUserId,
     creator,
     sequence: existingCount + 1
@@ -3708,6 +3710,7 @@ function buildTransferLotRecord({
   descricao = "",
   depositoOrigem,
   depositoDestino,
+  type = "transferencia",
   createdByUserId = null,
   creator = null,
   sequence = 1,
@@ -3726,6 +3729,7 @@ function buildTransferLotRecord({
     descricao: String(descricao || "").trim().slice(0, 80),
     depositoOrigem,
     depositoDestino,
+    type: normalizeTransferLotType(type),
     status: "open",
     createdByUserId,
     createdAt,
@@ -3757,13 +3761,14 @@ function formatCompactDate(value) {
   return `${day}${month}${year}`;
 }
 
-export async function createTransferLot({ userId, descricao = "", depositoOrigem, depositoDestino, createdByUserId = null }) {
+export async function createTransferLot({ userId, descricao = "", depositoOrigem, depositoDestino, type = "transferencia", tipo = "", createdByUserId = null }) {
   await ensureStore();
-  const depositoOrigemValue = String(depositoOrigem || "").trim();
-  const depositoDestinoValue = String(depositoDestino || "").trim();
+  type = normalizeTransferLotType(type || tipo);
+  const depositoOrigemValue = String(depositoOrigem || (type === "leilao" ? "Triagem" : "")).trim();
+  const depositoDestinoValue = String(depositoDestino || (type === "leilao" ? "Leilao" : "")).trim();
   if (!depositoOrigemValue) throw new Error("Informe o estoque de origem.");
   if (!depositoDestinoValue) throw new Error("Informe o estoque de destino.");
-  if (normalizeText(depositoOrigemValue) === normalizeText(depositoDestinoValue)) throw new Error("Origem e destino precisam ser diferentes.");
+  if (type === "transferencia" && normalizeText(depositoOrigemValue) === normalizeText(depositoDestinoValue)) throw new Error("Origem e destino precisam ser diferentes.");
 
   if (hasPostgres()) {
     const lot = await buildTransferLotWithAutomaticNamePg({
@@ -3771,6 +3776,7 @@ export async function createTransferLot({ userId, descricao = "", depositoOrigem
       descricao,
       depositoOrigem: depositoOrigemValue,
       depositoDestino: depositoDestinoValue,
+      type,
       createdByUserId
     });
     await insertTransferLotRows(null, [lot]);
@@ -3783,6 +3789,7 @@ export async function createTransferLot({ userId, descricao = "", depositoOrigem
     descricao,
     depositoOrigem: depositoOrigemValue,
     depositoDestino: depositoDestinoValue,
+    type,
     createdByUserId
   });
   db.transferLots.push(lot);
@@ -3921,11 +3928,14 @@ export async function scanTransferLot({ userId, transferLotId, code, externalPro
   if (!lot) throw notFound("Lote de transferencia nao encontrado.");
   if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
 
-  const product = findTransferProduct(db, userId, normalized) || normalizedExternalProduct;
-  if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
+  const product = isAuctionGrouping(lot)
+    ? findAuctionGroupingTriageProduct(db, userId, normalized, lot.id)
+    : findTransferProduct(db, userId, normalized) || normalizedExternalProduct;
+  if (!product) throw notFound(isAuctionGrouping(lot) ? "Etiqueta de triagem nao encontrada ou nao elegivel para agrupamento." : "Produto nao encontrado nos lotes deste usuario.");
   const existing = findExistingTransferItem(db.transferItems || [], lot.id, product);
   const now = new Date().toISOString();
   if (existing) {
+    if (isAuctionGrouping(lot)) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
     existing.quantidade += 1;
     existing.createdAt = now;
   } else {
@@ -3938,9 +3948,11 @@ export async function scanTransferLot({ userId, transferLotId, code, externalPro
 export async function releaseTransferLotForStore({ userId, transferLotId }) {
   await ensureStore();
   if (hasPostgres()) {
+    const existing = await getTransferLotDetail(userId, transferLotId);
+    const nextStatus = isAuctionGrouping(existing) ? "ready_sync" : "waiting_store";
     const result = await query(
-      "update transfer_lots set status = 'waiting_store' where id = $1 and user_id = $2 and status <> 'synced' returning *",
-      [transferLotId, userId]
+      "update transfer_lots set status = $3 where id = $1 and user_id = $2 and status <> 'synced' returning *",
+      [transferLotId, userId, nextStatus]
     );
     if (!result.rows.length) throw notFound("Lote de transferencia nao encontrado.");
     return { lot: await getTransferLotDetail(userId, transferLotId) };
@@ -3950,7 +3962,7 @@ export async function releaseTransferLotForStore({ userId, transferLotId }) {
   const lot = (db.transferLots || []).find((item) => item.id === transferLotId && item.userId === userId);
   if (!lot) throw notFound("Lote de transferencia nao encontrado.");
   if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
-  lot.status = "waiting_store";
+  lot.status = isAuctionGrouping(lot) ? "ready_sync" : "waiting_store";
   await writeDb(db);
   return { lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
@@ -5090,6 +5102,7 @@ async function ensurePgStore() {
       descricao text not null default '',
       deposito_origem text not null,
       deposito_destino text not null,
+      grouping_type text not null default 'transferencia',
       status text not null default 'open',
       created_by_user_id text references users(id) on delete set null,
       created_at timestamptz not null default now(),
@@ -5108,12 +5121,16 @@ async function ensurePgStore() {
     create table if not exists transfer_items (
       id text primary key,
       transfer_lot_id text not null references transfer_lots(id) on delete cascade,
+      triage_item_id text,
       source_lot_id text references lots(id) on delete set null,
       product_id text references products(id) on delete set null,
       codigo_ml text not null,
       sku text not null,
       descricao text not null,
       ean text not null default '',
+      diagnosis_condition text not null default '',
+      diagnosis_photo text not null default '',
+      triage_destination text not null default '',
       quantidade integer not null default 0,
       force_reason text not null default '',
       force_code text not null default '',
@@ -5417,10 +5434,15 @@ async function ensurePgStore() {
     alter table catalog_rejected_requests add column if not exists localizacao_estoque text not null default '';
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_items add column if not exists wms_location text not null default '';
+    alter table transfer_items add column if not exists triage_item_id text;
+    alter table transfer_items add column if not exists diagnosis_condition text not null default '';
+    alter table transfer_items add column if not exists diagnosis_photo text not null default '';
+    alter table transfer_items add column if not exists triage_destination text not null default '';
     alter table transfer_items add column if not exists force_reason text not null default '';
     alter table transfer_items add column if not exists force_code text not null default '';
     alter table transfer_items add column if not exists force_at timestamptz;
     alter table transfer_lots add column if not exists descricao text not null default '';
+    alter table transfer_lots add column if not exists grouping_type text not null default 'transferencia';
     alter table transfer_lots add column if not exists received_total integer;
     alter table transfer_lots add column if not exists received_at timestamptz;
     alter table transfer_lots add column if not exists received_by_name text not null default '';
@@ -6151,7 +6173,7 @@ async function insertTransferLotRows(client, lots = []) {
   await insertRows(
     target,
     "transfer_lots",
-    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name", "source", "triage_item_id", "diagnosis_condition", "triage_destination", "wms_enabled", "wms_prefix"],
+    ["id", "user_id", "name", "descricao", "deposito_origem", "deposito_destino", "grouping_type", "status", "created_by_user_id", "created_at", "synced_at", "received_total", "received_at", "received_by_name", "source", "triage_item_id", "diagnosis_condition", "triage_destination", "wms_enabled", "wms_prefix"],
     lots.map((lot) => [
       lot.id,
       lot.userId,
@@ -6159,6 +6181,7 @@ async function insertTransferLotRows(client, lots = []) {
       lot.descricao || "",
       lot.depositoOrigem,
       lot.depositoDestino,
+      normalizeTransferLotType(lot.type || lot.groupingType),
       lot.status || "open",
       lot.createdByUserId || null,
       lot.createdAt,
@@ -6179,6 +6202,7 @@ async function insertTransferLotRows(client, lots = []) {
 async function ensureTransferLotTriageColumnsPg(target = { query }) {
   await target.query(`
     alter table transfer_lots add column if not exists source text not null default 'manual';
+    alter table transfer_lots add column if not exists grouping_type text not null default 'transferencia';
     alter table transfer_lots add column if not exists triage_item_id text;
     alter table transfer_lots add column if not exists diagnosis_condition text not null default '';
     alter table transfer_lots add column if not exists triage_destination text not null default '';
@@ -6201,16 +6225,20 @@ async function insertTransferItemRows(client, items = []) {
   await insertRows(
     target,
     "transfer_items",
-    ["id", "transfer_lot_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "quantidade", "quantidade_conferida", "wms_location", "force_reason", "force_code", "force_at", "created_at"],
+    ["id", "transfer_lot_id", "triage_item_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "diagnosis_condition", "diagnosis_photo", "triage_destination", "quantidade", "quantidade_conferida", "wms_location", "force_reason", "force_code", "force_at", "created_at"],
     items.map((item) => [
       item.id,
       item.transferLotId,
+      item.triageItemId || null,
       item.sourceLotId || null,
       item.productId || null,
       item.codigoMl,
       item.sku,
       item.descricao,
       item.ean || "",
+      item.diagnosisCondition || "",
+      item.diagnosisPhoto || "",
+      item.triageDestination || "",
       requiredInt(item.quantidade),
       requiredInt(item.quantidadeConferida),
       item.wmsLocation || "",
@@ -6223,7 +6251,13 @@ async function insertTransferItemRows(client, items = []) {
 }
 
 async function ensureTransferItemWmsColumnsPg(target = { query }) {
-  await target.query("alter table transfer_items add column if not exists wms_location text not null default ''");
+  await target.query(`
+    alter table transfer_items add column if not exists wms_location text not null default '';
+    alter table transfer_items add column if not exists triage_item_id text;
+    alter table transfer_items add column if not exists diagnosis_condition text not null default '';
+    alter table transfer_items add column if not exists diagnosis_photo text not null default '';
+    alter table transfer_items add column if not exists triage_destination text not null default '';
+  `);
 }
 
 async function insertTransferForcedOccurrenceRows(client, occurrences = []) {
@@ -7256,9 +7290,14 @@ async function scanTransferLotPg({ userId, transferLotId, code, externalProduct 
     if (!lot) throw notFound("Lote de transferencia nao encontrado.");
     if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
 
-    const product = await findPgTransferProduct(client, userId, code) || externalProduct;
-    if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
-    const itemResult = product.id
+    await ensureTransferItemWmsColumnsPg(client);
+    const product = isAuctionGrouping(lot)
+      ? await findPgAuctionGroupingTriageProduct(client, userId, code, lot.id)
+      : await findPgTransferProduct(client, userId, code) || externalProduct;
+    if (!product) throw notFound(isAuctionGrouping(lot) ? "Etiqueta de triagem nao encontrada ou nao elegivel para agrupamento." : "Produto nao encontrado nos lotes deste usuario.");
+    const itemResult = product.triageItemId
+      ? await client.query("select * from transfer_items where transfer_lot_id = $1 and triage_item_id = $2 limit 1 for update", [lot.id, product.triageItemId])
+      : product.id
       ? await client.query("select * from transfer_items where transfer_lot_id = $1 and product_id = $2 limit 1 for update", [lot.id, product.id])
       : await client.query(
         `select * from transfer_items
@@ -7276,6 +7315,7 @@ async function scanTransferLotPg({ userId, transferLotId, code, externalProduct 
     const existing = itemResult.rows[0] && transferItemFromRow(itemResult.rows[0]);
     const now = new Date().toISOString();
     if (existing) {
+      if (isAuctionGrouping(lot)) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
       await client.query("update transfer_items set quantidade = quantidade + 1, created_at = $2 where id = $1", [existing.id, now]);
       result = { status: "updated", product };
     } else {
@@ -7693,6 +7733,30 @@ async function findPgTransferProduct(client, userId, code) {
     sourceLotId: product.lotId,
     sourceLotName: result.rows[0].lot__nome_arquivo || ""
   };
+}
+
+async function findPgAuctionGroupingTriageProduct(client, userId, code, transferLotId) {
+  const candidates = triageCodeCandidates(code);
+  if (!candidates.length) return null;
+  const result = await client.query(
+    "select * from triage_items where user_id = $1 and upper(code) = any($2::text[]) order by created_at desc limit 1",
+    [userId, candidates]
+  );
+  if (!result.rows.length) return null;
+  const item = triageItemFromRow(result.rows[0]);
+  if (item.status !== "diagnosticado") throw new Error("Item de triagem ainda nao possui laudo salvo.");
+  const existing = await client.query(
+    `select tl.id
+     from transfer_items ti
+     join transfer_lots tl on tl.id = ti.transfer_lot_id
+     where ti.triage_item_id = $1
+       and ti.transfer_lot_id <> $2
+       and tl.status <> 'synced'
+     limit 1`,
+    [item.id, transferLotId]
+  );
+  if (existing.rows.length) throw new Error("Esta etiqueta de triagem ja esta em outro agrupamento ativo.");
+  return transferProductFromTriageItem(item);
 }
 
 async function findPgPreviousProductHistory(client, userId, currentLotId, codigoMl, limit) {
@@ -8606,6 +8670,7 @@ function summarizeTransferLot(lot, items, reports = []) {
   const totalReceived = hasManualTotal ? Number(lot.receivedTotal || 0) : itemReceived;
   return {
     ...lot,
+    type: normalizeTransferLotType(lot.type || lot.groupingType),
     totalSkus: lotItems.length,
     totalQty,
     totalPlanned: totalQty,
@@ -8943,9 +9008,27 @@ function findTransferProduct(db, userId, code) {
   return { ...product, sourceLotId: product.lotId, sourceLotName: sourceLot?.nomeArquivo || "" };
 }
 
+function findAuctionGroupingTriageProduct(db, userId, code, transferLotId) {
+  const candidates = triageCodeCandidates(code);
+  const item = (db.triageItems || []).find((candidate) => (
+    candidate.userId === userId && candidates.includes(normalizeCode(candidate.code))
+  ));
+  if (!item) return null;
+  if (item.status !== "diagnosticado") throw new Error("Item de triagem ainda nao possui laudo salvo.");
+  const alreadyGrouped = (db.transferItems || []).some((transferItem) => {
+    if (transferItem.transferLotId === transferLotId) return false;
+    if (transferItem.triageItemId !== item.id) return false;
+    const lot = (db.transferLots || []).find((candidate) => candidate.id === transferItem.transferLotId);
+    return lot && lot.status !== "synced";
+  });
+  if (alreadyGrouped) throw new Error("Esta etiqueta de triagem ja esta em outro agrupamento ativo.");
+  return transferProductFromTriageItem(item);
+}
+
 function findExistingTransferItem(items, transferLotId, product) {
   return (items || []).find((item) => {
     if (item.transferLotId !== transferLotId) return false;
+    if (product.triageItemId) return item.triageItemId === product.triageItemId;
     if (product.id) return item.productId === product.id;
     if (item.productId) return false;
     const codigoMl = normalizeCode(product.codigoMl);
@@ -8980,6 +9063,17 @@ function normalizeExternalTransferProduct(input, fallbackCode) {
   };
 }
 
+function normalizeTransferLotType(value) {
+  const normalized = normalizeCode(value || "transferencia");
+  if (["LEILAO", "LEILÃO", "AUCTION"].includes(normalized)) return "leilao";
+  if (["TRANSFERENCIA", "TRANSFERÊNCIA", "TRANSFER", "MANUAL", ""].includes(normalized)) return "transferencia";
+  return "transferencia";
+}
+
+function isAuctionGrouping(lot = {}) {
+  return normalizeTransferLotType(lot.type || lot.groupingType) === "leilao";
+}
+
 function triageLookupFromProduct(product, row = {}) {
   return {
     productCode: product.codigoMl || "",
@@ -9006,12 +9100,16 @@ function buildTransferItem(transferLotId, product) {
   return {
     id: randomUUID(),
     transferLotId,
+    triageItemId: product.triageItemId || null,
     sourceLotId: product.sourceLotId || product.lotId || null,
     productId: product.id,
     codigoMl: product.codigoMl || "",
     sku: product.sku || "",
     descricao: product.descricao || "",
     ean: product.ean || "",
+    diagnosisCondition: product.diagnosisCondition || "",
+    diagnosisPhoto: product.diagnosisPhoto || "",
+    triageDestination: product.triageDestination || product.destination || "",
     quantidade: 1,
     quantidadeConferida: 0,
     createdAt: new Date().toISOString()
@@ -9262,6 +9360,7 @@ function transferProductFromTriageItem(item = {}) {
   if (!sku && !codigoMl) throw new Error("Item de triagem sem SKU ou codigo para transferencia.");
   return {
     id: null,
+    triageItemId: item.id || null,
     lotId: null,
     sourceLotId: null,
     sourceLotName: "Triagem",
@@ -9269,6 +9368,9 @@ function transferProductFromTriageItem(item = {}) {
     sku: sku || codigoMl,
     descricao: String(item.descricao || item.code || sku || codigoMl).trim(),
     ean: String(item.ean || "").trim(),
+    diagnosisCondition: item.diagnosisCondition || "",
+    diagnosisPhoto: item.diagnosisPhoto || "",
+    triageDestination: item.destination || "",
     origem: "triagem",
     createdAt: item.updatedAt || item.createdAt || new Date().toISOString()
   };
@@ -10164,6 +10266,7 @@ function transferLotFromRow(row) {
     descricao: row.descricao || "",
     depositoOrigem: row.deposito_origem,
     depositoDestino: row.deposito_destino,
+    type: normalizeTransferLotType(row.grouping_type || row.type),
     status: row.status || "open",
     createdByUserId: row.created_by_user_id || null,
     createdAt: iso(row.created_at),
@@ -10184,12 +10287,16 @@ function transferItemFromRow(row) {
   return {
     id: row.id,
     transferLotId: row.transfer_lot_id,
+    triageItemId: row.triage_item_id || null,
     sourceLotId: row.source_lot_id || null,
     productId: row.product_id || null,
     codigoMl: row.codigo_ml,
     sku: row.sku,
     descricao: row.descricao,
     ean: row.ean || "",
+    diagnosisCondition: row.diagnosis_condition || "",
+    diagnosisPhoto: row.diagnosis_photo || "",
+    triageDestination: row.triage_destination || "",
     quantidade: Number(row.quantidade || 0),
     quantidadeConferida: Number(row.quantidade_conferida || 0),
     wmsLocation: row.wms_location || "",

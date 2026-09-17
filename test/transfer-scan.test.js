@@ -600,3 +600,91 @@ test("confirmPublicTransferLotTotal records total divergence without item scans"
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("auction grouping scans triage labels as physical items", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-auction-grouping-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-auction-grouping`;
+    const { createTransferLot, scanTransferLot, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [
+        {
+          id: "triage-1",
+          userId: "user-1",
+          code: "LAB-20260917-000001",
+          sku: "SKU-LEILAO",
+          productCode: "ML1",
+          descricao: "Produto para leilao 1",
+          ean: "",
+          status: "diagnosticado",
+          destination: "LEILAO",
+          diagnosisCondition: "OK",
+          diagnosis: "Ok",
+          diagnosisPhoto: "data:image/jpeg;base64,abc",
+          createdAt: "2026-09-17T00:00:00.000Z",
+          updatedAt: "2026-09-17T00:00:00.000Z",
+          diagnosedAt: "2026-09-17T00:00:00.000Z"
+        },
+        {
+          id: "triage-2",
+          userId: "user-1",
+          code: "LAB-20260917-000002",
+          sku: "SKU-LEILAO",
+          productCode: "ML1",
+          descricao: "Produto para leilao 2",
+          ean: "",
+          status: "diagnosticado",
+          destination: "LEILAO",
+          diagnosisCondition: "OK",
+          diagnosis: "Ok",
+          diagnosisPhoto: "",
+          createdAt: "2026-09-17T00:01:00.000Z",
+          updatedAt: "2026-09-17T00:01:00.000Z",
+          diagnosedAt: "2026-09-17T00:01:00.000Z"
+        }
+      ],
+      triageEvents: []
+    });
+
+    const grouping = await createTransferLot({ userId: "user-1", descricao: "Leilao setembro", type: "leilao" });
+    await scanTransferLot({ userId: "user-1", transferLotId: grouping.id, code: "LAB-20260917-000001" });
+    const result = await scanTransferLot({ userId: "user-1", transferLotId: grouping.id, code: "LAB-20260917-000002" });
+    const db = await readDb();
+
+    assert.equal(result.lot.type, "leilao");
+    assert.equal(result.lot.totalSkus, 2);
+    assert.deepEqual(db.transferItems.map((item) => item.triageItemId).sort(), ["triage-1", "triage-2"]);
+    assert.equal(db.transferItems[0].diagnosisPhoto, "data:image/jpeg;base64,abc");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

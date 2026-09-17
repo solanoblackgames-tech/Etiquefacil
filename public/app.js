@@ -402,6 +402,7 @@ function bindEvents() {
   $("#diverseItems").addEventListener("click", handleDiverseItemsClick);
   $("#searchForm").addEventListener("submit", searchMl);
   $("#transferLotForm").addEventListener("submit", createTransferLot);
+  $("#transferLotForm select[name='type']")?.addEventListener("change", handleTransferTypeChange);
   $("#transferProductSearch")?.addEventListener("input", handleTransferProductSearchInput);
   $("#transferProductSearchResults")?.addEventListener("click", handleTransferProductSearchClick);
   $("#transferLots").addEventListener("click", handleTransferLotsClick);
@@ -3643,9 +3644,9 @@ function renderOperationalDashboard() {
       <div class="metric"><span>Conferencia</span><strong>${lots.skus || 0}/${lots.checkedQuantity || 0}</strong><small>cadastrados/bipados${operationalAverageText(lots.checkedQuantity || 0, period, "bipados/dia")}</small></div>
       <div class="metric"><span>Venda conferencia</span><strong>${money(lots.checkedValue || 0)}</strong><small>Custo ${money(lots.checkedCost || 0)}${operationalAverageMoneyPairText(lots.checkedValue || 0, lots.checkedCost || 0, period)}</small></div>
       <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.remessas || 0} Pallets/remessas</small></div>
-      <div class="metric"><span>Estruturas</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades aceitas</small></div>
-      <div class="metric"><span>Valor das estruturas</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
-      <div class="metric"><span>Custo das estruturas</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja aceito</small></div>
+      <div class="metric"><span>Agrupamentos</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades aceitas</small></div>
+      <div class="metric"><span>Valor dos agrupamentos</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
+      <div class="metric"><span>Custo dos agrupamentos</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja aceito</small></div>
       <div class="metric"><span>Triagem</span><strong>${triage.diagnosed || 0}</strong><small>itens triados${operationalAverageText(triage.diagnosed || 0, period, "triados/dia")}</small></div>
       <div class="metric"><span>Venda triagem</span><strong>${money(triage.diagnosedValue || 0)}</strong><small>Custo ${money(triage.diagnosedCost || 0)}${operationalAverageMoneyPairText(triage.diagnosedValue || 0, triage.diagnosedCost || 0, period)}</small></div>
       <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
@@ -3681,7 +3682,7 @@ function renderOperationalDashboard() {
       </section>
       <section class="operational-dashboard-block">
         <div>
-          <strong>Estruturas aceitas</strong>
+          <strong>Agrupamentos aceitos</strong>
           <span class="muted">Entradas loja com quantidade, venda e custo conferidos.</span>
         </div>
         ${operationalTransfersMarkup(stats.recentTransfers || [])}
@@ -5993,7 +5994,7 @@ async function showTransferReceiveOnly({ transferLotId, publicAccess = true }) {
   document.querySelector(".transfer-create-panel")?.classList.add("hidden");
   $("#transferLots").innerHTML = "";
   $("#transferDetail").classList.remove("empty");
-  $("#transferDetail").innerHTML = '<p class="muted">Carregando estrutura de transferencia...</p>';
+  $("#transferDetail").innerHTML = '<p class="muted">Carregando agrupamento...</p>';
   try {
     const response = await api(`${transferReceiveApiBase(transferLotId)}`);
     renderTransferReceivePage(response.lot);
@@ -6972,6 +6973,25 @@ function renderDepositSelects({ loading = false, error = "" } = {}) {
     select.disabled = loading || Boolean(error) || !state.blingDeposits.length;
     if ([...select.options].some((option) => option.value === previous)) select.value = previous;
   });
+  updateTransferTypeFields();
+}
+
+function handleTransferTypeChange() {
+  updateTransferTypeFields();
+}
+
+function updateTransferTypeFields() {
+  const form = $("#transferLotForm");
+  if (!form) return;
+  const type = form.elements.namedItem("type")?.value || "transferencia";
+  const auction = type === "leilao";
+  form.querySelectorAll("[data-transfer-deposit-field]").forEach((field) => {
+    field.classList.toggle("hidden", auction);
+    const select = field.querySelector("select");
+    if (!select) return;
+    select.required = !auction;
+    if (auction) select.value = "";
+  });
 }
 
 async function createTransferLot(event) {
@@ -6982,7 +7002,7 @@ async function createTransferLot(event) {
   button.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form));
-    if (normalizeCode(payload.depositoOrigem) === normalizeCode(payload.depositoDestino)) {
+    if (payload.type !== "leilao" && normalizeCode(payload.depositoOrigem) === normalizeCode(payload.depositoDestino)) {
       throw new Error("Escolha depositos diferentes para origem e destino.");
     }
     const response = await api("/api/transfer-lots", {
@@ -6991,8 +7011,11 @@ async function createTransferLot(event) {
       body: JSON.stringify(payload)
     });
     form.reset();
+    updateTransferTypeFields();
     $("#transferMessage").style.color = "#0f766e";
-    $("#transferMessage").textContent = "Estrutura de transferencia criada. Pode comecar a bipar.";
+    $("#transferMessage").textContent = payload.type === "leilao"
+      ? "Agrupamento de leilao criado. Bipe etiquetas de triagem."
+      : "Agrupamento de transferencia criado. Pode comecar a bipar.";
     await loadTransferLots(response.lot.id);
     $("#transferScanInput")?.focus();
   } catch (error) {
@@ -7007,7 +7030,7 @@ function renderTransferLots() {
   const wrapper = $("#transferLots");
   if (!wrapper) return;
   if (!state.transferLots.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhuma estrutura de transferencia criada.</p>';
+    wrapper.innerHTML = '<p class="muted">Nenhum agrupamento criado.</p>';
     return;
   }
   const matches = new Set(transferProductSearchMatches().map((match) => match.lot.id));
@@ -7018,6 +7041,7 @@ function renderTransferLots() {
         ${transferReleasedIconMarkup(lot)}
       </div>
       ${lot.descricao ? `<span class="muted">${escapeHtml(lot.descricao)}</span>` : ""}
+      <span class="muted">Tipo: ${transferLotType(lot) === "leilao" ? "Leilao" : "Transferencia"}</span>
       <span class="muted">${lot.totalSkus} SKUs · ${lot.totalQty} unidades</span>
       <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
       ${lot.source === "triage" ? `<span class="muted">Origem: Triagem${lot.diagnosisCondition ? ` - ${escapeHtml(triageDiagnosisConditionLabel(lot.diagnosisCondition))}` : ""}</span>` : ""}
@@ -7044,16 +7068,16 @@ function renderTransferProductSearchResults() {
   if (!wrapper) return;
   const query = String(state.transferSearchQuery || "").trim();
   if (!query) {
-    wrapper.innerHTML = '<p class="muted">Digite um produto para ver em quais estruturas de transferencia ele aparece.</p>';
+    wrapper.innerHTML = '<p class="muted">Digite um produto para ver em quais agrupamentos ele aparece.</p>';
     return;
   }
   const matches = transferProductSearchMatches();
   if (!matches.length) {
-    wrapper.innerHTML = `<p class="muted">Nenhuma estrutura encontrada para "${escapeHtml(query)}".</p>`;
+    wrapper.innerHTML = `<p class="muted">Nenhum agrupamento encontrado para "${escapeHtml(query)}".</p>`;
     return;
   }
   wrapper.innerHTML = `
-    <div class="transfer-search-summary">${matches.length} estrutura${matches.length === 1 ? "" : "s"} encontrada${matches.length === 1 ? "" : "s"}</div>
+    <div class="transfer-search-summary">${matches.length} agrupamento${matches.length === 1 ? "" : "s"} encontrado${matches.length === 1 ? "" : "s"}</div>
     ${matches.map(transferProductSearchResult).join("")}
   `;
 }
@@ -7117,14 +7141,14 @@ function transferLotsForProduct(product = {}) {
 function transferLotsForProductMarkup(product = {}) {
   const lots = transferLotsForProduct(product);
   if (!lots.length) return "";
-  return `<small class="product-transfer-refs">Estruturas: ${lots.map((lot) => escapeHtml(lot.name)).join(", ")}</small>`;
+  return `<small class="product-transfer-refs">Agrupamentos: ${lots.map((lot) => escapeHtml(lot.name)).join(", ")}</small>`;
 }
 
 function clearTransferDetail() {
   const detail = $("#transferDetail");
   if (!detail) return;
   detail.classList.add("empty");
-  detail.textContent = "Crie ou selecione uma estrutura de transferencia.";
+  detail.textContent = "Crie ou selecione um agrupamento.";
 }
 
 async function handleTransferLotsClick(event) {
@@ -7144,7 +7168,8 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
   const canSync = state.user?.role !== "operator";
   const synced = lot.status === "synced";
   const cdLocked = lot.status !== "open";
-  const receivedMetricLabel = lot.wmsEnabled ? "Alocado WMS" : lot.source === "triage" ? "Aceite estoque" : "Conferido loja";
+  const auction = transferLotType(lot) === "leilao";
+  const receivedMetricLabel = auction ? "Itens" : lot.wmsEnabled ? "Alocado WMS" : lot.source === "triage" ? "Aceite estoque" : "Conferido loja";
   const displayItems = prioritizeTransferItems(lot.items || [], lastCode);
   const detail = $("#transferDetail");
   detail.classList.remove("empty");
@@ -7152,7 +7177,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
     <section class="transfer-panel">
       <div class="work-heading">
         <div>
-          <span class="muted">${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}</span>
+          <span class="muted">${auction ? "Agrupamento: Leilao" : `${escapeHtml(lot.depositoOrigem)} → ${escapeHtml(lot.depositoDestino)}`}</span>
           <h2>${escapeHtml(lot.name)}</h2>
           ${lot.descricao ? `<p class="muted transfer-description">${escapeHtml(lot.descricao)}</p>` : ""}
         </div>
@@ -7162,40 +7187,40 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
         </div>
       </div>
       <form id="transferScanForm" class="search-bar">
-        <input id="transferScanInput" name="code" placeholder="CD: bipe Codigo ML ou SKU para montar a estrutura" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
+        <input id="transferScanInput" name="code" placeholder="${auction ? "Bipe a etiqueta de triagem" : "CD: bipe Codigo ML ou SKU para montar a estrutura"}" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
         <button type="submit" ${synced || cdLocked ? "disabled" : ""}>Adicionar</button>
       </form>
       <p id="transferScanMessage" class="message"></p>
       <div class="summary-grid">
         ${metric("SKUs", lot.totalSkus)}
-        ${metric("Planejado CD", lot.totalPlanned ?? lot.totalQty)}
+        ${metric(auction ? "Etiquetas" : "Planejado CD", lot.totalPlanned ?? lot.totalQty)}
         ${metric(receivedMetricLabel, lot.totalReceived || 0)}
-        ${metric("Falta", lot.totalPending ?? 0)}
+        ${auction ? metric("Fotos", (lot.items || []).filter((item) => item.diagnosisPhoto).length) : metric("Falta", lot.totalPending ?? 0)}
       </div>
-      <div class="summary-grid">
+      <div class="summary-grid ${auction ? "hidden" : ""}">
         ${metric("Origem", lot.depositoOrigem)}
         ${metric("Destino", lot.depositoDestino)}
       </div>
       ${transferDivergenceReportsList(lot)}
       <div class="actions">
-        <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR da estrutura</button>
-        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${lot.wmsEnabled ? "Liberar para WMS" : lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
-        <a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.wmsEnabled ? "Alocar produto" : lot.source === "triage" ? "Aceitar entrada fisica" : "Abrir conferencia da loja"}</a>
+        <button type="button" data-print-transfer-qr="${escapeHtml(lot.id)}" ${!lot.items.length ? "disabled" : ""}>Imprimir QR do agrupamento</button>
+        <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${auction ? "Fechar agrupamento" : lot.wmsEnabled ? "Liberar para WMS" : lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
+        ${auction ? "" : `<a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.wmsEnabled ? "Alocar produto" : lot.source === "triage" ? "Aceitar entrada fisica" : "Abrir conferencia da loja"}</a>`}
       </div>
-      <div class="actions ${canSync ? "" : "hidden"}">
+      <div class="actions ${canSync && !auction ? "" : "hidden"}">
         <a class="button-link" href="/api/transfer-lots/${encodeURIComponent(lot.id)}/bling">Baixar Excel</a>
         <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length || !(lot.totalReceived || 0) ? "disabled" : ""}>Enviar transferencia ao Bling</button>
       </div>
       <div class="diverse-table transfer-table">
-        <div class="diverse-row transfer-row diverse-row-head">
-          <span>SKU</span>
-          <span>Codigo</span>
-          <span>Produto</span>
-          <span>CD</span>
-          <span>Loja</span>
-          <span>Falta</span>
-          <span>Acoes</span>
-        </div>
+          <div class="diverse-row transfer-row diverse-row-head">
+            <span>SKU</span>
+            <span>${auction ? "Etiqueta" : "Codigo"}</span>
+            <span>Produto</span>
+            <span>${auction ? "Qtd" : "CD"}</span>
+            <span>${auction ? "Foto" : "Loja"}</span>
+            <span>${auction ? "Laudo" : "Falta"}</span>
+            <span>Acoes</span>
+          </div>
         ${displayItems.length ? displayItems.map((item) => transferItemRow(item, synced || cdLocked)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
       </div>
     </section>
@@ -7254,14 +7279,16 @@ function transferDivergenceTypeLabel(type) {
 
 function transferItemRow(item, synced) {
   const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
+  const photo = item.diagnosisPhoto ? `<img class="transfer-row-photo" src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto da triagem" />` : "";
+  const triageGrouped = Boolean(item.triageItemId);
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
       <span>${escapeHtml(item.codigoMl)}</span>
-      <span>${escapeHtml(item.descricao)}</span>
+      <span>${photo}${escapeHtml(item.descricao)}${item.diagnosisCondition ? `<small>${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}</small>` : ""}</span>
       <span>${item.quantidade}</span>
-      <span>${item.quantidadeConferida || 0}</span>
-      <span>${falta}</span>
+      <span>${triageGrouped ? item.diagnosisPhoto ? "Sim" : "Nao" : item.quantidadeConferida || 0}</span>
+      <span>${triageGrouped ? escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition)) : falta}</span>
       <span class="transfer-row-actions">
         <button type="button" class="danger ghost" data-transfer-decrement="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Diminuir</button>
         <button type="button" class="danger ghost" data-transfer-delete="${escapeHtml(item.id)}" ${synced ? "disabled" : ""}>Excluir</button>
@@ -7270,7 +7297,20 @@ function transferItemRow(item, synced) {
   `;
 }
 
+function transferLotType(lot = {}) {
+  const type = normalizeCode(lot.type || lot.groupingType || "");
+  return type === "LEILAO" || type === "LEILÃO" ? "leilao" : "transferencia";
+}
+
 function transferStatusLabel(status, lot = {}) {
+  if (transferLotType(lot) === "leilao") {
+    return ({
+      open: "Em montagem",
+      ready_sync: "Fechado",
+      divergent: "Divergente",
+      synced: "Finalizado"
+    })[status] || "Em montagem";
+  }
   if (lot?.source === "triage" && lot?.wmsEnabled) {
     return ({
       open: "Aguardando transferencia",
@@ -7337,7 +7377,7 @@ async function handleTransferDetailSubmit(event) {
     renderTransferDetail(response.lot, { lastCode: code });
     await loadTransferLots(response.lot.id);
     $("#transferScanMessage").style.color = "#0f766e";
-    $("#transferScanMessage").textContent = `${response.product.sku} adicionado a estrutura.`;
+    $("#transferScanMessage").textContent = `${response.product.sku} adicionado ao agrupamento.`;
   } catch (error) {
     $("#transferScanMessage").style.color = "";
     $("#transferScanMessage").textContent = error.message;
@@ -7351,7 +7391,7 @@ async function handleTransferDetailSubmit(event) {
 async function handleTransferDetailClick(event) {
   const deleteButton = event.target.closest("[data-transfer-delete]");
   if (deleteButton && state.selectedTransferLotId) {
-    if (!confirm("Excluir este item da estrutura?")) {
+    if (!confirm("Excluir este item do agrupamento?")) {
       return;
     }
     deleteButton.disabled = true;
@@ -7364,7 +7404,7 @@ async function handleTransferDetailClick(event) {
       renderTransferDetail(response.lot);
       await loadTransferLots(state.selectedTransferLotId);
       $("#transferScanMessage").style.color = "#0f766e";
-      $("#transferScanMessage").textContent = "Item excluido da estrutura.";
+      $("#transferScanMessage").textContent = "Item excluido do agrupamento.";
     } catch (error) {
       $("#transferScanMessage").style.color = "";
       $("#transferScanMessage").textContent = error.message;
@@ -7398,14 +7438,15 @@ async function handleTransferDetailClick(event) {
 async function releaseTransferLot(transferLotId, button) {
   const lot = state.transferLots.find((item) => item.id === transferLotId);
   const triageTransfer = lot?.source === "triage";
-  if (!confirm(lot?.wmsEnabled ? "Liberar esta estrutura para entrada WMS?" : triageTransfer ? "Liberar esta estrutura para aceite de estoque?" : "Liberar esta estrutura para conferencia na loja?")) return;
+  const auction = transferLotType(lot) === "leilao";
+  if (!confirm(auction ? "Fechar este agrupamento de leilao?" : lot?.wmsEnabled ? "Liberar esta estrutura para entrada WMS?" : triageTransfer ? "Liberar esta estrutura para aceite de estoque?" : "Liberar esta estrutura para conferencia na loja?")) return;
   button.disabled = true;
   try {
     const response = await api(`/api/transfer-lots/${encodeURIComponent(transferLotId)}/release`, { method: "POST" });
     renderTransferDetail(response.lot);
     await loadTransferLots(transferLotId);
     $("#transferScanMessage").style.color = "#0f766e";
-    $("#transferScanMessage").textContent = lot?.wmsEnabled ? "Estrutura liberada para entrada WMS." : triageTransfer ? "Estrutura liberada para aceite de estoque." : "Estrutura liberada para a loja.";
+    $("#transferScanMessage").textContent = auction ? "Agrupamento de leilao fechado." : lot?.wmsEnabled ? "Estrutura liberada para entrada WMS." : triageTransfer ? "Estrutura liberada para aceite de estoque." : "Estrutura liberada para a loja.";
   } catch (error) {
     $("#transferScanMessage").style.color = "";
     $("#transferScanMessage").textContent = error.message;
@@ -7424,10 +7465,10 @@ function showTransferQrLabel(transferLotId) {
   state.labelPrintMarkup = `
     <section class="transfer-qr-label">
       <header class="transfer-label-header">
-        <strong>ESTRUTURA</strong>
+        <strong>AGRUPAMENTO</strong>
         <span>${escapeHtml(lot?.name || transferLotId)}</span>
       </header>
-      <img src="/api/transfer-lots/${encodeURIComponent(transferLotId)}/qr.svg" alt="QR Code da estrutura de transferencia" />
+      <img src="/api/transfer-lots/${encodeURIComponent(transferLotId)}/qr.svg" alt="QR Code do agrupamento" />
       <div class="transfer-label-info">
         ${lot?.descricao ? `<p>${escapeHtml(lot.descricao)}</p>` : ""}
         <dl>

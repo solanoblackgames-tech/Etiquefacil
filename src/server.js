@@ -1022,6 +1022,7 @@ app.post("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, r
       descricao: req.body.descricao,
       depositoOrigem: req.body.depositoOrigem,
       depositoDestino: req.body.depositoDestino,
+      type: req.body.type || req.body.tipo,
       createdByUserId: req.session.user?.id
     });
     await recordOperatorActivity(req.session.user, "create_transfer_lot", { transferLotId: lot.id });
