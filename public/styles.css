@@ -2462,7 +2462,10 @@ h3 {
 
 .triage-label-simple,
 .triage-label-mode-complete .triage-label-complete {
-  display: block;
+  display: grid;
+  height: 100%;
+  place-items: center;
+  width: 100%;
 }
 
 .triage-label-simple-inner {
@@ -6858,6 +6861,8 @@ h3 {
   }
 
   #triageLabelPrintable {
+    align-content: center;
+    align-items: center;
     border-radius: 0;
     box-shadow: none;
     box-sizing: border-box;
@@ -6912,7 +6917,10 @@ h3 {
   }
 
   #triageLabelPrintable .triage-label-simple {
-    display: block;
+    display: grid;
+    height: 100%;
+    place-items: center;
+    width: 100%;
   }
 
   #triageLabelPrintable .triage-label-complete {

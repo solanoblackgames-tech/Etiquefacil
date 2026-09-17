@@ -5,6 +5,15 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+const completeTriagePayload = (payload = {}) => ({
+  ean: "7891234567890",
+  alturaCaixa: 10,
+  larguraCaixa: 20,
+  comprimentoCaixa: 30,
+  pesoCaixa: 1.5,
+  ...payload
+});
+
 test("triage diagnosis creates one waiting transfer from configured deposits", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -70,7 +79,7 @@ test("triage diagnosis creates one waiting transfer from configured deposits", a
       userId: "owner-1",
       createdByUserId: "operator-1",
       operatorUserId: "operator-1",
-      payload: { sku: "SKU123", descricao: "Produto internet", ean: "789" }
+      payload: completeTriagePayload({ sku: "SKU123", descricao: "Produto internet" })
     });
     const diagnosed = await updateTriageDiagnosis({
       userId: "owner-1",
@@ -166,13 +175,13 @@ test("triage transfer marks WMS only for destinations with generated WMS deposit
       userId: "owner-1",
       createdByUserId: "operator-1",
       operatorUserId: "operator-1",
-      payload: { sku: "SKU-ECOM", descricao: "Produto internet" }
+      payload: completeTriagePayload({ sku: "SKU-ECOM", descricao: "Produto internet" })
     });
     const rmaItem = await createTriageItem({
       userId: "owner-1",
       createdByUserId: "operator-1",
       operatorUserId: "operator-1",
-      payload: { sku: "SKU-RMA", descricao: "Produto RMA" }
+      payload: completeTriagePayload({ sku: "SKU-RMA", descricao: "Produto RMA" })
     });
 
     await createOrUpdateTriageTransfer({

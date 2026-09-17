@@ -1159,7 +1159,7 @@ export async function listTriageItems(userId, filters = {}) {
         left join lots l on l.id = p.lot_id
         where t.user_id = $1
           and ($2::text = '' or p.id is not null)
-        order by t.updated_at desc
+        order by coalesce(t.diagnosed_at, t.created_at) desc, t.created_at desc
       `,
       [userId, lotId]
     );
@@ -1188,7 +1188,17 @@ export async function listTriageItems(userId, filters = {}) {
       };
     })
     .filter((item) => !lotId || item.lotId === lotId)
-    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    .sort(compareTriageChronologyDesc);
+}
+
+function triageChronologyDate(item = {}) {
+  return item.diagnosedAt || item.createdAt || "";
+}
+
+function compareTriageChronologyDesc(a = {}, b = {}) {
+  const byDate = String(triageChronologyDate(b)).localeCompare(String(triageChronologyDate(a)));
+  if (byDate) return byDate;
+  return String(b.code || "").localeCompare(String(a.code || ""));
 }
 
 export async function getTriageStats(userId, period = {}) {
@@ -1508,6 +1518,12 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
     const client = await getPgPool().connect();
     try {
       await client.query("begin");
+      const current = await client.query(
+        "select * from triage_items where user_id = $1 and upper(code) = upper($2) limit 1 for update",
+        [userId, normalizeCode(code)]
+      );
+      if (!current.rows.length) throw notFound("Item de triagem nao encontrado.");
+      assertTriageReadyForDiagnosis(triageItemFromRow(current.rows[0]));
       const result = await client.query(
         `update triage_items
          set status = 'diagnosticado',
@@ -1551,6 +1567,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const db = await readDb();
   const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalizeCode(code));
   if (!item) throw notFound("Item de triagem nao encontrado.");
+  assertTriageReadyForDiagnosis(item);
   item.status = "diagnosticado";
   item.destination = destination;
   item.diagnosisCondition = diagnosisCondition;
@@ -1574,6 +1591,26 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   });
   await writeDb(db);
   return item;
+}
+
+function assertTriageReadyForDiagnosis(item = {}) {
+  const missing = [];
+  if (!String(item.descricao || "").trim()) missing.push("descricao");
+  if (!String(item.sku || "").trim()) missing.push("SKU");
+  if (!String(item.ean || "").trim()) missing.push("EAN");
+  if (!hasPositiveTriageNumber(item.alturaCaixa) || !hasPositiveTriageNumber(item.larguraCaixa) || !hasPositiveTriageNumber(item.comprimentoCaixa)) {
+    missing.push("dimensoes da caixa");
+  }
+  if (!hasPositiveTriageNumber(item.pesoCaixa)) missing.push("peso da caixa");
+  if (missing.length) {
+    throw new Error(`Complete os dados do item antes de diagnosticar: ${missing.join(", ")}.`);
+  }
+}
+
+function hasPositiveTriageNumber(value) {
+  if (value === undefined || value === null || value === "") return false;
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0;
 }
 
 export async function listTriageDiagnosisHistory({ userId, code }) {

@@ -5,6 +5,7 @@ const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
 const BLING_FETCH_TIMEOUT_MS = 12_000;
+const blingSupplierCache = new Map();
 
 export async function runBlingHomologation({ integration, saveIntegration, fetchImpl = globalThis.fetch } = {}) {
   if (!integration?.accessToken) throw new Error("Informe o access token do Bling para executar a homologacao.");
@@ -605,6 +606,27 @@ class BlingApiClient {
   async findOrCreateSupplier(name) {
     const normalized = normalizeText(name);
     if (!normalized) return null;
+    const cacheKey = blingSupplierCacheKey(this.integration, normalized);
+    const cached = blingSupplierCache.get(cacheKey);
+    if (cached) return cached instanceof Promise ? await cached : cached;
+
+    const pending = this.findOrCreateSupplierFresh(name, normalized);
+    blingSupplierCache.set(cacheKey, pending);
+    try {
+      const supplier = await pending;
+      if (supplier?.id) {
+        blingSupplierCache.set(cacheKey, supplier);
+      } else {
+        blingSupplierCache.delete(cacheKey);
+      }
+      return supplier;
+    } catch (error) {
+      blingSupplierCache.delete(cacheKey);
+      throw error;
+    }
+  }
+
+  async findOrCreateSupplierFresh(name, normalized) {
     const supplierType = await this.findSupplierContactType();
     if (!supplierType?.id) throw new Error("Tipo de contato Fornecedor nao encontrado no Bling.");
     const payload = await this.request("/contatos", {
@@ -1143,6 +1165,10 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+}
+
+function blingSupplierCacheKey(integration = {}, normalizedName = "") {
+  return `${integration.accessToken || ""}:${normalizedName}`;
 }
 
 function numberOrZero(value) {

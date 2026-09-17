@@ -795,6 +795,48 @@ test("Bling product sync does not block product creation when supplier contact i
   }
 });
 
+test("Bling supplier contact is reused when contact search is stale", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [{ id: 2, descricao: "Fornecedor" }] }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 321, nome: "Fornecedor Cache" } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 987 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 555 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 988 } }) },
+    { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [] }) },
+    { ok: true, status: 201, headers: new Headers(), json: async () => ({ data: { id: 556 } }) }
+  ];
+
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    return responses.shift();
+  };
+
+  try {
+    const integration = { accessToken: "token-supplier-cache" };
+    const first = await syncBlingProducts({
+      integration,
+      products: [{ sku: "CACHE001", descricao: "Produto cache 1", valorUnit: 10, precoCusto: 5, fornecedor: "Fornecedor Cache" }]
+    });
+    const second = await syncBlingProducts({
+      integration,
+      products: [{ sku: "CACHE002", descricao: "Produto cache 2", valorUnit: 20, precoCusto: 8, fornecedor: "Fornecedor Cache" }]
+    });
+
+    assert.equal(first.created, 1);
+    assert.equal(second.created, 1);
+    assert.equal(calls.filter((call) => call.method === "POST" && call.url.endsWith("/contatos")).length, 1);
+    assert.equal(calls.filter((call) => call.url.includes("/contatos?")).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Bling existing product update does not create missing products", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

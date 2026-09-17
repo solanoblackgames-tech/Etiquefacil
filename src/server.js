@@ -1033,14 +1033,14 @@ app.post("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, r
 
 app.get("/api/transfer-lots/:transferLotId", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   let lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
-  if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+  if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
   if (!req.session.user?.transferAccess) lot = await requireTransferLotAcceptanceDeposit(req, res, lot);
   res.json({ lot });
 });
 
 app.get("/api/public/transfer-lots/:transferLotId", requirePublicTransferReceiveAllowed, async (req, res) => {
   const lot = await getPublicTransferLotDetail(req.params.transferLotId);
-  if (!lot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+  if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
   res.json({ lot });
 });
 
@@ -1110,7 +1110,7 @@ app.post("/api/transfer-lots/:transferLotId/confirm-total", requireAuth, require
   try {
     const userId = workspaceUserId(req);
     const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
-    if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    if (!existingLot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
     await requireTransferLotAcceptanceDeposit(req, res, existingLot);
     result = await confirmPublicTransferLotTotal({
       transferLotId: req.params.transferLotId,
@@ -1149,7 +1149,7 @@ app.post("/api/transfer-lots/:transferLotId/force-receive-scan", requireAuth, re
   try {
     const userId = workspaceUserId(req);
     const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
-    if (!existingLot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    if (!existingLot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
     await requireTransferLotAcceptanceDeposit(req, res, existingLot);
     const code = String(req.body.code || req.body.codigoMl || "").trim().toUpperCase();
     const reason = normalizeRequiredJustification(req.body.reason || req.body.justificativa);
@@ -1311,7 +1311,7 @@ app.post("/api/public/transfer-lots/:transferLotId/divergence-reports", requireP
 app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
-    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
+    if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
     const url = `${req.protocol}://${req.get("host")}/transferencias/${encodeURIComponent(lot.id)}/loja`;
     const svg = await QRCode.toString(url, { type: "svg", margin: 1, width: 240, errorCorrectionLevel: "M" });
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
@@ -1324,8 +1324,8 @@ app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, requireTransfer
 app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
-    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
-    if (!lot.items.length) return res.status(404).json({ error: "Nenhum item bipado neste lote." });
+    if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
+    if (!lot.items.length) return res.status(404).json({ error: "Nenhum item bipado nesta estrutura." });
     const rows = buildBlingStockTransferRows(transferItemsForBling(lot), {
       depositoOrigem: lot.depositoOrigem,
       depositoDestino: lot.depositoDestino,
@@ -1347,10 +1347,10 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, requireTra
   try {
     const userId = workspaceUserId(req);
     const lot = await getTransferLotDetail(userId, req.params.transferLotId);
-    if (!lot) return res.status(404).json({ error: "Lote de transferencia nao encontrado." });
-    if (!lot.items.length) throw new Error("Nenhum item bipado neste lote.");
+    if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
+    if (!lot.items.length) throw new Error("Nenhum item bipado nesta estrutura.");
     const items = transferItemsForBling(lot, { requireReceived: true });
-    if (!items.length) throw new Error("Nenhum item conferido pela loja nesta remessa.");
+    if (!items.length) throw new Error("Nenhum item aceito fisicamente nesta estrutura.");
     const integration = await getRequiredBlingCredentials(userId);
     const result = await syncBlingStockTransfers({
       integration,
@@ -1379,7 +1379,7 @@ app.post("/api/transfer-lots/:transferLotId/bling/sync", requireAuth, requireTra
         return res.status(202).json({
           ok: false,
           queued: true,
-          error: `Transferencia no Bling ficou na fila para tentar novamente: ${error.message}`,
+          error: `Estrutura de transferencia no Bling ficou na fila para tentar novamente: ${error.message}`,
           lot
         });
       }
@@ -1401,7 +1401,7 @@ function transferItemsForBling(lot, { requireReceived = false } = {}) {
 }
 
 async function syncSingleReceivedTransferItem(lot, item) {
-  if (!lot?.userId) throw new Error("Dono da remessa nao encontrado para transferir no Bling.");
+  if (!lot?.userId) throw new Error("Dono da estrutura nao encontrado para transferir no Bling.");
   const integration = await getRequiredBlingCredentials(lot.userId);
   return syncBlingStockTransfers({
     integration,
@@ -2751,9 +2751,9 @@ async function requireTransferOrTriageAccess(req, res, next) {
 async function requirePublicTransferReceiveAllowed(req, res, next) {
   try {
     const lot = await getPublicTransferLotDetail(req.params.transferLotId);
-    if (!lot) return res.status(404).json({ error: "Remessa de transferencia nao encontrada." });
+    if (!lot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
     if (lot.source === "triage") {
-      return res.status(403).json({ error: "Transferencia gerada pela triagem exige operador autorizado." });
+      return res.status(403).json({ error: "Estrutura gerada pela triagem exige operador autorizado." });
     }
     return next();
   } catch (error) {

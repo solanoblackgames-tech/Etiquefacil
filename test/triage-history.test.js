@@ -5,6 +5,15 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+const completeTriagePayload = (payload = {}) => ({
+  ean: "7891234567890",
+  alturaCaixa: 10,
+  larguraCaixa: 20,
+  comprimentoCaixa: 30,
+  pesoCaixa: 1.5,
+  ...payload
+});
+
 test("updateTriageDiagnosis stores diagnosis history for the triage item", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -47,7 +56,7 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
     const item = await createTriageItem({
       userId: "owner-1",
       createdByUserId: "owner-1",
-      payload: { descricao: "Produto teste", sku: "SKU-1" }
+      payload: completeTriagePayload({ descricao: "Produto teste", sku: "SKU-1" })
     });
 
     await updateTriageDiagnosis({
@@ -74,6 +83,65 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
     assert.equal(history[1].diagnosisCondition, "OK_FUNCIONANDO");
     assert.equal(stats.totalCost, 0);
     assert.deepEqual(stats.diagnosisConditions, [{ condition: "FUNCIONANDO_COM_DETALHES", total: 1, totalValue: 0, totalCost: 0 }]);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("updateTriageDiagnosis blocks diagnosis when triage item data is incomplete", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-required-data-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-required-data`;
+    const { createTriageItem, updateTriageDiagnosis, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "owner-1", name: "Usuario", email: "user@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const item = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      payload: { sku: "SKU-1" }
+    });
+
+    await assert.rejects(
+      () => updateTriageDiagnosis({
+        userId: "owner-1",
+        code: item.code,
+        operatorUserId: "owner-1",
+        payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Laudo aprovado", destination: "VENDA_DIRETA" }
+      }),
+      /Complete os dados do item antes de diagnosticar: descricao, EAN, dimensoes da caixa, peso da caixa\./
+    );
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
@@ -200,7 +268,7 @@ test("triage stats rows can be filtered by lot for export", async () => {
       triageEvents: []
     });
 
-    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "owner-1", payload: { sku: "SKU-1", descricao: "Triagem 1" } });
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "owner-1", payload: completeTriagePayload({ sku: "SKU-1", descricao: "Triagem 1" }) });
     await createTriageItem({ userId: "owner-1", createdByUserId: "owner-1", payload: { sku: "SKU-2", descricao: "Triagem 2" } });
     await updateTriageDiagnosis({
       userId: "owner-1",

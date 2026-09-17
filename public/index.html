@@ -127,7 +127,7 @@
         <nav class="app-nav">
           <button data-tab="lots" type="button">Conferencia</button>
           <button data-tab="search" type="button">Busca Produtos</button>
-          <button data-tab="transfers" type="button">Transferencias</button>
+          <button data-tab="transfers" type="button">Estruturas</button>
           <button data-tab="expedition" type="button">Expedicao</button>
           <button data-tab="triage" class="hidden" type="button">Triagem</button>
           <button data-tab="profile" class="active" type="button">Perfil</button>
@@ -321,7 +321,7 @@
               </label>
               <label class="wide-field checkbox-field">
                 <input name="enabled" type="checkbox" />
-                <span>Gerar transferencia automaticamente ao salvar laudo</span>
+                <span>Gerar estrutura de transferencia automaticamente ao salvar laudo</span>
               </label>
               <div class="wide-field triage-deposit-picker">
                 <div class="triage-settings-heading">
@@ -431,20 +431,20 @@
         <section class="entry-panel transfer-create-panel hidden">
           <div class="panel-heading">
             <span class="muted">Operacao</span>
-            <h3>Criar lote de transferencia</h3>
+            <h3>Criar estrutura de transferencia</h3>
           </div>
           <form id="transferLotForm" class="transfer-form">
             <label>Descricao curta<input name="descricao" maxlength="80" placeholder="Ex: Caixa 2, roupas premium" /></label>
             <label>Estoque origem<select name="depositoOrigem" required><option value="">Carregando depositos...</option></select></label>
             <label>Estoque destino<select name="depositoDestino" required><option value="">Carregando depositos...</option></select></label>
-            <button type="submit">Criar lote</button>
+            <button type="submit">Criar estrutura</button>
           </form>
           <p id="transferMessage" class="message"></p>
         </section>
         <details class="entry-panel transfer-search-panel hidden">
           <summary class="panel-heading">
             <span class="muted">Localizar produto</span>
-            <h3>Buscar nas remessas de transferencia</h3>
+            <h3>Buscar nas estruturas de transferencia</h3>
           </summary>
           <div class="transfer-search-body">
             <label>Produto, SKU, Codigo ML ou EAN
@@ -457,11 +457,11 @@
           <aside class="lot-list">
             <div class="aside-heading">
               <span class="muted">Transferencias</span>
-              <h2>Lotes</h2>
+              <h2>Estruturas</h2>
             </div>
             <div id="transferLots"></div>
           </aside>
-          <section id="transferDetail" class="detail empty">Crie ou selecione um lote de transferencia.</section>
+          <section id="transferDetail" class="detail empty">Crie ou selecione uma estrutura de transferencia.</section>
         </section>
       </section>
 
@@ -597,7 +597,7 @@
             <div class="admin-heading">
               <div>
                 <h2>Regras de triagem e WMS</h2>
-                <p>Defina laudos, destinos e depositos usados para gerar transferencias automaticas no mesmo Bling.</p>
+                <p>Defina laudos, destinos e depositos usados para gerar estruturas de transferencia automaticas no mesmo Bling.</p>
               </div>
               <button id="adminTriageRulesRefreshButton" class="ghost" type="button">Atualizar</button>
             </div>
@@ -610,12 +610,12 @@
               </label>
               <label class="wide-field checkbox-field">
                 <input name="enabled" type="checkbox" />
-                <span>Gerar transferencias automaticamente pela triagem</span>
+                <span>Gerar estruturas automaticamente pela triagem</span>
               </label>
               <label class="wide-field">Destinos e depositos
                 <textarea name="destinations" rows="5" placeholder="ECOMMERCE | Ecommerce | Ecommerce&#10;LOJA | Loja | Loja"></textarea>
               </label>
-              <label class="wide-field">Laudos e regras de transferencia
+              <label class="wide-field">Laudos e regras da estrutura de transferencia
                 <textarea name="diagnosisOptions" rows="8" placeholder="OK_VENDA_INTERNET | OK venda internet | ECOMMERCE | Triagem | Ecommerce | sim&#10;OK_COM_DETALHES | OK com detalhes | LOJA | Triagem | Loja | sim"></textarea>
               </label>
               <button type="submit">Salvar regras</button>
