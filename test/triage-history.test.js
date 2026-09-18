@@ -250,7 +250,9 @@ test("triage stats rows can be filtered by lot for export", async () => {
         { id: "product-1", lotId: "lot-1", codigoMl: "ML1", sku: "SKU-1", descricao: "Produto 1", valorUnit: 120.5, precoCusto: 40, qtdTotal: 3, createdAt: now },
         { id: "product-2", lotId: "lot-2", codigoMl: "ML2", sku: "SKU-2", descricao: "Produto 2", valorUnit: 220.5, precoCusto: 80, qtdTotal: 2, createdAt: now }
       ],
-      rzItems: [],
+      rzItems: [
+        { id: "rz-1", lotId: "lot-1", productId: "product-1", codigoRz: "RZ-1", qtdEsperada: 3, qtdConferida: 1, tipoItem: "esperado", valorTotal: 361.5, createdAt: now }
+      ],
       scans: [],
       labels: [],
       blingIntegrations: [],

@@ -1214,6 +1214,7 @@ export async function listTriageStatsRows(userId, period = {}) {
     await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       `
+        with matched_triage as (
         select
           t.id,
           t.code,
@@ -1231,6 +1232,7 @@ export async function listTriageStatsRows(userId, period = {}) {
           coalesce(nullif(t.valor_unit, 0), nullif(p.valor_unit, 0), nullif(previous_triage.valor_unit, 0), 0) as valor_unit,
           coalesce(nullif(t.preco_custo, 0), nullif(p.preco_custo, 0), 0) as preco_custo,
           p.id as product__id,
+          p.checked_qty as product__checked_qty,
           p.lot_id as product__lot_id,
           p.codigo_ml as product__codigo_ml,
           p.sku as product__sku,
@@ -1272,12 +1274,19 @@ export async function listTriageStatsRows(userId, period = {}) {
           u.name as user__name,
           u.email as user__email,
           u.password_hash as user__password_hash,
-          u.created_at as user__created_at
+          u.created_at as user__created_at,
+          case
+            when p.id is null then null
+            else row_number() over (partition by p.id order by t.created_at asc, t.id asc)
+          end as product_match_rank
         from triage_items t
         left join lateral (
-          select pr.*
+          select
+            pr.*,
+            coalesce(sum(ri.qtd_conferida), 0)::int as checked_qty
           from products pr
           join lots l on l.id = pr.lot_id
+          left join rz_items ri on ri.product_id = pr.id and ri.lot_id = pr.lot_id
           where l.user_id = t.user_id
             and ($4::text = '' or l.id = $4::text)
             and (
@@ -1286,6 +1295,7 @@ export async function listTriageStatsRows(userId, period = {}) {
               or (t.codigo_bling2 <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.codigo_bling2)))
               or (t.asin <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.asin)))
             )
+          group by pr.id
           order by pr.created_at desc
           limit 1
         ) p on true
@@ -1309,8 +1319,11 @@ export async function listTriageStatsRows(userId, period = {}) {
         where t.user_id = $1
           and ($2::timestamptz is null or t.created_at >= $2::timestamptz)
           and ($3::timestamptz is null or t.created_at <= $3::timestamptz)
-          and ($4::text = '' or p.id is not null)
-        order by t.updated_at desc
+        )
+        select *
+        from matched_triage
+        where ($4::text = '' or (product__id is not null and product_match_rank <= product__checked_qty))
+        order by updated_at desc
       `,
       [userId, range.startAt, range.endAt, lotId]
     );
@@ -1345,7 +1358,7 @@ export async function listTriageStatsRows(userId, period = {}) {
   const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
   const transferredTriageItemIds = transferredTriageIdsFromLots((db.transferLots || []).filter((lot) => lot.userId === userId));
-  return (db.triageItems || [])
+  const rows = (db.triageItems || [])
     .filter((item) => item.userId === userId)
     .filter((item) => isWithinDateRange(item.createdAt, range))
     .map((item) => {
@@ -1362,6 +1375,25 @@ export async function listTriageStatsRows(userId, period = {}) {
       };
     })
     .filter((row) => !lotId || row.product?.lotId === lotId);
+  if (!lotId) return rows;
+  const checkedByProduct = new Map();
+  for (const item of db.rzItems || []) {
+    if (item.lotId !== lotId || !item.productId) continue;
+    checkedByProduct.set(item.productId, Number(checkedByProduct.get(item.productId) || 0) + Number(item.qtdConferida || 0));
+  }
+  const usedByProduct = new Map();
+  return rows
+    .sort((a, b) => String(a.item?.createdAt || "").localeCompare(String(b.item?.createdAt || "")) || String(a.item?.id || "").localeCompare(String(b.item?.id || "")))
+    .filter((row) => {
+      const productId = row.product?.id;
+      if (!productId) return false;
+      const used = Number(usedByProduct.get(productId) || 0);
+      const checked = Number(checkedByProduct.get(productId) || 0);
+      if (used >= checked) return false;
+      usedByProduct.set(productId, used + 1);
+      return true;
+    })
+    .sort((a, b) => String(b.item?.updatedAt || b.item?.createdAt || "").localeCompare(String(a.item?.updatedAt || a.item?.createdAt || "")));
 }
 
 export async function getOperationalDashboardStats(userId, period = {}) {
