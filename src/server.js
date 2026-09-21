@@ -161,7 +161,7 @@ const ADMIN_EMAIL = "lucassolano@jz";
 const ADMIN_PASSWORD = "Jz2026";
 const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Geral";
-const usePgSessionStore = hasPostgres() && config.cookieSecure;
+const usePgSessionStore = hasPostgres();
 const ADMIN_USER = {
   id: "backoffice-admin",
   tenantId: "backoffice",
@@ -1479,6 +1479,10 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
     res.redirect("/perfil?bling=connected");
   } catch (error) {
     req.session.blingOAuthState = null;
+    console.error("Falha no callback OAuth do Bling:", {
+      userId: workspaceUserId(req),
+      message: error.message
+    });
     res.redirect(`/perfil?bling=error&message=${encodeURIComponent(error.message)}`);
   }
 }
