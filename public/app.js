@@ -2573,6 +2573,17 @@ async function showApp(user) {
   $("#userName").textContent = `${user.name} (${user.email})`;
   state.blingIntegration = null;
   applyUserPermissions(user);
+  const route = parseRoute(window.location.pathname);
+  if (route.view === "transferAccept") {
+    if (!state.user?.stockTransferAcceptanceAccess) {
+      setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+      schedulePrimaryInputFocus();
+      return;
+    }
+    await showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
+    schedulePrimaryInputFocus();
+    return;
+  }
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
   if (user.triageAccess) await loadTriageTransferSettings();
@@ -2586,7 +2597,6 @@ async function showApp(user) {
     await showTransferReceiveOnly(transferReceiveRequest);
     return;
   }
-  const route = parseRoute(window.location.pathname);
   const directTriageRoute = route.view === "triageView" || (route.view === "triage" && route.triageCode);
   const canOpenDirectTriage = state.user?.triageAccess || (route.view === "triageView" && state.user?.stockTransferAcceptanceAccess);
   if (directTriageRoute && canOpenDirectTriage) {
