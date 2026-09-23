@@ -6192,6 +6192,7 @@ function renderTransferReceiveCompletePage(lot) {
         ${metric("Diferenca", transferTotalDifferenceLabel(lot))}
       </div>
       <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
+      ${nextTriageLabelScanMarkup(lot)}
       ${transferDivergenceReportPanel(lot)}
       <details class="transfer-items-panel" ${Number(lot.totalDifference || 0) ? "open" : ""}>
         <summary>
@@ -6210,7 +6211,63 @@ function renderTransferReceiveCompletePage(lot) {
       </details>
     </section>
   `;
+  detail.querySelector("#nextTriageLabelForm")?.addEventListener("submit", handleNextTriageLabelSubmit);
   detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
+  schedulePrimaryInputFocus(["#nextTriageLabelInput"]);
+}
+
+function nextTriageLabelScanMarkup(lot = {}) {
+  if (lot.source !== "triage" || lot.wmsEnabled) return "";
+  return `
+    <form id="nextTriageLabelForm" class="transfer-total-form next-triage-label-form">
+      <label>Proximo laudo
+        <input id="nextTriageLabelInput" name="triageCode" placeholder="Bipe a proxima etiqueta LAB" autocomplete="off" required />
+      </label>
+      <button type="submit">Abrir laudo</button>
+    </form>
+  `;
+}
+
+function handleNextTriageLabelSubmit(event) {
+  event.preventDefault();
+  const input = event.currentTarget.elements?.triageCode;
+  const code = triageCodeFromScan(input?.value || "");
+  if (!code) {
+    input?.select();
+    const message = $("#transferReceiveMessage");
+    if (message) {
+      message.style.color = "";
+      message.textContent = "Bipe uma etiqueta LAB valida para abrir o proximo laudo.";
+    }
+    return;
+  }
+  window.location.href = `/laudo/${encodeURIComponent(code)}`;
+}
+
+function triageCodeFromScan(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const parts = url.pathname.split("/").filter(Boolean).map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+    const reportIndex = parts.findIndex((part) => normalizeCode(part) === "LAUDO");
+    if (reportIndex >= 0 && parts[reportIndex + 1]) return normalizeCode(parts[reportIndex + 1]);
+    const triageIndex = parts.findIndex((part) => normalizeCode(part) === "TRIAGEM");
+    if (triageIndex >= 0) {
+      const codeIndex = normalizeCode(parts[triageIndex + 1]) === "VISUALIZAR" ? triageIndex + 2 : triageIndex + 1;
+      if (parts[codeIndex]) return normalizeCode(parts[codeIndex]);
+    }
+  } catch {
+    // Leitores podem enviar apenas o codigo, sem formato de URL.
+  }
+  const match = raw.match(/LAB-\d{8}-\d{6}/i);
+  return normalizeCode(match?.[0] || raw);
 }
 
 function transferDivergenceReportPanel(lot) {
@@ -6280,9 +6337,13 @@ async function submitTransferTotalReceive(event, transferLotId) {
     renderTransferReceiveCompletePage(response.lot);
     const updatedMessage = $("#transferReceiveMessage");
     updatedMessage.style.color = "#0f766e";
-    updatedMessage.textContent = Number(response.lot.totalDifference || 0)
-      ? "Estrutura aceita fisicamente. Divergencia de quantidade registrada; confira a sincronizacao com o Bling."
-      : "Estrutura aceita fisicamente. Estoque oficial depende da sincronizacao com o Bling.";
+    if (response.transfer?.queued) {
+      updatedMessage.textContent = "Estrutura aceita fisicamente. Transferencia enviada para a fila do Bling.";
+    } else {
+      updatedMessage.textContent = Number(response.lot.totalDifference || 0)
+        ? "Estrutura aceita fisicamente. Divergencia de quantidade registrada; confira a sincronizacao com o Bling."
+        : "Estrutura aceita fisicamente. Estoque oficial depende da sincronizacao com o Bling.";
+    }
   } catch (error) {
     message.style.color = "";
     message.textContent = error.message;

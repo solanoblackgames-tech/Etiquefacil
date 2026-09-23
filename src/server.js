@@ -1107,37 +1107,28 @@ app.post("/api/transfer-lots/:transferLotId/divergence-reports", requireAuth, re
 });
 
 app.post("/api/transfer-lots/:transferLotId/confirm-total", requireAuth, requireStockTransferAcceptanceAccess, async (req, res) => {
-  let result = null;
   try {
     const userId = workspaceUserId(req);
     const existingLot = await getTransferLotDetail(userId, req.params.transferLotId);
     if (!existingLot) return res.status(404).json({ error: "Estrutura de transferencia nao encontrada." });
     await requireTransferLotAcceptanceDeposit(req, res, existingLot);
-    result = await confirmPublicTransferLotTotal({
+    const result = await confirmPublicTransferLotTotal({
       transferLotId: req.params.transferLotId,
       receivedTotal: req.body?.receivedTotal,
       reporterName: req.body?.reporterName || operatorAuditLabel(req.session.user)
     });
     const items = transferItemsForBling(result.lot);
     const observacao = `Transferencia Etiquefacil ${result.lot.name} - aceite estoque (${result.lot.totalReceived}/${result.lot.totalPlanned})`;
-    let transferResult;
-    try {
-      transferResult = await syncBlingStockTransfers({
-        integration: await getRequiredBlingCredentials(result.lot.userId),
-        items,
-        depositoOrigemName: result.lot.depositoOrigem,
-        depositoDestinoName: result.lot.depositoDestino,
-        observacao,
-        saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
-      });
-      if (transferResult.ok) {
-        await markTransferLotSynced(result.lot.userId, result.lot.id);
-        result.lot.status = "synced";
-      }
-    } catch (blingError) {
-      await enqueueStockTransferSync({ userId: result.lot.userId, lot: result.lot, items, observacao, errorMessage: blingError.message, markLotSynced: true });
-      transferResult = { ok: false, queued: true, error: blingError.message };
-    }
+    const queuedJob = await enqueueStockTransferSync({
+      userId: result.lot.userId,
+      lot: result.lot,
+      items,
+      observacao,
+      errorMessage: "Transferencia aceita fisicamente aguardando envio ao Bling.",
+      markLotSynced: true
+    });
+    scheduleBlingSyncQueue();
+    const transferResult = { ok: false, queued: true, status: "queued", jobId: queuedJob.id };
     const currentLot = await getTransferLotDetail(userId, req.params.transferLotId);
     res.json({ ...result, lot: currentLot, transfer: transferResult });
   } catch (error) {
@@ -1209,30 +1200,24 @@ app.post("/api/public/transfer-lots/:transferLotId/receive-scan", requirePublicT
 });
 
 app.post("/api/public/transfer-lots/:transferLotId/confirm-total", requirePublicTransferReceiveAllowed, async (req, res) => {
-  let result = null;
   try {
-    result = await confirmPublicTransferLotTotal({
+    const result = await confirmPublicTransferLotTotal({
       transferLotId: req.params.transferLotId,
       receivedTotal: req.body.receivedTotal ?? req.body.totalRecebido,
       reporterName: req.body.reporterName
     });
     const items = transferItemsForBling(result.lot);
     const observacao = `Transferencia Etiquefacil ${result.lot.name} - conferencia total loja (${result.lot.totalReceived}/${result.lot.totalPlanned})`;
-    let transferResult;
-    try {
-      transferResult = await syncBlingStockTransfers({
-        integration: await getRequiredBlingCredentials(result.lot.userId),
-        items,
-        depositoOrigemName: result.lot.depositoOrigem,
-        depositoDestinoName: result.lot.depositoDestino,
-        observacao,
-        saveIntegration: (payload) => saveUserBlingIntegration(result.lot.userId, payload)
-      });
-      await markTransferLotSynced(result.lot.userId, result.lot.id);
-    } catch (blingError) {
-      await enqueueStockTransferSync({ userId: result.lot.userId, lot: result.lot, items, observacao, errorMessage: blingError.message, markLotSynced: true });
-      transferResult = { ok: false, queued: true, error: blingError.message };
-    }
+    const queuedJob = await enqueueStockTransferSync({
+      userId: result.lot.userId,
+      lot: result.lot,
+      items,
+      observacao,
+      errorMessage: "Transferencia aceita fisicamente aguardando envio ao Bling.",
+      markLotSynced: true
+    });
+    scheduleBlingSyncQueue();
+    const transferResult = { ok: false, queued: true, status: "queued", jobId: queuedJob.id };
     const currentLot = await getPublicTransferLotDetail(req.params.transferLotId);
     res.json({ ...result, lot: currentLot, transfer: transferResult });
   } catch (error) {
