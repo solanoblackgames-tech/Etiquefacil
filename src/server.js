@@ -2608,7 +2608,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/triagem", "/triagem/*", "/perfil", "/operadores/cadastro/*"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/triagem", "/triagem/*", "/laudo", "/laudo/*", "/perfil", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -2826,7 +2826,7 @@ const OPERATOR_HIDDEN_COST_FIELDS = new Set([
 ]);
 
 function triageStatusUrl(req, code) {
-  return `${req.protocol}://${req.get("host")}/triagem/visualizar/${encodeURIComponent(code)}`;
+  return `${req.protocol}://${req.get("host")}/laudo/${encodeURIComponent(code)}`;
 }
 
 async function publicUserForId(userId) {
@@ -4311,7 +4311,7 @@ ensureStore()
     console.error("Falha ao inicializar o banco:", error);
   });
 
-app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling", "/triagem", "/triagem/*", "/operadores/cadastro/*"], (req, res) => {
+app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bling", "/triagem", "/triagem/*", "/laudo", "/laudo/*", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 

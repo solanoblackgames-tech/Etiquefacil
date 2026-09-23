@@ -2410,6 +2410,12 @@ h3 {
   max-width: 980px;
 }
 
+.triage-qr-only .app-nav,
+.triage-qr-only .upload-band,
+.triage-qr-only #blingGlobalAlert {
+  display: none;
+}
+
 .triage-view-only .triage-create-panel,
 .triage-view-only .lot-list {
   display: none;

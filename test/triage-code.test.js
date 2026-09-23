@@ -227,11 +227,13 @@ test("lookupTriageItemByScan resolves triage label code and status URL", async (
 
     const byCode = await lookupTriageItemByScan("owner-1", "lab-20260727-000123");
     const byUrl = await lookupTriageItemByScan("owner-1", "https://etiquefacil.test/triagem/visualizar/LAB-20260727-000123");
+    const byReportUrl = await lookupTriageItemByScan("owner-1", "https://etiquefacil.test/laudo/LAB-20260727-000123");
     const bySku = await lookupTriageItemByScan("owner-1", "SKU-123");
     const bySeal = await lookupTriageItemByScan("owner-1", "lcr-000321");
 
     assert.equal(byCode.code, "LAB-20260727-000123");
     assert.equal(byUrl.code, "LAB-20260727-000123");
+    assert.equal(byReportUrl.code, "LAB-20260727-000123");
     assert.equal(bySeal.code, "LAB-20260727-000123");
     assert.equal(bySku, null);
   } finally {

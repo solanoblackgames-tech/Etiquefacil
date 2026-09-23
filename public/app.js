@@ -2576,7 +2576,6 @@ async function showApp(user) {
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
   if (user.triageAccess) await loadTriageTransferSettings();
-  if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   const scanRequest = getScanRequest();
   if (scanRequest) {
     await showScanOnly(scanRequest);
@@ -2587,6 +2586,15 @@ async function showApp(user) {
     await showTransferReceiveOnly(transferReceiveRequest);
     return;
   }
+  const route = parseRoute(window.location.pathname);
+  const directTriageRoute = route.view === "triageView" || (route.view === "triage" && route.triageCode);
+  const canOpenDirectTriage = state.user?.triageAccess || (route.view === "triageView" && state.user?.stockTransferAcceptanceAccess);
+  if (directTriageRoute && canOpenDirectTriage) {
+    await applyRouteFromLocation({ replace: true });
+    schedulePrimaryInputFocus();
+    return;
+  }
+  if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   await loadLots();
   if (user.transferAccess) await loadTransferLots();
   if (user.triageAccess) await loadTriageItems();
@@ -2635,6 +2643,7 @@ function canViewTriageStats() {
 
 function showAuth() {
   document.body.classList.remove("scan-only");
+  document.body.classList.remove("triage-qr-only");
   document.body.classList.remove("lot-focus");
   stopTransferCamera();
   $("#auth").classList.remove("hidden");
@@ -4850,7 +4859,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   if (route.view === "triageView") {
     setMainTab("triage", { push: false, triageViewOnly: true });
     await showTriageItemView(route.triageCode);
-    if (replace) updateRoute(`/triagem/visualizar/${encodeURIComponent(route.triageCode)}`, { replace: true });
+    if (replace) updateRoute(`/laudo/${encodeURIComponent(route.triageCode)}`, { replace: true });
     return;
   }
 
@@ -4872,12 +4881,20 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   }
 
   if (route.view === "triage") applyTriageFiltersFromQuery();
-  setMainTab(route.view, { push: false, resetSelection: route.view === "lots" });
+  setMainTab(route.view, {
+    push: false,
+    resetSelection: route.view === "lots",
+    skipTriageLoad: route.view === "triage" && Boolean(route.triageCode)
+  });
   if (route.view === "triage" && route.triageCode) {
-    await loadTriageItems(route.triageCode);
-    await selectTriageItem(route.triageCode, { push: false });
+    await selectTriageItem(route.triageCode, { push: false, showLoading: true });
   }
-  if (replace) updateRoute(routePathForView(route.view), { replace: true });
+  if (replace) {
+    const canonicalPath = route.view === "triage" && route.triageCode
+      ? `/triagem/${encodeURIComponent(route.triageCode)}`
+      : routePathForView(route.view);
+    updateRoute(canonicalPath, { replace: true });
+  }
 }
 
 function parseRoute(pathname) {
@@ -4888,6 +4905,7 @@ function parseRoute(pathname) {
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "expedicao") return { view: "expedition" };
+  if (parts[0] === "laudo" && parts[1]) return { view: "triageView", triageCode: parts[1] };
   if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
   if (parts[0] === "triagem" && parts[1]) return { view: "triage", triageCode: parts[1] };
   if (parts[0] === "triagem") return { view: "triage" };
@@ -4921,11 +4939,11 @@ function updateRoute(path, { replace = false } = {}) {
   window.history[replace ? "replaceState" : "pushState"]({}, "", next);
 }
 
-function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false } = {}) {
+function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false, skipTriageLoad = false } = {}) {
   let target = tab || "profile";
   if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "expedition" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
-  if (target === "triage" && !state.user?.triageAccess) target = state.user?.role === "operator" ? "lots" : "profile";
+  if (target === "triage" && !state.user?.triageAccess && !(triageViewOnly && state.user?.stockTransferAcceptanceAccess)) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {
     state.selectedLotId = null;
     state.previewLotId = null;
@@ -4952,6 +4970,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   toggleClass("#triageTab", "hidden", target !== "triage");
   toggleClass("#triageTab", "triage-view-only", target === "triage" && triageViewOnly);
   toggleClass("#profileTab", "hidden", target !== "profile");
+  document.body.classList.toggle("triage-qr-only", target === "triage" && triageViewOnly);
   document.body.classList.remove("lot-focus");
   if (push) updateRoute(routePathForView(target));
   if (target === "profile") setProfileSection(state.profileSection || "entries");
@@ -4960,7 +4979,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
     loadTransferLots(state.selectedTransferLotId);
   }
   if (target === "expedition") loadExpedition(state.selectedExpeditionOrderId);
-  if (target === "triage" && !triageViewOnly) loadTriageItems(state.selectedTriageCode);
+  if (target === "triage" && !triageViewOnly && !skipTriageLoad) loadTriageItems(state.selectedTriageCode);
   schedulePrimaryInputFocus();
 }
 
@@ -10647,8 +10666,13 @@ function handleTriageItemsClick(event) {
   selectTriageItem(card.dataset.triageCode);
 }
 
-async function selectTriageItem(code, { push = true } = {}) {
+async function selectTriageItem(code, { push = true, showLoading = false } = {}) {
   try {
+    const detail = $("#triageDetail");
+    if (showLoading && detail) {
+      detail.classList.add("empty");
+      detail.textContent = "Carregando item da triagem...";
+    }
     const response = await api(`/api/triage/items/${encodeURIComponent(code)}`);
     const item = response.item;
     state.selectedTriageCode = item.code;

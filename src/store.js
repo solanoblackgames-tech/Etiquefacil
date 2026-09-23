@@ -10800,6 +10800,8 @@ function triageCodeCandidates(value) {
       const viewIndex = normalizeCode(parts[triageIndex + 1]) === "VISUALIZAR" ? triageIndex + 2 : triageIndex + 1;
       addCandidate(parts[viewIndex]);
     }
+    const reportIndex = parts.findIndex((part) => normalizeCode(part) === "LAUDO");
+    if (reportIndex >= 0) addCandidate(parts[reportIndex + 1]);
   } catch {
     // Leitores podem enviar apenas o codigo, sem formato de URL.
   }
