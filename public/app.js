@@ -6202,23 +6202,23 @@ function renderTransferReceiveCompletePage(lot) {
         ${metric("Diferenca", transferTotalDifferenceLabel(lot))}
       </div>
       <div id="transferReceiveMessage" class="message transfer-complete-message">Pode fechar esta tela.</div>
-      ${nextTriageLabelScanMarkup(lot)}
-      ${transferDivergenceReportPanel(lot)}
-      <details class="transfer-items-panel" ${Number(lot.totalDifference || 0) ? "open" : ""}>
+      <details class="transfer-items-panel" open>
         <summary>
-          <span>Itens da estrutura</span>
-          <strong>${lot.totalSkus || 0} SKUs - ${lot.totalPlanned ?? lot.totalQty} unidades</strong>
+          <span>Material ${lot.wmsEnabled ? "alocado" : "conferido"}</span>
+          <strong>${lot.totalSkus || 0} SKUs - ${lot.totalReceived || 0} unidades</strong>
         </summary>
         <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
             <span>Codigo</span>
             <span>Produto</span>
-            <span>Qtd</span>
+            <span>${lot.wmsEnabled ? "Alocado" : "Recebido"}</span>
           </div>
-          ${transferReceiveAllRows(lot)}
+          ${transferReceiveAllRows(lot, { quantity: "received" })}
         </div>
       </details>
+      ${nextTriageLabelScanMarkup(lot)}
+      ${transferDivergenceReportPanel(lot)}
     </section>
   `;
   detail.querySelector("#nextTriageLabelForm")?.addEventListener("submit", handleNextTriageLabelSubmit);
@@ -6434,20 +6434,21 @@ function transferReceiveRows(lot) {
     : '<p class="muted transfer-empty">Todos os itens desta estrutura foram conferidos.</p>';
 }
 
-function transferReceiveAllRows(lot) {
+function transferReceiveAllRows(lot, options = {}) {
   return (lot.items || []).length
-    ? lot.items.map(transferReceiveItemRow).join("")
+    ? lot.items.map((item) => transferReceiveItemRow(item, options)).join("")
     : '<p class="muted transfer-empty">Nenhum item encontrado nesta estrutura.</p>';
 }
 
-function transferReceiveItemRow(item) {
+function transferReceiveItemRow(item, options = {}) {
   const wmsLocation = String(item.wmsLocation || "").trim();
+  const quantity = options.quantity === "received" ? item.quantidadeConferida : item.quantidade;
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
       <span>${escapeHtml(item.codigoMl)}</span>
       <span>${escapeHtml(item.descricao)}${wmsLocation ? `<small>WMS ${escapeHtml(wmsLocation)}</small>` : ""}</span>
-      <span>${item.quantidade}</span>
+      <span>${Number(quantity || 0)}</span>
     </article>
   `;
 }
@@ -6463,7 +6464,9 @@ function findTransferReceiveItem(lot, code) {
       normalizeCode(item.codigoMl) === normalized ||
       normalizeCode(item.sku) === normalized ||
       normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
-      normalizeCode(item.ean) === normalized
+      normalizeCode(item.ean) === normalized ||
+      normalizeCode(item.triageCode) === normalized ||
+      normalizeCode(item.securitySealCode) === normalized
     );
   });
   return matches.find((item) => Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) > 0) || matches[0] || null;

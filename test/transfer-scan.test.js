@@ -436,6 +436,102 @@ test("receiveTransferLotScan uses a pending duplicate SKU occurrence", async () 
   }
 });
 
+test("receiveTransferLotScan accepts a triage label code from the transfer item", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-transfer-receive-triage-code-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-receive-triage-code`;
+    const { receiveTransferLotScan, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [
+        {
+          id: "transfer-1",
+          userId: "user-1",
+          name: "TRF-1",
+          descricao: "",
+          depositoOrigem: "Triagem",
+          depositoDestino: "Soldin Ecommerce",
+          status: "waiting_store",
+          source: "triage",
+          createdAt: "2026-09-21T12:00:00.000Z"
+        }
+      ],
+      transferItems: [
+        {
+          id: "transfer-item-1",
+          transferLotId: "transfer-1",
+          triageItemId: "triage-1",
+          sourceLotId: null,
+          productId: null,
+          codigoMl: "BUIO18495",
+          sku: "3031TVL0141",
+          descricao: "Smart TV Aiwa 55 Android 4K",
+          ean: "",
+          quantidade: 2,
+          quantidadeConferida: 0,
+          createdAt: "2026-09-21T12:00:00.000Z"
+        }
+      ],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [
+        {
+          id: "triage-1",
+          userId: "user-1",
+          code: "LAB-20260921-000040",
+          securitySealCode: "28TVL0033",
+          sku: "3031TVL0141",
+          productCode: "BUIO18495",
+          descricao: "Smart TV Aiwa 55 Android 4K",
+          status: "diagnosticado",
+          destination: "Soldin Ecommerce",
+          diagnosisCondition: "OK",
+          createdAt: "2026-09-21T12:00:00.000Z",
+          updatedAt: "2026-09-21T12:00:00.000Z"
+        }
+      ],
+      triageEvents: []
+    });
+
+    const result = await receiveTransferLotScan({ userId: "user-1", transferLotId: "transfer-1", code: "LAB-20260921-000040" });
+    const sealResult = await receiveTransferLotScan({ userId: "user-1", transferLotId: "transfer-1", code: "28TVL0033" });
+    const db = await readDb();
+
+    assert.equal(result.status, "received");
+    assert.equal(result.item.id, "transfer-item-1");
+    assert.equal(sealResult.status, "received");
+    assert.equal(sealResult.item.id, "transfer-item-1");
+    assert.equal(sealResult.lot.status, "ready_sync");
+    assert.equal(db.transferItems[0].quantidadeConferida, 2);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("receiveTransferLotScan only allocates triage items to WMS positions from the destination deposit", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

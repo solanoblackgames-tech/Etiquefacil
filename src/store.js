@@ -20,6 +20,7 @@ const DEFAULT_PG_POOL_MAX = 10;
 
 let pool;
 let storeReady;
+let blingSyncJobsNullableLotIdReady = false;
 
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
@@ -2224,6 +2225,12 @@ export async function deleteUserBlingIntegration(userId) {
   return { ok: true };
 }
 
+async function ensureBlingSyncJobsNullableLotId() {
+  if (blingSyncJobsNullableLotIdReady) return;
+  await query("alter table bling_sync_jobs alter column lot_id drop not null");
+  blingSyncJobsNullableLotIdReady = true;
+}
+
 export async function enqueueBlingSyncJob({
   userId,
   lotId,
@@ -2239,6 +2246,7 @@ export async function enqueueBlingSyncJob({
   if (!normalized.userId || !normalized.productId || !normalized.sku) throw new Error("Produto sem dados suficientes para entrar na fila do Bling.");
 
   if (hasPostgres()) {
+    if (!normalized.lotId) await ensureBlingSyncJobsNullableLotId();
     const result = await query(
       `
         insert into bling_sync_jobs (
@@ -3319,13 +3327,25 @@ export async function getLotBlingData(userId, lotId, kind) {
   return { lot, products: getBlingProducts(db, lot, kind) };
 }
 
+function transferItemsWithTriageCodeQuery(whereClause) {
+  return `
+    select ti.*,
+      coalesce(nullif(ti.triage_code, ''), tri.code, '') as triage_code,
+      coalesce(tri.security_seal_code, '') as security_seal_code
+    from transfer_items ti
+    left join triage_items tri on tri.id = ti.triage_item_id
+    where ${whereClause}
+  `;
+}
+
 export async function listTransferLots(userId) {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureTransferItemWmsColumnsPg();
     const lots = await query("select * from transfer_lots where user_id = $1 order by created_at desc", [userId]);
     const lotIds = lots.rows.map((row) => row.id);
     const items = lotIds.length
-      ? await query("select * from transfer_items where transfer_lot_id = any($1::text[]) order by created_at asc", [lotIds])
+      ? await query(`${transferItemsWithTriageCodeQuery("ti.transfer_lot_id = any($1::text[])")} order by ti.created_at asc`, [lotIds])
       : { rows: [] };
     const reports = lotIds.length
       ? await query("select * from transfer_divergence_reports where transfer_lot_id = any($1::text[]) order by created_at desc", [lotIds])
@@ -3344,11 +3364,12 @@ export async function listTransferLots(userId) {
 export async function getTransferLotDetail(userId, transferLotId) {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureTransferItemWmsColumnsPg();
     const lotResult = await query("select * from transfer_lots where id = $1 and user_id = $2 limit 1", [transferLotId, userId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) return null;
     const [items, reports] = await Promise.all([
-      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query(`${transferItemsWithTriageCodeQuery("ti.transfer_lot_id = $1")} order by ti.created_at asc`, [lot.id]),
       query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
     ]);
     return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
@@ -3367,6 +3388,7 @@ export async function getTriageTransferLot(userId, triageItemId) {
 
   if (hasPostgres()) {
     await ensureTransferLotTriageColumnsPg();
+    await ensureTransferItemWmsColumnsPg();
     const lotResult = await query(
       "select * from transfer_lots where user_id = $1 and source = 'triage' and triage_item_id = $2 order by created_at desc limit 1",
       [userId, normalizedTriageItemId]
@@ -3374,7 +3396,7 @@ export async function getTriageTransferLot(userId, triageItemId) {
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) return null;
     const [items, reports] = await Promise.all([
-      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query(`${transferItemsWithTriageCodeQuery("ti.transfer_lot_id = $1")} order by ti.created_at asc`, [lot.id]),
       query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
     ]);
     return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
@@ -3390,11 +3412,12 @@ export async function getTriageTransferLot(userId, triageItemId) {
 export async function getPublicTransferLotDetail(transferLotId) {
   await ensureStore();
   if (hasPostgres()) {
+    await ensureTransferItemWmsColumnsPg();
     const lotResult = await query("select * from transfer_lots where id = $1 limit 1", [transferLotId]);
     const lot = lotResult.rows[0] && transferLotFromRow(lotResult.rows[0]);
     if (!lot) return null;
     const [items, reports] = await Promise.all([
-      query("select * from transfer_items where transfer_lot_id = $1 order by created_at asc", [lot.id]),
+      query(`${transferItemsWithTriageCodeQuery("ti.transfer_lot_id = $1")} order by ti.created_at asc`, [lot.id]),
       query("select * from transfer_divergence_reports where transfer_lot_id = $1 order by created_at desc", [lot.id])
     ]);
     return summarizeTransferLot(lot, items.rows.map(transferItemFromRow), reports.rows.map(transferDivergenceReportFromRow));
@@ -3990,7 +4013,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code, wmsL
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
   const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
-  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
+  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized, db.triageItems || []);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
@@ -4014,7 +4037,7 @@ export async function receivePublicTransferLotScan({ transferLotId, code, wmsLoc
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
   const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
 
-  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized);
+  const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized, db.triageItems || []);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
   if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
@@ -5132,6 +5155,7 @@ async function ensurePgStore() {
       id text primary key,
       transfer_lot_id text not null references transfer_lots(id) on delete cascade,
       triage_item_id text,
+      triage_code text not null default '',
       source_lot_id text references lots(id) on delete set null,
       product_id text references products(id) on delete set null,
       codigo_ml text not null,
@@ -5446,6 +5470,7 @@ async function ensurePgStore() {
     alter table transfer_items add column if not exists quantidade_conferida integer not null default 0;
     alter table transfer_items add column if not exists wms_location text not null default '';
     alter table transfer_items add column if not exists triage_item_id text;
+    alter table transfer_items add column if not exists triage_code text not null default '';
     alter table transfer_items add column if not exists diagnosis_condition text not null default '';
     alter table transfer_items add column if not exists diagnosis_photo text not null default '';
     alter table transfer_items add column if not exists triage_destination text not null default '';
@@ -6236,11 +6261,12 @@ async function insertTransferItemRows(client, items = []) {
   await insertRows(
     target,
     "transfer_items",
-    ["id", "transfer_lot_id", "triage_item_id", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "diagnosis_condition", "diagnosis_photo", "triage_destination", "quantidade", "quantidade_conferida", "wms_location", "force_reason", "force_code", "force_at", "created_at"],
+    ["id", "transfer_lot_id", "triage_item_id", "triage_code", "source_lot_id", "product_id", "codigo_ml", "sku", "descricao", "ean", "diagnosis_condition", "diagnosis_photo", "triage_destination", "quantidade", "quantidade_conferida", "wms_location", "force_reason", "force_code", "force_at", "created_at"],
     items.map((item) => [
       item.id,
       item.transferLotId,
       item.triageItemId || null,
+      item.triageCode || "",
       item.sourceLotId || null,
       item.productId || null,
       item.codigoMl,
@@ -7359,16 +7385,21 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code, wmsLocati
     if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
 
     const itemResult = await client.query(
-      `select * from transfer_items
-       where transfer_lot_id = $1
+      `select ti.*, coalesce(nullif(ti.triage_code, ''), tri.code, '') as triage_code
+       , coalesce(tri.security_seal_code, '') as security_seal_code
+       from transfer_items ti
+       left join triage_items tri on tri.id = ti.triage_item_id
+       where ti.transfer_lot_id = $1
          and (
-           upper(trim(codigo_ml)) = upper(trim($2))
-           or upper(trim(sku)) = upper(trim($2))
-           or regexp_replace(upper(trim(sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
-           or upper(trim(ean)) = upper(trim($2))
+           upper(trim(ti.codigo_ml)) = upper(trim($2))
+           or upper(trim(ti.sku)) = upper(trim($2))
+           or regexp_replace(upper(trim(ti.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+           or upper(trim(ti.ean)) = upper(trim($2))
+           or upper(trim(coalesce(nullif(ti.triage_code, ''), tri.code, ''))) = upper(trim($2))
+           or upper(trim(coalesce(tri.security_seal_code, ''))) = upper(trim($2))
          )
-       order by case when quantidade_conferida < quantidade then 0 else 1 end, created_at asc
-       limit 1 for update`,
+       order by case when ti.quantidade_conferida < ti.quantidade then 0 else 1 end, ti.created_at asc
+       limit 1 for update of ti`,
       [lot.id, code]
     );
     if (!itemResult.rows.length) throw notFound("Produto nao previsto nesta remessa.");
@@ -8978,14 +9009,19 @@ function parseWmsPosition(value) {
   };
 }
 
-function findTransferItemForReceive(items, transferLotId, code) {
+function findTransferItemForReceive(items, transferLotId, code, triageItems = []) {
   const normalized = normalizeCode(code);
+  const triageById = new Map((triageItems || []).map((item) => [item.id, item]));
   const matches = (items || []).filter((item) => {
+    const triageCode = item.triageCode || triageById.get(item.triageItemId)?.code || "";
+    const securitySealCode = item.securitySealCode || triageById.get(item.triageItemId)?.securitySealCode || "";
     return item.transferLotId === transferLotId &&
       (normalizeCode(item.codigoMl) === normalized ||
         normalizeCode(item.sku) === normalized ||
         normalizeCode(code39BarcodeValue(item.sku)) === normalized ||
-        normalizeCode(item.ean) === normalized);
+        normalizeCode(item.ean) === normalized ||
+        normalizeCode(triageCode) === normalized ||
+        normalizeCode(securitySealCode) === normalized);
   });
   return matches.find((item) => Number(item.quantidadeConferida || 0) < Number(item.quantidade || 0)) || matches[0] || null;
 }
@@ -9112,6 +9148,8 @@ function buildTransferItem(transferLotId, product) {
     id: randomUUID(),
     transferLotId,
     triageItemId: product.triageItemId || null,
+    triageCode: product.triageCode || "",
+    securitySealCode: product.securitySealCode || "",
     sourceLotId: product.sourceLotId || product.lotId || null,
     productId: product.id,
     codigoMl: product.codigoMl || "",
@@ -9372,6 +9410,8 @@ function transferProductFromTriageItem(item = {}) {
   return {
     id: null,
     triageItemId: item.id || null,
+    triageCode: item.code || "",
+    securitySealCode: item.securitySealCode || "",
     lotId: null,
     sourceLotId: null,
     sourceLotName: "Triagem",
@@ -10299,6 +10339,8 @@ function transferItemFromRow(row) {
     id: row.id,
     transferLotId: row.transfer_lot_id,
     triageItemId: row.triage_item_id || null,
+    triageCode: row.triage_code || "",
+    securitySealCode: row.security_seal_code || "",
     sourceLotId: row.source_lot_id || null,
     productId: row.product_id || null,
     codigoMl: row.codigo_ml,
