@@ -2271,7 +2271,7 @@ export async function enqueueBlingSyncJob({
       [
         normalized.id,
         normalized.userId,
-        normalized.lotId,
+        normalized.lotId || null,
         normalized.productId,
         normalized.sku,
         normalized.type,
@@ -2281,7 +2281,7 @@ export async function enqueueBlingSyncJob({
         normalized.createdAt
       ]
     );
-    await setProductBlingAlert(normalized.userId, normalized.lotId, normalized.productId, blingQueueAlertMessage(normalized));
+    if (normalized.lotId) await setProductBlingAlert(normalized.userId, normalized.lotId, normalized.productId, blingQueueAlertMessage(normalized));
     return blingSyncJobFromRow(result.rows[0]);
   }
 
@@ -2555,7 +2555,7 @@ export async function markBlingSyncJobSucceeded(jobId) {
         "select 1 from bling_sync_jobs where product_id = $1 and status in ('pending', 'failed') limit 1",
         [job.productId]
       );
-      if (!remaining.rows.length) await clearProductBlingQueueAlert(job.userId, job.lotId, job.productId);
+      if (!remaining.rows.length && job.lotId) await clearProductBlingQueueAlert(job.userId, job.lotId, job.productId);
     }
     return { ok: true, job };
   }
@@ -2598,7 +2598,7 @@ export async function markBlingSyncJobFailed(jobId, errorMessage = "") {
       [jobId, attempts, String(errorMessage || "").slice(0, 500), nextRunAt, now.toISOString()]
     );
     const updated = blingSyncJobFromRow(result.rows[0]);
-    await setProductBlingAlert(updated.userId, updated.lotId, updated.productId, blingQueueAlertMessage(updated));
+    if (updated.lotId) await setProductBlingAlert(updated.userId, updated.lotId, updated.productId, blingQueueAlertMessage(updated));
     return { ok: true, job: updated };
   }
 
@@ -5076,7 +5076,7 @@ async function ensurePgStore() {
     create table if not exists bling_sync_jobs (
       id text primary key,
       user_id text not null references users(id) on delete cascade,
-      lot_id text not null references lots(id) on delete cascade,
+      lot_id text references lots(id) on delete cascade,
       product_id text not null,
       sku text not null,
       type text not null,
@@ -5393,6 +5393,7 @@ async function ensurePgStore() {
     alter table bling_sync_jobs add column if not exists error_message text not null default '';
     alter table bling_sync_jobs add column if not exists attempts integer not null default 0;
     alter table bling_sync_jobs add column if not exists next_run_at timestamptz not null default now();
+    alter table bling_sync_jobs alter column lot_id drop not null;
     alter table bling_sync_jobs drop constraint if exists bling_sync_jobs_product_id_fkey;
     create unique index if not exists bling_sync_jobs_product_type_idx on bling_sync_jobs(product_id, type);
     alter table catalog_products add column if not exists ean text not null default '';

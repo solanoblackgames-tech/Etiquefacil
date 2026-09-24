@@ -3495,7 +3495,7 @@ async function enqueueStockTransferSync({ userId, lot, items, observacao, errorM
   const transferKey = items.length === 1 && items[0]?.id ? items[0].id : "all";
   return enqueueBlingSyncJob({
     userId,
-    lotId: lot.id,
+    lotId: null,
     productId: `transfer:${lot.id}:${transferKey}`,
     sku: `TRANSFER-${lot.id}-${transferKey}`,
     type: "stock_transfer",
