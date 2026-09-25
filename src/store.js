@@ -3331,6 +3331,7 @@ function transferItemsWithTriageCodeQuery(whereClause) {
   return `
     select ti.*,
       coalesce(nullif(ti.triage_code, ''), tri.code, '') as triage_code,
+      coalesce(tri.descricao, '') as triage_descricao,
       coalesce(tri.security_seal_code, '') as security_seal_code
     from transfer_items ti
     left join triage_items tri on tri.id = ti.triage_item_id
@@ -7386,6 +7387,7 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code, wmsLocati
 
     const itemResult = await client.query(
       `select ti.*, coalesce(nullif(ti.triage_code, ''), tri.code, '') as triage_code
+       , coalesce(tri.descricao, '') as triage_descricao
        , coalesce(tri.security_seal_code, '') as security_seal_code
        from transfer_items ti
        left join triage_items tri on tri.id = ti.triage_item_id
@@ -10335,17 +10337,23 @@ function transferLotFromRow(row) {
 }
 
 function transferItemFromRow(row) {
+  const triageCode = row.triage_code || "";
+  const triageDescricao = row.triage_descricao || "";
+  const descricao = String(row.descricao || "").trim();
+  const fallbackDescricao = triageDescricao && (!descricao || normalizeCode(descricao) === normalizeCode(triageCode))
+    ? triageDescricao
+    : descricao;
   return {
     id: row.id,
     transferLotId: row.transfer_lot_id,
     triageItemId: row.triage_item_id || null,
-    triageCode: row.triage_code || "",
+    triageCode,
     securitySealCode: row.security_seal_code || "",
     sourceLotId: row.source_lot_id || null,
     productId: row.product_id || null,
     codigoMl: row.codigo_ml,
     sku: row.sku,
-    descricao: row.descricao,
+    descricao: fallbackDescricao,
     ean: row.ean || "",
     diagnosisCondition: row.diagnosis_condition || "",
     diagnosisPhoto: row.diagnosis_photo || "",
