@@ -6046,6 +6046,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
   }
   const expected = Number(lot.totalPlanned ?? lot.totalQty ?? 0);
   const finishLabel = lot.source === "triage" ? "Aceitar entrada fisica" : "Finalizar conferencia";
+  const secondaryColumnLabel = lot.source === "triage" ? "Laudo" : "Codigo";
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -6084,7 +6085,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
         <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
-            <span>Codigo</span>
+            <span>${secondaryColumnLabel}</span>
             <span>Produto</span>
             <span>Qtd</span>
           </div>
@@ -6100,6 +6101,7 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
 
 function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
   const detail = $("#transferDetail");
+  const secondaryColumnLabel = lot.source === "triage" ? "Laudo" : "Codigo";
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -6139,7 +6141,7 @@ function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
         <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
-            <span>Codigo</span>
+            <span>${secondaryColumnLabel}</span>
             <span>Produto</span>
             <span>Qtd</span>
           </div>
@@ -6177,6 +6179,7 @@ function isTransferReceiveComplete(lot) {
 
 function renderTransferReceiveCompletePage(lot) {
   const detail = $("#transferDetail");
+  const secondaryColumnLabel = lot.source === "triage" ? "Laudo" : "Codigo";
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page transfer-complete-page">
@@ -6206,7 +6209,7 @@ function renderTransferReceiveCompletePage(lot) {
         <div class="diverse-table transfer-table transfer-receive-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
-            <span>Codigo</span>
+            <span>${secondaryColumnLabel}</span>
             <span>Produto</span>
             <span>${lot.wmsEnabled ? "Alocado" : "Recebido"}</span>
           </div>
@@ -6426,23 +6429,25 @@ function transferPendingConfirmation(pending) {
 function transferReceiveRows(lot) {
   const pendingItems = (lot.items || []).filter((item) => Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) > 0);
   return pendingItems.length
-    ? pendingItems.map(transferReceiveItemRow).join("")
+    ? pendingItems.map((item) => transferReceiveItemRow(item, { lot })).join("")
     : '<p class="muted transfer-empty">Todos os itens desta estrutura foram conferidos.</p>';
 }
 
 function transferReceiveAllRows(lot, options = {}) {
   return (lot.items || []).length
-    ? lot.items.map((item) => transferReceiveItemRow(item, options)).join("")
+    ? lot.items.map((item) => transferReceiveItemRow(item, { ...options, lot })).join("")
     : '<p class="muted transfer-empty">Nenhum item encontrado nesta estrutura.</p>';
 }
 
 function transferReceiveItemRow(item, options = {}) {
   const wmsLocation = String(item.wmsLocation || "").trim();
   const quantity = options.quantity === "received" ? item.quantidadeConferida : item.quantidade;
+  const triageItem = options.lot?.source === "triage" || item.triageItemId || item.triageCode;
+  const secondaryCode = triageItem ? item.triageCode || item.codigoMl : item.codigoMl;
   return `
     <article class="diverse-row transfer-row">
       <strong>${escapeHtml(item.sku)}</strong>
-      <span>${escapeHtml(item.codigoMl)}</span>
+      <span>${escapeHtml(secondaryCode)}</span>
       <span>${escapeHtml(item.descricao)}${wmsLocation ? `<small>WMS ${escapeHtml(wmsLocation)}</small>` : ""}</span>
       <span>${Number(quantity || 0)}</span>
     </article>
