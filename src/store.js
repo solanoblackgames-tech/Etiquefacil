@@ -1164,12 +1164,12 @@ export async function listTriageItems(userId, filters = {}) {
       `,
       [userId, lotId]
     );
-    return result.rows.map((row) => ({
+    return Promise.all(result.rows.map(async (row) => enrichTriageGradeComparison(userId, {
       ...triageItemFromRow(row),
       lotId: row.matched_lot_id || "",
       lotName: row.matched_lot_name || "",
       lotSkuPrefix: row.matched_lot_sku_prefix || ""
-    }));
+    }, lotId)));
   }
 
   const db = await readDb();
@@ -1189,7 +1189,8 @@ export async function listTriageItems(userId, filters = {}) {
       };
     })
     .filter((item) => !lotId || item.lotId === lotId)
-    .sort(compareTriageChronologyDesc);
+    .sort(compareTriageChronologyDesc)
+    .map((item) => enrichTriageGradeComparisonFromDb(db, userId, item, lotId ? new Set([lotId]) : lotIds));
 }
 
 function triageChronologyDate(item = {}) {
@@ -1437,13 +1438,14 @@ export async function getTriageItem(userId, code) {
   if (hasPostgres()) {
     const result = await query("select * from triage_items where user_id = $1 and upper(code) = upper($2) limit 1", [userId, normalized]);
     if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
-    return triageItemFromRow(result.rows[0]);
+    return enrichTriageGradeComparison(userId, triageItemFromRow(result.rows[0]));
   }
 
   const db = await readDb();
   const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalized);
   if (!item) throw notFound("Item de triagem nao encontrado.");
-  return item;
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  return enrichTriageGradeComparisonFromDb(db, userId, item, lotIds);
 }
 
 export async function lookupTriageItemByScan(userId, value) {
@@ -1496,14 +1498,15 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
 
   if (hasPostgres()) {
     await insertTriageItemRows(null, [item]);
-    return item;
+    return enrichTriageGradeComparison(userId, item);
   }
 
   const db = await readDb();
   db.triageItems = db.triageItems || [];
   db.triageItems.push(item);
   await writeDb(db);
-  return item;
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  return enrichTriageGradeComparisonFromDb(db, userId, item, lotIds);
 }
 
 async function hydrateTriageInputPrice(userId, item) {
@@ -1545,6 +1548,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const destination = normalizeTriageDestination(rule.destination);
   const diagnosis = String(payload.diagnosis || "").trim();
   const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
+  const gradeAvaliada = normalizeGradeValue(payload.gradeAvaliada ?? payload.grade_avaliada ?? payload.gradeTestada ?? payload.grade_testada ?? payload.grade);
   const now = new Date().toISOString();
 
   if (hasPostgres()) {
@@ -1563,15 +1567,16 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
              diagnosis_condition = $4,
              diagnosis = $5,
              diagnosis_photo = $6,
-             operator_user_id = coalesce($7, operator_user_id),
-             updated_at = $8,
-             diagnosed_at = $8
+             grade_avaliada = $7,
+             operator_user_id = coalesce($8, operator_user_id),
+             updated_at = $9,
+             diagnosed_at = $9
          where user_id = $1 and upper(code) = upper($2)
          returning *`,
-        [userId, normalizeCode(code), destination, diagnosisCondition, diagnosis, diagnosisPhoto, operatorUserId, now]
+        [userId, normalizeCode(code), destination, diagnosisCondition, diagnosis, diagnosisPhoto, gradeAvaliada, operatorUserId, now]
       );
       if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
-      const item = triageItemFromRow(result.rows[0]);
+      const item = await enrichTriageGradeComparison(userId, triageItemFromRow(result.rows[0]));
       await insertTriageEventRows(client, [
         {
           id: randomUUID(),
@@ -1604,6 +1609,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   item.diagnosisCondition = diagnosisCondition;
   item.diagnosis = diagnosis;
   item.diagnosisPhoto = diagnosisPhoto;
+  item.gradeAvaliada = gradeAvaliada;
   item.operatorUserId = operatorUserId || item.operatorUserId || null;
   item.updatedAt = now;
   item.diagnosedAt = now;
@@ -1621,7 +1627,8 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
     createdAt: now
   });
   await writeDb(db);
-  return item;
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  return enrichTriageGradeComparisonFromDb(db, userId, item, lotIds);
 }
 
 export async function listTriageDiagnosisHistory({ userId, code }) {
@@ -1707,6 +1714,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
     valorUnit: hasValorUnit ? decimalMoney(payload.valorUnit ?? payload.valor_unit ?? payload.preco) : null,
     precoCusto: hasPrecoCusto ? decimalMoney(payload.precoCusto ?? payload.preco_custo ?? payload.custo) : null,
     serial: String(payload.serial || "").trim(),
+    gradeAvaliada: normalizeGradeValue(payload.gradeAvaliada ?? payload.grade_avaliada ?? payload.gradeTestada ?? payload.grade_testada ?? payload.grade),
     securitySealCode: normalizeCode(payload.securitySealCode ?? payload.security_seal_code ?? payload.lacreSeguranca ?? payload.lacre),
     alturaCaixa: optionalNum(payload.alturaCaixa ?? payload.altura_caixa ?? payload.altura),
     larguraCaixa: optionalNum(payload.larguraCaixa ?? payload.largura_caixa ?? payload.largura),
@@ -1740,12 +1748,13 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
            valor_unit = case when $10::numeric is not null and $10::numeric > 0 then $10::numeric else valor_unit end,
            preco_custo = case when $11::numeric is not null and $11::numeric > 0 then $11::numeric else preco_custo end,
            serial = $12,
-           security_seal_code = $13,
-           altura_caixa = $14,
-           largura_caixa = $15,
-           comprimento_caixa = $16,
-           peso_caixa = $17,
-           updated_at = $18
+           grade_avaliada = $13,
+           security_seal_code = $14,
+           altura_caixa = $15,
+           largura_caixa = $16,
+           comprimento_caixa = $17,
+           peso_caixa = $18,
+           updated_at = $19
        where user_id = $1 and upper(code) = upper($2)
        returning *`,
       [
@@ -1761,6 +1770,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
         details.valorUnit,
         details.precoCusto,
         details.serial,
+        details.gradeAvaliada,
         details.securitySealCode,
         details.alturaCaixa || null,
         details.larguraCaixa || null,
@@ -1770,7 +1780,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
       ]
     );
     if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
-    return triageItemFromRow(result.rows[0]);
+    return enrichTriageGradeComparison(userId, triageItemFromRow(result.rows[0]));
   }
 
   const db = await readDb();
@@ -1786,7 +1796,8 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   if (!details.precoCusto) delete details.precoCusto;
   Object.assign(item, details, { code: nextCode, updatedAt: now });
   await writeDb(db);
-  return item;
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  return enrichTriageGradeComparisonFromDb(db, userId, item, lotIds);
 }
 
 export async function updateProductRegistrationFromTriage({ userId, item }) {
@@ -1904,6 +1915,7 @@ export async function lookupTriageProduct(userId, code) {
           and (
             upper(trim(p.sku)) = upper(trim($2))
             or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
+            or upper(trim(p.codigo_ml)) = upper(trim($2))
           )
         order by p.created_at desc
         limit 1
@@ -5272,6 +5284,7 @@ async function ensurePgStore() {
       valor_unit numeric not null default 0,
       preco_custo numeric not null default 0,
       serial text not null default '',
+      grade_avaliada text not null default '',
       security_seal_code text not null default '',
       altura_caixa numeric,
       largura_caixa numeric,
@@ -5455,6 +5468,7 @@ async function ensurePgStore() {
     alter table triage_items add column if not exists peso_caixa numeric;
     alter table triage_items add column if not exists valor_unit numeric not null default 0;
     alter table triage_items add column if not exists preco_custo numeric not null default 0;
+    alter table triage_items add column if not exists grade_avaliada text not null default '';
     alter table triage_items add column if not exists security_seal_code text not null default '';
     create index if not exists triage_events_item_created_idx on triage_events(triage_item_id, created_at desc);
     alter table catalog_rejected_requests add column if not exists created_by_user_id text;
@@ -6507,6 +6521,7 @@ async function insertTriageItemRows(client, items = []) {
       "valor_unit",
       "preco_custo",
       "serial",
+      "grade_avaliada",
       "security_seal_code",
       "altura_caixa",
       "largura_caixa",
@@ -6536,6 +6551,7 @@ async function insertTriageItemRows(client, items = []) {
       item.valorUnit || 0,
       item.precoCusto || 0,
       item.serial || "",
+      item.gradeAvaliada || "",
       item.securitySealCode || "",
       item.alturaCaixa || null,
       item.larguraCaixa || null,
@@ -9288,6 +9304,7 @@ function triageItemFromRow(row) {
     valorUnit: num(row.valor_unit),
     precoCusto: num(row.preco_custo),
     serial: row.serial || "",
+    gradeAvaliada: row.grade_avaliada || "",
     securitySealCode: row.security_seal_code || "",
     alturaCaixa: row.altura_caixa === null || row.altura_caixa === undefined ? "" : num(row.altura_caixa),
     larguraCaixa: row.largura_caixa === null || row.largura_caixa === undefined ? "" : num(row.largura_caixa),
@@ -10064,6 +10081,88 @@ function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
       if (sku && normalizeCode(product.sku) === sku) return true;
       return codes.some((code) => normalizeCode(product.codigoMl) === code);
     }) || null;
+}
+
+async function enrichTriageGradeComparison(userId, item = {}, lotId = "") {
+  const gradeData = await findExpectedGradeData(userId, item, lotId);
+  return applyTriageGradeComparison(item, gradeData);
+}
+
+async function findExpectedGradeData(userId, item = {}, lotId = "") {
+  const sku = normalizeCode(item.sku);
+  const codes = [item.productCode, item.codigoBling2, item.asin].map(normalizeCode).filter(Boolean);
+  if (!sku && !codes.length) return { expectedGrades: [], expectedGrade: "", expectedGradeComparison: "sem_esperado" };
+
+  const params = [userId, sku, codes, String(lotId || "").trim()];
+  const result = await query(
+    `
+      select array_agg(distinct nullif(trim(ri.condicao_grade), '')) filter (where nullif(trim(ri.condicao_grade), '') is not null) as expected_grades
+      from products p
+      join lots l on l.id = p.lot_id
+      left join rz_items ri on ri.product_id = p.id and ri.lot_id = p.lot_id
+      where l.user_id = $1
+        and ($4::text = '' or l.id = $4::text)
+        and (
+          ($2 <> '' and upper(trim(p.sku)) = upper(trim($2)))
+          or ($2 <> '' and regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2)))
+          or (cardinality($3::text[]) > 0 and upper(trim(p.codigo_ml)) = any($3::text[]))
+        )
+    `,
+    params
+  );
+  const expectedGrades = normalizeGradeList(result.rows[0]?.expected_grades || []);
+  return { expectedGrades, expectedGrade: expectedGrades.join(", ") };
+}
+
+function enrichTriageGradeComparisonFromDb(db, userId, item = {}, lotIds = new Set()) {
+  const product = findTriageStatsProduct(db.products || [], lotIds, item);
+  if (!product) return applyTriageGradeComparison(item, { expectedGrades: [], expectedGrade: "" });
+  const expectedGrades = normalizeGradeList((db.rzItems || [])
+    .filter((rzItem) => rzItem.productId === product.id && rzItem.lotId === product.lotId)
+    .map((rzItem) => rzItem.condicaoGrade));
+  return applyTriageGradeComparison(item, { expectedGrades, expectedGrade: expectedGrades.join(", ") });
+}
+
+function applyTriageGradeComparison(item = {}, { expectedGrades = [], expectedGrade = "" } = {}) {
+  const gradeAvaliada = normalizeGradeValue(item.gradeAvaliada);
+  return {
+    ...item,
+    gradeAvaliada,
+    gradeEsperada: expectedGrade || expectedGrades.join(", "),
+    gradeEsperadaLista: expectedGrades,
+    gradeComparacao: compareTriageGrades(expectedGrades, gradeAvaliada)
+  };
+}
+
+function normalizeGradeList(values = []) {
+  return [...new Set((values || []).map(normalizeGradeValue).filter(Boolean))]
+    .sort((a, b) => gradeRank(a) - gradeRank(b) || a.localeCompare(b));
+}
+
+function normalizeGradeValue(value) {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return "";
+  const match = text.match(/[A-D]/);
+  return match ? match[0] : text.slice(0, 20);
+}
+
+function compareTriageGrades(expectedGrades = [], evaluatedGrade = "") {
+  const expected = normalizeGradeList(expectedGrades);
+  const evaluated = normalizeGradeValue(evaluatedGrade);
+  if (!evaluated) return expected.length ? "pendente" : "sem_esperado";
+  if (!expected.length) return "sem_esperado";
+  if (expected.includes(evaluated)) return "igual";
+  const evaluatedRank = gradeRank(evaluated);
+  const ranks = expected.map(gradeRank).filter((rank) => Number.isFinite(rank));
+  if (!Number.isFinite(evaluatedRank) || !ranks.length) return "divergente";
+  if (evaluatedRank < Math.min(...ranks)) return "melhor";
+  if (evaluatedRank > Math.max(...ranks)) return "pior";
+  return "divergente";
+}
+
+function gradeRank(grade) {
+  const rank = ["A", "B", "C", "D"].indexOf(normalizeGradeValue(grade));
+  return rank >= 0 ? rank : Number.POSITIVE_INFINITY;
 }
 
 function triageStatMoney(...values) {
@@ -11053,6 +11152,7 @@ function normalizeTriageInput(input = {}) {
     valorUnit: decimalMoney(input.valorUnit ?? input.valor_unit ?? input.preco),
     precoCusto: decimalMoney(input.precoCusto ?? input.preco_custo ?? input.custo),
     serial: String(input.serial || "").trim(),
+    gradeAvaliada: normalizeGradeValue(input.gradeAvaliada ?? input.grade_avaliada ?? input.gradeTestada ?? input.grade_testada ?? input.grade),
     securitySealCode: normalizeCode(input.securitySealCode ?? input.security_seal_code ?? input.lacreSeguranca ?? input.lacre),
     alturaCaixa: optionalNum(input.alturaCaixa ?? input.altura_caixa ?? input.altura),
     larguraCaixa: optionalNum(input.larguraCaixa ?? input.largura_caixa ?? input.largura),

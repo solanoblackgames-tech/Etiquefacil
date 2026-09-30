@@ -10981,6 +10981,9 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
           <div><dt>Descricao</dt><dd>${escapeHtml(item.descricao || "-")}</dd></div>
           <div><dt>SKU</dt><dd>${escapeHtml(item.sku || "-")}</dd></div>
+          <div><dt>Grade esperada</dt><dd>${escapeHtml(triageExpectedGradeLabel(item))}</dd></div>
+          <div><dt>Grade avaliada</dt><dd>${escapeHtml(item.gradeAvaliada || "-")}</dd></div>
+          <div><dt>Comparacao grade</dt><dd>${escapeHtml(triageGradeComparisonLabel(item.gradeComparacao))}</dd></div>
           <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
           <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
           <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
@@ -11010,6 +11013,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       <label>Identificacao interna<input name="code" value="${escapeHtml(item.code)}" required /></label>
       <label>Descricao<input name="descricao" value="${escapeHtml(item.descricao || "")}" /></label>
       <label>SKU<input name="sku" value="${escapeHtml(item.sku || "")}" /></label>
+      <label>Grade avaliada<input name="gradeAvaliada" value="${escapeHtml(item.gradeAvaliada || "")}" maxlength="20" placeholder="A, B, C ou D" /></label>
       <label>EAN<input name="ean" value="${escapeHtml(item.ean || "")}" /></label>
       <label>ASIN/COD ML<input name="asin" value="${escapeHtml(item.asin || "")}" /></label>
       <label>Codigo produto<input name="productCode" value="${escapeHtml(item.productCode || "")}" /></label>
@@ -11053,6 +11057,9 @@ function renderTriageItemView(item) {
         <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
         <div><dt>Descricao</dt><dd>${escapeHtml(item.descricao || "-")}</dd></div>
         <div><dt>SKU</dt><dd>${escapeHtml(item.sku || "-")}</dd></div>
+        <div><dt>Grade esperada</dt><dd>${escapeHtml(triageExpectedGradeLabel(item))}</dd></div>
+        <div><dt>Grade avaliada</dt><dd>${escapeHtml(item.gradeAvaliada || "-")}</dd></div>
+        <div><dt>Comparacao grade</dt><dd>${escapeHtml(triageGradeComparisonLabel(item.gradeComparacao))}</dd></div>
         <div><dt>EAN</dt><dd>${escapeHtml(item.ean || "-")}</dd></div>
         <div><dt>ASIN/COD ML</dt><dd>${escapeHtml(item.asin || "-")}</dd></div>
         <div><dt>Serial</dt><dd>${escapeHtml(item.serial || "-")}</dd></div>
@@ -11103,6 +11110,7 @@ function triageDiagnosisPhotoFormMarkup(item) {
       <input type="hidden" name="diagnosisCondition" value="${escapeHtml(item.diagnosisCondition || "")}" />
       <input type="hidden" name="diagnosis" value="${escapeHtml(item.diagnosis || "")}" />
       <input type="hidden" name="destination" value="${escapeHtml(item.destination || "")}" />
+      <input type="hidden" name="gradeAvaliada" value="${escapeHtml(item.gradeAvaliada || "")}" />
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
       <label>Foto do laudo
         <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required />
@@ -11135,6 +11143,8 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
           ${diagnosisOptions.map((option) => `<option value="${escapeHtml(option.code)}" ${item.diagnosisCondition === option.code ? "selected" : ""}>${escapeHtml(option.label || option.code)}</option>`).join("")}
         </select>
       </label>
+      <label>Grade avaliada<input name="gradeAvaliada" value="${escapeHtml(item.gradeAvaliada || "")}" maxlength="20" placeholder="A, B, C ou D" /></label>
+      ${triageGradeExpectationMarkup(item)}
       <label>Descricao do diagnostico<textarea name="diagnosis" rows="4">${escapeHtml(item.diagnosis || "")}</textarea></label>
       <input type="hidden" name="destination" value="${escapeHtml(automaticDestination)}" />
       <div class="readonly-field" data-triage-auto-destination>
@@ -11152,6 +11162,32 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
       </div>
       <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
     </form>
+  `;
+}
+
+function triageExpectedGradeLabel(item = {}) {
+  return item.gradeEsperada || (item.gradeEsperadaLista || []).join(", ") || "-";
+}
+
+function triageGradeComparisonLabel(status) {
+  const value = String(status || "").trim();
+  if (value === "igual") return "Bateu com esperado";
+  if (value === "melhor") return "Melhor que esperado";
+  if (value === "pior") return "Pior que esperado";
+  if (value === "divergente") return "Divergente";
+  if (value === "pendente") return "Aguardando grade avaliada";
+  return "Sem grade esperada";
+}
+
+function triageGradeExpectationMarkup(item = {}) {
+  const expected = triageExpectedGradeLabel(item);
+  const comparison = triageGradeComparisonLabel(item.gradeComparacao);
+  return `
+    <div class="readonly-field triage-grade-comparison">
+      <span>Grade esperada</span>
+      <strong>${escapeHtml(expected)}</strong>
+      <small>${escapeHtml(comparison)}</small>
+    </div>
   `;
 }
 
