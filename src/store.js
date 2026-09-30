@@ -5695,6 +5695,11 @@ async function assertPgSchemaReady() {
   if (missing.length) {
     throw new Error(`Schema PostgreSQL incompleto. Execute com PG_AUTO_MIGRATE=true uma vez. Tabelas ausentes: ${missing.join(", ")}.`);
   }
+  await ensureTriageGradeColumnPg();
+}
+
+async function ensureTriageGradeColumnPg() {
+  await query("alter table if exists triage_items add column if not exists grade_avaliada text not null default ''");
 }
 
 async function backfillPgCatalogLotSuggestions() {
