@@ -10494,7 +10494,13 @@ async function hydrateTriageProductFromSku(form, { showNotFound = false } = {}) 
   if (!sku) return null;
   const hasProductData = ["descricao", "ean", "asin", "productCode"].some((name) => String(form.elements?.[name]?.value || "").trim());
   if (hasProductData) return null;
-  const response = await api(`/api/triage/lookup?code=${encodeURIComponent(sku)}`);
+  let response;
+  try {
+    response = await api(`/api/triage/lookup?code=${encodeURIComponent(sku)}`);
+  } catch {
+    if (showNotFound) renderTriageLookupPreview(null, "SKU nao encontrado na base. A etiqueta sera criada somente com o codigo bipado.");
+    return null;
+  }
   if (response.product) {
     fillTriageProduct(response.product);
     renderTriageLookupPreview(response.product);

@@ -734,12 +734,17 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
     const integration = await getUserBlingCredentials(userId);
     if (integration?.accessToken && integration?.refreshToken) {
       const blingApp = await getBlingAppCredentials(userId);
-      const product = await lookupBlingProductForTriage({
-        integration: { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret },
-        code,
-        saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-      });
-      if (product) return res.json({ product: mergeTriageProductLookup(product, localProduct) });
+      try {
+        const product = await lookupBlingProductForTriage({
+          integration: { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret },
+          code,
+          saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+        });
+        if (product) return res.json({ product: mergeTriageProductLookup(product, localProduct) });
+      } catch (lookupError) {
+        if (localProduct) return res.json({ product: localProduct });
+        if (!isNotFoundLookupError(lookupError)) throw lookupError;
+      }
     }
 
     res.json({ product: localProduct || null });
@@ -748,6 +753,10 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
   }
 });
 
+function isNotFoundLookupError(error) {
+  const text = String(error?.message || "").toLowerCase();
+  return error?.status === 404 || text.includes("nao encontrado") || text.includes("não encontrado") || text.includes("not found");
+}
 app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
