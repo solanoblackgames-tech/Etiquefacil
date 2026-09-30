@@ -204,6 +204,12 @@ app.get("/", (req, res, next) => {
     requireOwner(req, res, () => handleBlingOAuthCallback(req, res, getBlingRootRedirectUri(req)))
   );
 });
+app.use((req, res, next) => {
+  if (["/", "/index.html", "/app.js", "/styles.css"].includes(req.path)) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.get("/api/config", (req, res) => {
