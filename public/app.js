@@ -150,6 +150,7 @@ const normalizeSearchText = (value) =>
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
 const canViewCost = () => isOwnerUser();
+const canViewLotValues = () => state.user?.role !== "operator";
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
@@ -7768,7 +7769,7 @@ function renderLotPreview(lot) {
       <h3 class="section-title">Andamento geral</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
-        ${progressMetric("Preco de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`)}
+        ${canViewLotValues() ? progressMetric("Preco de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
       </div>
@@ -7879,7 +7880,7 @@ function renderLotDetail(lot) {
     ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
         ${metric("Quantidade bipada", lot.progress.checkedQty)}
-        ${metric("Valor bipado", money(lot.progress.checkedValue))}
+        ${canViewLotValues() ? metric("Valor bipado", money(lot.progress.checkedValue)) : ""}
       </div>
     ` : `
       <div class="summary-grid">
@@ -7891,9 +7892,9 @@ function renderLotDetail(lot) {
       <h3 class="section-title">Progresso do lote</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
-        ${progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`)}
-        ${metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0)))}
-        ${metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0)))}
+        ${canViewLotValues() ? progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
+        ${canViewLotValues() ? metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0))) : ""}
+        ${canViewLotValues() ? metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0))) : ""}
       </div>
     `}
     ${operatorNoSheetLot ? "" : `
@@ -8239,14 +8240,14 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       ${metric("Conferido", rz.checked)}
       ${metric("Faltante", rz.missing)}
       ${metric("Excedente", rz.excess)}
-      ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+      ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
     </div>
     <h3 class="section-title">Progresso do Pallet</h3>
     <div class="summary-grid">
       ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
-      ${progressMetric("Preço de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
-      ${metric("Valor faltante", money(rz.missingValue))}
-      ${metric("Valor excedente", money(rz.excessValue))}
+      ${canViewLotValues() ? progressMetric("Preço de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`) : ""}
+      ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
+      ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
     </div>
     <div id="scanMessage" class="message"></div>
     <div class="items">
@@ -8294,16 +8295,16 @@ function renderPallet(lot, codigoRz) {
       </div>
       <div class="summary-grid">
         ${metric("Excedente", rz.excess)}
-        ${metric("Venda total", money(rz.expectedValue))}
-        ${metric("Venda conferida", money(rz.checkedValue))}
-        ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+        ${canViewLotValues() ? metric("Venda total", money(rz.expectedValue)) : ""}
+        ${canViewLotValues() ? metric("Venda conferida", money(rz.checkedValue)) : ""}
+        ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
       </div>
       <h3 class="section-title">Progresso do pallet</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
-        ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
-        ${metric("Valor faltante", money(rz.missingValue))}
-        ${metric("Valor excedente", money(rz.excessValue))}
+        ${canViewLotValues() ? progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`) : ""}
+        ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
+        ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
       </div>
       <div class="pallet-table">
         <div class="pallet-row pallet-row-head">
@@ -8311,7 +8312,7 @@ function renderPallet(lot, codigoRz) {
           <span>Produto</span>
           <span>Endereco</span>
           <span>Qtd</span>
-          <span>Valores</span>
+          ${canViewLotValues() ? "<span>Valores</span>" : ""}
           <span>Status</span>
         </div>
         ${items.map(palletRow).join("")}
@@ -8408,16 +8409,16 @@ function scanSummaryMarkup(rz) {
     ${metric("Conferido", rz.checked)}
     ${metric("Faltante", rz.missing)}
     ${metric("Excedente", rz.excess)}
-    ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+    ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
   `;
 }
 
 function scanProgressMarkup(rz) {
   return `
     ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
-    ${progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`)}
-    ${metric("Valor faltante", money(rz.missingValue))}
-    ${metric("Valor excedente", money(rz.excessValue))}
+    ${canViewLotValues() ? progressMetric("Preco de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`) : ""}
+    ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
+    ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
   `;
 }
 
@@ -9720,6 +9721,7 @@ function progressMetric(label, percent, detail) {
 
 function previewRzRow(rz) {
   const status = rz.missing === 0 && rz.excess === 0 && rz.checked > 0 ? "OK" : rz.checked > 0 ? "Parcial" : "Pendente";
+  const valueCell = canViewLotValues() ? `<span><small>Venda conf.</small>${money(rz.checkedValue)}</span>` : "";
   return `
     <article class="preview-rz-row">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
@@ -9727,21 +9729,25 @@ function previewRzRow(rz) {
       <span><small>Conferido</small>${rz.checked}/${rz.expected}</span>
       <span><small>Faltante</small>${rz.missing}</span>
       <span><small>Excedente</small>${rz.excess}</span>
-      <span><small>Venda conf.</small>${money(rz.checkedValue)}</span>
+      ${valueCell}
     </article>
   `;
 }
 
 function rzCard(rz, { canScan = true } = {}) {
-  const title = `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
+  const title = canViewLotValues()
+    ? `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`
+    : `Itens ${rz.expected} · Conferido ${rz.checked} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
+  const valueCells = canViewLotValues()
+    ? `<span>Venda total</span><strong>${money(rz.expectedValue)}</strong><span>Venda conf.</span><strong>${money(rz.checkedValue)}</strong>`
+    : "";
   return `
     <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
       <div class="rz-card-details">
         <span>Itens</span><strong>${rz.expected}</strong>
         <span>Conferido</span><strong>${rz.checked}</strong>
-        <span>Venda total</span><strong>${money(rz.expectedValue)}</strong>
-        <span>Venda conf.</span><strong>${money(rz.checkedValue)}</strong>
+        ${valueCells}
         <span>Faltante</span><strong>${rz.missing}</strong>
         <span>Excedente</span><strong>${rz.excess}</strong>
       </div>
@@ -9787,6 +9793,7 @@ function itemRow(item) {
 function scanItemsTable(items) {
   if (!items.length) return '<p class="muted">Nenhum produto neste Pallet.</p>';
   const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
+  const saleHeader = canViewLotValues() ? '<span class="diverse-sale-cell">Venda</span>' : "";
   return `
     <div class="diverse-table scan-table">
       <div class="diverse-row scan-row diverse-row-head">
@@ -9796,7 +9803,7 @@ function scanItemsTable(items) {
         <span class="diverse-product-cell">Produto</span>
         <span class="diverse-operator-cell">Status</span>
         <span class="diverse-quantity-cell">Qtd</span>
-        <span class="diverse-sale-cell">Venda</span>
+        ${saleHeader}
         ${costHeader}
         <span class="diverse-actions-cell">Acoes</span>
       </div>
@@ -9822,6 +9829,7 @@ function scanItemTableRow(item) {
   const typeLabel = item.tipoItem === "excedente_externo" ? "excedente externo" : item.tipoItem;
   const blingAlert = productBlingAlertMarkup(product);
   const transferRefs = transferLotsForProductMarkup(product);
+  const saleCell = canViewLotValues() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
@@ -9838,7 +9846,7 @@ function scanItemTableRow(item) {
         <span class="scan-quantity-label"><strong>${item.qtdConferida}/${item.qtdEsperada}</strong></span>
         <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
       </span>
-      <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
+      ${saleCell}
       ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
         <button type="button" class="ghost icon-button" data-edit-product="${escapeHtml(product.id || "")}" title="Editar" aria-label="Editar">${editIcon()}</button>
@@ -9916,6 +9924,7 @@ function diverseItemsTable(lot) {
     return String(a.product?.sku || "").localeCompare(String(b.product?.sku || ""));
   });
   const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
+  const saleHeader = canViewLotValues() ? '<span class="diverse-sale-cell">Venda</span>' : "";
 
   return `
     <div class="diverse-table">
@@ -9926,7 +9935,7 @@ function diverseItemsTable(lot) {
         <span class="diverse-product-cell">Produto</span>
         <span class="diverse-operator-cell">Operador</span>
         <span class="diverse-quantity-cell">Qtd</span>
-        <span class="diverse-sale-cell">Venda</span>
+        ${saleHeader}
         ${costHeader}
         <span class="diverse-actions-cell">Acoes</span>
       </div>
@@ -9957,6 +9966,7 @@ function diverseItemRow(item, startsRz = false) {
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
   const externalExcessData = isExternalExcess ? ' data-diverse-external-excess="true"' : "";
+  const saleCell = canViewLotValues() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
   const quantityCell = `
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}"${externalExcessData} ${canDecrementQuantity ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${checkedQuantity}/${expectedQuantity}</strong>
@@ -9973,7 +9983,7 @@ function diverseItemRow(item, startsRz = false) {
       <span class="quantity-stepper diverse-quantity-cell" data-label="Qtd">
         ${quantityCell}
       </span>
-      <span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>
+      ${saleCell}
       ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}
       <span class="diverse-row-actions diverse-actions-cell" data-label="Acoes">
         ${isExternalExcess ? `<span class="badge excess">${escapeHtml(itemTypeLabel)}</span>` : ""}
@@ -10059,13 +10069,14 @@ function palletRow(item) {
   const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
   const blingAlert = productBlingAlertMarkup(product);
   const costDetail = canViewCost() ? `<small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small>` : `<small>Estoque ${product.qtdTotal || 0}</small>`;
+  const valueCell = canViewLotValues() ? `<span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small>${costDetail}</span>` : "";
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
       <span>${escapeHtml(product.descricao || "")}<small>${escapeHtml(item.tipoItem || "")} ${escapeHtml(item.condicaoGrade || "")}</small><small>${escapeHtml(product.origem || "")} · ${escapeHtml(product.categoria || "")} / ${escapeHtml(product.subcategoria || "")}</small></span>
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
       <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
-      <span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small>${costDetail}</span>
+      ${valueCell}
       <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button><button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button></span>
     </article>
   `;
