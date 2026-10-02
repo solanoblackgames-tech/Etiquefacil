@@ -4468,6 +4468,7 @@ function operatorPermissionConfig(kind, operator) {
   const configs = {
     triage: {
       enabled: operator.triageAccess,
+      available: Boolean(state.user?.triageAccess),
       canToggle: isOwnerUser() && state.user?.triageAccess,
       label: "Triagem",
       route: "triage-access",
@@ -4475,6 +4476,7 @@ function operatorPermissionConfig(kind, operator) {
     },
     transfer: {
       enabled: operator.transferAccess,
+      available: Boolean(state.user?.transferAccess),
       canToggle: isOwnerUser() && state.user?.transferAccess,
       label: "Estrutura de transferencia",
       route: "transfer-access",
@@ -4482,20 +4484,23 @@ function operatorPermissionConfig(kind, operator) {
     },
     stockTransferAcceptance: {
       enabled: operator.stockTransferAcceptanceAccess,
-      canToggle: isOwnerUser(),
+      available: Boolean(state.user?.stockTransferAcceptanceAccess),
+      canToggle: isOwnerUser() && state.user?.stockTransferAcceptanceAccess,
       label: "Aceitar estrutura de estoque",
       route: "stock-transfer-acceptance-access",
       bodyKey: "stockTransferAcceptanceAccess"
     },
     operatorStats: {
       enabled: operator.operatorStatsAccess,
-      canToggle: isOwnerUser(),
+      available: Boolean(state.user?.operatorStatsAccess),
+      canToggle: isOwnerUser() && state.user?.operatorStatsAccess,
       label: "Operadores e estatisticas",
       route: "operator-stats-access",
       bodyKey: "operatorStatsAccess"
     },
     largeQrLabel: {
       enabled: operator.largeQrLabelAccess,
+      available: Boolean(state.user?.largeQrLabelAccess),
       canToggle: isOwnerUser() && state.user?.largeQrLabelAccess,
       label: "Etiqueta 100x150 QR",
       route: "large-qr-label-access",
@@ -4503,14 +4508,16 @@ function operatorPermissionConfig(kind, operator) {
     },
     viewSalePrice: {
       enabled: operator.viewSalePriceAccess,
-      canToggle: isOwnerUser(),
+      available: state.user?.viewSalePriceAccess !== false,
+      canToggle: isOwnerUser() && state.user?.viewSalePriceAccess !== false,
       label: "Visualizar preço de venda",
       route: "view-sale-price-access",
       bodyKey: "viewSalePriceAccess"
     },
     viewCostPrice: {
       enabled: operator.viewCostPriceAccess,
-      canToggle: isOwnerUser(),
+      available: state.user?.viewCostPriceAccess !== false,
+      canToggle: isOwnerUser() && state.user?.viewCostPriceAccess !== false,
       label: "Visualizar preço de custo",
       route: "view-cost-price-access",
       bodyKey: "viewCostPriceAccess"
@@ -4527,7 +4534,7 @@ function openOperatorPermissionsModal(operator) {
   const actionsEl = $("#decisionActions");
   const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel", "viewSalePrice", "viewCostPrice"]
     .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
-    .filter((permission) => permission.kind !== "largeQrLabel" || state.user?.largeQrLabelAccess || permission.enabled);
+    .filter((permission) => permission.available);
   const knownDeposits = [...new Set([
     ...triageAvailableDepositNames(),
     ...(operator.acceptedDeposits || [])
@@ -4569,28 +4576,30 @@ function openOperatorPermissionsModal(operator) {
         </div>
       `).join("")}
     </div>
-    <form class="operator-permissions-list" data-operator-deposits-form>
-      <div class="operator-permission-row">
-        <div>
-          <strong>Depositos de aceite</strong>
-          <span>${operator.acceptedDeposits?.length ? operator.acceptedDeposits.join(", ") : "Nenhum deposito liberado"}</span>
+    ${state.user?.stockTransferAcceptanceAccess ? `
+      <form class="operator-permissions-list" data-operator-deposits-form>
+        <div class="operator-permission-row">
+          <div>
+            <strong>Depositos de aceite</strong>
+            <span>${operator.acceptedDeposits?.length ? operator.acceptedDeposits.join(", ") : "Nenhum deposito liberado"}</span>
+          </div>
+          <button type="submit" class="ghost access-toggle">Salvar depositos</button>
         </div>
-        <button type="submit" class="ghost access-toggle">Salvar depositos</button>
-      </div>
-      ${knownDeposits.length ? `
-        <div class="triage-deposit-choices">
-          ${knownDeposits.map((deposit) => `
-            <label class="triage-deposit-chip ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "selected" : ""}">
-              <input type="checkbox" name="acceptedDeposits" value="${escapeHtml(deposit)}" ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "checked" : ""} />
-              ${escapeHtml(deposit)}
-            </label>
-          `).join("")}
-        </div>
-      ` : ""}
-      <label>Outros depositos
-        <textarea name="extraAcceptedDeposits" rows="3" placeholder="Um deposito por linha">${escapeHtml((operator.acceptedDeposits || []).filter((deposit) => !knownDeposits.some((known) => normalizeLooseText(known) === normalizeLooseText(deposit))).join("\n"))}</textarea>
-      </label>
-    </form>
+        ${knownDeposits.length ? `
+          <div class="triage-deposit-choices">
+            ${knownDeposits.map((deposit) => `
+              <label class="triage-deposit-chip ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "selected" : ""}">
+                <input type="checkbox" name="acceptedDeposits" value="${escapeHtml(deposit)}" ${acceptedDepositKeys.has(normalizeLooseText(deposit)) ? "checked" : ""} />
+                ${escapeHtml(deposit)}
+              </label>
+            `).join("")}
+          </div>
+        ` : ""}
+        <label>Outros depositos
+          <textarea name="extraAcceptedDeposits" rows="3" placeholder="Um deposito por linha">${escapeHtml((operator.acceptedDeposits || []).filter((deposit) => !knownDeposits.some((known) => normalizeLooseText(known) === normalizeLooseText(deposit))).join("\n"))}</textarea>
+        </label>
+      </form>
+    ` : ""}
     <p class="message" data-permission-message></p>
   `;
   actionsEl.innerHTML = '<button type="button" class="ghost" data-close-operator-permissions>Fechar</button>';

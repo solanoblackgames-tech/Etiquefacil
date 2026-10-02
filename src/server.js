@@ -515,7 +515,7 @@ app.patch("/api/operators/:operatorUserId/transfer-access", requireAuth, require
   }
 });
 
-app.patch("/api/operators/:operatorUserId/stock-transfer-acceptance-access", requireAuth, requireOwner, async (req, res) => {
+app.patch("/api/operators/:operatorUserId/stock-transfer-acceptance-access", requireAuth, requireOwner, requireOwnerFeature("stockTransferAcceptanceAccess", "Entrada WMS nao liberada para esta conta."), async (req, res) => {
   try {
     res.json(await updateOperatorStockTransferAcceptanceAccess({
       ownerUserId: workspaceUserId(req),
@@ -527,7 +527,7 @@ app.patch("/api/operators/:operatorUserId/stock-transfer-acceptance-access", req
   }
 });
 
-app.patch("/api/operators/:operatorUserId/accepted-deposits", requireAuth, requireOwner, async (req, res) => {
+app.patch("/api/operators/:operatorUserId/accepted-deposits", requireAuth, requireOwner, requireOwnerFeature("stockTransferAcceptanceAccess", "Entrada WMS nao liberada para esta conta."), async (req, res) => {
   try {
     res.json(await updateOperatorAcceptedDeposits({
       ownerUserId: workspaceUserId(req),
@@ -539,7 +539,7 @@ app.patch("/api/operators/:operatorUserId/accepted-deposits", requireAuth, requi
   }
 });
 
-app.patch("/api/operators/:operatorUserId/operator-stats-access", requireAuth, requireOwner, async (req, res) => {
+app.patch("/api/operators/:operatorUserId/operator-stats-access", requireAuth, requireOwner, requireOwnerFeature("operatorStatsAccess", "Operadores e estatisticas nao liberados para esta conta."), async (req, res) => {
   try {
     res.json(await updateOperatorStatsAccess({
       ownerUserId: workspaceUserId(req),
@@ -2780,12 +2780,37 @@ function requireOwner(req, res, next) {
   next();
 }
 
+function requireOwnerFeature(featureKey, message) {
+  return async (req, res, next) => {
+    try {
+      const freshUser = await refreshSessionUser(req);
+      const role = freshUser?.role || (freshUser?.parentUserId ? "operator" : "owner");
+      if (role === "owner" && freshUser?.[featureKey]) return next();
+      return res.status(403).json({ error: message });
+    } catch (error) {
+      sendError(res, error);
+    }
+  };
+}
+
+async function userHasWorkspaceFeature(user, featureKey) {
+  if (!user) return false;
+  const role = user.role || (user.parentUserId ? "operator" : "owner");
+  if (role === "owner") return Boolean(user[featureKey]);
+  if (!user[featureKey]) return false;
+
+  const ownerUserId = user.workspaceUserId || user.parentUserId;
+  if (!ownerUserId) return false;
+  const owner = await getPublicUserById(ownerUserId).catch(() => null);
+  return Boolean(owner?.[featureKey]);
+}
+
 async function requireOperatorStatsAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     const role = freshUser?.role || (freshUser?.parentUserId ? "operator" : "owner");
-    if (role === "owner" || freshUser?.operatorStatsAccess) return next();
+    if (role === "owner" || await userHasWorkspaceFeature(freshUser, "operatorStatsAccess")) return next();
     return res.status(403).json({ error: "Estatisticas de operadores nao liberadas para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2796,7 +2821,7 @@ async function requireTriageAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.triageAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "triageAccess")) return next();
     return res.status(403).json({ error: "Modulo de triagem nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2807,7 +2832,7 @@ async function requireTriageViewOrStockTransferAcceptanceAccess(req, res, next) 
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.triageAccess || freshUser?.stockTransferAcceptanceAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "triageAccess") || await userHasWorkspaceFeature(freshUser, "stockTransferAcceptanceAccess")) return next();
     return res.status(403).json({ error: "Visualizacao de laudo ou entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2818,7 +2843,7 @@ async function requireTransferAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.transferAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "transferAccess")) return next();
     return res.status(403).json({ error: "Modulo de transferencia nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2829,7 +2854,7 @@ async function requireStockTransferAcceptanceAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.stockTransferAcceptanceAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "stockTransferAcceptanceAccess")) return next();
     return res.status(403).json({ error: "Entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2841,7 +2866,7 @@ async function requireTransferLotAcceptanceDeposit(req, res, lot = null) {
   if (!currentLot) return null;
   if (req.session.user?.role === "admin") return currentLot;
   const freshUser = await refreshSessionUser(req);
-  if (userCanAcceptDeposit(freshUser, currentLot.depositoDestino)) return currentLot;
+  if (await userHasWorkspaceFeature(freshUser, "stockTransferAcceptanceAccess") && userCanAcceptDeposit(freshUser, currentLot.depositoDestino)) return currentLot;
   const error = new Error(`Operador nao autorizado a aceitar entradas no deposito ${currentLot.depositoDestino || "destino"}.`);
   error.status = 403;
   throw error;
@@ -2851,7 +2876,7 @@ async function requireTransferViewOrAcceptanceAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.transferAccess || freshUser?.stockTransferAcceptanceAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "transferAccess") || await userHasWorkspaceFeature(freshUser, "stockTransferAcceptanceAccess")) return next();
     return res.status(403).json({ error: "Transferencia ou entrada WMS nao liberada para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -2862,7 +2887,7 @@ async function requireTransferOrTriageAccess(req, res, next) {
   try {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
-    if (freshUser?.transferAccess || freshUser?.triageAccess) return next();
+    if (await userHasWorkspaceFeature(freshUser, "transferAccess") || await userHasWorkspaceFeature(freshUser, "triageAccess")) return next();
     return res.status(403).json({ error: "Modulo de transferencia ou triagem nao liberado para este usuario." });
   } catch (error) {
     sendError(res, error);
