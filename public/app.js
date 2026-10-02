@@ -774,11 +774,6 @@ async function addDiverseItem(event) {
     const suggestedLotItem = await findNoSheetSuggestionForProduct(preview.product || {}).catch(() => null);
     quantidade = manualSuggestionQuantityValue(suggestedLotItem);
     if (preview.status === "preview_existing") {
-      const action = await askProductAlreadyRegistered(preview.product, { sameCode: true, quantidade });
-      if (action !== "use_existing") {
-        input.select();
-        return;
-      }
       input.value = "";
       await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, codigoMl);
       await refreshLotsList(state.selectedDiverseLotId);

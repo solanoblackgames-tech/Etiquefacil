@@ -3542,6 +3542,12 @@ async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) 
 
   try {
     const integration = await getRequiredBlingCredentials(userId);
+    const lot = await getUserLotDetail(userId, lotId);
+    await syncBlingProducts({
+      integration,
+      products: withLotSupplier([item], lot),
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
     const result = await syncBlingStockMovement({
       integration,
       item,
@@ -3553,6 +3559,8 @@ async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) 
     const updatedLot = await updateLotProductBlingAlerts({ userId, lotId, syncResult: result });
     return updatedLot ? { ...result, lot: updatedLot } : result;
   } catch (error) {
+    const lot = await getUserLotDetail(userId, lotId);
+    if (lot) await enqueueProductSyncs({ userId, lot, products: [item], errorMessage: error.message });
     await enqueueStockMovementSync({
       userId,
       lotId,
@@ -3562,12 +3570,11 @@ async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) 
       errorMessage: error.message
     });
     scheduleBlingSyncQueue();
-    const lot = await getUserLotDetail(userId, lotId);
     return {
       ok: false,
       queued: true,
       status: "queued",
-      error: `Entrada no Bling ficou na fila para tentar novamente: ${error.message}`,
+      error: `Produto e entrada no Bling ficaram na fila para tentar novamente: ${error.message}`,
       lot
     };
   }
