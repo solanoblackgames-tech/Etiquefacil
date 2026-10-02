@@ -155,6 +155,13 @@ const canViewLotValues = () => canViewSalePrice();
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
+async function refreshCurrentUser() {
+  if (!state.user) return null;
+  const response = await api("/api/me");
+  state.user = response.user || null;
+  return state.user;
+}
+
 function defaultConferenceSettings() {
   return {
     fields: {
@@ -7687,6 +7694,7 @@ async function syncTransferLot(transferLotId, button) {
 
 async function loadLots(selectId = state.selectedLotId) {
   try {
+    await refreshCurrentUser();
     const response = await api("/api/lots");
     state.lots = response.lots;
     if (!selectId || !state.lots.some((lot) => lot.id === selectId)) {
@@ -7711,6 +7719,7 @@ async function loadLots(selectId = state.selectedLotId) {
 }
 
 async function refreshLotsList(activeLotId = state.selectedLotId) {
+  await refreshCurrentUser();
   const response = await api("/api/lots");
   state.lots = response.lots;
   if (activeLotId && state.lots.some((lot) => lot.id === activeLotId)) {
@@ -7775,6 +7784,7 @@ async function previewLot(lotId) {
   detail.innerHTML = '<p class="muted">Carregando status do lote...</p>';
 
   try {
+    await refreshCurrentUser();
     const response = await api(`/api/lots/${lotId}`);
     renderLotPreview(response.lot);
   } catch (error) {
@@ -7795,6 +7805,7 @@ async function selectLot(lotId, { push = true } = {}) {
   detail.innerHTML = '<p class="muted">Carregando lote...</p>';
 
   try {
+    await refreshCurrentUser();
     const response = await api(`/api/lots/${encodeURIComponent(lotId)}`);
     if (selectionToken !== state.lotSelectionToken) return null;
     renderLots();

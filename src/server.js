@@ -2728,9 +2728,15 @@ app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Faça login para continuar." });
-  next();
+  try {
+    const user = await refreshSessionUser(req);
+    if (!user) return res.status(401).json({ error: "Faça login para continuar." });
+    next();
+  } catch (error) {
+    sendError(res, error);
+  }
 }
 
 async function refreshSessionUser(req) {
