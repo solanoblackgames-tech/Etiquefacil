@@ -151,7 +151,7 @@ const normalizeSearchText = (value) =>
 const isOwnerUser = () => state.user?.role === "owner";
 const canViewSalePrice = () => state.user?.viewSalePriceAccess ?? state.user?.role !== "operator";
 const canViewCost = () => state.user?.viewCostPriceAccess ?? state.user?.role !== "operator";
-const canViewLotValues = () => canViewSalePrice();
+const canViewLotValues = () => state.user?.role !== "operator";
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
@@ -9938,7 +9938,7 @@ function itemRow(item) {
 function scanItemsTable(items) {
   if (!items.length) return '<p class="muted">Nenhum produto neste Pallet.</p>';
   const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
-  const saleHeader = canViewLotValues() ? '<span class="diverse-sale-cell">Venda</span>' : "";
+  const saleHeader = canViewSalePrice() ? '<span class="diverse-sale-cell">Venda</span>' : "";
   return `
     <div class="diverse-table scan-table">
       <div class="diverse-row scan-row diverse-row-head">
@@ -9974,7 +9974,7 @@ function scanItemTableRow(item) {
   const typeLabel = item.tipoItem === "excedente_externo" ? "excedente externo" : item.tipoItem;
   const blingAlert = productBlingAlertMarkup(product);
   const transferRefs = transferLotsForProductMarkup(product);
-  const saleCell = canViewLotValues() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
+  const saleCell = canViewSalePrice() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
   const deleteButton =
     item.tipoItem === "excedente_externo"
       ? `<button type="button" class="danger ghost icon-button" data-delete-external-excess="${escapeHtml(product.codigoMl || "")}" title="Excluir excedente no Bling" aria-label="Excluir excedente no Bling">${trashIcon()}</button>`
@@ -10069,7 +10069,7 @@ function diverseItemsTable(lot) {
     return String(a.product?.sku || "").localeCompare(String(b.product?.sku || ""));
   });
   const costHeader = canViewCost() ? '<span class="diverse-cost-cell">Custo</span>' : "";
-  const saleHeader = canViewLotValues() ? '<span class="diverse-sale-cell">Venda</span>' : "";
+  const saleHeader = canViewSalePrice() ? '<span class="diverse-sale-cell">Venda</span>' : "";
 
   return `
     <div class="diverse-table">
@@ -10111,7 +10111,7 @@ function diverseItemRow(item, startsRz = false) {
   const code = product.codigoMl || product.sku || "";
   const blingAlert = productBlingAlertMarkup(product);
   const externalExcessData = isExternalExcess ? ' data-diverse-external-excess="true"' : "";
-  const saleCell = canViewLotValues() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
+  const saleCell = canViewSalePrice() ? `<span class="diverse-sale-cell" data-label="Venda">${money(product.valorUnit)}</span>` : "";
   const quantityCell = `
         <button type="button" class="danger ghost quantity-button" data-diverse-decrement-ml="${escapeHtml(code)}" data-diverse-rz="${escapeHtml(item.codigoRz || "")}"${externalExcessData} ${canDecrementQuantity ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <strong>${checkedQuantity}/${expectedQuantity}</strong>
@@ -10214,7 +10214,7 @@ function palletRow(item) {
   const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
   const blingAlert = productBlingAlertMarkup(product);
   const costDetail = canViewCost() ? `<small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small>` : `<small>Estoque ${product.qtdTotal || 0}</small>`;
-  const valueCell = canViewLotValues() ? `<span>${money(value)}<small>Total ${money(value * item.qtdEsperada)}</small>${costDetail}</span>` : "";
+  const valueCell = canViewSalePrice() ? `<span>${money(value)}${state.user?.role === "operator" ? "" : `<small>Total ${money(value * item.qtdEsperada)}</small>`}${costDetail}</span>` : "";
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
