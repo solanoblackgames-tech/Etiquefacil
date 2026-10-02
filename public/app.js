@@ -8527,7 +8527,7 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
     button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
   });
   root.querySelectorAll("[data-add-ml]").forEach((button) => {
-    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl));
+    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl, { triggerButton: button }));
   });
   root.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
     button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
@@ -8612,7 +8612,7 @@ function bindLabelTextControls() {
   });
 }
 
-async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
+async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerButton = null } = {}) {
   if (state.pendingScan) return;
   const input = $("#scanInput");
   if (!input && !codigoMlFromButton) return;
@@ -8622,8 +8622,10 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
 
   try {
     state.pendingScan = true;
-    $("#scanButton").disabled = true;
-    input.disabled = true;
+    const scanButton = $("#scanButton");
+    if (scanButton) scanButton.disabled = true;
+    if (triggerButton) triggerButton.disabled = true;
+    if (input) input.disabled = true;
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8666,11 +8668,14 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
       }
     }
   } catch (error) {
-    $("#scanMessage").textContent = error.message;
+    const message = $("#scanMessage");
+    if (message) message.textContent = error.message;
+    else alert(error.message);
   } finally {
     state.pendingScan = false;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = false;
+    if (triggerButton) triggerButton.disabled = false;
     const scanInput = $("#scanInput");
     if (scanInput) scanInput.disabled = false;
     schedulePrimaryInputFocus(["#scanInput"]);

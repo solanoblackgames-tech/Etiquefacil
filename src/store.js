@@ -842,7 +842,8 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
 
 export async function recordOperatorActivity(user, action, metadata = {}) {
   if (!action) return null;
-  const operatorUserId = user?.role === "operator" ? user.id : null;
+  const role = user?.role || (user?.parentUserId ? "operator" : "owner");
+  const operatorUserId = role === "operator" ? user.id : null;
   const ownerUserId = user?.workspaceUserId || user?.parentUserId || null;
   if (!operatorUserId || !ownerUserId) return null;
   await ensureStore();

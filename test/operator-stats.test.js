@@ -77,3 +77,58 @@ test("operator entry items count scans and manual registrations once", async () 
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("recordOperatorActivity accepts operator session inferred from parent user", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-operator-activity-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-operator-activity`;
+    const { readDb, recordOperatorActivity, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      userSettings: [],
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const activity = await recordOperatorActivity(
+      { id: "operator-1", parentUserId: "owner-1", email: "ana@example.com" },
+      "scan_ml",
+      { lotId: "lot-1", codigoMl: "ML1" }
+    );
+    const db = await readDb();
+
+    assert.equal(activity.operatorUserId, "operator-1");
+    assert.equal(activity.ownerUserId, "owner-1");
+    assert.equal(db.operatorActivities.length, 1);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
