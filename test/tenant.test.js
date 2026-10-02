@@ -13,7 +13,9 @@ test("sanitizeUser exposes explicit tenant context", () => {
       role: "owner",
       operatorCode: null,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }),
     {
       id: "user-1",
@@ -24,7 +26,9 @@ test("sanitizeUser exposes explicit tenant context", () => {
       role: "owner",
       operatorCode: null,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }
   );
 });
@@ -45,7 +49,9 @@ test("sanitizeUser keeps legacy users compatible with tenant context", () => {
       role: "owner",
       operatorCode: null,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }
   );
 });
@@ -73,7 +79,9 @@ test("sanitizeUser only exposes module access when explicitly enabled", () => {
       role: "owner",
       operatorCode: null,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }
   );
 
@@ -89,7 +97,9 @@ test("sanitizeUser only exposes module access when explicitly enabled", () => {
       transferAccess: true,
       largeQrLabelAccess: true,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }),
     {
       id: "user-1",
@@ -103,7 +113,9 @@ test("sanitizeUser only exposes module access when explicitly enabled", () => {
       transferAccess: true,
       largeQrLabelAccess: true,
       name: "Lucas",
-      email: "lucas@example.com"
+      email: "lucas@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: true
     }
   );
 });
@@ -129,7 +141,39 @@ test("sanitizeUser points operators at the owner workspace", () => {
       role: "operator",
       operatorCode: 1001,
       name: "Ana",
+      email: "ana@example.com",
+      viewSalePriceAccess: false,
+      viewCostPriceAccess: false
+    }
+  );
+});
+
+test("sanitizeUser exposes explicit price view permissions", () => {
+  assert.deepEqual(
+    sanitizeUser({
+      id: "operator-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: "user-1",
+      role: "operator",
+      operatorCode: 1001,
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: false,
+      name: "Ana",
       email: "ana@example.com"
+    }),
+    {
+      id: "operator-1",
+      tenantId: "tenant-1",
+      tenantName: "Empresa 1",
+      parentUserId: "user-1",
+      workspaceUserId: "user-1",
+      role: "operator",
+      operatorCode: 1001,
+      name: "Ana",
+      email: "ana@example.com",
+      viewSalePriceAccess: true,
+      viewCostPriceAccess: false
     }
   );
 });

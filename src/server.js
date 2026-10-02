@@ -133,6 +133,8 @@ import {
   updateOperatorAcceptedDeposits,
   updateOperatorStatsAccess,
   updateOperatorLargeQrLabelAccess,
+  updateOperatorViewSalePriceAccess,
+  updateOperatorViewCostPriceAccess,
   updateOperatorForOwner,
   updateTriageDiagnosis,
   updateTriageItemDetails,
@@ -141,6 +143,8 @@ import {
   updateUserTransferAccessForAdmin,
   updateUserStockTransferAcceptanceAccessForAdmin,
   updateUserOperatorStatsAccessForAdmin,
+  updateUserViewSalePriceAccessForAdmin,
+  updateUserViewCostPriceAccessForAdmin,
   updateOperatorPasswordForOwner,
   updateUserPassword,
   saveUserBlingIntegration,
@@ -393,6 +397,22 @@ app.patch("/api/admin/users/:userId/operator-stats-access", requireAdmin, async 
   }
 });
 
+app.patch("/api/admin/users/:userId/view-sale-price-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserViewSalePriceAccessForAdmin(req.params.userId, Boolean(req.body?.viewSalePriceAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/admin/users/:userId/view-cost-price-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await updateUserViewCostPriceAccessForAdmin(req.params.userId, Boolean(req.body?.viewCostPriceAccess)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
   try {
     res.json(await deleteUser(req.params.userId));
@@ -537,6 +557,30 @@ app.patch("/api/operators/:operatorUserId/large-qr-label-access", requireAuth, r
       ownerUserId: workspaceUserId(req),
       operatorUserId: req.params.operatorUserId,
       largeQrLabelAccess: Boolean(req.body?.largeQrLabelAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/view-sale-price-access", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorViewSalePriceAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      viewSalePriceAccess: Boolean(req.body?.viewSalePriceAccess)
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/operators/:operatorUserId/view-cost-price-access", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json(await updateOperatorViewCostPriceAccess({
+      ownerUserId: workspaceUserId(req),
+      operatorUserId: req.params.operatorUserId,
+      viewCostPriceAccess: Boolean(req.body?.viewCostPriceAccess)
     }));
   } catch (error) {
     sendError(res, error);

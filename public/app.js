@@ -149,8 +149,9 @@ const normalizeSearchText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 const isOwnerUser = () => state.user?.role === "owner";
-const canViewCost = () => isOwnerUser();
-const canViewLotValues = () => state.user?.role !== "operator";
+const canViewSalePrice = () => state.user?.viewSalePriceAccess ?? state.user?.role !== "operator";
+const canViewCost = () => state.user?.viewCostPriceAccess ?? state.user?.role !== "operator";
+const canViewLotValues = () => canViewSalePrice();
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
@@ -777,7 +778,7 @@ async function addDiverseItem(event) {
       schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
       return;
     }
-    if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
+    if (canViewSalePrice() && state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
       if (preview.status === "preview") {
         const product = preview.product || {};
         const suggestedPrice = suggestionPriceValue(suggestedLotItem) || await findNoSheetSuggestedPriceForProduct(product);
@@ -2038,10 +2039,10 @@ function diverseLabelOptionsMarkup() {
   return `
     <div class="diverse-label-options">
       <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-      <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
-      ${labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle")}
+      ${canViewSalePrice() ? `<label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>` : ""}
+      ${canViewSalePrice() ? labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle") : ""}
       ${largeQrLabelOptionMarkup("diverseLargeQrLabelToggle")}
-      <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
+      ${canViewSalePrice() ? `<label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>` : ""}
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelNameFontControlsMarkup()}
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
@@ -2059,13 +2060,13 @@ function bindDiverseLabelOptions() {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
   });
-  $("#diverseIncludePriceToggle").addEventListener("change", (event) => {
+  $("#diverseIncludePriceToggle")?.addEventListener("change", (event) => {
     state.labelOptions.includePrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
   bindClubPriceToggle("#diverseIncludeClubPriceToggle");
   bindLargeQrLabelToggle("#diverseLargeQrLabelToggle");
-  $("#diverseSuggestPriceToggle").addEventListener("change", (event) => {
+  $("#diverseSuggestPriceToggle")?.addEventListener("change", (event) => {
     state.labelOptions.suggestPrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.suggestPrice", String(state.labelOptions.suggestPrice));
   });
@@ -2219,7 +2220,8 @@ async function deleteDiverseProduct(item, button) {
 function openProductEditModal(product, options = {}) {
   return new Promise((resolve) => {
     const includeLogisticsFields = options.includeLogisticsFields !== false;
-    const canEditCost = isOwnerUser();
+    const canEditSalePrice = isOwnerUser() && canViewSalePrice();
+    const canEditCost = isOwnerUser() && canViewCost();
     const modal = $("#productEditModal");
     const form = $("#productEditForm");
     const code = $("#productEditCode");
@@ -2242,6 +2244,7 @@ function openProductEditModal(product, options = {}) {
     const error = $("#productEditError");
     const cancel = $("#productEditCancel");
     const fieldVisibility = [
+      [price, canEditSalePrice],
       [cost, canEditCost],
       [ean, isConferenceFieldEnabled("ean")],
       [categoria, isConferenceFieldEnabled("category")],
@@ -2261,6 +2264,7 @@ function openProductEditModal(product, options = {}) {
       input.closest("label")?.classList.toggle("hidden", !visible);
       input.disabled = !visible;
       if (input === cost) input.required = Boolean(visible);
+      if (input === price) input.required = Boolean(visible);
     });
 
     const cleanup = () => {
@@ -2270,6 +2274,7 @@ function openProductEditModal(product, options = {}) {
         input.disabled = false;
       });
       cost.required = true;
+      price.required = true;
       form.onsubmit = null;
       cancel.onclick = null;
       modal.onkeydown = null;
@@ -2305,7 +2310,7 @@ function openProductEditModal(product, options = {}) {
 
     form.onsubmit = (event) => {
       event.preventDefault();
-      const valorUnit = parseMoneyInput(price.value);
+      const valorUnit = canEditSalePrice ? parseMoneyInput(price.value) : Number(product.valorUnit || 0);
       const precoCusto = canEditCost ? parseMoneyInput(cost.value) : Number(product.precoCusto || 0);
       const codigoMl = normalizeCodigoMl(code.value);
       code.value = codigoMl;
@@ -2319,7 +2324,7 @@ function openProductEditModal(product, options = {}) {
         description.focus();
         return;
       }
-      if (!Number.isFinite(valorUnit) || valorUnit <= 0) {
+      if (canEditSalePrice && (!Number.isFinite(valorUnit) || valorUnit <= 0)) {
         error.textContent = "Informe um preco valido.";
         price.focus();
         return;
@@ -4388,6 +4393,8 @@ function operatorViewModel(operator) {
     stockTransferAcceptanceAccess: Boolean(operator.stockTransferAcceptanceAccess),
     operatorStatsAccess: Boolean(operator.operatorStatsAccess),
     largeQrLabelAccess: Boolean(operator.largeQrLabelAccess),
+    viewSalePriceAccess: Boolean(operator.viewSalePriceAccess),
+    viewCostPriceAccess: Boolean(operator.viewCostPriceAccess),
     logins,
     searches,
     scans,
@@ -4493,6 +4500,20 @@ function operatorPermissionConfig(kind, operator) {
       label: "Etiqueta 100x150 QR",
       route: "large-qr-label-access",
       bodyKey: "largeQrLabelAccess"
+    },
+    viewSalePrice: {
+      enabled: operator.viewSalePriceAccess,
+      canToggle: isOwnerUser(),
+      label: "Visualizar preço de venda",
+      route: "view-sale-price-access",
+      bodyKey: "viewSalePriceAccess"
+    },
+    viewCostPrice: {
+      enabled: operator.viewCostPriceAccess,
+      canToggle: isOwnerUser(),
+      label: "Visualizar preço de custo",
+      route: "view-cost-price-access",
+      bodyKey: "viewCostPriceAccess"
     }
   };
   return configs[kind];
@@ -4504,7 +4525,7 @@ function openOperatorPermissionsModal(operator) {
   const bodyEl = $("#decisionBody");
   const fieldsEl = $("#decisionFields");
   const actionsEl = $("#decisionActions");
-  const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel"]
+  const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel", "viewSalePrice", "viewCostPrice"]
     .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
     .filter((permission) => permission.kind !== "largeQrLabel" || state.user?.largeQrLabelAccess || permission.enabled);
   const knownDeposits = [...new Set([
@@ -5660,6 +5681,8 @@ function adminUserRow(user) {
           <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
           <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(user.id)}" data-stock-transfer-acceptance-access="${user.stockTransferAcceptanceAccess ? "false" : "true"}">${user.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
           <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
+          <button type="button" data-toggle-admin-view-sale-price="${escapeHtml(user.id)}" data-view-sale-price-access="${user.viewSalePriceAccess ? "false" : "true"}">${user.viewSalePriceAccess ? "Bloquear preço venda" : "Liberar preço venda"}</button>
+          <button type="button" data-toggle-admin-view-cost-price="${escapeHtml(user.id)}" data-view-cost-price-access="${user.viewCostPriceAccess ? "false" : "true"}">${user.viewCostPriceAccess ? "Bloquear preço custo" : "Liberar preço custo"}</button>
           <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
         </div>
       </div>
@@ -5701,6 +5724,8 @@ function adminOperatorRow(operator) {
         <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
         <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(operator.id)}" data-stock-transfer-acceptance-access="${operator.stockTransferAcceptanceAccess ? "false" : "true"}">${operator.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
         <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
+        <button type="button" data-toggle-admin-view-sale-price="${escapeHtml(operator.id)}" data-view-sale-price-access="${operator.viewSalePriceAccess ? "false" : "true"}">${operator.viewSalePriceAccess ? "Bloquear preço venda" : "Liberar preço venda"}</button>
+        <button type="button" data-toggle-admin-view-cost-price="${escapeHtml(operator.id)}" data-view-cost-price-access="${operator.viewCostPriceAccess ? "false" : "true"}">${operator.viewCostPriceAccess ? "Bloquear preço custo" : "Liberar preço custo"}</button>
         <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
       </div>
     </div>
@@ -5849,6 +5874,48 @@ async function handleAdminUsersClick(event) {
       $("#adminMessage").textContent = error.message;
     } finally {
       operatorStatsButton.disabled = false;
+    }
+    return;
+  }
+
+  const viewSalePriceButton = event.target.closest("[data-toggle-admin-view-sale-price]");
+  if (viewSalePriceButton) {
+    viewSalePriceButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(viewSalePriceButton.dataset.toggleAdminViewSalePrice)}/view-sale-price-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewSalePriceAccess: viewSalePriceButton.dataset.viewSalePriceAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de preco de venda atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      viewSalePriceButton.disabled = false;
+    }
+    return;
+  }
+
+  const viewCostPriceButton = event.target.closest("[data-toggle-admin-view-cost-price]");
+  if (viewCostPriceButton) {
+    viewCostPriceButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(viewCostPriceButton.dataset.toggleAdminViewCostPrice)}/view-cost-price-access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewCostPriceAccess: viewCostPriceButton.dataset.viewCostPriceAccess === "true" })
+      });
+      $("#adminMessage").style.color = "#0f766e";
+      $("#adminMessage").textContent = "Permissao de preco de custo atualizada.";
+      await loadAdminUsers();
+    } catch (error) {
+      $("#adminMessage").style.color = "";
+      $("#adminMessage").textContent = error.message;
+    } finally {
+      viewCostPriceButton.disabled = false;
     }
     return;
   }
@@ -8230,25 +8297,25 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-      <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
-      ${labelClubPriceOptionMarkup()}
+      ${canViewSalePrice() ? `<label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>` : ""}
+      ${canViewSalePrice() ? labelClubPriceOptionMarkup() : ""}
       ${largeQrLabelOptionMarkup()}
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelTextControls()}
     </div>
-    <div class="summary-grid">
-      ${metric("Conferido", rz.checked)}
-      ${metric("Faltante", rz.missing)}
-      ${metric("Excedente", rz.excess)}
-      ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
-    </div>
-    <h3 class="section-title">Progresso do Pallet</h3>
-    <div class="summary-grid">
-      ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
-      ${canViewLotValues() ? progressMetric("Preço de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`) : ""}
-      ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
-      ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
-    </div>
+      <div class="summary-grid">
+        ${metric("Conferido", rz.checked)}
+        ${metric("Faltante", rz.missing)}
+        ${metric("Excedente", rz.excess)}
+        ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
+      </div>
+      <h3 class="section-title">Progresso do Pallet</h3>
+      <div class="summary-grid">
+        ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
+        ${canViewLotValues() ? progressMetric("Preço de venda", rz.valuePercent, `${money(rz.checkedValue)} / ${money(rz.expectedValue)}`) : ""}
+        ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
+        ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
+      </div>
     <div id="scanMessage" class="message"></div>
     <div class="items">
       ${items.map(itemRow).join("")}
@@ -8383,8 +8450,8 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-        <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
-        ${labelClubPriceOptionMarkup()}
+        ${canViewSalePrice() ? `<label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>` : ""}
+        ${canViewSalePrice() ? labelClubPriceOptionMarkup() : ""}
         ${largeQrLabelOptionMarkup()}
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelNameFontControlsMarkup()}
@@ -8506,7 +8573,7 @@ function bindScanControls(lotId, codigoRz, items = []) {
     state.labelOptions.autoPrint = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.autoPrint", String(state.labelOptions.autoPrint));
   });
-  $("#includePriceToggle").addEventListener("change", (event) => {
+  $("#includePriceToggle")?.addEventListener("change", (event) => {
     state.labelOptions.includePrice = event.currentTarget.checked;
     localStorage.setItem("etiquefacil.includePrice", String(state.labelOptions.includePrice));
   });
@@ -9439,7 +9506,7 @@ function labelMarkupCacheKey(product = {}, meta = null) {
     },
     label: {
       largeQr: labelUsesLargeQr(),
-      includePrice: Boolean(state.labelOptions.includePrice),
+      includePrice: Boolean(canViewSalePrice() && state.labelOptions.includePrice),
       includeClubPrice: Boolean(state.labelOptions.includeClubPrice),
       includeText: Boolean(state.labelOptions.includeText),
       customText: state.labelOptions.includeText ? String(state.labelOptions.customText || "").trim() : "",
@@ -9484,7 +9551,7 @@ function scheduleLabelMarkupWarmup(items = []) {
 }
 
 function labelPriceMarkup(product) {
-  if (!state.labelOptions.includePrice) return '<strong class="label-price"></strong>';
+  if (!canViewSalePrice() || !state.labelOptions.includePrice) return '<strong class="label-price"></strong>';
   const regularPrice = Number(product.valorUnit || 0);
   const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
   if (!labelUsesClubPrice(settings)) {
@@ -9502,7 +9569,7 @@ function labelPriceMarkup(product) {
 }
 
 function labelUsesClubPrice(settings = normalizePriceDisplaySettings(state.priceDisplaySettings)) {
-  return Boolean(state.labelOptions.includePrice && settings.enabled && state.labelOptions.includeClubPrice);
+  return Boolean(canViewSalePrice() && state.labelOptions.includePrice && settings.enabled && state.labelOptions.includeClubPrice);
 }
 
 function roundMoneyValue(value) {
@@ -10072,7 +10139,7 @@ async function largeQrLabelMarkup(product, meta = null) {
   const qrValue = labelQrValue(product);
   const qrDataUrl = await labelQrDataUrl(qrValue);
   return `
-    <section class="label-print label-print-large-qr ${state.labelOptions.includePrice ? "has-price" : ""} ${customText ? "has-note" : ""}">
+    <section class="label-print label-print-large-qr ${canViewSalePrice() && state.labelOptions.includePrice ? "has-price" : ""} ${customText ? "has-note" : ""}">
       <strong class="label-large-brand">ETIQUEFACIL</strong>
       <p class="label-desc-large">${escapeHtml(product.descricao)}</p>
       <img class="label-qr" src="${escapeHtml(qrDataUrl)}" alt="QR Code" />
@@ -10085,7 +10152,7 @@ async function largeQrLabelMarkup(product, meta = null) {
 
 function largeQrLabelDetails(product, stockLocation, customText) {
   const location = stockLocation ? `<div><span>Localizacao</span><strong>${escapeHtml(stockLocation)}</strong></div>` : "";
-  const price = state.labelOptions.includePrice ? `<div class="label-large-price-row"><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
+  const price = canViewSalePrice() && state.labelOptions.includePrice ? `<div class="label-large-price-row"><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
   const note = customText ? `<div><span>Obs.</span><strong>${escapeHtml(customText)}</strong></div>` : "";
   return `
     <div class="label-large-details">
