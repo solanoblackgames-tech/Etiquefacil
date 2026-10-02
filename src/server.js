@@ -3223,6 +3223,9 @@ function buildTriageStatsExportWorkbook(rows = []) {
     return {
       LOTE: lot.nomeArquivo || "",
       SKU: product.sku || item.sku || "",
+      GRADE: item.gradeAvaliada || "",
+      "NUMERO DE SERIE": item.serial || "",
+      EAN: item.ean || product.ean || "",
       QTD: 1,
       "PRECO DE VENDA VAREJO": roundMoney(row.salePrice || 0),
       "RESULTADO DO LAUDO": diagnosis || condition,
@@ -3240,6 +3243,9 @@ function buildTriageStatsExportWorkbook(rows = []) {
     header: [
       "LOTE",
       "SKU",
+      "GRADE",
+      "NUMERO DE SERIE",
+      "EAN",
       "QTD",
       "PRECO DE VENDA VAREJO",
       "RESULTADO DO LAUDO",
@@ -3255,6 +3261,9 @@ function buildTriageStatsExportWorkbook(rows = []) {
   });
   worksheet["!cols"] = [
     { wch: 28 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 22 },
     { wch: 18 },
     { wch: 8 },
     { wch: 22 },
