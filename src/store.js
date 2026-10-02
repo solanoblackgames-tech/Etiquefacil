@@ -4402,10 +4402,10 @@ export async function decrementDiverseLotItemQuantity({ userId, lotId, codigoRz,
   return { lot: summarizeLot(db, lot, true) };
 }
 
-export async function createExternalExcess({ userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
+export async function createExternalExcess({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
-  if (hasPostgres()) return createExternalExcessPg({ userId, operatorUserId, lotId, codigoRz, codigoMl: normalizedMl });
+  if (hasPostgres()) return createExternalExcessPg({ userId, createdByUserId, operatorUserId, lotId, codigoRz, codigoMl: normalizedMl });
 
   const db = await readDb();
   const lot = getUserLotFromDb(db, userId, lotId);
@@ -4419,7 +4419,7 @@ export async function createExternalExcess({ userId, operatorUserId = null, lotI
 
   const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
   const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
-  const { product, item } = buildExternalExcessRecords(lot, history, codigoRz, normalizedMl, { sku: reservation.sku });
+  const { product, item } = buildExternalExcessRecords(lot, history, codigoRz, normalizedMl, { createdByUserId, operatorUserId, sku: reservation.sku });
   consumeSkuReservationInDb(reservation, product.id);
   db.products.push(product);
   db.rzItems.push(item);
@@ -7112,7 +7112,7 @@ async function decrementDiverseLotItemQuantityPg({ userId, lotId, codigoRz, codi
   return { lot: await getUserLotDetail(userId, lotId) };
 }
 
-async function createExternalExcessPg({ userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
+async function createExternalExcessPg({ userId, createdByUserId = userId, operatorUserId = null, lotId, codigoRz, codigoMl }) {
   const client = await getPgPool().connect();
   let product;
   try {
@@ -7130,7 +7130,7 @@ async function createExternalExcessPg({ userId, operatorUserId = null, lotId, co
 
     const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
     const reservation = await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-    const records = buildExternalExcessRecords(lot, history, codigoRz, codigoMl, { sku: reservation.sku });
+    const records = buildExternalExcessRecords(lot, history, codigoRz, codigoMl, { createdByUserId, operatorUserId, sku: reservation.sku });
     product = records.product;
     await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
     await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });

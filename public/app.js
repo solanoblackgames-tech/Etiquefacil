@@ -8627,7 +8627,7 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigoMl })
+      body: JSON.stringify({ codigoMl, autoStockEntry: true })
     });
     input.value = "";
     const message = $("#scanMessage");
@@ -8659,10 +8659,10 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
           lotId,
           autoPrint: true,
           meta: labelMeta(response.scan.createdAt),
-          afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
+          afterPrint: () => handleScanStockEntrySync(lotId, codigoRz, codigoMl, response, { printed: true })
         });
       } else if (scannedProduct) {
-        await syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl);
+        await handleScanStockEntrySync(lotId, codigoRz, codigoMl, response);
       }
     }
   } catch (error) {
@@ -8675,6 +8675,23 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "") {
     if (scanInput) scanInput.disabled = false;
     schedulePrimaryInputFocus(["#scanInput"]);
   }
+}
+
+async function handleScanStockEntrySync(lotId, codigoRz, codigoMl, scanResponse, { printed = false } = {}) {
+  if (!scanResponse?.bling) return syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed });
+  const message = $("#scanMessage");
+  if (scanResponse.bling?.lot) renderScanPage(scanResponse.bling.lot, codigoRz, { lastCodigoMl: codigoMl });
+  const targetMessage = $("#scanMessage") || message;
+  if (!targetMessage) return scanResponse.bling;
+  targetMessage.style.color = scanResponse.bling.queued || scanResponse.bling.ok === false ? "" : "#0f766e";
+  targetMessage.textContent = scanResponse.bling.queued
+    ? "Bipagem registrada e Bling sincronizando em segundo plano."
+    : scanResponse.bling.ok === false
+      ? `Bipagem registrada, mas a entrada no Bling falhou: ${scanResponse.bling.error || "verifique a integracao."}`
+      : printed
+        ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`
+        : `Bipagem registrada e entrada lancada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`;
+  return scanResponse.bling;
 }
 
 async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {

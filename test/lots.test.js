@@ -682,11 +682,20 @@ test("scanLotRz accepts previous lot history for external excess", async () => {
     assert.equal(scan.scan.status, "historico");
     assert.equal(scan.scan.history[0].descricao, "Produto do historico anterior");
 
-    const created = await createExternalExcess({ userId: "user-1", lotId: "lot-new", codigoRz: "RZ-001", codigoMl: "ML-HIST" });
+    const created = await createExternalExcess({
+      userId: "user-1",
+      createdByUserId: "operator-1",
+      operatorUserId: "operator-1",
+      lotId: "lot-new",
+      codigoRz: "RZ-001",
+      codigoMl: "ML-HIST"
+    });
     const db = await readDb();
 
     assert.equal(created.product.descricao, "Produto do historico anterior");
     assert.equal(created.product.sku, "NEW0007");
+    assert.equal(created.product.createdByUserId, "operator-1");
+    assert.equal(created.product.operatorUserId, "operator-1");
     assert.equal(created.lot.items[0].tipoItem, "excedente_externo");
     assert.equal(db.products.find((product) => product.lotId === "lot-new").codigoMl, "ML-HIST");
   } finally {

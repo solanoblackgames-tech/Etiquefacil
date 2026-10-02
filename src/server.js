@@ -2354,7 +2354,14 @@ app.post("/api/lots/:lotId/rz/:codigoRz/external-excess", requireAuth, async (re
     const userId = workspaceUserId(req);
     const codigoMl = String(req.body.codigoMl || "").trim().toUpperCase();
     await recordOperatorActivity(req.session.user, "create_external_excess", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
-    const result = await createExternalExcess({ userId, operatorUserId: operatorUserId(req), lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
+    const result = await createExternalExcess({
+      userId,
+      createdByUserId: req.session.user?.id,
+      operatorUserId: operatorUserId(req),
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      codigoMl
+    });
     result.lot = await getUserLotDetail(userId, req.params.lotId);
     await enqueueProductSyncs({ userId, lot: result.lot, products: [result.product], errorMessage: "Produto aguardando envio ao Bling." });
     await enqueueStockMovementSync({
@@ -3382,7 +3389,7 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
 
 async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) {
   const item = await getRzStockMovementItem(userId, lotId, codigoRz, codigoMl);
-  if (!item || !isNoSheetStockEntryItem(item)) return { ok: true, skipped: true, status: "not_needed" };
+  if (!item) return { ok: true, skipped: true, status: "not_needed" };
 
   try {
     const integration = await getRequiredBlingCredentials(userId);
