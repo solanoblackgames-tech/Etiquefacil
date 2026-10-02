@@ -785,7 +785,7 @@ async function addDiverseItem(event) {
       schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
       return;
     }
-    if (canViewSalePrice() && state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
+    if (state.labelOptions.suggestPrice && !shouldReviewProductBeforePrint()) {
       if (preview.status === "preview") {
         const product = preview.product || {};
         const suggestedPrice = suggestionPriceValue(suggestedLotItem) || await findNoSheetSuggestedPriceForProduct(product);
@@ -2046,10 +2046,10 @@ function diverseLabelOptionsMarkup() {
   return `
     <div class="diverse-label-options">
       <label class="check-option"><input id="diverseAutoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-      ${canViewSalePrice() ? `<label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>` : ""}
-      ${canViewSalePrice() ? labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle") : ""}
+      <label class="check-option"><input id="diverseIncludePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+      ${labelClubPriceOptionMarkup("diverseIncludeClubPriceToggle")}
       ${largeQrLabelOptionMarkup("diverseLargeQrLabelToggle")}
-      ${canViewSalePrice() ? `<label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>` : ""}
+      <label class="check-option"><input id="diverseSuggestPriceToggle" type="checkbox" ${state.labelOptions.suggestPrice ? "checked" : ""} /> Sugerir preco antes de imprimir</label>
       <label class="check-option"><input id="diverseIncludeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelNameFontControlsMarkup()}
       <div id="diverseCustomTextRow" class="custom-text-row ${state.labelOptions.includeText ? "" : "hidden"}">
@@ -8317,8 +8317,8 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
       <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
       <button id="scanButton">Bipar</button>
       <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-      ${canViewSalePrice() ? `<label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>` : ""}
-      ${canViewSalePrice() ? labelClubPriceOptionMarkup() : ""}
+      <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preço</label>
+      ${labelClubPriceOptionMarkup()}
       ${largeQrLabelOptionMarkup()}
       <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
       ${labelTextControls()}
@@ -8470,8 +8470,8 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
         <input id="scanInput" placeholder="Bipe o SKU da etiqueta ou Codigo ML no ${escapeHtml(codigoRz)}" autofocus />
         <button id="scanButton">Bipar</button>
         <label class="check-option"><input id="autoPrintToggle" type="checkbox" ${state.labelOptions.autoPrint ? "checked" : ""} /> Imprimir ao bipar</label>
-        ${canViewSalePrice() ? `<label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>` : ""}
-        ${canViewSalePrice() ? labelClubPriceOptionMarkup() : ""}
+        <label class="check-option"><input id="includePriceToggle" type="checkbox" ${state.labelOptions.includePrice ? "checked" : ""} /> Etiqueta com preco</label>
+        ${labelClubPriceOptionMarkup()}
         ${largeQrLabelOptionMarkup()}
         <label class="check-option"><input id="includeTextToggle" type="checkbox" ${state.labelOptions.includeText ? "checked" : ""} /> Texto na etiqueta</label>
         ${labelNameFontControlsMarkup()}
@@ -9526,7 +9526,7 @@ function labelMarkupCacheKey(product = {}, meta = null) {
     },
     label: {
       largeQr: labelUsesLargeQr(),
-      includePrice: Boolean(canViewSalePrice() && state.labelOptions.includePrice),
+      includePrice: Boolean(state.labelOptions.includePrice),
       includeClubPrice: Boolean(state.labelOptions.includeClubPrice),
       includeText: Boolean(state.labelOptions.includeText),
       customText: state.labelOptions.includeText ? String(state.labelOptions.customText || "").trim() : "",
@@ -9571,7 +9571,7 @@ function scheduleLabelMarkupWarmup(items = []) {
 }
 
 function labelPriceMarkup(product) {
-  if (!canViewSalePrice() || !state.labelOptions.includePrice) return '<strong class="label-price"></strong>';
+  if (!state.labelOptions.includePrice) return '<strong class="label-price"></strong>';
   const regularPrice = Number(product.valorUnit || 0);
   const settings = normalizePriceDisplaySettings(state.priceDisplaySettings);
   if (!labelUsesClubPrice(settings)) {
@@ -9589,7 +9589,7 @@ function labelPriceMarkup(product) {
 }
 
 function labelUsesClubPrice(settings = normalizePriceDisplaySettings(state.priceDisplaySettings)) {
-  return Boolean(canViewSalePrice() && state.labelOptions.includePrice && settings.enabled && state.labelOptions.includeClubPrice);
+  return Boolean(state.labelOptions.includePrice && settings.enabled && state.labelOptions.includeClubPrice);
 }
 
 function roundMoneyValue(value) {
@@ -10159,7 +10159,7 @@ async function largeQrLabelMarkup(product, meta = null) {
   const qrValue = labelQrValue(product);
   const qrDataUrl = await labelQrDataUrl(qrValue);
   return `
-    <section class="label-print label-print-large-qr ${canViewSalePrice() && state.labelOptions.includePrice ? "has-price" : ""} ${customText ? "has-note" : ""}">
+    <section class="label-print label-print-large-qr ${state.labelOptions.includePrice ? "has-price" : ""} ${customText ? "has-note" : ""}">
       <strong class="label-large-brand">ETIQUEFACIL</strong>
       <p class="label-desc-large">${escapeHtml(product.descricao)}</p>
       <img class="label-qr" src="${escapeHtml(qrDataUrl)}" alt="QR Code" />
@@ -10172,7 +10172,7 @@ async function largeQrLabelMarkup(product, meta = null) {
 
 function largeQrLabelDetails(product, stockLocation, customText) {
   const location = stockLocation ? `<div><span>Localizacao</span><strong>${escapeHtml(stockLocation)}</strong></div>` : "";
-  const price = canViewSalePrice() && state.labelOptions.includePrice ? `<div class="label-large-price-row"><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
+  const price = state.labelOptions.includePrice ? `<div class="label-large-price-row"><span>Preco</span><strong>${escapeHtml(money(product.valorUnit || 0))}</strong></div>` : "";
   const note = customText ? `<div><span>Obs.</span><strong>${escapeHtml(customText)}</strong></div>` : "";
   return `
     <div class="label-large-details">
