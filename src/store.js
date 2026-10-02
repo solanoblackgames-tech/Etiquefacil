@@ -4322,6 +4322,35 @@ export async function scanLotRz({ userId, lotId, codigoRz, codigoMl }) {
   return { scan, lot: summarizeLot(scopeDbToLotRz(db, lot.id, codigoRz), lot, true) };
 }
 
+export async function incrementLotRzItemScan({ userId, lotId, codigoRz, itemId }) {
+  await ensureStore();
+  if (hasPostgres()) return incrementLotRzItemScanPg({ userId, lotId, codigoRz, itemId });
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+
+  const item = (db.rzItems || []).find((candidate) => candidate.id === itemId && candidate.lotId === lot.id && candidate.codigoRz === codigoRz);
+  if (!item) throw notFound("Item nao encontrado nesta RZ.");
+  const product = (db.products || []).find((candidate) => candidate.id === item.productId && candidate.lotId === lot.id);
+  if (!product) throw notFound("Produto nao encontrado neste lote.");
+
+  item.qtdConferida += 1;
+  const scan = {
+    id: randomUUID(),
+    lotId: lot.id,
+    codigoRz,
+    codigoMl: product.codigoMl || product.sku || "",
+    status: item.qtdConferida > item.qtdEsperada ? "excedente" : "ok",
+    createdAt: new Date().toISOString()
+  };
+  if (item.qtdConferida > item.qtdEsperada && item.tipoItem === "esperado") item.tipoItem = "excedente_outro_rz";
+  if (product.origem === "excedente_externo") product.qtdTotal += 1;
+  db.scans.push(scan);
+  await writeDb(db);
+  return { scan, item: { ...item, product }, product, lot: summarizeLot(scopeDbToLotRz(db, lot.id, codigoRz), lot, true) };
+}
+
 export async function decrementLotRzScan({ userId, lotId, codigoRz, codigoMl }) {
   await ensureStore();
   const normalizedMl = normalizeCode(codigoMl);
@@ -6825,6 +6854,106 @@ async function scanLotRzPg({ userId, lotId, codigoRz, codigoMl }) {
   }
 
   return { scan, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
+}
+
+async function incrementLotRzItemScanPg({ userId, lotId, codigoRz, itemId }) {
+  const client = await getPgPool().connect();
+  let scan;
+  let product;
+  let item;
+  try {
+    await client.query("begin");
+    const lotResult = await client.query("select * from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    const lot = lotResult.rows[0] && lotFromRow(lotResult.rows[0]);
+    if (!lot) throw notFound("Lote nao encontrado.");
+
+    const itemResult = await client.query(
+      `
+        select
+          ri.*,
+          p.id as product_id,
+          p.created_by_user_id as product_created_by_user_id,
+          p.operator_user_id as product_operator_user_id,
+          p.codigo_ml as product_codigo_ml,
+          p.sku as product_sku,
+          p.descricao as product_descricao,
+          p.valor_unit as product_valor_unit,
+          p.preco_custo as product_preco_custo,
+          p.qtd_total as product_qtd_total,
+          p.categoria as product_categoria,
+          p.subcategoria as product_subcategoria,
+          p.ncm as product_ncm,
+          p.ean as product_ean,
+          p.link as product_link,
+          p.foto as product_foto,
+          p.origem as product_origem,
+          p.created_at as product_created_at
+        from rz_items ri
+        join products p on p.id = ri.product_id
+        where ri.id = $1
+          and ri.lot_id = $2
+          and ri.codigo_rz = $3
+        limit 1
+        for update of ri
+      `,
+      [itemId, lot.id, codigoRz]
+    );
+    const row = itemResult.rows[0];
+    if (!row) throw notFound("Item nao encontrado nesta RZ.");
+
+    const nextQtdConferida = Number(row.qtd_conferida) + 1;
+    const nextTipoItem =
+      nextQtdConferida > Number(row.qtd_esperada) && row.tipo_item === "esperado" ? "excedente_outro_rz" : row.tipo_item;
+    await client.query("update rz_items set qtd_conferida = $1, tipo_item = $2 where id = $3", [nextQtdConferida, nextTipoItem, row.id]);
+    if (row.product_origem === "excedente_externo") {
+      await client.query("update products set qtd_total = qtd_total + 1 where id = $1", [row.product_id]);
+    }
+
+    scan = {
+      id: randomUUID(),
+      lotId: lot.id,
+      codigoRz,
+      codigoMl: row.product_codigo_ml || row.product_sku || "",
+      status: nextQtdConferida > Number(row.qtd_esperada) ? "excedente" : "ok",
+      createdAt: new Date().toISOString()
+    };
+    await client.query(
+      `insert into scans (id, lot_id, codigo_rz, codigo_ml, status, history, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [scan.id, scan.lotId, scan.codigoRz, scan.codigoMl, scan.status, null, scan.createdAt]
+    );
+
+    item = rzItemFromRow({ ...row, qtd_conferida: nextQtdConferida, tipo_item: nextTipoItem });
+    product = productFromRow({
+      id: row.product_id,
+      lot_id: lot.id,
+      created_by_user_id: row.product_created_by_user_id,
+      operator_user_id: row.product_operator_user_id,
+      codigo_ml: row.product_codigo_ml,
+      sku: row.product_sku,
+      descricao: row.product_descricao,
+      valor_unit: row.product_valor_unit,
+      preco_custo: row.product_preco_custo,
+      qtd_total: row.product_qtd_total,
+      categoria: row.product_categoria,
+      subcategoria: row.product_subcategoria,
+      ncm: row.product_ncm,
+      ean: row.product_ean,
+      link: row.product_link,
+      foto: row.product_foto,
+      origem: row.product_origem,
+      created_at: row.product_created_at
+    });
+    item.product = product;
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { scan, item, product, lot: await getUserLotRzDetail(userId, lotId, codigoRz) };
 }
 
 async function splitLotProductPg({ userId, operatorUserId = null, lotId, productId, codigoRz, kitQuantity, sellableQuantity, descricao }) {

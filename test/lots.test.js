@@ -547,6 +547,84 @@ test("scanLotRz counts one unit per scan for multi-quantity SKU", async () => {
   }
 });
 
+test("incrementLotRzItemScan increments the selected row directly", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-rz-item-increment-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-rz-item-increment`;
+    const { incrementLotRzItemScan, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [{ id: "lot-1", userId: "user-1", nomeArquivo: "Lote", createdAt: "2026-07-03T00:00:00.000Z" }],
+      products: [
+        {
+          id: "product-1",
+          lotId: "lot-1",
+          codigoMl: "ML1",
+          sku: "SKU1",
+          descricao: "Produto com duas unidades",
+          valorUnit: 10,
+          precoCusto: 2,
+          qtdTotal: 2,
+          origem: "planilha",
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      rzItems: [
+        {
+          id: "item-1",
+          lotId: "lot-1",
+          productId: "product-1",
+          codigoRz: "RZ-1",
+          qtdEsperada: 2,
+          qtdConferida: 0,
+          tipoItem: "esperado",
+          valorTotal: 20,
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      transferLots: [],
+      transferItems: [],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await incrementLotRzItemScan({ userId: "user-1", lotId: "lot-1", codigoRz: "RZ-1", itemId: "item-1" });
+    const db = await readDb();
+
+    assert.equal(result.scan.status, "ok");
+    assert.equal(result.item.qtdConferida, 1);
+    assert.equal(result.lot.items[0].qtdConferida, 1);
+    assert.equal(result.lot.items[0].qtdEsperada, 2);
+    assert.equal(db.rzItems[0].qtdConferida, 1);
+    assert.equal(db.scans[0].codigoMl, "ML1");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("decrementLotRzScan reduces checked quantity without changing expected total", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

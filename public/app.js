@@ -8527,7 +8527,7 @@ function bindScanItemControls(lotId, codigoRz, items = [], root = document) {
     button.addEventListener("click", () => decrementCurrent(lotId, codigoRz, button.dataset.decrementMl));
   });
   root.querySelectorAll("[data-add-ml]").forEach((button) => {
-    button.addEventListener("click", () => scanCurrent(lotId, codigoRz, button.dataset.addMl, { triggerButton: button }));
+    button.addEventListener("click", () => addScannedItemQuantity(lotId, codigoRz, button.dataset.addItemId, button.dataset.addMl, button));
   });
   root.querySelectorAll("[data-delete-external-excess]").forEach((button) => {
     button.addEventListener("click", () => deleteExternalExcess(lotId, codigoRz, button.dataset.deleteExternalExcess, button));
@@ -8610,6 +8610,42 @@ function bindLabelTextControls() {
     state.labelOptions.customText = event.currentTarget.value;
     localStorage.setItem("etiquefacil.customText", state.labelOptions.customText);
   });
+}
+
+async function addScannedItemQuantity(lotId, codigoRz, itemId, codigoMl, button) {
+  if (!itemId) return scanCurrent(lotId, codigoRz, codigoMl, { triggerButton: button });
+  if (state.pendingScan) return;
+  try {
+    state.pendingScan = true;
+    if (button) button.disabled = true;
+    const response = await api(`/api/lots/${encodeURIComponent(lotId)}/rz/${encodeURIComponent(codigoRz)}/items/${encodeURIComponent(itemId)}/increment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoStockEntry: true })
+    });
+    const product = response.product || findScannedProduct(response.lot, codigoRz, codigoMl);
+    if (!updateRenderedScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl })) {
+      renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
+    }
+    const message = $("#scanMessage");
+    if (message) {
+      message.style.color = response.bling?.ok === false && !response.bling?.queued ? "" : "#0f766e";
+      message.textContent = response.bling?.queued
+        ? "Quantidade registrada. Produto e entrada no Bling sincronizando em segundo plano."
+        : response.bling?.ok === false
+          ? `Quantidade registrada, mas o Bling falhou: ${response.bling.error || "verifique a integracao."}`
+          : "Quantidade registrada e saldo lancado no Bling.";
+    }
+    if (product && state.labelOptions.autoPrint) await printProductLabel(product, { lotId, autoPrint: true, meta: labelMeta(response.scan?.createdAt) });
+  } catch (error) {
+    const message = $("#scanMessage");
+    if (message) message.textContent = error.message;
+    else alert(error.message);
+  } finally {
+    state.pendingScan = false;
+    if (button) button.disabled = false;
+    schedulePrimaryInputFocus(["#scanInput"]);
+  }
 }
 
 async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerButton = null } = {}) {
@@ -9799,7 +9835,7 @@ function itemRow(item) {
       <span class="quantity-stepper scan-quantity-stepper">
         <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <span class="scan-quantity-label"><small>Bipado / esperado</small><strong>${item.qtdConferida}/${item.qtdEsperada}</strong></span>
-        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
+        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" data-add-item-id="${escapeHtml(item.id || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
       ${badge}
       <span class="item-actions">
@@ -9866,7 +9902,7 @@ function scanItemTableRow(item) {
       <span class="quantity-stepper diverse-quantity-cell scan-quantity-stepper" data-label="Qtd">
         <button type="button" class="danger ghost quantity-button" data-decrement-ml="${escapeHtml(scanCode)}" ${item.qtdConferida > 0 ? "" : "disabled"} aria-label="Diminuir quantidade">-</button>
         <span class="scan-quantity-label"><strong>${item.qtdConferida}/${item.qtdEsperada}</strong></span>
-        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" aria-label="Aumentar quantidade">+</button>
+        <button type="button" class="ghost quantity-button" data-add-ml="${escapeHtml(scanCode)}" data-add-item-id="${escapeHtml(item.id || "")}" aria-label="Aumentar quantidade">+</button>
       </span>
       ${saleCell}
       ${canViewCost() ? `<span class="diverse-cost-cell" data-label="Custo">${money(product.precoCusto)}</span>` : ""}

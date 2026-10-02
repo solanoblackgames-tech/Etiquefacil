@@ -91,6 +91,7 @@ import {
   getUserLotDetail,
   getUserLotSummaries,
   hasPostgres,
+  incrementLotRzItemScan,
   listDueBlingSyncJobs,
   listTransferLots,
   listWmsExpedition,
@@ -2303,6 +2304,70 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => 
     sendError(res, error);
   }
 });
+
+app.post("/api/lots/:lotId/rz/:codigoRz/items/:itemId/increment", requireAuth, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const result = await incrementLotRzItemScan({
+      userId,
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      itemId: req.params.itemId
+    });
+    const codigoMl = result.product?.codigoMl || result.product?.sku || "";
+    await recordOperatorActivity(req.session.user, "scan_ml", {
+      lotId: req.params.lotId,
+      codigoRz: req.params.codigoRz,
+      codigoMl,
+      itemId: req.params.itemId,
+      productId: result.product?.id || "",
+      source: "plus_button",
+      status: result.scan?.status || "ok"
+    });
+
+    if (req.body?.autoStockEntry === true && ["ok", "excedente"].includes(result.scan?.status)) {
+      const lot = await getUserLotDetail(userId, req.params.lotId);
+      const product = (lot?.products || []).find((item) => item.id === result.product?.id) || result.product;
+      const stockItem = stockMovementItemFromProduct(lot || result.lot, product, 1);
+      try {
+        await syncSingleLotProductToBling(userId, lot || result.lot, product);
+        const integration = await getRequiredBlingCredentials(userId);
+        result.bling = await syncBlingStockMovement({
+          integration,
+          item: stockItem,
+          depositoName: BLING_STOCK_DEPOSIT,
+          operation: "entry",
+          observacao: `Entrada automatica por botao + RZ ${req.params.codigoRz}`,
+          saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+        });
+        const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
+        if (updatedLot) result.lot = updatedLot;
+      } catch (error) {
+        await enqueueProductSyncs({ userId, lot: lot || result.lot, products: [product], errorMessage: error.message });
+        await enqueueStockMovementSync({
+          userId,
+          lotId: req.params.lotId,
+          codigoRz: req.params.codigoRz,
+          item: stockItem,
+          operation: "entry",
+          errorMessage: error.message
+        });
+        scheduleBlingSyncQueue();
+        result.bling = {
+          ok: false,
+          queued: true,
+          status: "queued",
+          error: `Produto e entrada no Bling ficaram na fila para tentar novamente: ${error.message}`
+        };
+      }
+    }
+
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
   try {
