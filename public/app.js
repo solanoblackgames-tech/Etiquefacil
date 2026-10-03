@@ -3767,7 +3767,7 @@ function dashboardOverviewMarkup(stats, filter) {
         ${dash2FlowMarkup(overview)}
         ${dash2AlertsMarkup(overview)}
       </div>
-      ${dash2StoreMarkup(overview)}
+      ${dash2ShipmentsMarkup(overview)}
       <div class="dash2-row">
         ${dash2DestinationsMarkup(overview)}
         ${dash2TeamMarkup(overview)}
@@ -3866,42 +3866,190 @@ function dash2AlertsMarkup(overview) {
   `;
 }
 
-function dash2StoreMarkup(overview) {
-  const store = overview.store || {};
-  const series = store.series || [];
-  const max = Math.max(1, ...series.map((row) => Number(row.quantity || 0)));
-  const average = Number(store.perDay || 0);
-  const averageBottom = Math.round((Math.min(average, max) / max) * 150);
+const DASH2_SHIP_METRICS = [
+  { key: "quantity", label: "Unidades" },
+  { key: "value", label: "Venda" },
+  { key: "cost", label: "Custo" }
+];
+
+function dash2ShipState() {
+  state.dash2Ship = state.dash2Ship || { lot: "all", destination: "all", metric: "quantity" };
+  return state.dash2Ship;
+}
+
+function dash2ShipMetricText(metric, value) {
+  return metric === "quantity" ? `${dash2Int(value)} un` : dash2Money(value);
+}
+
+function dash2DestinationLabel(destination, overview) {
+  const label = dash2Label(destination);
+  return String(destination || "").trim().toUpperCase() === String(overview.storeDeposit || "").trim().toUpperCase() ? `${label} (loja)` : label;
+}
+
+function dash2SumShipments(rows) {
+  return rows.reduce((sum, row) => {
+    sum.quantity += Number(row.quantity || 0);
+    sum.value += Number(row.value || 0);
+    sum.cost += Number(row.cost || 0);
+    sum.received += Number(row.received || 0);
+    return sum;
+  }, { quantity: 0, value: 0, cost: 0, received: 0 });
+}
+
+function dash2ShipmentTransferCount(shipments, lot, destination) {
+  const ids = new Set();
+  for (const row of shipments.transfers || []) {
+    if (lot !== "all" && row.lot !== lot) continue;
+    if (destination !== "all" && row.destination !== destination) continue;
+    for (const id of row.ids || []) ids.add(id);
+  }
+  return ids.size;
+}
+
+function dash2ShipmentsMarkup(overview) {
+  const shipments = overview.shipments || { lots: [], rows: [], transfers: [], days: [] };
+  const ship = dash2ShipState();
+  if (ship.lot !== "all" && !(shipments.lots || []).some((lot) => lot.id === ship.lot)) ship.lot = "all";
+  const lotRows = (shipments.rows || []).filter((row) => ship.lot === "all" || row.lot === ship.lot);
+  const destinationNames = [...new Set(lotRows.map((row) => row.destination))];
+  if (ship.destination !== "all" && !destinationNames.includes(ship.destination)) ship.destination = "all";
+  const selectedRows = lotRows.filter((row) => ship.destination === "all" || row.destination === ship.destination);
+  const totals = dash2SumShipments(selectedRows);
+  const lotTotals = dash2SumShipments(lotRows);
+  const byDestination = destinationNames
+    .map((destination) => ({ destination, ...dash2SumShipments(lotRows.filter((row) => row.destination === destination)), transfers: dash2ShipmentTransferCount(shipments, ship.lot, destination) }))
+    .sort((a, b) => b.value - a.value || b.quantity - a.quantity);
+  const selectedLot = (shipments.lots || []).find((lot) => lot.id === ship.lot);
+  const scopeLabel = `${ship.lot === "all" ? "todos os lotes" : `lote ${selectedLot?.name || ""}`} · ${ship.destination === "all" ? "todos os destinos" : dash2DestinationLabel(ship.destination, overview)}`;
   return `
-    <section class="dash2-card">
+    <section class="dash2-card dash2-ship">
       <div class="dash2-store-head">
         <div class="dash2-card-head">
-          <h4 class="dash2-h">Envio para a loja</h4>
-          <p>Unidades enviadas por dia para ${escapeHtml(overview.storeDeposit || "a loja")}.${average ? " A linha tracejada é a média por dia útil." : ""}</p>
+          <h4 class="dash2-h">Envios por destino</h4>
+          <p>Quanto saiu de cada lote e para onde, no período. Venda = preço de varejo; custo = preço de custo.</p>
         </div>
-        <div class="dash2-store-figures">
-          <div><span>Enviado</span><b>${dash2Int(store.sent)} un</b></div>
-          <div><span>Recebido pela loja</span><b class="${Number(store.received || 0) < Number(store.sent || 0) ? "is-alert" : ""}">${dash2Int(store.received)} un</b></div>
-          <div><span>Valor enviado</span><b>${dash2Money(store.sentValue)}</b></div>
-        </div>
+        <label class="dash2-select">Lote
+          <select data-dash2-lot aria-label="Filtrar envios por lote">
+            <option value="all"${ship.lot === "all" ? " selected" : ""}>Todos os lotes</option>
+            ${(shipments.lots || []).map((lot) => `<option value="${escapeHtml(lot.id)}"${ship.lot === lot.id ? " selected" : ""}>${escapeHtml(lot.name)}${lot.fornecedor ? ` · ${escapeHtml(lot.fornecedor)}` : ""}</option>`).join("")}
+          </select>
+        </label>
       </div>
-      ${series.length ? `
-        <div class="dash2-chart-scroll">
-          <div class="dash2-chart" style="--dash2-cols: ${series.length}">
-            ${average ? `<div class="dash2-chart-avg" style="bottom: ${averageBottom + 24}px"><span>média ${dash2Rate(average)}/dia</span></div>` : ""}
-            <div class="dash2-chart-bars">
-              ${series.map((row) => `
-                <div class="dash2-chart-col" title="${escapeHtml(dash2DayLabel(row.day))}: ${dash2Int(row.quantity)} un - ${escapeHtml(money(row.value))}">
-                  <small>${dash2Int(row.quantity)}</small>
-                  <i style="height: ${Math.max(2, Math.round((Number(row.quantity || 0) / max) * 150))}px"></i>
-                </div>
-              `).join("")}
-            </div>
-            <div class="dash2-chart-days">${series.map((row) => `<span>${escapeHtml(dash2DayLabel(row.day))}</span>`).join("")}</div>
-          </div>
+      ${lotRows.length ? `
+        <div class="dash2-store-figures dash2-ship-figures" aria-live="polite">
+          <div><span>Enviado</span><b>${dash2Int(totals.quantity)} un</b></div>
+          <div><span>Valor de venda</span><b>${dash2Money(totals.value)}</b></div>
+          <div><span>Valor de custo</span><b>${dash2Money(totals.cost)}</b></div>
+          <div><span>Recebido no destino</span><b>${dash2Int(totals.received)} un</b></div>
+          <div><span>Pendente</span><b class="${totals.quantity - totals.received > 0 ? "is-alert" : ""}">${dash2Int(Math.max(0, totals.quantity - totals.received))} un</b></div>
         </div>
-      ` : '<p class="dash2-empty">Nenhum envio para a loja no período.</p>'}
+        <p class="dash2-scope">Mostrando: ${escapeHtml(scopeLabel)}</p>
+        <div class="dash2-table-scroll">
+          <table class="dash2-table dash2-ship-table">
+            <thead><tr><th>Destino</th><th>Agrup.</th><th>Unidades</th><th>Venda</th><th>Custo</th><th>Recebido</th><th>Pendente</th></tr></thead>
+            <tbody>
+              ${byDestination.map((row) => `
+                <tr class="${ship.destination === row.destination ? "is-selected" : ""}">
+                  <td><button type="button" class="dash2-link" data-dash2-dest="${escapeHtml(row.destination)}" aria-pressed="${ship.destination === row.destination}">${escapeHtml(dash2DestinationLabel(row.destination, overview))}</button></td>
+                  <td>${dash2Int(row.transfers)}</td>
+                  <td>${dash2Int(row.quantity)}</td>
+                  <td><strong>${money(row.value)}</strong></td>
+                  <td class="dash2-muted">${money(row.cost)}</td>
+                  <td>${dash2Int(row.received)}</td>
+                  <td class="${row.quantity - row.received > 0 ? "dash2-alert-text" : ""}">${dash2Int(Math.max(0, row.quantity - row.received))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+            <tfoot>
+              <tr class="${ship.destination === "all" ? "is-selected" : ""}">
+                <td><button type="button" class="dash2-link" data-dash2-dest="all" aria-pressed="${ship.destination === "all"}">Todos os destinos</button></td>
+                <td>${dash2Int(dash2ShipmentTransferCount(shipments, ship.lot, "all"))}</td>
+                <td>${dash2Int(lotTotals.quantity)}</td>
+                <td><strong>${money(lotTotals.value)}</strong></td>
+                <td class="dash2-muted">${money(lotTotals.cost)}</td>
+                <td>${dash2Int(lotTotals.received)}</td>
+                <td>${dash2Int(Math.max(0, lotTotals.quantity - lotTotals.received))}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        ${dash2ShipmentsChartMarkup(shipments, selectedRows, ship)}
+        ${ship.lot === "all" ? dash2ShipmentsByLotMarkup(shipments, overview, ship) : ""}
+      ` : '<p class="dash2-empty">Nenhum envio no período.</p>'}
     </section>
+  `;
+}
+
+function dash2ShipmentsChartMarkup(shipments, rows, ship) {
+  const days = shipments.days || [];
+  if (!days.length) return "";
+  const metric = ship.metric || "quantity";
+  const byDay = new Map();
+  for (const row of rows) byDay.set(row.day, Number(byDay.get(row.day) || 0) + Number(row[metric] || 0));
+  const series = days.map((day) => ({ day, value: Number(byDay.get(day) || 0) }));
+  const max = Math.max(1, ...series.map((row) => row.value));
+  const total = rows.reduce((sum, row) => sum + Number(row[metric] || 0), 0);
+  const average = shipments.businessDays ? total / shipments.businessDays : 0;
+  const averageBottom = Math.round((Math.min(average, max) / max) * 150);
+  const short = (value) => {
+    if (metric === "quantity") return dash2Int(value);
+    if (!Number(value || 0)) return "";
+    return dash2Money(value).replace(/^R\$\s?/, "");
+  };
+  return `
+    <div class="dash2-chart-head">
+      <strong>Por dia</strong>
+      <div class="dash2-seg" role="group" aria-label="Medida do gráfico">
+        ${DASH2_SHIP_METRICS.map((item) => `<button type="button" data-dash2-metric="${item.key}" aria-pressed="${metric === item.key}">${item.label}</button>`).join("")}
+      </div>
+    </div>
+    <div class="dash2-chart-scroll">
+      <div class="dash2-chart" style="--dash2-cols: ${series.length}">
+        ${average ? `<div class="dash2-chart-avg" style="bottom: ${averageBottom + 24}px"><span>média ${escapeHtml(dash2ShipMetricText(metric, average))}/dia</span></div>` : ""}
+        <div class="dash2-chart-bars">
+          ${series.map((row) => `
+            <div class="dash2-chart-col" title="${escapeHtml(dash2DayLabel(row.day))}: ${escapeHtml(dash2ShipMetricText(metric, row.value))}">
+              <small>${escapeHtml(short(row.value))}</small>
+              <i style="height: ${Math.max(2, Math.round((row.value / max) * 150))}px"></i>
+            </div>
+          `).join("")}
+        </div>
+        <div class="dash2-chart-days">${series.map((row) => `<span>${escapeHtml(dash2DayLabel(row.day))}</span>`).join("")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function dash2ShipmentsByLotMarkup(shipments, overview, ship) {
+  const rows = (shipments.rows || []).filter((row) => ship.destination === "all" || row.destination === ship.destination);
+  const lots = (shipments.lots || [])
+    .map((lot) => {
+      const lotRows = rows.filter((row) => row.lot === lot.id);
+      const totals = dash2SumShipments(lotRows);
+      const destinations = [...new Set(lotRows.map((row) => row.destination))]
+        .map((destination) => ({ destination, quantity: dash2SumShipments(lotRows.filter((row) => row.destination === destination)).quantity }))
+        .sort((a, b) => b.quantity - a.quantity);
+      return { ...lot, ...totals, destinations };
+    })
+    .filter((lot) => lot.quantity > 0)
+    .sort((a, b) => b.value - a.value);
+  if (!lots.length) return "";
+  return `
+    <div class="dash2-chart-head"><strong>Por lote</strong><span class="dash2-muted">Clique no lote para ver só ele.</span></div>
+    <div class="dash2-table-scroll">
+      <table class="dash2-table dash2-lot-table">
+        <thead><tr><th>Lote</th><th>Unidades</th><th>Venda</th><th>Custo</th><th class="dash2-left">Para onde foi (unidades)</th></tr></thead>
+        <tbody>${lots.map((lot) => `
+          <tr>
+            <td><button type="button" class="dash2-link" data-dash2-lot-pick="${escapeHtml(lot.id)}">${escapeHtml(lot.name)}</button>${lot.fornecedor ? `<small class="dash2-sub">${escapeHtml(lot.fornecedor)}</small>` : ""}</td>
+            <td>${dash2Int(lot.quantity)}</td>
+            <td><strong>${money(lot.value)}</strong></td>
+            <td class="dash2-muted">${money(lot.cost)}</td>
+            <td class="dash2-left"><div class="dash2-chips">${lot.destinations.map((row) => `<span>${escapeHtml(dash2DestinationLabel(row.destination, overview))} <b>${dash2Int(row.quantity)}</b></span>`).join("")}</div></td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -4008,6 +4156,13 @@ function handleOperationalDashboardSubmit(event) {
 }
 
 function handleOperationalDashboardChange(event) {
+  const lotSelect = event.target.closest("[data-dash2-lot]");
+  if (lotSelect) {
+    dash2ShipState().lot = lotSelect.value || "all";
+    dash2ShipState().destination = "all";
+    renderOperationalDashboard();
+    return;
+  }
   if (!event.target.closest("#operationalDateFilter") || !event.target.matches('input[type="date"]')) return;
   applyOperationalDateFilterFromForm(event.target.form);
 }
@@ -4158,6 +4313,27 @@ function handleOperationalDashboardClick(event) {
       endDate: formatInputDate(today)
     };
     loadOperationalDashboard();
+    return;
+  }
+
+  const shipDestination = event.target.closest("[data-dash2-dest]");
+  if (shipDestination) {
+    const value = shipDestination.dataset.dash2Dest || "all";
+    dash2ShipState().destination = dash2ShipState().destination === value ? "all" : value;
+    renderOperationalDashboard();
+    return;
+  }
+  const shipMetric = event.target.closest("[data-dash2-metric]");
+  if (shipMetric) {
+    dash2ShipState().metric = shipMetric.dataset.dash2Metric || "quantity";
+    renderOperationalDashboard();
+    return;
+  }
+  const shipLot = event.target.closest("[data-dash2-lot-pick]");
+  if (shipLot) {
+    dash2ShipState().lot = shipLot.dataset.dash2LotPick || "all";
+    dash2ShipState().destination = "all";
+    renderOperationalDashboard();
     return;
   }
 

@@ -7157,3 +7157,25 @@ h3 {
 .profile-section:has(.dash2) { grid-template-columns: minmax(0, 1fr); }
 .dash2, .dash2 > *, .dash2-stages > * { min-width: 0; }
 .dash2-stages { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
+
+/* Envios por destino */
+.dash2-select { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--d-muted); min-width: min(320px, 100%); }
+.dash2-select select { min-height: 44px; border: 1px solid var(--d-line); border-radius: 8px; padding: 0 10px; background: #fff; color: var(--d-ink); font: inherit; font-size: 15px; }
+.dash2-ship-figures { gap: 22px 32px; }
+.dash2-scope { font-size: 13px; color: var(--d-muted); margin-top: -6px !important; }
+.dash2-link { all: unset; cursor: pointer; font-weight: 600; color: var(--d-ink); text-decoration: underline; text-decoration-color: var(--d-line); text-underline-offset: 3px; min-height: 28px; display: inline-flex; align-items: center; }
+.dash2-link:hover { text-decoration-color: var(--d-brand); }
+.dash2-link:focus-visible { outline: 2px solid var(--d-brand); outline-offset: 2px; border-radius: 3px; }
+.dash2-table tr.is-selected td { background: var(--d-good-bg); }
+.dash2-table tfoot td { border-top: 1px solid var(--d-line); border-bottom: 0; font-weight: 600; }
+.dash2-alert-text { color: var(--d-alert); font-weight: 600; }
+.dash2-ship-table { min-width: 720px; }
+.dash2-lot-table { min-width: 760px; }
+.dash2-sub { display: block; font-size: 12px; color: var(--d-muted); }
+.dash2-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dash2-chips span { background: var(--d-soft); border-radius: 6px; padding: 3px 8px; font-size: 13px; white-space: nowrap; }
+.dash2-chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 4px; }
+.dash2-chart-head strong { font-size: 16px; }
+.dash2-seg { display: inline-flex; border: 1px solid var(--d-line); border-radius: 8px; overflow: hidden; }
+.dash2-seg button { border: 0; border-radius: 0; background: #fff; color: var(--d-ink); padding: 0 14px; min-height: 36px; font-weight: 600; cursor: pointer; width: auto; }
+.dash2-seg button[aria-pressed="true"] { background: var(--d-ink); color: #fff; }

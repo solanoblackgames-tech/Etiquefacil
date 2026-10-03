@@ -10745,11 +10745,22 @@ function buildDashboardOverview(input) {
     })
     .sort((a, b) => b.items - a.items);
 
+  const shipments = buildDashboardShipments({ db, userId, transfers, transferItems, triageById, lookups });
+  const shipmentDays = new Set(shipments.rows.map((row) => row.day).filter(Boolean));
+  const shipmentChartStart = (() => {
+    const first = startDay || [...shipmentDays].sort()[0] || today;
+    const days = dashboardDayList(first, endDay);
+    return days.length > DASHBOARD_CHART_MAX_DAYS ? days[days.length - DASHBOARD_CHART_MAX_DAYS] : first;
+  })();
+  shipments.days = dashboardDayList(shipmentChartStart, endDay).filter((day) => isDashboardBusinessDay(day) || shipmentDays.has(day));
+  shipments.businessDays = businessDays;
+
   return {
     today,
     businessDays,
     month,
     storeDeposit: DASHBOARD_STORE_DEPOSIT,
+    shipments,
     stages,
     flow: {
       conferred: Number(conference.checked || 0),
@@ -10776,6 +10787,85 @@ function buildDashboardOverview(input) {
       pendingValue: roundMoney(pendingRow.value)
     },
     team
+  };
+}
+
+const DASHBOARD_UNKNOWN_LOT_ID = "sem-lote";
+
+// Envios do periodo agregados por lote de origem, destino e dia.
+// Quantidade, valor de venda (varejo), custo e quanto o destino ja confirmou.
+function buildDashboardShipments({ db, userId, transfers = [], transferItems = [], triageById = new Map(), lookups = {} }) {
+  const { productsById = new Map(), productsBySku = new Map(), productsByCode = new Map() } = lookups;
+  const lotInfo = new Map((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => [lot.id, lot]));
+  const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
+  const plannedByTransfer = new Map();
+  for (const item of transferItems) {
+    plannedByTransfer.set(item.transferLotId, Number(plannedByTransfer.get(item.transferLotId) || 0) + Number(item.quantidade || 0));
+  }
+  const findProduct = (item) => {
+    const direct = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+    if (direct) return direct;
+    const triageItem = item.triageItemId ? triageById.get(item.triageItemId) : null;
+    if (!triageItem) return null;
+    return productsBySku.get(normalizeCode(triageItem.sku))
+      || productsByCode.get(normalizeCode(triageItem.productCode))
+      || productsByCode.get(normalizeCode(triageItem.codigoBling2))
+      || productsByCode.get(normalizeCode(triageItem.asin))
+      || null;
+  };
+  const rows = new Map();
+  const transferCounts = new Map();
+  for (const item of transferItems) {
+    const transfer = transfersById.get(item.transferLotId);
+    if (!transfer) continue;
+    const qty = Number(item.quantidade || 0);
+    if (!qty) continue;
+    const product = findProduct(item);
+    const triageItem = item.triageItemId ? triageById.get(item.triageItemId) : null;
+    const unitValue = Number(product?.valorUnit || triageItem?.valorUnit || 0);
+    const unitCost = Number(product?.precoCusto || triageItem?.precoCusto || 0);
+    const lotId = (item.sourceLotId && lotInfo.has(item.sourceLotId) ? item.sourceLotId : "") || (product?.lotId && lotInfo.has(product.lotId) ? product.lotId : "") || DASHBOARD_UNKNOWN_LOT_ID;
+    const destination = String(transfer.depositoDestino || "Sem destino").trim() || "Sem destino";
+    const planned = Number(plannedByTransfer.get(transfer.id) || 0);
+    const hasManualTotal = transfer.receivedTotal !== null && transfer.receivedTotal !== undefined;
+    const receivedRaw = hasManualTotal && planned > 0
+      ? qty * (Number(transfer.receivedTotal || 0) / planned)
+      : Number(item.quantidadeConferida || 0);
+    const received = Math.min(qty, receivedRaw);
+    const day = dashboardLocalDay(transfer.createdAt);
+    const key = `${lotId}\u0000${destination}\u0000${day}`;
+    const row = rows.get(key) || { lot: lotId, destination, day, quantity: 0, value: 0, cost: 0, received: 0 };
+    row.quantity += qty;
+    row.value += qty * unitValue;
+    row.cost += qty * unitCost;
+    row.received += received;
+    rows.set(key, row);
+    const countKey = `${lotId}\u0000${destination}`;
+    const transfersForKey = transferCounts.get(countKey) || new Set();
+    transfersForKey.add(transfer.id);
+    transferCounts.set(countKey, transfersForKey);
+  }
+  const usedLots = new Set([...rows.values()].map((row) => row.lot));
+  const lots = [...usedLots]
+    .map((id) => {
+      if (id === DASHBOARD_UNKNOWN_LOT_ID) return { id, name: "Sem lote identificado", fornecedor: "", createdAt: "" };
+      const lot = lotInfo.get(id);
+      return { id, name: lot?.nomeArquivo || "Lote", fornecedor: lot?.fornecedor || "", createdAt: lot?.createdAt || "" };
+    })
+    .sort((a, b) => (a.id === DASHBOARD_UNKNOWN_LOT_ID) - (b.id === DASHBOARD_UNKNOWN_LOT_ID) || String(b.createdAt).localeCompare(String(a.createdAt)));
+  return {
+    unknownLotId: DASHBOARD_UNKNOWN_LOT_ID,
+    lots,
+    rows: [...rows.values()].map((row) => ({
+      ...row,
+      value: roundMoney(row.value),
+      cost: roundMoney(row.cost),
+      received: Math.round(row.received * 100) / 100
+    })),
+    transfers: [...transferCounts.entries()].map(([key, ids]) => {
+      const [lot, destination] = key.split("\u0000");
+      return { lot, destination, total: ids.size, ids: [...ids] };
+    })
   };
 }
 
