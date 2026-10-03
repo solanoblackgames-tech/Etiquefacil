@@ -9918,6 +9918,9 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     && isOperationalDashboardDateInRange(item.diagnosedAt || item.updatedAt || item.createdAt, range)
   ));
   const transferredTriageItemIds = transferredTriageIdsFromLots(transfers);
+  for (const item of transferItems) {
+    if (item.triageItemId) transferredTriageItemIds.add(item.triageItemId);
+  }
 
   const productsById = new Map(allProducts.map((product) => [product.id, product]));
   const productsBySku = new Map();
@@ -10038,6 +10041,7 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
   let commercialTransferReceivedValue = 0;
   let commercialTransferReceivedCost = 0;
   const transferDestinationRows = new Map();
+  const materialDestinationRows = new Map();
   for (const transfer of transfers) {
     const destination = String(transfer.depositoDestino || "Sem destino").trim() || "Sem destino";
     const key = normalizeText(destination);
@@ -10054,6 +10058,20 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     };
     row.total += 1;
     transferDestinationRows.set(key, row);
+    const materialRow = materialDestinationRows.get(key) || {
+      destination,
+      transfers: 0,
+      triageOnly: 0,
+      quantity: 0,
+      value: 0,
+      cost: 0,
+      received: 0,
+      pending: 0,
+      receivedValue: 0,
+      receivedCost: 0
+    };
+    materialRow.transfers += 1;
+    materialDestinationRows.set(key, materialRow);
   }
   const plannedQtyByTransfer = new Map();
   for (const item of transferItems) {
@@ -10099,6 +10117,16 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
       destinationRow.receivedCost = roundMoney(destinationRow.receivedCost + receivedCost);
       destinationRow.pending = Math.max(0, destinationRow.quantity - destinationRow.received);
     }
+    const materialRow = materialDestinationRows.get(destinationKey);
+    if (materialRow) {
+      materialRow.quantity += qty;
+      materialRow.received += received;
+      materialRow.value = roundMoney(materialRow.value + value);
+      materialRow.cost = roundMoney(materialRow.cost + cost);
+      materialRow.receivedValue = roundMoney(materialRow.receivedValue + receivedValue);
+      materialRow.receivedCost = roundMoney(materialRow.receivedCost + receivedCost);
+      materialRow.pending = Math.max(0, materialRow.quantity - materialRow.received);
+    }
     const row = operatorFor(transfer?.createdByUserId || userId);
     row.transferQty += qty;
     row.transferReceived += received;
@@ -10125,6 +10153,28 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     row.totalValue = roundMoney(row.totalValue + value);
     row.totalCost = roundMoney(row.totalCost + cost);
     triageDestinationRows.set(destination, row);
+    if (!transferredTriageItemIds.has(item.id) && item.destination) {
+      const materialDestination = destinationLabelForStats(item.destination);
+      const materialKey = normalizeText(materialDestination);
+      const materialRow = materialDestinationRows.get(materialKey) || {
+        destination: materialDestination,
+        transfers: 0,
+        triageOnly: 0,
+        quantity: 0,
+        value: 0,
+        cost: 0,
+        received: 0,
+        pending: 0,
+        receivedValue: 0,
+        receivedCost: 0
+      };
+      materialRow.triageOnly += 1;
+      materialRow.quantity += 1;
+      materialRow.pending += 1;
+      materialRow.value = roundMoney(materialRow.value + value);
+      materialRow.cost = roundMoney(materialRow.cost + cost);
+      materialDestinationRows.set(materialKey, materialRow);
+    }
     if (item.diagnosisCondition) {
       const condition = String(item.diagnosisCondition).trim().toUpperCase();
       const conditionRow = triageDiagnosisConditionRows.get(condition) || { condition, total: 0, totalValue: 0, totalCost: 0 };
@@ -10322,7 +10372,9 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     sectors,
     operators: operatorStats,
     recentLots,
-    recentTransfers
+    recentTransfers,
+    materialDestinations: [...materialDestinationRows.values()]
+      .sort((a, b) => b.value - a.value || b.quantity - a.quantity || a.destination.localeCompare(b.destination))
   };
 }
 
@@ -10352,6 +10404,17 @@ function isCommercialStoreTransferDestination(destination) {
     "bag venda direta",
     "soldim matriz"
   ]).has(normalizeText(destination));
+}
+
+function destinationLabelForStats(destination) {
+  const value = String(destination || "").trim().toUpperCase();
+  const labels = {
+    ECOMMERCE: "Ecommerce",
+    LOJA: "Loja",
+    VENDA_DIRETA: "Venda Direta",
+    RMA: "RMA"
+  };
+  return labels[value] || String(destination || "Sem destino").trim() || "Sem destino";
 }
 
 function publicDashboardUser(user) {

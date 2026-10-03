@@ -3698,6 +3698,13 @@ function renderOperationalDashboard() {
       </section>
       <section class="operational-dashboard-block">
         <div>
+          <strong>Destino do material</strong>
+          <span class="muted">Remessas mais triagens ainda sem agrupamento.</span>
+        </div>
+        ${operationalMaterialDestinationsMarkup(stats.materialDestinations || [])}
+      </section>
+      <section class="operational-dashboard-block">
+        <div>
           <strong>Destinos dos agrupamentos</strong>
           <span class="muted">Para onde foi o material movimentado.</span>
         </div>
@@ -3883,6 +3890,30 @@ function operationalTransferDestinationsMarkup(destinations = []) {
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
             <small>${destination.total || 0} remessas - ${destination.quantity || 0} unidades - ${destination.pending || 0} pendentes - Custo ${money(destination.cost || 0)}</small>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function operationalMaterialDestinationsMarkup(destinations = []) {
+  if (!destinations.length) return '<p class="muted">Nenhum material destinado no periodo.</p>';
+  const maxValue = Math.max(...destinations.map((destination) => Number(destination.value || 0)), 1);
+  return `
+    <div class="operational-sector-chart operational-destination-chart">
+      ${destinations.map((destination) => {
+        const percent = Math.max(4, Math.round((Number(destination.value || 0) / maxValue) * 100));
+        const transferText = `${destination.transfers || 0} remessas`;
+        const triageText = `${destination.triageOnly || 0} itens so na triagem`;
+        return `
+          <article>
+            <div>
+              <strong>${escapeHtml(destination.destination || "Sem destino")}</strong>
+              <span>${money(destination.value || 0)}</span>
+            </div>
+            <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
+            <small>${transferText} - ${triageText} - ${destination.quantity || 0} unidades - Custo ${money(destination.cost || 0)}</small>
           </article>
         `;
       }).join("")}

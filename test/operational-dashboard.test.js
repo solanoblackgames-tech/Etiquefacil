@@ -164,6 +164,44 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
         receivedCost: 10
       }
     ]);
+    assert.deepEqual(stats.materialDestinations, [
+      {
+        destination: "Loja",
+        transfers: 1,
+        triageOnly: 1,
+        quantity: 4,
+        value: 155,
+        cost: 15,
+        received: 2,
+        pending: 2,
+        receivedValue: 20,
+        receivedCost: 10
+      },
+      {
+        destination: "Venda Direta",
+        transfers: 0,
+        triageOnly: 1,
+        quantity: 1,
+        value: 125,
+        cost: 0,
+        received: 0,
+        pending: 1,
+        receivedValue: 0,
+        receivedCost: 0
+      },
+      {
+        destination: "venda",
+        transfers: 0,
+        triageOnly: 1,
+        quantity: 1,
+        value: 99,
+        cost: 33,
+        received: 0,
+        pending: 1,
+        receivedValue: 0,
+        receivedCost: 0
+      }
+    ]);
     assert.equal(ana.lotValue, 20);
     assert.equal(ana.lotCost, 10);
     assert.equal(ana.todayLotSkus, 1);
