@@ -3512,6 +3512,44 @@ h3 {
   text-decoration: none;
 }
 
+.pallet-table-toolbar {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.pallet-table-toolbar label {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 4px;
+  text-transform: uppercase;
+}
+
+.pallet-table-toolbar select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 38px;
+  min-width: 170px;
+  padding: 0 10px;
+  text-transform: none;
+}
+
+.pallet-table-toolbar span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 38px;
+  padding-top: 18px;
+}
+
 .pallet-table {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3563,6 +3601,11 @@ h3 {
   font-size: 12px;
   min-height: 32px;
   padding: 0 10px;
+}
+
+.pallet-empty {
+  margin: 0;
+  padding: 18px;
 }
 
 .scan-box {

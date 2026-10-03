@@ -51,6 +51,10 @@ const state = {
   lotSelectionToken: 0,
   noSheetSuggestionTimer: null,
   selectedRz: null,
+  palletListOptions: {
+    sort: localStorage.getItem("etiquefacil.palletSort") || "default",
+    filter: localStorage.getItem("etiquefacil.palletFilter") || "all"
+  },
   blingAlertRefreshTimer: null,
   blingAlertRefreshInFlight: false,
   scanOnly: false,
@@ -8351,6 +8355,7 @@ function renderPallet(lot, codigoRz) {
   if (!rzDetail) return;
 
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
+  const visibleItems = palletVisibleItems(items);
   const status = rz.missing === 0 && rz.excess === 0 ? "Concluido" : rz.checked > 0 ? "Em andamento" : "Pendente";
   const baseUrl = `/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/pallet`;
   rzDetail.innerHTML = `
@@ -8388,6 +8393,21 @@ function renderPallet(lot, codigoRz) {
         ${canViewLotValues() ? metric("Valor faltante", money(rz.missingValue)) : ""}
         ${canViewLotValues() ? metric("Valor excedente", money(rz.excessValue)) : ""}
       </div>
+      <div class="pallet-table-toolbar">
+        <label>
+          Mostrar
+          <select id="palletFilterSelect">
+            ${palletFilterOptionsMarkup()}
+          </select>
+        </label>
+        <label>
+          Ordenar
+          <select id="palletSortSelect">
+            ${palletSortOptionsMarkup()}
+          </select>
+        </label>
+        <span>${visibleItems.length} de ${items.length} itens</span>
+      </div>
       <div class="pallet-table">
         <div class="pallet-row pallet-row-head">
           <span>SKU / ML</span>
@@ -8397,10 +8417,20 @@ function renderPallet(lot, codigoRz) {
           ${canViewLotValues() ? "<span>Valores</span>" : ""}
           <span>Status</span>
         </div>
-        ${items.map(palletRow).join("")}
+        ${visibleItems.length ? visibleItems.map(palletRow).join("") : '<p class="pallet-empty muted">Nenhum item encontrado com este filtro.</p>'}
       </div>
     </section>
   `;
+  $("#palletSortSelect")?.addEventListener("change", (event) => {
+    state.palletListOptions.sort = event.currentTarget.value;
+    localStorage.setItem("etiquefacil.palletSort", state.palletListOptions.sort);
+    renderPallet(lot, codigoRz);
+  });
+  $("#palletFilterSelect")?.addEventListener("change", (event) => {
+    state.palletListOptions.filter = event.currentTarget.value;
+    localStorage.setItem("etiquefacil.palletFilter", state.palletListOptions.filter);
+    renderPallet(lot, codigoRz);
+  });
   $("#rzDetail [data-scan-rz]")?.addEventListener("click", () => {
     openRzScanInNewTab(lot, codigoRz);
   });
@@ -10201,21 +10231,95 @@ function productOperatorLabel(product) {
   return name || email || "-";
 }
 
+function palletItemStats(item) {
+  const product = item.product || {};
+  const expected = Number(item.qtdEsperada || 0);
+  const checked = Number(item.qtdConferida || 0);
+  const missing = Math.max(0, expected - checked);
+  const excess = item.tipoItem === "excedente_externo" ? checked : Math.max(0, checked - expected);
+  const value = Number(product.valorUnit || 0);
+  const status = missing === 0 && excess === 0 ? "ok" : checked > 0 ? "partial" : "pending";
+  return { checked, excess, expected, missing, status, totalValue: value * expected, unitValue: value };
+}
+
+function palletVisibleItems(items) {
+  const filter = state.palletListOptions.filter || "all";
+  const sort = state.palletListOptions.sort || "default";
+  return items
+    .filter((item) => {
+      const stats = palletItemStats(item);
+      if (filter === "divergence") return stats.missing > 0 || stats.excess > 0;
+      if (filter === "missing") return stats.missing > 0;
+      if (filter === "excess") return stats.excess > 0;
+      if (filter === "checked") return stats.status === "ok";
+      if (filter === "partial") return stats.status === "partial";
+      if (filter === "pending") return stats.status === "pending";
+      if (filter === "not_checked") return stats.status !== "ok";
+      return true;
+    })
+    .sort((a, b) => {
+      const aStats = palletItemStats(a);
+      const bStats = palletItemStats(b);
+      if (sort === "unit_value_desc") return bStats.unitValue - aStats.unitValue;
+      if (sort === "total_value_desc") return bStats.totalValue - aStats.totalValue;
+      if (sort === "expected_desc") return bStats.expected - aStats.expected;
+      if (sort === "missing_desc") return bStats.missing - aStats.missing;
+      if (sort === "excess_desc") return bStats.excess - aStats.excess;
+      if (sort === "status") return palletStatusWeight(aStats.status) - palletStatusWeight(bStats.status);
+      return 0;
+    });
+}
+
+function palletStatusWeight(status) {
+  if (status === "pending") return 0;
+  if (status === "partial") return 1;
+  return 2;
+}
+
+function palletSelectOption(value, label, selected) {
+  return `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+function palletSortOptionsMarkup() {
+  const selected = state.palletListOptions.sort || "default";
+  return [
+    ["default", "Planilha"],
+    ["unit_value_desc", "Maior preco"],
+    ["total_value_desc", "Maior valor total"],
+    ["expected_desc", "Maior quantidade"],
+    ["missing_desc", "Mais faltantes"],
+    ["excess_desc", "Mais excedentes"],
+    ["status", "Pendente > parcial > OK"]
+  ].map(([value, label]) => palletSelectOption(value, label, selected)).join("");
+}
+
+function palletFilterOptionsMarkup() {
+  const selected = state.palletListOptions.filter || "all";
+  return [
+    ["all", "Todos"],
+    ["divergence", "Com divergencia"],
+    ["missing", "Faltantes"],
+    ["excess", "Excedentes"],
+    ["not_checked", "Nao conferidos"],
+    ["partial", "Parciais"],
+    ["pending", "Pendentes"],
+    ["checked", "OK"]
+  ].map(([value, label]) => palletSelectOption(value, label, selected)).join("");
+}
+
 function palletRow(item) {
   const product = item.product || {};
-  const missing = Math.max(0, item.qtdEsperada - item.qtdConferida);
-  const excess = item.tipoItem === "excedente_externo" ? item.qtdConferida : Math.max(0, item.qtdConferida - item.qtdEsperada);
-  const value = Number(product.valorUnit || 0);
-  const rowStatus = missing === 0 && excess === 0 ? "OK" : item.qtdConferida > 0 ? "Parcial" : "Pendente";
+  const stats = palletItemStats(item);
+  const rowStatus = stats.status === "ok" ? "OK" : stats.status === "partial" ? "Parcial" : "Pendente";
   const blingAlert = productBlingAlertMarkup(product);
   const costDetail = canViewCost() ? `<small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small>` : `<small>Estoque ${product.qtdTotal || 0}</small>`;
-  const valueCell = canViewSalePrice() ? `<span>${money(value)}${state.user?.role === "operator" ? "" : `<small>Total ${money(value * item.qtdEsperada)}</small>`}${costDetail}</span>` : "";
+  const valueCell = canViewSalePrice() ? `<span>${money(stats.unitValue)}${state.user?.role === "operator" ? "" : `<small>Total ${money(stats.totalValue)}</small>`}${costDetail}</span>` : "";
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
       <span>${escapeHtml(product.descricao || "")}<small>${escapeHtml(item.tipoItem || "")} ${escapeHtml(item.condicaoGrade || "")}</small><small>${escapeHtml(product.origem || "")} · ${escapeHtml(product.categoria || "")} / ${escapeHtml(product.subcategoria || "")}</small></span>
       <span>${escapeHtml(item.enderecoWms || "-")}</span>
-      <span>Esp. ${item.qtdEsperada}<small>Conf. ${item.qtdConferida} · Falt. ${missing} · Exc. ${excess}</small></span>
+      <span>Esp. ${stats.expected}<small>Conf. ${stats.checked} · Falt. ${stats.missing} · Exc. ${stats.excess}</small></span>
       ${valueCell}
       <span class="pallet-row-actions"><span class="badge">${rowStatus}</span><button type="button" class="ghost" data-pallet-split="${escapeHtml(product.id || "")}">Desmembrar</button><button type="button" data-print-product="${escapeHtml(product.id || "")}">Reimprimir</button></span>
     </article>
