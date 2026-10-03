@@ -1535,13 +1535,32 @@ export async function getOperationalDashboardStats(userId, period = {}) {
       ])
       : [{ rows: [] }, { rows: [] }];
     const triageResult = await query("select * from triage_items where user_id = $1 order by created_at asc", [userId]);
+    const activityRange = normalizeOperatorActivityRange(period);
+    const activityResult = await query(
+      `select operator_user_id, action,
+              to_char(created_at at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as day,
+              count(*)::int as total
+         from operator_activities
+        where owner_user_id = $1
+          and action = any($2::text[])
+          and ($3::timestamptz is null or created_at >= $3::timestamptz)
+          and ($4::timestamptz is null or created_at <= $4::timestamptz)
+        group by 1, 2, 3`,
+      [userId, DASHBOARD_TEAM_ACTIONS, activityRange.startAt, activityRange.endAt]
+    );
     const db = {
       ...lotsDb,
       users: usersResult.rows.map(userFromRow),
       transferLots: transferLotsResult.rows.map(transferLotFromRow),
       transferItems: transferItemsResult.rows.map(transferItemFromRow),
       transferDivergenceReports: reportsResult.rows.map(transferDivergenceReportFromRow),
-      triageItems: triageResult.rows.map(triageItemFromRow)
+      triageItems: triageResult.rows.map(triageItemFromRow),
+      operatorActivityDaily: activityResult.rows.map((row) => ({
+        operatorUserId: row.operator_user_id,
+        action: row.action,
+        day: row.day,
+        total: Number(row.total || 0)
+      }))
     };
     return buildOperationalDashboardStats(db, userId, period);
   }
@@ -10329,8 +10348,26 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     }
   ];
 
+  const overview = buildDashboardOverview({
+    db,
+    userId,
+    period,
+    range,
+    userMap,
+    lookups: { productsById, productsBySku, productsByCode },
+    conference: { quantity: lotQty, checked: lotCheckedQty, value: lotCheckedValue },
+    transfers,
+    transferItems,
+    triageItems,
+    triageDestinationRows,
+    transferredTriageItemIds,
+    awaitingAcceptance,
+    divergenceReports: reports.length
+  });
+
   return {
     generatedAt: new Date().toISOString(),
+    overview,
     period: {
       startDate: period.startDate || "",
       endDate: period.endDate || "",
@@ -10432,8 +10469,9 @@ function buildAwaitingAcceptanceStats(db, userId, lookups = {}, now = new Date()
     }
     const destination = String(lot.depositoDestino || "Sem destino").trim() || "Sem destino";
     const key = normalizeText(destination);
-    const row = destinations.get(key) || { destination, total: 0, quantity: 0, value: 0, cost: 0, fromTriage: 0 };
+    const row = destinations.get(key) || { destination, total: 0, quantity: 0, value: 0, cost: 0, fromTriage: 0, oldestCreatedAt: null };
     row.total += 1;
+    if (lot.createdAt && (!row.oldestCreatedAt || String(lot.createdAt) < String(row.oldestCreatedAt))) row.oldestCreatedAt = lot.createdAt;
     row.quantity += lotQty;
     row.value = roundMoney(row.value + lotValue);
     row.cost = roundMoney(row.cost + lotCost);
@@ -10450,6 +10488,302 @@ function buildAwaitingAcceptanceStats(db, userId, lookups = {}, now = new Date()
     oldestCreatedAt,
     destinations: [...destinations.values()].sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination))
   };
+}
+
+const DASHBOARD_STORE_DEPOSIT = "SOLDIM MATRIZ";
+const DASHBOARD_TIME_ZONE = "America/Sao_Paulo";
+const DASHBOARD_CHART_MAX_DAYS = 31;
+const DASHBOARD_NON_SALEABLE_DESTINATIONS = new Set(["RMA", "AGUARDANDO TRIAGEM"]);
+const DASHBOARD_TEAM_STAGES = [
+  { key: "conference", label: "Conferência", actions: ["scan_ml", "create_manual_product"] },
+  { key: "transfer", label: "Transferência", actions: ["scan_transfer", "confirm_transfer_total"] },
+  { key: "triage", label: "Triagem", actions: ["triage_diagnosis"] }
+];
+const DASHBOARD_TEAM_ACTIONS = DASHBOARD_TEAM_STAGES.flatMap((stage) => stage.actions);
+
+function dashboardLocalDay(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: DASHBOARD_TIME_ZONE }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
+function dashboardDayList(startDay, endDay) {
+  const days = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDay) || !/^\d{4}-\d{2}-\d{2}$/.test(endDay) || startDay > endDay) return days;
+  const cursor = new Date(`${startDay}T12:00:00Z`);
+  const end = new Date(`${endDay}T12:00:00Z`);
+  while (cursor <= end && days.length < 400) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+function isDashboardBusinessDay(day) {
+  const weekday = new Date(`${day}T12:00:00Z`).getUTCDay();
+  return weekday !== 0 && weekday !== 6;
+}
+
+function dashboardMonthBusinessDays(today) {
+  const month = today.slice(0, 7);
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const days = dashboardDayList(`${month}-01`, `${month}-${String(lastDay).padStart(2, "0")}`).filter(isDashboardBusinessDay);
+  return {
+    month,
+    total: days.length,
+    elapsed: days.filter((day) => day <= today).length,
+    remaining: days.filter((day) => day > today).length
+  };
+}
+
+// Visao do administrador: ritmo por etapa, fluxo, alertas, envio para a loja, destinos e equipe.
+function buildDashboardOverview(input) {
+  const {
+    db,
+    userId,
+    period = {},
+    range = {},
+    userMap = new Map(),
+    lookups = {},
+    conference = {},
+    transfers = [],
+    transferItems = [],
+    triageItems = [],
+    triageDestinationRows = new Map(),
+    transferredTriageItemIds = new Set(),
+    awaitingAcceptance = {},
+    divergenceReports = 0,
+    now = new Date()
+  } = input;
+  const { productsById = new Map(), productsBySku = new Map(), productsByCode = new Map() } = lookups;
+  const today = dashboardLocalDay(now);
+  const startDay = /^\d{4}-\d{2}-\d{2}$/.test(String(period.startDate || "")) ? String(period.startDate) : "";
+  const endDayRaw = /^\d{4}-\d{2}-\d{2}$/.test(String(period.endDate || "")) ? String(period.endDate) : today;
+  const endDay = endDayRaw > today ? today : endDayRaw;
+  const periodDays = startDay ? dashboardDayList(startDay, endDay) : [];
+  const businessDays = periodDays.filter(isDashboardBusinessDay).length || (periodDays.length ? 1 : 0);
+  const perDay = (total) => (businessDays ? Number(total || 0) / businessDays : null);
+  const month = dashboardMonthBusinessDays(today);
+  const storeKey = normalizeText(DASHBOARD_STORE_DEPOSIT);
+  const triageById = new Map((db.triageItems || []).filter((item) => item.userId === userId).map((item) => [item.id, item]));
+  const unitPrice = (item) => {
+    const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+    const triageItem = item.triageItemId ? triageById.get(item.triageItemId) : null;
+    return { value: Number(product?.valorUnit || triageItem?.valorUnit || 0), cost: Number(product?.precoCusto || triageItem?.precoCusto || 0) };
+  };
+
+  // Transferencias e envio para a loja no periodo
+  const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
+  let transferUnits = 0;
+  let storeUnits = 0;
+  let storeDirectUnits = 0;
+  let storeValue = 0;
+  const storeDaily = new Map();
+  for (const item of transferItems) {
+    const transfer = transfersById.get(item.transferLotId);
+    if (!transfer) continue;
+    const qty = Number(item.quantidade || 0);
+    transferUnits += qty;
+    if (normalizeText(transfer.depositoDestino) !== storeKey) continue;
+    const price = unitPrice(item);
+    storeUnits += qty;
+    storeValue += qty * price.value;
+    if (transfer.source !== "triage") storeDirectUnits += qty;
+    const day = dashboardLocalDay(transfer.createdAt);
+    const row = storeDaily.get(day) || { quantity: 0, value: 0 };
+    row.quantity += qty;
+    row.value += qty * price.value;
+    storeDaily.set(day, row);
+  }
+  const storeReceived = (db.transferLots || [])
+    .filter((lot) => lot.userId === userId && normalizeText(lot.depositoDestino) === storeKey && lot.receivedAt && isOperationalDashboardDateInRange(lot.receivedAt, range))
+    .reduce((sum, lot) => sum + Number(lot.receivedTotal || 0), 0);
+  const chartStart = (() => {
+    const first = startDay || [...storeDaily.keys()].filter(Boolean).sort()[0] || today;
+    const days = dashboardDayList(first, endDay);
+    return days.length > DASHBOARD_CHART_MAX_DAYS ? days[days.length - DASHBOARD_CHART_MAX_DAYS] : first;
+  })();
+  const storeSeries = dashboardDayList(chartStart, endDay)
+    .filter((day) => isDashboardBusinessDay(day) || storeDaily.has(day))
+    .map((day) => ({ day, quantity: storeDaily.get(day)?.quantity || 0, value: roundMoney(storeDaily.get(day)?.value || 0) }));
+
+  // Fila da triagem (todas as datas)
+  const allTriage = (db.triageItems || []).filter((item) => item.userId === userId);
+  const triageQueue = allTriage.filter((item) => !isTriageItemCompleted(item, transferredTriageItemIds));
+  const triageQueueValue = triageQueue.reduce((sum, item) => sum + Number(item.valorUnit || 0), 0);
+  const triageDiagnosed = triageItems.filter((item) => isTriageItemCompleted(item, transferredTriageItemIds)).length;
+
+  const awaitingDestinations = awaitingAcceptance.destinations || [];
+  const storeAwaiting = awaitingDestinations.find((row) => normalizeText(row.destination) === storeKey) || { total: 0, quantity: 0, value: 0, oldestCreatedAt: null };
+
+  const monthProjection = (rate) => (rate === null ? null : Math.round(rate * month.total));
+  const queueDays = (queue, rate) => (rate && queue > 0 ? Math.ceil(queue / rate) : null);
+  const conferenceQueue = Math.max(0, Number(conference.quantity || 0) - Number(conference.checked || 0));
+  const stages = [
+    {
+      key: "conference",
+      name: "Conferência",
+      unit: "unidades",
+      total: Number(conference.checked || 0),
+      perDay: perDay(conference.checked),
+      queueLabel: "Na fila",
+      queue: conferenceQueue,
+      queueDays: queueDays(conferenceQueue, perDay(conference.checked)),
+      monthProjection: monthProjection(perDay(conference.checked))
+    },
+    {
+      key: "transfer",
+      name: "Transferência",
+      unit: "unidades",
+      total: transferUnits,
+      perDay: perDay(transferUnits),
+      queueLabel: "Aguardando aceite",
+      queue: Number(awaitingAcceptance.quantity || 0),
+      queueDays: null,
+      monthProjection: monthProjection(perDay(transferUnits))
+    },
+    {
+      key: "triage",
+      name: "Triagem",
+      unit: "itens",
+      total: triageDiagnosed,
+      perDay: perDay(triageDiagnosed),
+      queueLabel: "Aguardando",
+      queue: triageQueue.length,
+      queueDays: queueDays(triageQueue.length, perDay(triageDiagnosed)),
+      monthProjection: monthProjection(perDay(triageDiagnosed))
+    },
+    {
+      key: "store",
+      name: "Envio para loja",
+      unit: "unidades",
+      total: storeUnits,
+      perDay: perDay(storeUnits),
+      queueLabel: "Sem conferência da loja",
+      queue: Number(storeAwaiting.total || 0),
+      queueUnit: "agrup.",
+      queueDays: null,
+      monthProjection: monthProjection(perDay(storeUnits))
+    }
+  ];
+
+  // Destinos da triagem: vendavel x RMA x fila
+  const destinations = [...triageDestinationRows.values()]
+    .map((row) => ({ destination: row.destination, total: row.total, value: roundMoney(row.totalValue), cost: roundMoney(row.totalCost), saleable: !DASHBOARD_NON_SALEABLE_DESTINATIONS.has(row.destination) }))
+    .sort((a, b) => Number(b.saleable) - Number(a.saleable) || b.value - a.value || b.total - a.total);
+  const saleableValue = destinations.filter((row) => row.saleable).reduce((sum, row) => sum + row.value, 0);
+  const rmaRow = destinations.find((row) => row.destination === "RMA") || { total: 0, value: 0 };
+  const pendingRow = destinations.find((row) => row.destination === "AGUARDANDO TRIAGEM") || { total: 0, value: 0 };
+  const triageTotal = triageItems.length;
+
+  // Alertas que pedem decisao, ordenados pelo valor em risco
+  const alerts = [];
+  const shortDate = (value) => {
+    const day = dashboardLocalDay(value);
+    return day ? `${day.slice(8, 10)}/${day.slice(5, 7)}` : "";
+  };
+  const diagnosedTotal = destinations.filter((row) => row.destination !== "AGUARDANDO TRIAGEM").reduce((sum, row) => sum + row.total, 0);
+  if (rmaRow.total && diagnosedTotal) {
+    const share = Math.round((rmaRow.total / diagnosedTotal) * 100);
+    if (share >= 20) alerts.push({ key: "rma_share", severity: "high", value: rmaRow.value, title: `${share}% da triagem foi para RMA`, detail: `${rmaRow.total} itens, ${formatDashboardMoney(rmaRow.value)} em preço de venda parados em conserto ou garantia.` });
+  }
+  if (storeAwaiting.total) {
+    alerts.push({ key: "store_awaiting", severity: "high", value: storeAwaiting.value, title: `${storeAwaiting.total} envios à loja sem conferência`, detail: `A loja não confirmou o recebimento de ${storeAwaiting.quantity} unidades.${storeAwaiting.oldestCreatedAt ? ` O mais antigo é de ${shortDate(storeAwaiting.oldestCreatedAt)}.` : ""}` });
+  }
+  const triageAwaiting = awaitingDestinations.filter((row) => row.fromTriage > 0);
+  const triageAwaitingTotal = triageAwaiting.reduce((sum, row) => sum + row.fromTriage, 0);
+  if (triageAwaitingTotal) {
+    const value = triageAwaiting.reduce((sum, row) => sum + (row.total ? (row.value * row.fromTriage) / row.total : 0), 0);
+    alerts.push({ key: "triage_awaiting", severity: "high", value, title: `${triageAwaitingTotal} transferências da triagem aguardando aceite`, detail: triageAwaiting.map((row) => `${row.destination} ${row.fromTriage}`).join(", ") + "." });
+  }
+  const topSaleable = destinations.filter((row) => row.saleable).sort((a, b) => b.value - a.value)[0];
+  const diagnosedValue = destinations.filter((row) => row.destination !== "AGUARDANDO TRIAGEM").reduce((sum, row) => sum + row.value, 0);
+  if (topSaleable && diagnosedValue) {
+    const share = Math.round((topSaleable.value / diagnosedValue) * 100);
+    if (share >= 40) alerts.push({ key: "concentration", severity: "medium", value: topSaleable.value, title: `${share}% do valor triado foi para ${topSaleable.destination}`, detail: `${topSaleable.total} itens, ${formatDashboardMoney(topSaleable.value)}. Dependência de um canal.` });
+  }
+  if (triageQueue.length) {
+    alerts.push({ key: "triage_queue", severity: "medium", value: triageQueueValue, title: `${triageQueue.length} itens aguardando triagem`, detail: `${formatDashboardMoney(triageQueueValue)} em preço de venda na fila do laboratório.` });
+  }
+  if (divergenceReports) {
+    alerts.push({ key: "divergences", severity: "medium", value: 0, title: `${divergenceReports} divergências relatadas no período`, detail: "Conferir os agrupamentos com divergencia." });
+  }
+  alerts.sort((a, b) => (a.severity === b.severity ? b.value - a.value : a.severity === "high" ? -1 : 1));
+
+  // Equipe: cada operador medido na etapa em que trabalhou
+  const activityDaily = db.operatorActivityDaily || (db.operatorActivities || [])
+    .filter((activity) => activity.ownerUserId === userId && DASHBOARD_TEAM_ACTIONS.includes(activity.action) && isOperatorActivityInRange(activity, range))
+    .map((activity) => ({ operatorUserId: activity.operatorUserId, action: activity.action, day: dashboardLocalDay(activity.createdAt), total: 1 }));
+  const teamRows = new Map();
+  for (const row of activityDaily) {
+    const stage = DASHBOARD_TEAM_STAGES.find((item) => item.actions.includes(row.action));
+    if (!stage) continue;
+    const key = `${row.operatorUserId}\u0000${stage.key}`;
+    const current = teamRows.get(key) || { operatorUserId: row.operatorUserId, stage: stage.key, stageLabel: stage.label, items: 0, days: new Set() };
+    current.items += Number(row.total || 0);
+    if (row.day) current.days.add(row.day);
+    teamRows.set(key, current);
+  }
+  const team = [...teamRows.values()]
+    .map((row) => {
+      const user = userMap.get(row.operatorUserId);
+      const days = row.days.size;
+      return {
+        operatorUserId: row.operatorUserId,
+        name: user?.name || "Operador",
+        operatorCode: user?.operatorCode || null,
+        stage: row.stage,
+        stageLabel: row.stageLabel,
+        items: row.items,
+        days,
+        perDay: days ? row.items / days : 0
+      };
+    })
+    .sort((a, b) => b.items - a.items);
+
+  return {
+    today,
+    businessDays,
+    month,
+    storeDeposit: DASHBOARD_STORE_DEPOSIT,
+    stages,
+    flow: {
+      conferred: Number(conference.checked || 0),
+      conferredValue: roundMoney(Number(conference.value || 0)),
+      storeDirect: storeDirectUnits,
+      triageTotal,
+      triageDiagnosed,
+      triageQueue: triageQueue.length,
+      destinations: destinations.map(({ destination, total, saleable }) => ({ destination, total, saleable }))
+        .sort((a, b) => b.total - a.total)
+    },
+    alerts,
+    store: {
+      sent: storeUnits,
+      sentValue: roundMoney(storeValue),
+      received: storeReceived,
+      perDay: perDay(storeUnits),
+      series: storeSeries
+    },
+    destinations,
+    destinationTotals: {
+      saleableValue: roundMoney(saleableValue),
+      rmaValue: roundMoney(rmaRow.value),
+      pendingValue: roundMoney(pendingRow.value)
+    },
+    team
+  };
+}
+
+function formatDashboardMoney(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 1000000) return `R$ ${(number / 1000000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} mi`;
+  if (Math.abs(number) >= 10000) return `R$ ${Math.round(number / 1000).toLocaleString("pt-BR")} mil`;
+  return number.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 function isOperationalDashboardDateInRange(value, range) {

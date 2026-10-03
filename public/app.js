@@ -3637,44 +3637,11 @@ function renderOperationalDashboard() {
   const triage = stats.triage || {};
   const period = stats.period || {};
   const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
-  const awaiting = transfers.awaitingAcceptance || {};
-  const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
-  const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
-  const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
   panel.innerHTML = `
-    <div class="panel-heading operational-dashboard-heading">
-      <div>
-        <span class="muted">Perfil</span>
-        <h3>Dashboard operacional</h3>
-      </div>
-      <span class="operational-dashboard-updated">Atualizado em ${formatDateTime(stats.generatedAt)}</span>
-    </div>
-    ${operationalDateFilterMarkup(filter)}
-    <div class="operational-dashboard-hero">
-      <section title="Agrupamentos liberados que o estoque de destino ainda nao confirmou o recebimento. Considera todas as datas, nao so o periodo filtrado.">
-        <span class="muted">Aguardando aceite no destino</span>
-        <strong>${awaiting.total || 0} agrupamentos</strong>
-        <small>${operationalAwaitingAcceptanceText(awaiting)}</small>
-      </section>
-      <section>
-        <span class="muted">Progresso conferencia</span>
-        <strong>${lotProgress}%</strong>
-        <div class="operational-progress"><span style="width: ${lotProgress}%"></span></div>
-        <small>${lots.checkedQuantity || 0}/${lots.quantity || 0} unidades conferidas${operationalAverageText(lots.checkedQuantity || 0, period, "un./dia")}</small>
-      </section>
-      <section>
-        <span class="muted">Progresso transferencias</span>
-        <strong>${transferProgress}%</strong>
-        <div class="operational-progress"><span style="width: ${transferProgress}%"></span></div>
-        <small>${transfers.received || 0}/${transfers.quantity || 0} unidades recebidas${operationalAverageText(transfers.received || 0, period, "un./dia")}</small>
-      </section>
-      <section>
-        <span class="muted">Progresso triagem</span>
-        <strong>${triageProgress}%</strong>
-        <div class="operational-progress"><span style="width: ${triageProgress}%"></span></div>
-        <small>${triage.diagnosed || 0}/${triage.total || 0} itens diagnosticados${operationalAverageText(triage.diagnosed || 0, period, "itens/dia")}</small>
-      </section>
-    </div>
+    ${dashboardOverviewMarkup(stats, filter)}
+    <details class="dash2-details">
+      <summary>Detalhamento completo (números por setor, lotes e operadores)</summary>
+      <div class="dash2-details-body">
     <div class="operational-dashboard-summary">
       <div class="metric"><span>Conferencia</span><strong>${lots.skus || 0}/${lots.checkedQuantity || 0}</strong><small>cadastrados/bipados${operationalAverageText(lots.checkedQuantity || 0, period, "bipados/dia")}</small></div>
       <div class="metric"><span>Venda conferencia</span><strong>${money(lots.checkedValue || 0)}</strong><small>Custo ${money(lots.checkedCost || 0)}${operationalAverageMoneyPairText(lots.checkedValue || 0, lots.checkedCost || 0, period)}</small></div>
@@ -3745,6 +3712,245 @@ function renderOperationalDashboard() {
         ${operationalLotsMarkup(stats.recentLots || [])}
       </section>
     </div>
+      </div>
+    </details>
+  `;
+}
+
+const DASH2_INT = new Intl.NumberFormat("pt-BR");
+
+function dash2Int(value) {
+  return DASH2_INT.format(Math.round(Number(value || 0)));
+}
+
+function dash2Rate(value) {
+  if (value === null || value === undefined) return "--";
+  const number = Number(value || 0);
+  return number.toLocaleString("pt-BR", { maximumFractionDigits: number < 100 ? 1 : 0 });
+}
+
+function dash2Money(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 1000000) return `R$ ${(number / 1000000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} mi`;
+  if (Math.abs(number) >= 10000) return `R$ ${Math.round(number / 1000).toLocaleString("pt-BR")} mil`;
+  return money(number);
+}
+
+function dash2Label(value) {
+  return String(value || "").replace(/_/g, " ");
+}
+
+function dash2DayLabel(day) {
+  return day ? `${day.slice(8, 10)}/${day.slice(5, 7)}` : "";
+}
+
+function dash2MonthName(month) {
+  const names = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  return names[Number(String(month || "").slice(5, 7)) - 1] || "este mês";
+}
+
+function dashboardOverviewMarkup(stats, filter) {
+  const overview = stats.overview;
+  if (!overview) return operationalDateFilterMarkup(filter);
+  return `
+    <div class="dash2">
+      <div class="dash2-header">
+        <div>
+          <span class="dash2-kicker">Etiquefácil · visão do administrador</span>
+          <h3 class="dash2-title">Painel da operação</h3>
+        <span class="dash2-updated">Atualizado em ${formatDateTime(stats.generatedAt)}</span>
+        </div>
+        ${operationalDateFilterMarkup(filter)}
+      </div>
+      ${dash2StagesMarkup(overview)}
+      <div class="dash2-row">
+        ${dash2FlowMarkup(overview)}
+        ${dash2AlertsMarkup(overview)}
+      </div>
+      ${dash2StoreMarkup(overview)}
+      <div class="dash2-row">
+        ${dash2DestinationsMarkup(overview)}
+        ${dash2TeamMarkup(overview)}
+      </div>
+    </div>
+  `;
+}
+
+function dash2StageFuture(stage, overview) {
+  if (stage.perDay === null) return "Escolha um período para ver o ritmo.";
+  if (stage.queueDays) return `Fila zera em cerca de ${dash2Int(stage.queueDays)} dias úteis no ritmo atual.`;
+  if (stage.monthProjection !== null) return `No ritmo atual: cerca de ${dash2Int(stage.monthProjection)} ${stage.unit} em ${dash2MonthName(overview.month?.month)}.`;
+  return "";
+}
+
+function dash2StagesMarkup(overview) {
+  return `
+    <section class="dash2-section">
+      <h4 class="dash2-h">Ritmo da produção</h4>
+      <div class="dash2-stages">
+        ${(overview.stages || []).map((stage) => `
+          <article class="dash2-stage">
+            <div class="dash2-stage-top"><strong>${escapeHtml(stage.name)}</strong><span>${escapeHtml(stage.unit)}</span></div>
+            <div class="dash2-stage-rate"><b>${dash2Rate(stage.perDay)}</b><span>por dia útil</span></div>
+            <div class="dash2-goal">
+              <div class="dash2-goal-track"><span style="width: 0%"></span></div>
+              <small>Meta diária: em breve</small>
+            </div>
+            <div class="dash2-stage-figures">
+              <div><span>No período</span><strong>${dash2Int(stage.total)} ${stage.key === "triage" ? "itens" : "un"}</strong></div>
+              <div><span>${escapeHtml(stage.queueLabel)}</span><strong>${stage.queue ? `${dash2Int(stage.queue)} ${escapeHtml(stage.queueUnit || (stage.key === "triage" ? "itens" : "un"))}` : "em dia"}</strong></div>
+            </div>
+            <p class="dash2-future">${escapeHtml(dash2StageFuture(stage, overview))}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function dash2FlowMarkup(overview) {
+  const flow = overview.flow || {};
+  const destinations = flow.destinations || [];
+  const max = Math.max(1, ...destinations.map((row) => Number(row.total || 0)));
+  return `
+    <section class="dash2-card dash2-flow">
+      <div class="dash2-card-head">
+        <h4 class="dash2-h">Para onde a mercadoria foi</h4>
+        <p>Cada caminho tem sua contagem; os números não se somam entre etapas.</p>
+      </div>
+      <div class="dash2-flow-body">
+        <div class="dash2-flow-origin">
+          <span>Conferido</span>
+          <b>${dash2Int(flow.conferred)}</b>
+          <span>unidades · ${dash2Money(flow.conferredValue)} em venda</span>
+        </div>
+        <div class="dash2-flow-paths">
+          <div class="dash2-path">
+            <div><strong>Loja direto · ${escapeHtml(overview.storeDeposit || "Loja")}</strong><span>Sem passar pela triagem</span></div>
+            <b>${dash2Int(flow.storeDirect)} un</b>
+          </div>
+          <div class="dash2-path dash2-path-triage">
+            <div class="dash2-path-line">
+              <div><strong>Triagem · laboratório</strong><span>${dash2Int(flow.triageDiagnosed)} diagnosticados, ${dash2Int(flow.triageQueue)} na fila</span></div>
+              <b>${dash2Int(flow.triageTotal)} itens</b>
+            </div>
+            ${destinations.length ? `<div class="dash2-bars">${destinations.map((row) => `
+              <div class="dash2-bar-row">
+                <span>${escapeHtml(dash2Label(row.destination))}</span>
+                <div class="dash2-bar-track"><i class="${row.destination === "RMA" ? "is-alert" : row.saleable ? "" : "is-neutral"}" style="width: ${Math.round((Number(row.total || 0) / max) * 100)}%"></i></div>
+                <strong>${dash2Int(row.total)}</strong>
+              </div>
+            `).join("")}</div>` : '<p class="dash2-empty">Nenhum item triado no período.</p>'}
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function dash2AlertsMarkup(overview) {
+  const alerts = overview.alerts || [];
+  return `
+    <section class="dash2-card dash2-alerts">
+      <div class="dash2-card-head">
+        <h4 class="dash2-h">Precisa de decisão</h4>
+        <p>Ordenado pelo valor em risco. Some quando resolvido.</p>
+      </div>
+      ${alerts.length ? `<ol class="dash2-alert-list">${alerts.map((alert, index) => `
+        <li class="${alert.severity === "high" ? "is-high" : ""}">
+          <span class="dash2-alert-rank">${index + 1}</span>
+          <div><strong>${escapeHtml(alert.title)}</strong><span>${escapeHtml(alert.detail)}</span></div>
+        </li>
+      `).join("")}</ol>` : '<p class="dash2-empty">Nada pendente de decisão agora.</p>'}
+    </section>
+  `;
+}
+
+function dash2StoreMarkup(overview) {
+  const store = overview.store || {};
+  const series = store.series || [];
+  const max = Math.max(1, ...series.map((row) => Number(row.quantity || 0)));
+  const average = Number(store.perDay || 0);
+  const averageBottom = Math.round((Math.min(average, max) / max) * 150);
+  return `
+    <section class="dash2-card">
+      <div class="dash2-store-head">
+        <div class="dash2-card-head">
+          <h4 class="dash2-h">Envio para a loja</h4>
+          <p>Unidades enviadas por dia para ${escapeHtml(overview.storeDeposit || "a loja")}.${average ? " A linha tracejada é a média por dia útil." : ""}</p>
+        </div>
+        <div class="dash2-store-figures">
+          <div><span>Enviado</span><b>${dash2Int(store.sent)} un</b></div>
+          <div><span>Recebido pela loja</span><b class="${Number(store.received || 0) < Number(store.sent || 0) ? "is-alert" : ""}">${dash2Int(store.received)} un</b></div>
+          <div><span>Valor enviado</span><b>${dash2Money(store.sentValue)}</b></div>
+        </div>
+      </div>
+      ${series.length ? `
+        <div class="dash2-chart-scroll">
+          <div class="dash2-chart" style="--dash2-cols: ${series.length}">
+            ${average ? `<div class="dash2-chart-avg" style="bottom: ${averageBottom + 24}px"><span>média ${dash2Rate(average)}/dia</span></div>` : ""}
+            <div class="dash2-chart-bars">
+              ${series.map((row) => `
+                <div class="dash2-chart-col" title="${escapeHtml(dash2DayLabel(row.day))}: ${dash2Int(row.quantity)} un - ${escapeHtml(money(row.value))}">
+                  <small>${dash2Int(row.quantity)}</small>
+                  <i style="height: ${Math.max(2, Math.round((Number(row.quantity || 0) / max) * 150))}px"></i>
+                </div>
+              `).join("")}
+            </div>
+            <div class="dash2-chart-days">${series.map((row) => `<span>${escapeHtml(dash2DayLabel(row.day))}</span>`).join("")}</div>
+          </div>
+        </div>
+      ` : '<p class="dash2-empty">Nenhum envio para a loja no período.</p>'}
+    </section>
+  `;
+}
+
+function dash2DestinationsMarkup(overview) {
+  const rows = overview.destinations || [];
+  const totals = overview.destinationTotals || {};
+  return `
+    <section class="dash2-card">
+      <div class="dash2-card-head">
+        <h4 class="dash2-h">Valor da triagem por destino</h4>
+        <p>Vendável separado do que está em RMA ou na fila.</p>
+      </div>
+      <div class="dash2-split">
+        <div class="is-good"><span>Valor vendável</span><b>${dash2Money(totals.saleableValue)}</b></div>
+        <div class="is-alert"><span>Em RMA</span><b>${dash2Money(totals.rmaValue)}</b></div>
+      </div>
+      ${rows.length ? `
+        <div class="dash2-table-scroll">
+          <table class="dash2-table">
+            <thead><tr><th>Destino</th><th>Itens</th><th>Venda</th><th>Custo</th></tr></thead>
+            <tbody>${rows.map((row) => `
+              <tr><td>${escapeHtml(dash2Label(row.destination))}</td><td>${dash2Int(row.total)}</td><td><strong>${money(row.value)}</strong></td><td class="dash2-muted">${money(row.cost)}</td></tr>
+            `).join("")}</tbody>
+          </table>
+        </div>
+      ` : '<p class="dash2-empty">Nenhum item triado no período.</p>'}
+    </section>
+  `;
+}
+
+function dash2TeamMarkup(overview) {
+  const rows = overview.team || [];
+  return `
+    <section class="dash2-card">
+      <div class="dash2-card-head">
+        <h4 class="dash2-h">Equipe</h4>
+        <p>Cada pessoa medida na etapa em que trabalhou. A conta principal não entra.</p>
+      </div>
+      ${rows.length ? `
+        <div class="dash2-table-scroll">
+          <table class="dash2-table">
+            <thead><tr><th>Operador</th><th class="dash2-left">Etapa</th><th>Itens</th><th>Dias</th><th>Itens/dia</th></tr></thead>
+            <tbody>${rows.map((row) => `
+              <tr><td><strong>${escapeHtml(row.name)}</strong></td><td class="dash2-muted dash2-left">${escapeHtml(row.stageLabel)}</td><td>${dash2Int(row.items)}</td><td>${dash2Int(row.days)}</td><td><strong>${dash2Rate(row.perDay)}</strong></td></tr>
+            `).join("")}</tbody>
+          </table>
+        </div>
+      ` : '<p class="dash2-empty">Nenhuma atividade de operador no período.</p>'}
+    </section>
   `;
 }
 
