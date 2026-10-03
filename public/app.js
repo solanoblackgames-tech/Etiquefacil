@@ -36,7 +36,7 @@ const state = {
   triageStatsFilter: null,
   operationalDateFilter: null,
   operationalStats: null,
-  operationalOperatorSort: { key: "totalValue", direction: "desc" },
+  operationalOperatorSort: { key: "lotCheckedQty", direction: "desc" },
   blingDeposits: [],
   blingDepositsLoaded: false,
   blingDepositsError: "",
@@ -3958,7 +3958,7 @@ function handleOperationalDashboardClick(event) {
   const button = event.target.closest("[data-operational-operator-sort]");
   if (!button) return;
   const key = button.dataset.operationalOperatorSort;
-  const current = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  const current = state.operationalOperatorSort || { key: "lotCheckedQty", direction: "desc" };
   state.operationalOperatorSort = {
     key,
     direction: current.key === key && current.direction === "desc" ? "asc" : "desc"
@@ -3967,7 +3967,7 @@ function handleOperationalDashboardClick(event) {
 }
 
 function sortedOperationalOperators(operators = []) {
-  const sort = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  const sort = state.operationalOperatorSort || { key: "lotCheckedQty", direction: "desc" };
   const direction = sort.direction === "asc" ? 1 : -1;
   return [...operators].sort((a, b) => {
     const left = operationalOperatorSortValue(a, sort.key);
@@ -3985,7 +3985,7 @@ function operationalOperatorSortValue(operator, key) {
 }
 
 function operationalOperatorSortButton(key, label) {
-  const sort = state.operationalOperatorSort || { key: "totalValue", direction: "desc" };
+  const sort = state.operationalOperatorSort || { key: "lotCheckedQty", direction: "desc" };
   const active = sort.key === key;
   const arrow = active ? (sort.direction === "desc" ? "↓" : "↑") : "↕";
   return `<button type="button" class="operational-sort-button ${active ? "active" : ""}" data-operational-operator-sort="${escapeHtml(key)}">${escapeHtml(label)} <span>${arrow}</span></button>`;
