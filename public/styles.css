@@ -1292,8 +1292,9 @@ h3 {
 
 .bling-global-alert {
   align-items: center;
-  background: #b91c1c;
-  color: #fff;
+  background: #eef8f7;
+  border-top: 1px solid #c9e5e2;
+  color: #0f3f3c;
   display: flex;
   gap: 14px;
   justify-content: space-between;
@@ -1307,7 +1308,7 @@ h3 {
 
 .bling-global-alert strong,
 .bling-global-alert span {
-  color: #fff;
+  color: inherit;
 }
 
 .bling-global-alert strong {
@@ -1315,19 +1316,20 @@ h3 {
 }
 
 .bling-global-alert span {
+  color: #476569;
   font-size: 13px;
   font-weight: 700;
 }
 
 .bling-global-alert button {
   background: #fff;
-  color: #991b1b;
+  color: #006b65;
   flex: 0 0 auto;
 }
 
 .bling-global-alert button:hover:not(:disabled) {
-  background: #fee2e2;
-  color: #7f1d1d;
+  background: #dff2ef;
+  color: #064e49;
 }
 
 .upload-band {
@@ -3251,7 +3253,7 @@ h3 {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(140px, 1.2fr) repeat(5, minmax(90px, 1fr));
+  grid-template-columns: minmax(140px, 1.2fr) repeat(6, minmax(86px, 1fr));
   padding: 11px 12px;
 }
 
@@ -3306,7 +3308,7 @@ h3 {
   margin-top: 4px;
 }
 
-.progress-metric em {
+.metric em {
   color: var(--muted);
   display: block;
   font-size: 12px;

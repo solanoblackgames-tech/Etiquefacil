@@ -63,7 +63,7 @@ test("updateTriageDiagnosis stores diagnosis history for the triage item", async
       userId: "owner-1",
       code: item.code,
       operatorUserId: "operator-1",
-      payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Primeiro laudo", destination: "LOJA" }
+      payload: { diagnosisCondition: "OK_FUNCIONANDO", description: "Primeiro laudo", destination: "LOJA" }
     });
     await updateTriageDiagnosis({
       userId: "owner-1",
@@ -237,7 +237,7 @@ test("triage stats rows can be filtered by lot for export", async () => {
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-lot-export`;
-    const { createTriageItem, getTriageStats, listTriageItems, listTriageStatsRows, updateTriageDiagnosis, writeDb } = await import(storeUrl.href);
+    const { createTriageItem, getTriageStats, listTriageItems, listTriageStatsRows, readDb, updateTriageDiagnosis, writeDb } = await import(storeUrl.href);
     const now = new Date().toISOString();
 
     await writeDb({
@@ -277,8 +277,25 @@ test("triage stats rows can be filtered by lot for export", async () => {
       userId: "owner-1",
       code: first.code,
       operatorUserId: "owner-1",
-      payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosis: "Laudo aprovado", destination: "VENDA_DIRETA" }
+      payload: { diagnosisCondition: "OK_VENDA_DIRETA", diagnosis: "Laudo aprovado", destination: "VENDA_DIRETA" }
     });
+    const db = await readDb();
+    db.transferLots.push({
+      id: "transfer-1",
+      userId: "owner-1",
+      name: "Transferencia Loja",
+      descricao: "Transferencia manual para loja",
+      depositoOrigem: "Triagem",
+      depositoDestino: "Loja",
+      status: "waiting_store",
+      createdByUserId: "owner-1",
+      source: "triage",
+      triageItemId: first.id,
+      diagnosisCondition: "OK_VENDA_DIRETA",
+      triageDestination: "VENDA_DIRETA",
+      createdAt: now
+    });
+    await writeDb(db);
 
     const stats = await getTriageStats("owner-1", { lotId: "lot-1" });
     const rows = await listTriageStatsRows("owner-1", { lotId: "lot-1" });
@@ -286,13 +303,15 @@ test("triage stats rows can be filtered by lot for export", async () => {
 
     assert.equal(stats.total, 1);
     assert.equal(stats.totalValue, 120.5);
+    assert.deepEqual(stats.storeTransfer, { total: 1, totalValue: 120.5, totalCost: 40 });
+    assert.deepEqual(stats.transferDestinations, [{ destination: "Loja", total: 1, totalValue: 120.5, totalCost: 40 }]);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].product.sku, "SKU-1");
     assert.equal(rows[0].lot.nomeArquivo, "Lote 1");
     assert.equal(rows[0].item.diagnosis, "Laudo aprovado");
     assert.equal(items.length, 1);
     assert.equal(items[0].lotId, "lot-1");
-    assert.equal(items[0].destination, "LOJA");
+    assert.equal(items[0].destination, "VENDA_DIRETA");
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

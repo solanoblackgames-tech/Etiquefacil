@@ -1355,6 +1355,8 @@ export async function listTriageStatsRows(userId, period = {}) {
               and tl.source = 'triage'
               and tl.triage_item_id = t.id
           ) as triage_transferred,
+          triage_transfer.deposito_destino as triage_transfer_deposito_destino,
+          triage_transfer.status as triage_transfer_status,
           u.id as user__id,
           u.tenant_id as user__tenant_id,
           u.tenant_name as user__tenant_name,
@@ -1411,6 +1413,15 @@ export async function listTriageStatsRows(userId, period = {}) {
           order by previous.created_at desc
           limit 1
         ) previous_triage on true
+        left join lateral (
+          select tl.deposito_destino, tl.status
+          from transfer_lots tl
+          where tl.user_id = t.user_id
+            and tl.source = 'triage'
+            and tl.triage_item_id = t.id
+          order by tl.created_at desc
+          limit 1
+        ) triage_transfer on true
         left join lots l on l.id = p.lot_id
         left join users u on u.id = coalesce(t.operator_user_id, t.created_by_user_id, t.user_id)
         where t.user_id = $1
@@ -1440,6 +1451,8 @@ export async function listTriageStatsRows(userId, period = {}) {
         diagnosisCondition: row.diagnosis_condition || "",
         diagnosis: row.diagnosis || "",
         triageTransferred: Boolean(row.triage_transferred),
+        triageTransferDepositDestination: row.triage_transfer_deposito_destino || "",
+        triageTransferStatus: row.triage_transfer_status || "",
         createdAt: iso(row.created_at),
         updatedAt: iso(row.updated_at || row.created_at),
         diagnosedAt: row.diagnosed_at ? iso(row.diagnosed_at) : null
@@ -1457,7 +1470,9 @@ export async function listTriageStatsRows(userId, period = {}) {
   const lotIds = new Set(userLots.map((lot) => lot.id));
   const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
-  const transferredTriageItemIds = transferredTriageIdsFromLots((db.transferLots || []).filter((lot) => lot.userId === userId));
+  const userTransferLots = (db.transferLots || []).filter((lot) => lot.userId === userId);
+  const transferredTriageItemIds = transferredTriageIdsFromLots(userTransferLots);
+  const triageTransferByItemId = latestTriageTransferByItemId(userTransferLots);
   const rows = (db.triageItems || [])
     .filter((item) => item.userId === userId)
     .filter((item) => isWithinDateRange(item.createdAt, range))
@@ -1466,7 +1481,12 @@ export async function listTriageStatsRows(userId, period = {}) {
       const product = findTriageStatsProduct(db.products || [], scopedLotIds, item);
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
-        item: { ...item, triageTransferred: transferredTriageItemIds.has(item.id) },
+        item: {
+          ...item,
+          triageTransferred: transferredTriageItemIds.has(item.id),
+          triageTransferDepositDestination: triageTransferByItemId.get(item.id)?.depositoDestino || "",
+          triageTransferStatus: triageTransferByItemId.get(item.id)?.status || ""
+        },
         salePrice: triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(db.triageItems || [], item)),
         costPrice: triageStatMoney(item.precoCusto, product?.precoCusto),
         product,
@@ -1576,7 +1596,7 @@ export async function lookupTriageItemByScan(userId, value) {
 export async function createTriageItem({ userId, createdByUserId, operatorUserId = null, payload = {} }) {
   await ensureStore();
   const now = new Date().toISOString();
-  const item = await hydrateTriageInputPrice(userId, normalizeTriageInput({
+  const input = await hydrateTriageInputProduct(userId, normalizeTriageInput({
     ...payload,
     id: randomUUID(),
     userId,
@@ -1591,6 +1611,7 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
     updatedAt: now,
     diagnosedAt: null
   }));
+  const item = await hydrateTriageInputPrice(userId, input);
 
   await ensureTriageSecuritySealAvailable({ userId, securitySealCode: item.securitySealCode });
 
@@ -1644,7 +1665,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const rule = findTriageDiagnosisOption(triageSettings, diagnosisCondition);
   if (!rule) throw new Error("Diagnostico nao configurado para a triagem.");
   const destination = normalizeTriageDestination(rule.destination);
-  const diagnosis = String(payload.diagnosis || "").trim();
+  const diagnosis = String(payload.diagnosis ?? payload.description ?? payload.descricaoDiagnostico ?? payload.descricao_diagnostico ?? "").trim();
   const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
   const gradeAvaliada = normalizeGradeValue(payload.gradeAvaliada ?? payload.grade_avaliada ?? payload.gradeTestada ?? payload.grade_testada ?? payload.grade);
   const now = new Date().toISOString();
@@ -2014,6 +2035,7 @@ export async function lookupTriageProduct(userId, code) {
             upper(trim(p.sku)) = upper(trim($2))
             or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = upper(trim($2))
             or upper(trim(p.codigo_ml)) = upper(trim($2))
+            or upper(trim(p.ean)) = upper(trim($2))
           )
         order by p.created_at desc
         limit 1
@@ -2051,6 +2073,40 @@ export async function updateOperatorPasswordForOwner(ownerUserId, operatorUserId
   operator.passwordHash = passwordHash;
   await writeDb(db);
   return { ok: true };
+}
+
+async function hydrateTriageInputProduct(userId, item) {
+  const lookupCodes = [
+    item.sku,
+    item.productCode,
+    item.codigoBling2,
+    item.asin,
+    item.ean
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  if (!lookupCodes.length) return item;
+  const hasMissingText = ["descricao", "ean", "asin", "codigoBling2"].some((field) => !String(item[field] || "").trim());
+  const hasMissingMoney = Number(item.valorUnit || 0) <= 0 || Number(item.precoCusto || 0) <= 0;
+  const hasMissingLogistics = ["alturaCaixa", "larguraCaixa", "comprimentoCaixa", "pesoCaixa"].some((field) => !item[field]);
+  if (!hasMissingText && !hasMissingMoney && !hasMissingLogistics) return item;
+
+  for (const code of lookupCodes) {
+    const product = await lookupTriageProduct(userId, code);
+    if (!product) continue;
+    return mergeTriageProductData(item, product);
+  }
+  return item;
+}
+
+function mergeTriageProductData(item, product) {
+  const merged = { ...item };
+  for (const field of ["descricao", "ean", "asin", "codigoBling2", "alturaCaixa", "larguraCaixa", "comprimentoCaixa", "pesoCaixa"]) {
+    if (!String(merged[field] || "").trim() && product[field]) merged[field] = product[field];
+  }
+  if (Number(merged.valorUnit || 0) <= 0 && Number(product.valorUnit || 0) > 0) merged.valorUnit = product.valorUnit;
+  if (Number(merged.precoCusto || 0) <= 0 && Number(product.precoCusto || 0) > 0) merged.precoCusto = product.precoCusto;
+  if (!String(merged.productCode || "").trim() && product.productCode) merged.productCode = product.productCode;
+  if (!String(merged.sku || "").trim() && product.sku) merged.sku = product.sku;
+  return merged;
 }
 
 export async function updateOperatorForOwner({ ownerUserId, operatorUserId, name, email, operatorCode }) {
@@ -10244,9 +10300,13 @@ function buildTriageStatsFromRows(rows = []) {
   const byOperator = new Map();
   const destinations = new Map();
   const diagnosisConditions = new Map();
+  const transferDestinations = new Map();
   let totalValue = 0;
   let totalCost = 0;
   let diagnosedTotal = 0;
+  let storeTransferTotal = 0;
+  let storeTransferValue = 0;
+  let storeTransferCost = 0;
 
   for (const row of rows) {
     const item = row.item || {};
@@ -10270,6 +10330,20 @@ function buildTriageStatsFromRows(rows = []) {
       conditionStats.totalValue = roundMoney(conditionStats.totalValue + salePrice);
       conditionStats.totalCost = roundMoney(conditionStats.totalCost + costPrice);
       diagnosisConditions.set(condition, conditionStats);
+    }
+    if (item.triageTransferDepositDestination) {
+      const transferDestination = String(item.triageTransferDepositDestination).trim();
+      const transferKey = normalizeText(transferDestination);
+      const transferStats = transferDestinations.get(transferKey) || { destination: transferDestination, total: 0, totalValue: 0, totalCost: 0 };
+      transferStats.total += 1;
+      transferStats.totalValue = roundMoney(transferStats.totalValue + salePrice);
+      transferStats.totalCost = roundMoney(transferStats.totalCost + costPrice);
+      transferDestinations.set(transferKey, transferStats);
+      if (transferKey === normalizeText("Loja")) {
+        storeTransferTotal += 1;
+        storeTransferValue = roundMoney(storeTransferValue + salePrice);
+        storeTransferCost = roundMoney(storeTransferCost + costPrice);
+      }
     }
 
     const user = row.user || null;
@@ -10297,6 +10371,8 @@ function buildTriageStatsFromRows(rows = []) {
     .sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination));
   const diagnosisConditionRows = [...diagnosisConditions.values()]
     .sort((a, b) => b.total - a.total || a.condition.localeCompare(b.condition));
+  const transferDestinationRows = [...transferDestinations.values()]
+    .sort((a, b) => b.totalValue - a.totalValue || b.total - a.total || a.destination.localeCompare(b.destination));
 
   return {
     total: rows.length,
@@ -10307,8 +10383,26 @@ function buildTriageStatsFromRows(rows = []) {
     mainDestination: destinationRows[0] || null,
     destinations: destinationRows,
     diagnosisConditions: diagnosisConditionRows,
+    transferDestinations: transferDestinationRows,
+    storeTransfer: {
+      total: storeTransferTotal,
+      totalValue: roundMoney(storeTransferValue),
+      totalCost: roundMoney(storeTransferCost)
+    },
     operators: [...byOperator.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   };
+}
+
+function latestTriageTransferByItemId(transferLots = []) {
+  const byItemId = new Map();
+  for (const lot of transferLots || []) {
+    if (lot?.source !== "triage" || !lot.triageItemId) continue;
+    const current = byItemId.get(lot.triageItemId);
+    if (!current || String(lot.createdAt || "").localeCompare(String(current.createdAt || "")) > 0) {
+      byItemId.set(lot.triageItemId, lot);
+    }
+  }
+  return byItemId;
 }
 
 function transferredTriageIdsFromLots(transferLots = []) {

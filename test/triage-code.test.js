@@ -118,6 +118,53 @@ test("createTriageItem creates a new label every time the same SKU is scanned", 
   }
 });
 
+test("createTriageItem hydrates product description from scanned SKU", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-hydrate-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-hydrate`;
+    const { createTriageItem, lookupTriageProduct, writeDb } = await import(storeUrl.href);
+    const db = emptyDb();
+    db.lots.push({ id: "lot-1", userId: "owner-1", nomeArquivo: "Lote teste", fornecedor: "FORN", prefixoSku: "SKU", percentualArremate: 0, proximoSequencialSku: 1, createdAt: "2026-10-02T10:00:00.000Z" });
+    db.products.push({
+      id: "product-1",
+      lotId: "lot-1",
+      codigoMl: "MLB123",
+      sku: "SKU-HIDRATAR",
+      descricao: "Produto cadastrado na base",
+      valorUnit: 99.9,
+      precoCusto: 30,
+      qtdTotal: 1,
+      ean: "7891234567890",
+      createdAt: "2026-10-02T10:00:00.000Z"
+    });
+    await writeDb(db);
+
+    const item = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "owner-1",
+      payload: { sku: "SKU-HIDRATAR" }
+    });
+    const byEan = await lookupTriageProduct("owner-1", "7891234567890");
+
+    assert.equal(item.descricao, "Produto cadastrado na base");
+    assert.equal(item.ean, "7891234567890");
+    assert.equal(item.valorUnit, 99.9);
+    assert.equal(byEan.descricao, "Produto cadastrado na base");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("operator can delete only their last five generated triage labels", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;

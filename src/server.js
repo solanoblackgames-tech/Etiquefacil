@@ -808,6 +808,7 @@ function isNotFoundLookupError(error) {
   const text = String(error?.message || "").toLowerCase();
   return error?.status === 404 || text.includes("nao encontrado") || text.includes("não encontrado") || text.includes("not found");
 }
+
 app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
@@ -1178,7 +1179,7 @@ app.post("/api/transfer-lots/:transferLotId/confirm-total", requireAuth, require
       reporterName: req.body?.reporterName || operatorAuditLabel(req.session.user)
     });
     const items = transferItemsForBling(result.lot);
-    const observacao = `Transferencia Etiquefacil ${result.lot.name} - aceite estoque (${result.lot.totalReceived}/${result.lot.totalPlanned})`;
+    const observacao = transferAcceptanceObservation(result.lot, req.session.user);
     const queuedJob = await enqueueStockTransferSync({
       userId: result.lot.userId,
       lot: result.lot,
@@ -1209,13 +1210,15 @@ app.post("/api/transfer-lots/:transferLotId/force-receive-scan", requireAuth, re
     result = await forceReceivePublicTransferLotScan({ transferLotId: req.params.transferLotId, code, reason, wmsLocation });
     let transferResult;
     try {
-      transferResult = await syncSingleReceivedTransferItem(result.lot, result.item);
+      transferResult = await syncSingleReceivedTransferItem(result.lot, result.item, {
+        observacao: transferAcceptanceObservation(result.lot, req.session.user)
+      });
     } catch (blingError) {
       await enqueueStockTransferSync({
         userId: result.lot.userId,
         lot: result.lot,
         items: [{ ...result.item, quantidade: 1 }],
-        observacao: `Transferencia Etiquefacil ${result.lot.name} - aceite estoque`,
+        observacao: transferAcceptanceObservation(result.lot, req.session.user),
         errorMessage: blingError.message
       });
       transferResult = { ok: false, queued: true, error: blingError.message };
@@ -1446,7 +1449,7 @@ function transferItemsForBling(lot, { requireReceived = false } = {}) {
     .filter((item) => Number(item.quantidade || 0) > 0);
 }
 
-async function syncSingleReceivedTransferItem(lot, item) {
+async function syncSingleReceivedTransferItem(lot, item, { observacao = "" } = {}) {
   if (!lot?.userId) throw new Error("Dono da estrutura nao encontrado para transferir no Bling.");
   const integration = await getRequiredBlingCredentials(lot.userId);
   return syncBlingStockTransfers({
@@ -1454,9 +1457,13 @@ async function syncSingleReceivedTransferItem(lot, item) {
     items: [{ ...item, quantidade: 1 }],
     depositoOrigemName: lot.depositoOrigem,
     depositoDestinoName: lot.depositoDestino,
-    observacao: `Transferencia Etiquefacil ${lot.name} - conferencia QR`,
+    observacao: observacao || `Transferencia Etiquefacil ${lot.name} - conferencia QR`,
     saveIntegration: (payload) => saveUserBlingIntegration(lot.userId, payload)
   });
+}
+
+function transferAcceptanceObservation(lot, user) {
+  return `Transf-EF ${lot?.name || ""} - aceite por ${operatorAuditLabel(user)}`.trim();
 }
 
 app.get("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
@@ -2411,7 +2418,6 @@ app.post("/api/lots/:lotId/rz/:codigoRz/items/:itemId/increment", requireAuth, a
     sendError(res, error);
   }
 });
-
 
 app.post("/api/lots/:lotId/rz/:codigoRz/scan/decrement", requireAuth, async (req, res) => {
   try {

@@ -427,6 +427,28 @@ export async function listBlingDeposits({ integration, saveIntegration }) {
   return client.listDeposits();
 }
 
+export async function getBlingStockBalancesForSkus({ integration, skus = [], depositoName, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const deposito = await client.findDepositByDescription(depositoName);
+  if (!deposito?.id) throw new Error(`Deposito Bling nao encontrado: ${depositoName}`);
+
+  const results = [];
+  for (const batch of chunks(skus, 100)) {
+    const products = await client.findProductsBySkus(batch);
+    const productsBySku = new Map(products.map((product) => [normalizeCode(product.codigo), product]));
+    const balancesByProductId = await client.getProductStockBalances(products.map((product) => product.id).filter(Boolean), deposito.id);
+    for (const sku of batch) {
+      const product = productsBySku.get(normalizeCode(sku));
+      if (!product?.id) {
+        results.push({ sku, status: "not_found", balance: 0 });
+        continue;
+      }
+      results.push({ sku, status: "found", blingProductId: product.id, balance: balancesByProductId.get(String(product.id)) || 0 });
+    }
+  }
+  return { deposito: { id: deposito.id, descricao: deposito.descricao || depositoName }, results };
+}
+
 export async function listBlingSalesOrdersForStore({ integration, storeName = "", storeId = "", saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listSalesOrdersForStore({ storeName, storeId });
@@ -556,6 +578,15 @@ class BlingApiClient {
     const detailedProduct = { ...product, ...(detailPayload?.data || {}) };
     const supplierCost = includeSupplierCost ? await this.findProductSupplierCost(product.id) : 0;
     return supplierCost > 0 ? { ...detailedProduct, precoCusto: supplierCost, precoCompra: supplierCost } : detailedProduct;
+  }
+
+  async findProductsBySkus(skus = []) {
+    if (!skus.length) return [];
+    const payload = await this.request("/produtos", {
+      query: { "codigos[]": skus, criterio: 5, limite: Math.min(Math.max(skus.length, 1), 100) }
+    });
+    const wanted = new Set(skus.map(normalizeCode));
+    return (payload?.data || []).filter((candidate) => wanted.has(normalizeCode(candidate.codigo)));
   }
 
   async createProduct(payload) {
@@ -734,12 +765,30 @@ class BlingApiClient {
     }
   }
 
+  async getProductStockBalances(productIds = [], depositoId) {
+    if (!productIds.length) return new Map();
+    try {
+      const payload = await this.request(`/estoques/saldos/${encodeURIComponent(depositoId)}`, {
+        query: { "idsProdutos[]": productIds }
+      });
+      return stockBalancesFromPayload(payload);
+    } catch (error) {
+      const payload = await this.request("/estoques/saldos", {
+        query: { "idsProdutos[]": productIds }
+      });
+      return stockBalancesFromPayload(payload);
+    }
+  }
+
   async request(path, { method = "GET", query = {}, body = null, retry = true } = {}) {
     await this.refreshTokenIfNeeded();
 
     const url = new URL(`${BLING_API_BASE_URL}${path}`);
     for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined && value !== null && value !== "") url.searchParams.append(key, String(value));
+      const values = Array.isArray(value) ? value : [value];
+      for (const entry of values) {
+        if (entry !== undefined && entry !== null && entry !== "") url.searchParams.append(key, String(entry));
+      }
     }
 
     await this.waitForRequestSlot();
@@ -1199,6 +1248,25 @@ function stockBalanceFromPayload(payload, productId) {
   const value = row.saldoFisico ?? row.saldoFisicoTotal ?? row.saldo ?? row.quantidade ?? row.estoque ?? 0;
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function stockBalancesFromPayload(payload) {
+  const result = new Map();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  for (const row of rows) {
+    const productId = row.produto?.id || row.idProduto || row.produtoId || row.id || "";
+    if (!productId) continue;
+    const value = row.saldoFisico ?? row.saldoFisicoTotal ?? row.saldo ?? row.quantidade ?? row.estoque ?? 0;
+    const number = Number(value || 0);
+    result.set(String(productId), Number.isFinite(number) ? number : 0);
+  }
+  return result;
+}
+
+function chunks(items = [], size = 100) {
+  const result = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
 }
 
 function retryAfterMs(response) {

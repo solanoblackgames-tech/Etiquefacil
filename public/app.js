@@ -14,6 +14,7 @@ const state = {
     doubleCheckOnly: false
   },
   blingIntegration: null,
+  blingIntegrationLoaded: false,
   operators: [],
   operatorDateFilter: null,
   transferLots: [],
@@ -2580,6 +2581,7 @@ async function showApp(user) {
   $("#app .app-nav")?.classList.remove("hidden");
   $("#userName").textContent = `${user.name} (${user.email})`;
   state.blingIntegration = null;
+  state.blingIntegrationLoaded = false;
   applyUserPermissions(user);
   const route = parseRoute(window.location.pathname);
   if (route.view === "transferAccept") {
@@ -2595,6 +2597,7 @@ async function showApp(user) {
   await loadConferenceSettings();
   await loadPriceDisplaySettings();
   if (user.triageAccess) await loadTriageTransferSettings();
+  if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   const scanRequest = getScanRequest();
   if (scanRequest) {
     await showScanOnly(scanRequest);
@@ -2612,7 +2615,6 @@ async function showApp(user) {
     schedulePrimaryInputFocus();
     return;
   }
-  if (isOwnerUser()) await loadBlingIntegration({ validate: true });
   await loadLots();
   if (user.transferAccess) await loadTransferLots();
   if (user.triageAccess) await loadTriageItems();
@@ -2707,11 +2709,15 @@ function showScanSessionExpired({ lotId, codigoRz }) {
 }
 
 async function loadBlingIntegration({ validate = false } = {}) {
+  state.blingIntegrationLoaded = false;
+  updateBlingGlobalAlert();
   try {
     const response = await api(`/api/integrations/bling${validate ? "?validate=1" : ""}`);
     state.blingIntegration = response.integration;
+    state.blingIntegrationLoaded = true;
     renderBlingIntegration(response.integration);
   } catch (error) {
+    state.blingIntegrationLoaded = false;
     $("#blingIntegrationStatus").textContent = error.message;
     updateBlingGlobalAlert();
   }
@@ -2744,7 +2750,8 @@ function updateBlingShortcutLabel() {
 function updateBlingGlobalAlert() {
   const alert = $("#blingGlobalAlert");
   if (!alert) return;
-  const shouldShow = isOwnerUser() && !(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
+  const connected = Boolean(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
+  const shouldShow = isOwnerUser() && state.blingIntegrationLoaded && !connected;
   alert.classList.toggle("hidden", !shouldShow);
 }
 
@@ -2754,6 +2761,7 @@ async function deleteBlingIntegration() {
   try {
     await api("/api/integrations/bling", { method: "DELETE" });
     state.blingIntegration = null;
+    state.blingIntegrationLoaded = true;
     renderBlingIntegration(null);
   } catch (error) {
     $("#blingIntegrationStatus").style.color = "";
@@ -7754,9 +7762,8 @@ function renderLots() {
   for (const lot of state.lots) {
     const card = document.createElement("article");
     const activeLotId = state.previewLotId || state.selectedLotId;
-    const lotMeta = canViewCost()
-      ? `${escapeHtml(lot.prefixoSku)} · ${lot.percentualArremate}% · ${escapeHtml(lot.fornecedor)}`
-      : `${escapeHtml(lot.prefixoSku)} · ${escapeHtml(lot.fornecedor)}`;
+    const lotProgress = `${Number(lot.progress?.qtyPercent || 0).toLocaleString("pt-BR")}% conferido`;
+    const lotMeta = `${escapeHtml(lot.prefixoSku)} · ${lotProgress} · ${escapeHtml(lot.fornecedor)}`;
     card.className = `lot-card ${lot.id === activeLotId ? "active" : ""}`;
     card.innerHTML = `
       <strong>${escapeHtml(lot.nomeArquivo)}</strong>
@@ -7829,6 +7836,7 @@ function renderLotPreview(lot) {
   const canManage = state.user?.role !== "operator";
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
+  const balance = balanceMetric(missingQty, excessQty);
   const checkedRzs = lot.rzs.filter((rz) => Number(rz.qtyPercent || 0) >= 100 && Number(rz.missing || 0) === 0 && Number(rz.excess || 0) === 0).length;
   const status = missingQty === 0 && excessQty === 0 && lot.totalItems > 0 ? "Conferido" : lot.progress.checkedQty > 0 ? "Em andamento" : "Pendente";
   const detail = $("#lotDetail");
@@ -7858,6 +7866,7 @@ function renderLotPreview(lot) {
         ${canViewLotValues() ? progressMetric("Preco de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
+        ${metric(balance.label, balance.value, balance.detail)}
       </div>
       <h3 class="section-title">Resumo dos Pallets</h3>
       <div class="preview-rz-list">
@@ -7944,6 +7953,9 @@ function renderLotDetail(lot) {
   const canManage = !isOperator;
   const operatorNoSheetLot = isOperator && noSheetLot;
   const canScan = true;
+  const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
+  const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
+  const balance = balanceMetric(missingQty, excessQty);
   moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -7981,6 +7993,7 @@ function renderLotDetail(lot) {
         ${canViewLotValues() ? progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
         ${canViewLotValues() ? metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0))) : ""}
         ${canViewLotValues() ? metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0))) : ""}
+        ${metric(balance.label, balance.value, balance.detail)}
       </div>
     `}
     ${operatorNoSheetLot ? "" : `
@@ -8357,6 +8370,7 @@ function renderPallet(lot, codigoRz) {
   const items = lot.items.filter((item) => item.codigoRz === codigoRz);
   const visibleItems = palletVisibleItems(items);
   const status = rz.missing === 0 && rz.excess === 0 ? "Concluido" : rz.checked > 0 ? "Em andamento" : "Pendente";
+  const balance = balanceMetric(rz.missing, rz.excess);
   const baseUrl = `/api/lots/${encodeURIComponent(lot.id)}/rz/${encodeURIComponent(codigoRz)}/pallet`;
   rzDetail.innerHTML = `
     <section class="pallet-panel">
@@ -8380,12 +8394,20 @@ function renderPallet(lot, codigoRz) {
         ${metric("Conferido", rz.checked)}
         ${metric("Faltante", rz.missing)}
       </div>
-      <div class="summary-grid">
-        ${metric("Excedente", rz.excess)}
-        ${canViewLotValues() ? metric("Venda total", money(rz.expectedValue)) : ""}
-        ${canViewLotValues() ? metric("Venda conferida", money(rz.checkedValue)) : ""}
-        ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
-      </div>
+      ${canViewLotValues() ? `
+        <div class="summary-grid">
+          ${metric("Excedente", rz.excess)}
+          ${metric(balance.label, balance.value, balance.detail)}
+          ${metric("Venda total", money(rz.expectedValue))}
+          ${metric("Venda conferida", money(rz.checkedValue))}
+          ${metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`)}
+        </div>
+      ` : `
+        <div class="summary-grid">
+          ${metric("Excedente", rz.excess)}
+          ${metric(balance.label, balance.value, balance.detail)}
+        </div>
+      `}
       <h3 class="section-title">Progresso do pallet</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", rz.qtyPercent, `${rz.checked}/${rz.expected}`)}
@@ -8517,10 +8539,12 @@ function renderScanPage(lot, codigoRz, { lastCodigoMl = "" } = {}) {
 }
 
 function scanSummaryMarkup(rz) {
+  const balance = balanceMetric(rz.missing, rz.excess);
   return `
     ${metric("Conferido", rz.checked)}
     ${metric("Faltante", rz.missing)}
     ${metric("Excedente", rz.excess)}
+    ${metric(balance.label, balance.value, balance.detail)}
     ${canViewLotValues() ? metric("Impacto", `${money(rz.missingValue)} / ${money(rz.excessValue)}`) : ""}
   `;
 }
@@ -9873,8 +9897,18 @@ function labelTextControls() {
   `;
 }
 
-function metric(label, value) {
-  return `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`;
+function metric(label, value, detail = "") {
+  return `<div class="metric"><span>${label}</span><strong>${value}</strong>${detail ? `<em>${escapeHtml(detail)}</em>` : ""}</div>`;
+}
+
+function balanceMetric(missing, excess) {
+  const missingQty = Number(missing || 0);
+  const excessQty = Number(excess || 0);
+  const balance = missingQty - excessQty;
+  const detail = `${missingQty} faltantes - ${excessQty} excedentes`;
+  if (balance > 0) return { label: "Saldo a conferir", value: balance, detail };
+  if (balance < 0) return { label: "Saldo excedente", value: Math.abs(balance), detail };
+  return { label: "Saldo líquido", value: 0, detail };
 }
 
 function progressMetric(label, percent, detail) {
@@ -9891,6 +9925,7 @@ function progressMetric(label, percent, detail) {
 
 function previewRzRow(rz) {
   const status = rz.missing === 0 && rz.excess === 0 && rz.checked > 0 ? "OK" : rz.checked > 0 ? "Parcial" : "Pendente";
+  const balance = balanceMetric(rz.missing, rz.excess);
   const valueCell = canViewLotValues() ? `<span><small>Venda conf.</small>${money(rz.checkedValue)}</span>` : "";
   return `
     <article class="preview-rz-row">
@@ -9899,12 +9934,14 @@ function previewRzRow(rz) {
       <span><small>Conferido</small>${rz.checked}/${rz.expected}</span>
       <span><small>Faltante</small>${rz.missing}</span>
       <span><small>Excedente</small>${rz.excess}</span>
+      <span><small>${escapeHtml(balance.label)}</small>${balance.value}</span>
       ${valueCell}
     </article>
   `;
 }
 
 function rzCard(rz, { canScan = true } = {}) {
+  const balance = balanceMetric(rz.missing, rz.excess);
   const title = canViewLotValues()
     ? `Itens ${rz.expected} · Conferido ${rz.checked} · Venda total ${money(rz.expectedValue)} · Venda conferida ${money(rz.checkedValue)} · Faltante ${rz.missing} · Excedente ${rz.excess}`
     : `Itens ${rz.expected} · Conferido ${rz.checked} · Faltante ${rz.missing} · Excedente ${rz.excess}`;
@@ -9920,6 +9957,7 @@ function rzCard(rz, { canScan = true } = {}) {
         ${valueCells}
         <span>Faltante</span><strong>${rz.missing}</strong>
         <span>Excedente</span><strong>${rz.excess}</strong>
+        <span>${escapeHtml(balance.label)}</span><strong>${balance.value}</strong>
       </div>
       <div class="rz-card-actions">
         ${canScan ? `<button type="button" data-scan-rz="${escapeHtml(rz.codigoRz)}">Iniciar bipagem</button>` : ""}
@@ -10382,6 +10420,8 @@ function renderTriageStats() {
   const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
   const costSummary = canViewCost() ? `<small>Preco de venda Bling. Custo: ${money(stats.totalCost || 0)}</small>` : '<small>Preco de venda Bling.</small>';
   const averageCostMetric = canViewCost() ? `<div class="metric"><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></div>` : "";
+  const storeTransfer = stats.storeTransfer || {};
+  const storeTransferCost = canViewCost() && Number(storeTransfer.totalCost || 0) ? ` - Custo ${money(storeTransfer.totalCost || 0)}` : "";
   const destinationCostCopy = canViewCost() ? "Quantidade, venda, custo e media por destino." : "Quantidade, venda e media por destino.";
   const operatorCostCopy = canViewCost() ? "Produtividade, venda e custo por pessoa." : "Produtividade e venda por pessoa.";
   panel.innerHTML = `
@@ -10404,6 +10444,7 @@ function renderTriageStats() {
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
       ${averageCostMetric}
+      <div class="metric"><span>Enviado a Loja</span><strong>${money(storeTransfer.totalValue || 0)}</strong><small>${storeTransfer.total || 0} itens transferidos${storeTransferCost}</small></div>
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
@@ -11212,6 +11253,7 @@ async function printTriageLabel(mode = "simple") {
   if (complete) appendTriageCompletePrintStyle();
   await waitForPrintableImages($("#triageLabelPrintable"));
   window.print();
+  setTimeout(finishTriageLabelPrint, 250);
   triageLabelPrintFallbackTimer = setTimeout(finishTriageLabelPrint, LABEL_PRINT_FALLBACK_MS);
 }
 
