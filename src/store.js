@@ -10147,7 +10147,7 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     const product = findTriageStatsProduct(allProducts, allLotIds, item);
     const value = triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(triageItems, item));
     const cost = triageStatMoney(item.precoCusto, product?.precoCusto);
-    const destination = String(item.destination || "sem_destino").trim().toUpperCase() || "SEM_DESTINO";
+    const destination = String(item.destination || "").trim().toUpperCase() || TRIAGE_PENDING_DESTINATION_LABEL;
     const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
     row.total += 1;
     row.totalValue = roundMoney(row.totalValue + value);
@@ -10278,6 +10278,12 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
       };
     });
 
+  const awaitingAcceptance = buildAwaitingAcceptanceStats(db, userId, {
+    productsById,
+    productsBySku,
+    productsByCode
+  });
+
   const triage = {
     total: triageItems.length,
     diagnosed: triageDiagnosed,
@@ -10366,7 +10372,8 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
         .map((row) => ({ ...row, pending: Math.max(0, Number(row.quantity || 0) - Number(row.received || 0)) }))
         .sort((a, b) => b.value - a.value || b.quantity - a.quantity || a.destination.localeCompare(b.destination)),
       divergenceReports: reports.length,
-      statusCounts
+      statusCounts,
+      awaitingAcceptance
     },
     triage,
     sectors,
@@ -10375,6 +10382,73 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     recentTransfers,
     materialDestinations: [...materialDestinationRows.values()]
       .sort((a, b) => b.value - a.value || b.quantity - a.quantity || a.destination.localeCompare(b.destination))
+  };
+}
+
+const TRIAGE_PENDING_DESTINATION_LABEL = "AGUARDANDO TRIAGEM";
+const AWAITING_ACCEPTANCE_STATUS = "waiting_store";
+const AWAITING_ACCEPTANCE_STALE_DAYS = 7;
+
+// Agrupamentos liberados que o estoque de destino ainda nao confirmou.
+// Nao usa o filtro de periodo: e uma fila acumulada, o que importa e o que esta parado hoje.
+function buildAwaitingAcceptanceStats(db, userId, lookups = {}, now = new Date()) {
+  const { productsById = new Map(), productsBySku = new Map(), productsByCode = new Map() } = lookups;
+  const triageById = new Map((db.triageItems || []).filter((item) => item.userId === userId).map((item) => [item.id, item]));
+  const waiting = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.status === AWAITING_ACCEPTANCE_STATUS);
+  const waitingIds = new Set(waiting.map((lot) => lot.id));
+  const itemsByLot = new Map();
+  for (const item of db.transferItems || []) {
+    if (!waitingIds.has(item.transferLotId)) continue;
+    const list = itemsByLot.get(item.transferLotId) || [];
+    list.push(item);
+    itemsByLot.set(item.transferLotId, list);
+  }
+  const staleLimit = now.getTime() - AWAITING_ACCEPTANCE_STALE_DAYS * 86400000;
+  const destinations = new Map();
+  let quantity = 0;
+  let value = 0;
+  let cost = 0;
+  let stale = 0;
+  let oldestCreatedAt = null;
+  for (const lot of waiting) {
+    let lotQty = 0;
+    let lotValue = 0;
+    let lotCost = 0;
+    for (const item of itemsByLot.get(lot.id) || []) {
+      const product = productsById.get(item.productId) || productsBySku.get(normalizeCode(item.sku)) || productsByCode.get(normalizeCode(item.codigoMl));
+      const triageItem = item.triageItemId ? triageById.get(item.triageItemId) : null;
+      const qty = Number(item.quantidade || 0);
+      lotQty += qty;
+      lotValue += qty * Number(product?.valorUnit || triageItem?.valorUnit || 0);
+      lotCost += qty * Number(product?.precoCusto || triageItem?.precoCusto || 0);
+    }
+    quantity += lotQty;
+    value += lotValue;
+    cost += lotCost;
+    const createdTime = new Date(lot.createdAt || "").getTime();
+    if (Number.isFinite(createdTime)) {
+      if (createdTime < staleLimit) stale += 1;
+      if (!oldestCreatedAt || createdTime < new Date(oldestCreatedAt).getTime()) oldestCreatedAt = lot.createdAt;
+    }
+    const destination = String(lot.depositoDestino || "Sem destino").trim() || "Sem destino";
+    const key = normalizeText(destination);
+    const row = destinations.get(key) || { destination, total: 0, quantity: 0, value: 0, cost: 0, fromTriage: 0 };
+    row.total += 1;
+    row.quantity += lotQty;
+    row.value = roundMoney(row.value + lotValue);
+    row.cost = roundMoney(row.cost + lotCost);
+    if (lot.source === "triage") row.fromTriage += 1;
+    destinations.set(key, row);
+  }
+  return {
+    total: waiting.length,
+    quantity,
+    value: roundMoney(value),
+    cost: roundMoney(cost),
+    stale,
+    staleDays: AWAITING_ACCEPTANCE_STALE_DAYS,
+    oldestCreatedAt,
+    destinations: [...destinations.values()].sort((a, b) => b.total - a.total || a.destination.localeCompare(b.destination))
   };
 }
 

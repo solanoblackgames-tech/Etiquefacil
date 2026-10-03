@@ -3637,8 +3637,7 @@ function renderOperationalDashboard() {
   const triage = stats.triage || {};
   const period = stats.period || {};
   const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
-  const totalOperationValue = Number(lots.checkedValue || 0) + Number(transfers.receivedValue || 0) + Number(triage.diagnosedValue || 0);
-  const totalOperationCost = Number(lots.checkedCost || 0) + Number(transfers.receivedCost || 0) + Number(triage.diagnosedCost || 0);
+  const awaiting = transfers.awaitingAcceptance || {};
   const lotProgress = operationalPercent(lots.checkedQuantity || 0, lots.quantity || 0);
   const transferProgress = operationalPercent(transfers.received || 0, transfers.quantity || 0);
   const triageProgress = operationalPercent(triage.diagnosed || 0, triage.total || 0);
@@ -3652,10 +3651,10 @@ function renderOperationalDashboard() {
     </div>
     ${operationalDateFilterMarkup(filter)}
     <div class="operational-dashboard-hero">
-      <section>
-        <span class="muted">Visao geral</span>
-        <strong>${money(totalOperationValue)}</strong>
-        <small>Venda movimentada. Custo: ${money(totalOperationCost)}.${operationalAverageMoneyPairText(totalOperationValue, totalOperationCost, period)}</small>
+      <section title="Agrupamentos liberados que o estoque de destino ainda nao confirmou o recebimento. Considera todas as datas, nao so o periodo filtrado.">
+        <span class="muted">Aguardando aceite no destino</span>
+        <strong>${awaiting.total || 0} agrupamentos</strong>
+        <small>${operationalAwaitingAcceptanceText(awaiting)}</small>
       </section>
       <section>
         <span class="muted">Progresso conferencia</span>
@@ -3686,7 +3685,7 @@ function renderOperationalDashboard() {
       <div class="metric"><span>Custo dos agrupamentos</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja aceito</small></div>
       <div class="metric"><span>Triagem</span><strong>${triage.diagnosed || 0}</strong><small>itens triados${operationalAverageText(triage.diagnosed || 0, period, "triados/dia")}</small></div>
       <div class="metric"><span>Venda triagem</span><strong>${money(triage.diagnosedValue || 0)}</strong><small>Custo ${money(triage.diagnosedCost || 0)}${operationalAverageMoneyPairText(triage.diagnosedValue || 0, triage.diagnosedCost || 0, period)}</small></div>
-      <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>${operationalTransferStatusSummary(transfers.statusCounts || {})}</small></div>
+      <div class="metric"><span>Divergencias</span><strong>${transfers.divergenceReports || 0}</strong><small>relatos de divergencia no periodo</small></div>
     </div>
     <div class="operational-dashboard-grid">
       <section class="operational-dashboard-block">
@@ -3992,6 +3991,15 @@ function operationalOperatorSortButton(key, label) {
   return `<button type="button" class="operational-sort-button ${active ? "active" : ""}" data-operational-operator-sort="${escapeHtml(key)}">${escapeHtml(label)} <span>${arrow}</span></button>`;
 }
 
+function operationalAwaitingAcceptanceText(awaiting = {}) {
+  if (!Number(awaiting.total || 0)) return "Nenhum agrupamento parado. Todos os destinos confirmaram o recebimento.";
+  const parts = [`${awaiting.quantity || 0} unidades`, `venda ${money(awaiting.value || 0)}`];
+  if (Number(awaiting.stale || 0)) parts.push(`${awaiting.stale} ha mais de ${awaiting.staleDays || 7} dias`);
+  if (awaiting.oldestCreatedAt) parts.push(`mais antigo de ${formatDateTime(awaiting.oldestCreatedAt)}`);
+  const destinations = (awaiting.destinations || []).slice(0, 4).map((row) => `${row.destination}: ${row.total}`);
+  return `${parts.join(" - ")}.${destinations.length ? ` ${destinations.join(" · ")}` : ""}`;
+}
+
 function operationalTransferStatusSummary(statusCounts = {}) {
   const labels = Object.entries(statusCounts)
     .filter(([, total]) => Number(total || 0) > 0)
@@ -4016,8 +4024,6 @@ function operationalOperatorsMarkup(operators = []) {
         <span>${operationalOperatorSortButton("transferReceivedCost", "Custo conf.")}</span>
         <span>${operationalOperatorSortButton("triageValue", "Triagem")}</span>
         <span>${operationalOperatorSortButton("triageCost", "Custo triagem")}</span>
-        <span>${operationalOperatorSortButton("totalValue", "Total")}</span>
-        <span>${operationalOperatorSortButton("totalCost", "Custo total")}</span>
       </div>
       ${sortedOperators.map((operator) => `
         <div class="operational-dashboard-row">
@@ -4032,8 +4038,6 @@ function operationalOperatorsMarkup(operators = []) {
           <span>${money(operator.transferReceivedCost || 0)}</span>
           <span>${operator.triageCount || 0}<small>Venda ${money(operator.triageValue || 0)}</small></span>
           <span>${money(operator.triageCost || 0)}</span>
-          <span>${money(operator.totalValue || 0)}</span>
-          <span>${money(operator.totalCost || 0)}</span>
         </div>
       `).join("")}
     </div>
@@ -4258,8 +4262,8 @@ function formatDecimal(value) {
   return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
 }
 
-function operatorManualDailyAverage(creates, activeDays) {
-  return activeDays ? Number(creates || 0) / activeDays : 0;
+function operatorDailyAverage(total, activeDays) {
+  return activeDays ? Number(total || 0) / activeDays : 0;
 }
 
 function formatShortDate(value) {
@@ -4481,7 +4485,8 @@ function operatorViewModel(operator) {
     palletViews,
     productionErrors,
     activeDays,
-    averagePerDay: operatorManualDailyAverage(creates, activeDays),
+    averagePerDay: operatorDailyAverage(entryItems, activeDays),
+    manualAveragePerDay: operatorDailyAverage(creates, activeDays),
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
     bippedItems: entryItems,
@@ -4500,8 +4505,8 @@ function operatorPodiumCard(operator, index) {
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.bippedItems}</b>
       <small>${operator.registrationScans} bipados encontrados / ${operator.creates} cadastrados</small>
-      <em>${formatDecimal(operator.averagePerDay)} media/dia</em>
-      <small>${operator.creates} cad. manuais / ${operator.activeDays || 0} dias</small>
+      <em>${formatDecimal(operator.averagePerDay)} itens/dia</em>
+      <small>${operator.bippedItems} itens / ${operator.activeDays || 0} dias · ${formatDecimal(operator.manualAveragePerDay)} cad. manuais/dia</small>
     </article>
   `;
 }
