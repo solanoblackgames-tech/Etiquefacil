@@ -8286,6 +8286,7 @@ function renderLotPreview(lot) {
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
   const balance = balanceMetric(missingQty, excessQty);
+  const values = lotValueSummary(lot);
   const checkedRzs = lot.rzs.filter((rz) => Number(rz.qtyPercent || 0) >= 100 && Number(rz.missing || 0) === 0 && Number(rz.excess || 0) === 0).length;
   const status = missingQty === 0 && excessQty === 0 && lot.totalItems > 0 ? "Conferido" : lot.progress.checkedQty > 0 ? "Em andamento" : "Pendente";
   const detail = $("#lotDetail");
@@ -8312,7 +8313,9 @@ function renderLotPreview(lot) {
       <h3 class="section-title">Andamento geral</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
-        ${canViewLotValues() ? progressMetric("Preco de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
+        ${canViewLotValues() ? progressMetric("Venda esperada conferida", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
+        ${canViewLotValues() ? metric("Valor excedente", money(values.excessValue)) : ""}
+        ${canViewLotValues() ? metric("Venda conferida + excedente", money(values.checkedPlusExcessValue)) : ""}
         ${metric("Itens faltantes", missingQty)}
         ${metric("Itens excedentes", excessQty)}
         ${metric(balance.label, balance.value, balance.detail)}
@@ -8405,6 +8408,7 @@ function renderLotDetail(lot) {
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
   const balance = balanceMetric(missingQty, excessQty);
+  const values = lotValueSummary(lot);
   moveDiversePanelToHome();
   detail.classList.remove("empty");
   detail.innerHTML = `
@@ -8439,9 +8443,10 @@ function renderLotDetail(lot) {
       <h3 class="section-title">Progresso do lote</h3>
       <div class="summary-grid">
         ${progressMetric("Quantidade", lot.progress.qtyPercent, `${lot.progress.checkedQty}/${lot.progress.expectedQty}`)}
-        ${canViewLotValues() ? progressMetric("Preço de venda", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
-        ${canViewLotValues() ? metric("Valor faltante", money(lot.rzs.reduce((sum, rz) => sum + rz.missingValue, 0))) : ""}
-        ${canViewLotValues() ? metric("Valor excedente", money(lot.rzs.reduce((sum, rz) => sum + rz.excessValue, 0))) : ""}
+        ${canViewLotValues() ? progressMetric("Venda esperada conferida", lot.progress.valuePercent, `${money(lot.progress.checkedValue)} / ${money(lot.progress.expectedValue)}`) : ""}
+        ${canViewLotValues() ? metric("Valor faltante", money(values.missingValue)) : ""}
+        ${canViewLotValues() ? metric("Valor excedente", money(values.excessValue)) : ""}
+        ${canViewLotValues() ? metric("Venda conferida + excedente", money(values.checkedPlusExcessValue)) : ""}
         ${metric(balance.label, balance.value, balance.detail)}
       </div>
     `}
@@ -10358,6 +10363,26 @@ function balanceMetric(missing, excess) {
   if (balance > 0) return { label: "Saldo a conferir", value: balance, detail };
   if (balance < 0) return { label: "Saldo excedente", value: Math.abs(balance), detail };
   return { label: "Saldo líquido", value: 0, detail };
+}
+
+function lotValueSummary(lot) {
+  const progress = lot?.progress || {};
+  const rzs = Array.isArray(lot?.rzs) ? lot.rzs : [];
+  const checkedValue = Number(progress.checkedValue || 0);
+  const missingValue = rzs.reduce((sum, rz) => sum + Number(rz.missingValue || 0), 0);
+  const progressExcessValue = Number(progress.excessValue);
+  const excessValue = Number.isFinite(progressExcessValue)
+    ? progressExcessValue
+    : rzs.reduce((sum, rz) => sum + Number(rz.excessValue || 0), 0);
+  const progressCheckedPlusExcessValue = Number(progress.checkedPlusExcessValue);
+  const checkedPlusExcessValue = Number.isFinite(progressCheckedPlusExcessValue)
+    ? progressCheckedPlusExcessValue
+    : checkedValue + excessValue;
+  return {
+    missingValue,
+    excessValue,
+    checkedPlusExcessValue
+  };
 }
 
 function progressMetric(label, percent, detail) {

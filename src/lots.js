@@ -17,6 +17,7 @@ export function summarizeLot(db, lot, includeItems = false) {
   const checkedQty = rzs.reduce((sum, rz) => sum + rz.checked, 0);
   const expectedValue = rzs.reduce((sum, rz) => sum + rz.expectedValue, 0);
   const checkedValue = rzs.reduce((sum, rz) => sum + rz.checkedValue, 0);
+  const excessValue = rzs.reduce((sum, rz) => sum + rz.excessValue, 0);
 
   const result = {
     ...lot,
@@ -29,6 +30,8 @@ export function summarizeLot(db, lot, includeItems = false) {
       qtyPercent: percent(checkedQty, expectedQty),
       expectedValue: roundMoney(expectedValue),
       checkedValue: roundMoney(checkedValue),
+      excessValue: roundMoney(excessValue),
+      checkedPlusExcessValue: roundMoney(checkedValue + excessValue),
       valuePercent: percent(checkedValue, expectedValue)
     },
     rzs

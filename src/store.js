@@ -1113,7 +1113,8 @@ async function listLotsForAdminPg() {
           coalesce(sum(ri.qtd_esperada), 0)::numeric as expected_qty,
           coalesce(sum(ri.qtd_conferida), 0)::numeric as checked_qty,
           coalesce(sum(ri.qtd_esperada * coalesce(p.valor_unit, 0)), 0)::numeric as expected_value,
-          coalesce(sum(case when ri.tipo_item = 'excedente_externo' then 0 else least(ri.qtd_conferida, ri.qtd_esperada) * coalesce(p.valor_unit, 0) end), 0)::numeric as checked_value
+          coalesce(sum(case when ri.tipo_item = 'excedente_externo' then 0 else least(ri.qtd_conferida, ri.qtd_esperada) * coalesce(p.valor_unit, 0) end), 0)::numeric as checked_value,
+          coalesce(sum((case when ri.tipo_item = 'excedente_externo' then ri.qtd_conferida else greatest(0, ri.qtd_conferida - ri.qtd_esperada) end) * coalesce(p.valor_unit, 0)), 0)::numeric as excess_value
         from rz_items ri
         left join products p on p.id = ri.product_id
         group by ri.lot_id
@@ -1127,6 +1128,7 @@ async function listLotsForAdminPg() {
         coalesce(rt.checked_qty, 0)::numeric as checked_qty,
         coalesce(rt.expected_value, 0)::numeric as expected_value,
         coalesce(rt.checked_value, 0)::numeric as checked_value,
+        coalesce(rt.excess_value, 0)::numeric as excess_value,
         u.id as user_id_owner,
         u.tenant_id as user_tenant_id,
         u.tenant_name as user_tenant_name,
@@ -1159,6 +1161,7 @@ async function listLotsForAdminPg() {
     const checkedQty = num(row.checked_qty);
     const expectedValue = num(row.expected_value);
     const checkedValue = num(row.checked_value);
+    const excessValue = num(row.excess_value);
     const user = row.user_id_owner ? sanitizeUser(userFromPrefixedRow(row, "user_")) : null;
     return {
       ...lot,
@@ -1171,6 +1174,8 @@ async function listLotsForAdminPg() {
         qtyPercent: percent(checkedQty, expectedQty),
         expectedValue: roundMoney(expectedValue),
         checkedValue: roundMoney(checkedValue),
+        excessValue: roundMoney(excessValue),
+        checkedPlusExcessValue: roundMoney(checkedValue + excessValue),
         valuePercent: percent(checkedValue, expectedValue)
       },
       rzs: Array.from({ length: Number(row.total_rzs || 0) }, () => ({})),
@@ -2971,6 +2976,7 @@ async function getUserLotSummariesPg(userId) {
     const checkedQty = rzs.reduce((sum, rz) => sum + rz.checked, 0);
     const expectedValue = rzs.reduce((sum, rz) => sum + rz.expectedValue, 0);
     const checkedValue = rzs.reduce((sum, rz) => sum + rz.checkedValue, 0);
+    const excessValue = rzs.reduce((sum, rz) => sum + rz.excessValue, 0);
     return {
       ...lot,
       totalProducts: Number(row.total_products || 0),
@@ -2982,6 +2988,8 @@ async function getUserLotSummariesPg(userId) {
         qtyPercent: percent(checkedQty, expectedQty),
         expectedValue: roundMoney(expectedValue),
         checkedValue: roundMoney(checkedValue),
+        excessValue: roundMoney(excessValue),
+        checkedPlusExcessValue: roundMoney(checkedValue + excessValue),
         valuePercent: percent(checkedValue, expectedValue)
       },
       rzs

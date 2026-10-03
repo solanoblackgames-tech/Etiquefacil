@@ -109,6 +109,11 @@ test("summarizeLot consolidates repeated product rows in the same RZ", () => {
   assert.equal(summary.rzs[0].checked, 3);
   assert.equal(summary.rzs[0].missing, 0);
   assert.equal(summary.rzs[0].excess, 1);
+  assert.equal(summary.rzs[0].checkedValue, 20);
+  assert.equal(summary.rzs[0].excessValue, 10);
+  assert.equal(summary.progress.checkedValue, 20);
+  assert.equal(summary.progress.excessValue, 10);
+  assert.equal(summary.progress.checkedPlusExcessValue, 30);
 });
 
 test("summarizeLot includes the latest scan timestamp for each RZ item", () => {
