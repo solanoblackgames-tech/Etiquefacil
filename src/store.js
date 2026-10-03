@@ -10030,6 +10030,31 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
   let transferReceivedValue = 0;
   let transferReceivedCost = 0;
   const transfersById = new Map(transfers.map((transfer) => [transfer.id, transfer]));
+  const commercialTransferLotIds = new Set(transfers.filter((transfer) => isCommercialStoreTransferDestination(transfer.depositoDestino)).map((transfer) => transfer.id));
+  let commercialTransferQty = 0;
+  let commercialTransferReceived = 0;
+  let commercialTransferValue = 0;
+  let commercialTransferCost = 0;
+  let commercialTransferReceivedValue = 0;
+  let commercialTransferReceivedCost = 0;
+  const transferDestinationRows = new Map();
+  for (const transfer of transfers) {
+    const destination = String(transfer.depositoDestino || "Sem destino").trim() || "Sem destino";
+    const key = normalizeText(destination);
+    const row = transferDestinationRows.get(key) || {
+      destination,
+      total: 0,
+      quantity: 0,
+      received: 0,
+      pending: 0,
+      value: 0,
+      cost: 0,
+      receivedValue: 0,
+      receivedCost: 0
+    };
+    row.total += 1;
+    transferDestinationRows.set(key, row);
+  }
   const plannedQtyByTransfer = new Map();
   for (const item of transferItems) {
     plannedQtyByTransfer.set(item.transferLotId, Number(plannedQtyByTransfer.get(item.transferLotId) || 0) + Number(item.quantidade || 0));
@@ -10055,6 +10080,25 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
     transferCost += cost;
     transferReceivedValue += receivedValue;
     transferReceivedCost += receivedCost;
+    if (commercialTransferLotIds.has(item.transferLotId)) {
+      commercialTransferQty += qty;
+      commercialTransferReceived += received;
+      commercialTransferValue = roundMoney(commercialTransferValue + value);
+      commercialTransferCost = roundMoney(commercialTransferCost + cost);
+      commercialTransferReceivedValue = roundMoney(commercialTransferReceivedValue + receivedValue);
+      commercialTransferReceivedCost = roundMoney(commercialTransferReceivedCost + receivedCost);
+    }
+    const destinationKey = normalizeText(transfer?.depositoDestino || "Sem destino");
+    const destinationRow = transferDestinationRows.get(destinationKey);
+    if (destinationRow) {
+      destinationRow.quantity += qty;
+      destinationRow.received += received;
+      destinationRow.value = roundMoney(destinationRow.value + value);
+      destinationRow.cost = roundMoney(destinationRow.cost + cost);
+      destinationRow.receivedValue = roundMoney(destinationRow.receivedValue + receivedValue);
+      destinationRow.receivedCost = roundMoney(destinationRow.receivedCost + receivedCost);
+      destinationRow.pending = Math.max(0, destinationRow.quantity - destinationRow.received);
+    }
     const row = operatorFor(transfer?.createdByUserId || userId);
     row.transferQty += qty;
     row.transferReceived += received;
@@ -10258,6 +10302,19 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
       cost: roundMoney(transferCost),
       receivedValue: roundMoney(transferReceivedValue),
       receivedCost: roundMoney(transferReceivedCost),
+      commercialStore: {
+        total: commercialTransferLotIds.size,
+        quantity: commercialTransferQty,
+        received: commercialTransferReceived,
+        pending: Math.max(0, commercialTransferQty - commercialTransferReceived),
+        value: roundMoney(commercialTransferValue),
+        cost: roundMoney(commercialTransferCost),
+        receivedValue: roundMoney(commercialTransferReceivedValue),
+        receivedCost: roundMoney(commercialTransferReceivedCost)
+      },
+      destinations: [...transferDestinationRows.values()]
+        .map((row) => ({ ...row, pending: Math.max(0, Number(row.quantity || 0) - Number(row.received || 0)) }))
+        .sort((a, b) => b.value - a.value || b.quantity - a.quantity || a.destination.localeCompare(b.destination)),
       divergenceReports: reports.length,
       statusCounts
     },
@@ -10285,6 +10342,16 @@ function operationalDashboardPeriodDays(period = {}) {
   const end = new Date(`${normalized.endDate}T00:00:00`);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
   return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+
+function isCommercialStoreTransferDestination(destination) {
+  return new Set([
+    "loja",
+    "venda b2b",
+    "venda direta",
+    "bag venda direta",
+    "soldim matriz"
+  ]).has(normalizeText(destination));
 }
 
 function publicDashboardUser(user) {

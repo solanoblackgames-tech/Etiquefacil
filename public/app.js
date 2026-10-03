@@ -3633,6 +3633,7 @@ function renderOperationalDashboard() {
   if (!panel || !stats) return;
   const lots = stats.lots || {};
   const transfers = stats.transfers || {};
+  const commercialStore = transfers.commercialStore || {};
   const triage = stats.triage || {};
   const period = stats.period || {};
   const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
@@ -3681,6 +3682,7 @@ function renderOperationalDashboard() {
       <div class="metric"><span>Lotes</span><strong>${lots.total || 0}</strong><small>${lots.remessas || 0} Pallets/remessas</small></div>
       <div class="metric"><span>Agrupamentos</span><strong>${transfers.total || 0}</strong><small>${transfers.received || 0}/${transfers.quantity || 0} unidades aceitas</small></div>
       <div class="metric"><span>Valor dos agrupamentos</span><strong>${money(transfers.value || 0)}</strong><small>${transfers.pending || 0} unidades pendentes</small></div>
+      <div class="metric"><span>Remessas loja/vendas</span><strong>${money(commercialStore.value || 0)}</strong><small>${commercialStore.total || 0} remessas - ${commercialStore.quantity || 0} unidades</small></div>
       <div class="metric"><span>Custo dos agrupamentos</span><strong>${money(transfers.cost || 0)}</strong><small>${money(transfers.receivedCost || 0)} ja aceito</small></div>
       <div class="metric"><span>Triagem</span><strong>${triage.diagnosed || 0}</strong><small>itens triados${operationalAverageText(triage.diagnosed || 0, period, "triados/dia")}</small></div>
       <div class="metric"><span>Venda triagem</span><strong>${money(triage.diagnosedValue || 0)}</strong><small>Custo ${money(triage.diagnosedCost || 0)}${operationalAverageMoneyPairText(triage.diagnosedValue || 0, triage.diagnosedCost || 0, period)}</small></div>
@@ -3693,6 +3695,13 @@ function renderOperationalDashboard() {
           <span class="muted">Conferencia, transferencias e triagem.</span>
         </div>
         ${operationalSectorsMarkup(stats.sectors || [])}
+      </section>
+      <section class="operational-dashboard-block">
+        <div>
+          <strong>Destinos dos agrupamentos</strong>
+          <span class="muted">Para onde foi o material movimentado.</span>
+        </div>
+        ${operationalTransferDestinationsMarkup(transfers.destinations || [])}
       </section>
       <section class="operational-dashboard-block">
         <div>
@@ -3852,6 +3861,28 @@ function operationalTriageDestinationsMarkup(destinations = []) {
             </div>
             <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
             <small>Venda ${money(destination.totalValue || 0)} - Custo ${money(destination.totalCost || 0)}${operationalAverageText(destination.total || 0, state.operationalStats?.period || {}, "itens/dia")}${operationalAverageMoneyPairText(destination.totalValue || 0, destination.totalCost || 0, state.operationalStats?.period || {})}</small>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function operationalTransferDestinationsMarkup(destinations = []) {
+  if (!destinations.length) return '<p class="muted">Nenhum agrupamento registrado.</p>';
+  const maxValue = Math.max(...destinations.map((destination) => Number(destination.value || 0)), 1);
+  return `
+    <div class="operational-sector-chart operational-destination-chart">
+      ${destinations.map((destination) => {
+        const percent = Math.max(4, Math.round((Number(destination.value || 0) / maxValue) * 100));
+        return `
+          <article>
+            <div>
+              <strong>${escapeHtml(destination.destination || "Sem destino")}</strong>
+              <span>${money(destination.value || 0)}</span>
+            </div>
+            <div class="operational-bar operational-bar-alt"><span style="width: ${percent}%"></span></div>
+            <small>${destination.total || 0} remessas - ${destination.quantity || 0} unidades - ${destination.pending || 0} pendentes - Custo ${money(destination.cost || 0)}</small>
           </article>
         `;
       }).join("")}
