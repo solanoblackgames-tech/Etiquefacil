@@ -888,6 +888,43 @@ h3 {
   line-height: 1.35;
 }
 
+.operator-capacity {
+  background: #10231a;
+  border: 1px solid #244232;
+  border-radius: 8px;
+  color: #fff;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.operator-capacity div {
+  background: #173524;
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 18px;
+}
+
+.operator-capacity span {
+  color: #b8d4c3;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.operator-capacity strong {
+  color: #fff;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.operator-capacity small {
+  color: #d7e8dd;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .operator-podium {
   display: grid;
   gap: 10px;
@@ -6371,6 +6408,7 @@ h3 {
   .operator-filter,
   .operator-filter-fields,
   .operator-metrics,
+  .operator-capacity,
   .operator-podium,
   .triage-stats-hero,
   .triage-stats-summary,

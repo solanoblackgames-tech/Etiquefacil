@@ -4537,7 +4537,10 @@ function renderOperators() {
     .slice(0, 3);
   const leader = topOperators[0];
   const periodDays = operatorPeriodDays(filter);
-  const avgPerActiveOperatorDay = totals.activeOperators && periodDays ? totals.activity / totals.activeOperators / periodDays : 0;
+  const lineEntryPerDay = periodDays ? totals.bippedItems / periodDays : 0;
+  const lineCreatesPerDay = periodDays ? totals.creates / periodDays : 0;
+  const entryPerActiveOperatorDay = totals.activeOperators && periodDays ? totals.bippedItems / totals.activeOperators / periodDays : 0;
+  const createsPerActiveOperatorDay = totals.activeOperators && periodDays ? totals.creates / totals.activeOperators / periodDays : 0;
 
   wrapper.innerHTML = `
     <section class="operator-dashboard">
@@ -4545,40 +4548,68 @@ function renderOperators() {
 
       <div class="operator-metrics">
         <article class="operator-metric">
-          <span>Atividades no periodo</span>
-          <strong>${totals.activity}</strong>
-          <small>${operators.length} operadores cadastrados</small>
-        </article>
-        <article class="operator-metric">
-          <span>Itens na entrada</span>
+          <span>Entrada total</span>
           <strong>${totals.bippedItems}</strong>
-          <small>${totals.registrationScans} bipados encontrados / ${totals.creates} cadastrados</small>
+          <small>${totals.registrationScans} bipados encontrados + ${totals.creates} cadastros</small>
         </article>
         <article class="operator-metric">
-          <span>Itens cadastrados</span>
+          <span>Cadastros feitos</span>
           <strong>${totals.creates}</strong>
-          <small>Entram no total de itens da entrada</small>
+          <small>${formatDecimal(lineCreatesPerDay)} cadastros/dia na linha</small>
+        </article>
+        <article class="operator-metric">
+          <span>Bipados encontrados</span>
+          <strong>${totals.registrationScans}</strong>
+          <small>Itens de entrada ja existentes no cadastro</small>
         </article>
         <article class="operator-metric">
           <span>Itens transferidos</span>
           <strong>${totals.transferScans}</strong>
-          <small>Dado extra, fora da soma da entrada</small>
+          <small>Fluxo separado, nao entra na capacidade de entrada</small>
         </article>
         <article class="operator-metric">
-          <span>Erros producao</span>
-          <strong>${totals.productionErrors}</strong>
-          <small>divergencias reportadas</small>
+          <span>Capacidade da linha</span>
+          <strong>${formatDecimal(lineEntryPerDay)}</strong>
+          <small>entradas/dia no periodo selecionado</small>
         </article>
         <article class="operator-metric">
-          <span>Capacidade media</span>
-          <strong>${formatDecimal(avgPerActiveOperatorDay)}</strong>
-          <small>atividades por operador em dia do periodo</small>
+          <span>Capacidade por operador</span>
+          <strong>${formatDecimal(entryPerActiveOperatorDay)}</strong>
+          <small>entradas por operador ativo/dia</small>
         </article>
         <article class="operator-metric">
           <span>Melhor dia de um operador</span>
           <strong>${totals.bestDay?.total || 0}</strong>
           <small>${totals.bestDay?.operatorName ? `${escapeHtml(totals.bestDay.operatorName)}${totals.bestDay.date ? ` - ${formatShortDate(totals.bestDay.date)}` : ""}` : "Sem atividade"}</small>
         </article>
+        <article class="operator-metric">
+          <span>Erros producao</span>
+          <strong>${totals.productionErrors}</strong>
+          <small>divergencias reportadas</small>
+        </article>
+      </div>
+
+      <div class="operator-capacity">
+        <div>
+          <span>Linha de producao</span>
+          <strong>${formatDecimal(lineEntryPerDay)} entradas/dia</strong>
+          <small>${totals.bippedItems} entradas em ${periodDays || 0} dias do calendario</small>
+        </div>
+        <div>
+          <span>Cadastro manual</span>
+          <strong>${formatDecimal(lineCreatesPerDay)} cadastros/dia</strong>
+          <small>${formatDecimal(createsPerActiveOperatorDay)} por operador ativo/dia</small>
+        </div>
+        <div>
+          <span>Operadores ativos</span>
+          <strong>${totals.activeOperators}/${operators.length}</strong>
+          <small>com atividade no periodo filtrado</small>
+        </div>
+        <div>
+          <span>Melhor capacidade individual</span>
+          <strong>${leader ? formatDecimal(leader.averagePerDay) : "0"}</strong>
+          <small>${leader ? `${escapeHtml(leader.name)} em entradas/dia ativo` : "Sem atividade"}</small>
+        </div>
       </div>
 
       <div class="operator-podium">
@@ -4592,15 +4623,15 @@ function renderOperators() {
           <span>Cod.</span>
           <span>Logins</span>
           <span>Buscas</span>
-          <span>Itens entrada</span>
-          <span>Bip. achados</span>
+          <span>Entrada total</span>
+          <span>Bipados</span>
           <span>Bip. transf.</span>
-          <span>Cad. manuais</span>
+          <span>Cadastros</span>
           <span>Lotes</span>
           <span>Pallets</span>
           <span>Erros</span>
           <span>Dias trab.</span>
-          <span>Media/dia</span>
+          <span>Entrada/dia</span>
           <span>Ultima ativ.</span>
           <span>Acoes</span>
           <span>Senha</span>
@@ -4837,8 +4868,11 @@ function operatorViewModel(operator) {
   const palletViews = stats.palletViews || 0;
   const productionErrors = stats.productionErrors || 0;
   const dailyTotals = stats.dailyTotals || {};
-  const activeDays = Object.values(dailyTotals).filter((total) => Number(total || 0) > 0).length;
-  const bestDay = Object.entries(dailyTotals).reduce((best, [date, total]) => {
+  const entryDailyTotals = stats.entryDailyTotals && Object.keys(stats.entryDailyTotals).length ? stats.entryDailyTotals : dailyTotals;
+  const createDailyTotals = stats.createDailyTotals || {};
+  const activeDays = Object.values(entryDailyTotals).filter((total) => Number(total || 0) > 0).length;
+  const createActiveDays = Object.values(createDailyTotals).filter((total) => Number(total || 0) > 0).length;
+  const bestDay = Object.entries(entryDailyTotals).reduce((best, [date, total]) => {
     const normalizedTotal = Number(total || 0);
     if (!best || normalizedTotal > best.total) return { date, total: normalizedTotal };
     return best;
@@ -4868,7 +4902,7 @@ function operatorViewModel(operator) {
     productionErrors,
     activeDays,
     averagePerDay: operatorDailyAverage(entryItems, activeDays),
-    manualAveragePerDay: operatorDailyAverage(creates, activeDays),
+    manualAveragePerDay: operatorDailyAverage(creates, createActiveDays || activeDays),
     bestDayDate: bestDay?.date || "",
     bestDayTotal: bestDay?.total || 0,
     bippedItems: entryItems,
@@ -4886,9 +4920,9 @@ function operatorPodiumCard(operator, index) {
       <strong>${escapeHtml(operator.name)}</strong>
       <span>${escapeHtml(operator.operatorCode || operator.email)}</span>
       <b>${operator.bippedItems}</b>
-      <small>${operator.registrationScans} bipados encontrados / ${operator.creates} cadastrados</small>
+      <small>${operator.registrationScans} bipados + ${operator.creates} cadastros</small>
       <em>${formatDecimal(operator.averagePerDay)} itens/dia</em>
-      <small>${operator.bippedItems} itens / ${operator.activeDays || 0} dias · ${formatDecimal(operator.manualAveragePerDay)} cad. manuais/dia</small>
+      <small>${operator.bippedItems} entradas / ${operator.activeDays || 0} dias · ${formatDecimal(operator.manualAveragePerDay)} cadastros/dia</small>
     </article>
   `;
 }
@@ -4907,7 +4941,7 @@ function operatorTableRow(operator, index) {
       <strong>${operator.bippedItems}</strong>
       <span>${operator.registrationScans}</span>
       <span>${operator.transferScans}</span>
-      <span>${operator.creates}</span>
+      <strong>${operator.creates}</strong>
       <span>${operator.lotViews}</span>
       <span>${operator.palletViews}</span>
       <strong>${operator.productionErrors}</strong>

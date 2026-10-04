@@ -865,6 +865,8 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
               0
             )
           )::int as entry_item_total,
+          coalesce(op.entry_day_totals, '{}'::jsonb) as entry_day_totals,
+          coalesce(op.create_day_totals, '{}'::jsonb) as create_day_totals,
           count(oa.id) filter (where oa.action = 'view_lot')::int as lot_view_total,
           count(oa.id) filter (where oa.action = 'view_pallet')::int as pallet_view_total,
           count(oa.id) filter (where oa.action = 'report_transfer_divergence')::int as production_error_total
@@ -905,20 +907,31 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
         ) od on od.operator_user_id = u.id
         left join (
           select
-            coalesce(p.operator_user_id, p.created_by_user_id) as operator_user_id,
-            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos')), 0)::int as entry_found_total,
-            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_created_total,
-            coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos', 'lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_product_total
-          from products p
-          join lots l on l.id = p.lot_id
-          where l.user_id = $1
-            and coalesce(p.operator_user_id, p.created_by_user_id) is not null
-            and ($2::timestamptz is null or p.created_at >= $2::timestamptz)
-            and ($3::timestamptz is null or p.created_at <= $3::timestamptz)
-          group by coalesce(p.operator_user_id, p.created_by_user_id)
+            operator_user_id,
+            coalesce(sum(entry_found_total), 0)::int as entry_found_total,
+            coalesce(sum(entry_created_total), 0)::int as entry_created_total,
+            coalesce(sum(entry_product_total), 0)::int as entry_product_total,
+            coalesce(jsonb_object_agg(product_day, entry_product_total) filter (where entry_product_total > 0), '{}'::jsonb) as entry_day_totals,
+            coalesce(jsonb_object_agg(product_day, entry_created_total) filter (where entry_created_total > 0), '{}'::jsonb) as create_day_totals
+          from (
+            select
+              coalesce(p.operator_user_id, p.created_by_user_id) as operator_user_id,
+              to_char(p.created_at at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as product_day,
+              coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos')), 0)::int as entry_found_total,
+              coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_created_total,
+              coalesce(sum(greatest(coalesce(p.qtd_total, 0), 1)) filter (where p.origem in ('lote_sem_planilha', 'entrada_diversos', 'lote_sem_planilha_manual', 'excedente_externo')), 0)::int as entry_product_total
+            from products p
+            join lots l on l.id = p.lot_id
+            where l.user_id = $1
+              and coalesce(p.operator_user_id, p.created_by_user_id) is not null
+              and ($2::timestamptz is null or p.created_at >= $2::timestamptz)
+              and ($3::timestamptz is null or p.created_at <= $3::timestamptz)
+            group by coalesce(p.operator_user_id, p.created_by_user_id), to_char(p.created_at at time zone 'America/Sao_Paulo', 'YYYY-MM-DD')
+          ) product_daily
+          group by operator_user_id
         ) op on op.operator_user_id = u.id
         where u.parent_user_id = $1
-        group by u.id, od.day_totals, op.entry_found_total, op.entry_created_total, op.entry_product_total
+        group by u.id, od.day_totals, op.entry_found_total, op.entry_created_total, op.entry_product_total, op.entry_day_totals, op.create_day_totals
         order by u.created_at desc
       `,
       [ownerUserId, range.startAt, range.endAt, OPERATOR_DASHBOARD_ACTIONS]
@@ -11584,6 +11597,8 @@ function operatorStatsFromRow(row) {
     transferScans: Number(row.transfer_scan_total || 0),
     creates: Number(row.create_total || 0),
     entryItems: Number(row.entry_item_total || 0),
+    entryDailyTotals: normalizeDailyTotals(row.entry_day_totals),
+    createDailyTotals: normalizeDailyTotals(row.create_day_totals),
     lotViews: Number(row.lot_view_total || 0),
     palletViews: Number(row.pallet_view_total || 0),
     productionErrors: Number(row.production_error_total || 0),
@@ -11594,7 +11609,23 @@ function operatorStatsFromRow(row) {
 
 function summarizeOperatorActivities(activities, operatorUserId, range = {}, operator = {}, db = {}) {
   const productStats = summarizeOperatorEntryProducts(db, operatorUserId, range);
-  const stats = { total: 0, logins: 0, searches: 0, scans: 0, registrationScans: productStats.found, transferScans: 0, creates: 0, entryItems: 0, lotViews: 0, palletViews: 0, productionErrors: 0, dailyTotals: {}, lastActivityAt: null };
+  const stats = {
+    total: 0,
+    logins: 0,
+    searches: 0,
+    scans: 0,
+    registrationScans: productStats.found,
+    transferScans: 0,
+    creates: 0,
+    entryItems: 0,
+    entryDailyTotals: { ...productStats.entryDailyTotals },
+    createDailyTotals: { ...productStats.createDailyTotals },
+    lotViews: 0,
+    palletViews: 0,
+    productionErrors: 0,
+    dailyTotals: {},
+    lastActivityAt: null
+  };
   let fallbackCreates = 0;
   for (const activity of activities || []) {
     if (activity.operatorUserId !== operatorUserId) continue;
@@ -11611,6 +11642,8 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (activity.action === "scan_ml" && activity.metadata?.source !== "diverse_lot") {
       stats.registrationScans += 1;
       stats.entryItems += 1;
+      const day = operatorActivityLocalDay(activity.createdAt);
+      if (day) stats.entryDailyTotals[day] = (stats.entryDailyTotals[day] || 0) + 1;
     }
     if (activity.action === "scan_transfer") stats.transferScans += 1;
     if (activity.action === "create_manual_product" || activity.action === "create_external_excess") {
@@ -11622,27 +11655,46 @@ function summarizeOperatorActivities(activities, operatorUserId, range = {}, ope
     if (!stats.lastActivityAt || activity.createdAt > stats.lastActivityAt) stats.lastActivityAt = activity.createdAt;
   }
   stats.creates = productStats.created || fallbackCreates;
+  if (!productStats.created && fallbackCreates) {
+    for (const activity of activities || []) {
+      if (activity.operatorUserId !== operatorUserId) continue;
+      if (!isOperatorActivityInRange(activity, range)) continue;
+      if (isIgnoredOperatorActivity(activity, operator)) continue;
+      if (!["create_manual_product", "create_external_excess"].includes(activity.action)) continue;
+      if (activity.metadata?.source === "diverse_lot") continue;
+      const day = operatorActivityLocalDay(activity.createdAt);
+      if (!day) continue;
+      stats.createDailyTotals[day] = (stats.createDailyTotals[day] || 0) + 1;
+      stats.entryDailyTotals[day] = (stats.entryDailyTotals[day] || 0) + 1;
+    }
+  }
   stats.entryItems += productStats.total || fallbackCreates;
   return stats;
 }
 
 function summarizeOperatorEntryProducts(db = {}, operatorUserId, range = {}) {
   const lotIds = new Set((db.lots || []).map((lot) => lot.id));
-  const result = { found: 0, created: 0, total: 0 };
+  const result = { found: 0, created: 0, total: 0, entryDailyTotals: {}, createDailyTotals: {} };
   for (const product of db.products || []) {
     const responsibleUserId = product.operatorUserId || product.createdByUserId || "";
     if (responsibleUserId !== operatorUserId) continue;
     if (product.lotId && !lotIds.has(product.lotId)) continue;
     if (!isWithinDateRange(product.createdAt, range)) continue;
+    const day = operatorActivityLocalDay(product.createdAt);
     if (product.origem === "lote_sem_planilha" || product.origem === "entrada_diversos") {
       const quantity = Math.max(Number(product.qtdTotal || 0), 1);
       result.found += quantity;
       result.total += quantity;
+      if (day) result.entryDailyTotals[day] = (result.entryDailyTotals[day] || 0) + quantity;
     }
     if (product.origem === "lote_sem_planilha_manual" || product.origem === "excedente_externo") {
       const quantity = Math.max(Number(product.qtdTotal || 0), 1);
       result.created += quantity;
       result.total += quantity;
+      if (day) {
+        result.createDailyTotals[day] = (result.createDailyTotals[day] || 0) + quantity;
+        result.entryDailyTotals[day] = (result.entryDailyTotals[day] || 0) + quantity;
+      }
     }
   }
   return result;
