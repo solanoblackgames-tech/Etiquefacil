@@ -70,6 +70,7 @@ const state = {
   pendingExpeditionPick: false,
   operatorInviteToken: null,
   pendingScan: false,
+  scanQueue: [],
   pendingDecrement: false,
   labelProduct: null,
   labelMeta: null,
@@ -9251,20 +9252,15 @@ async function addScannedItemQuantity(lotId, codigoRz, itemId, codigoMl, button)
     if (!updateRenderedScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl })) {
       renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
     }
-    const message = $("#scanMessage");
-    if (message) {
-      message.style.color = response.bling?.ok === false && !response.bling?.queued ? "" : "#0f766e";
-      message.textContent = response.bling?.queued
-        ? "Quantidade registrada. Produto e entrada no Bling sincronizando em segundo plano."
-        : response.bling?.ok === false
-          ? `Quantidade registrada, mas o Bling falhou: ${response.bling.error || "verifique a integracao."}`
-          : "Quantidade registrada e saldo lancado no Bling.";
-    }
+    setScanFeedback(response.bling?.queued
+      ? "Quantidade registrada. Produto e entrada no Bling sincronizando em segundo plano."
+      : response.bling?.ok === false
+        ? `Quantidade registrada, mas o Bling falhou: ${response.bling.error || "verifique a integração."}`
+        : "Quantidade registrada e saldo lançado no Bling.",
+    response.bling?.ok === false && !response.bling?.queued ? "error" : "success", { sound: true });
     if (product && state.labelOptions.autoPrint) await printProductLabel(product, { lotId, autoPrint: true, meta: labelMeta(response.scan?.createdAt) });
   } catch (error) {
-    const message = $("#scanMessage");
-    if (message) message.textContent = error.message;
-    else alert(error.message);
+    if (!setScanFeedback(error.message, "error", { sound: true })) alert(error.message);
   } finally {
     state.pendingScan = false;
     if (button) button.disabled = false;
@@ -9273,49 +9269,52 @@ async function addScannedItemQuantity(lotId, codigoRz, itemId, codigoMl, button)
 }
 
 async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerButton = null } = {}) {
-  if (state.pendingScan) return;
   const input = $("#scanInput");
   if (!input && !codigoMlFromButton) return;
   const codigoMl = normalizeCodigoMl(codigoMlFromButton || input?.value);
-  if (input) input.value = "";
+  if (input && !codigoMlFromButton) input.value = "";
   if (!codigoMl) return;
+  // O leitor pode bipar de novo antes da resposta: enfileira em vez de descartar.
+  if (state.pendingScan) {
+    state.scanQueue.push({ lotId, codigoRz, codigoMl });
+    return;
+  }
 
   try {
     state.pendingScan = true;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = true;
     if (triggerButton) triggerButton.disabled = true;
-    if (input) input.disabled = true;
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ codigoMl, autoStockEntry: true })
     });
-    input.value = "";
     const message = $("#scanMessage");
     if (response.scan.status === "desconhecido") {
+      playScanFeedback("error");
       await createManualExternalExcessFromScan(lotId, codigoRz, codigoMl);
       return;
     }
     if (response.scan.status === "historico") {
       const history = response.scan.history[0];
+      message.style.color = SCAN_FEEDBACK_COLORS.warning;
       message.innerHTML = `
-        ML encontrado no banco historico: ${escapeHtml(history.descricao)}.
+        ML encontrado no banco histórico: ${escapeHtml(history.descricao)}.
         SKU sugerido no sequencial do lote atual.
         <button id="confirmExternal">Cadastrar excedente externo</button>
       `;
+      playScanFeedback("warning");
       $("#confirmExternal").addEventListener("click", () => createExternalExcess(lotId, codigoRz, codigoMl));
     } else if (response.scan.status === "outro_rz") {
-      message.textContent = "Este ML existe no lote, mas pertence a outro Pallet.";
-    } else if (response.scan.status === "desconhecido") {
-      message.textContent = "ML não encontrado neste lote nem no histórico do usuário.";
+      setScanFeedback("Este ML existe no lote, mas pertence a outro Pallet.", "error", { sound: true });
     } else {
-      message.textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
       const scannedProduct = findScannedProduct(response.lot, codigoRz, codigoMl);
       if (!updateRenderedScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl })) {
         renderScanPage(response.lot, codigoRz, { lastCodigoMl: codigoMl });
       }
-      $("#scanMessage").textContent = response.scan.status === "excedente" ? "Quantidade excedente registrada." : "Bipagem registrada.";
+      const isExcess = response.scan.status === "excedente";
+      setScanFeedback(isExcess ? "Quantidade excedente registrada." : "Bipagem registrada.", isExcess ? "warning" : "success", { sound: true });
       if (scannedProduct && state.labelOptions.autoPrint) {
         await printProductLabel(scannedProduct, {
           lotId,
@@ -9328,34 +9327,60 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerBu
       }
     }
   } catch (error) {
-    const message = $("#scanMessage");
-    if (message) message.textContent = error.message;
-    else alert(error.message);
+    if (!setScanFeedback(error.message, "error", { sound: true })) alert(error.message);
   } finally {
     state.pendingScan = false;
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = false;
     if (triggerButton) triggerButton.disabled = false;
-    const scanInput = $("#scanInput");
-    if (scanInput) scanInput.disabled = false;
     schedulePrimaryInputFocus(["#scanInput"]);
+    processNextQueuedScan();
   }
+}
+
+function processNextQueuedScan() {
+  // Descarta bipagens enfileiradas de outro Pallet/lote (o operador saiu da tela).
+  state.scanQueue = state.scanQueue.filter((scan) => scan.lotId === state.selectedLotId && scan.codigoRz === state.selectedRz);
+  const next = state.scanQueue.shift();
+  if (next) scanCurrent(next.lotId, next.codigoRz, next.codigoMl);
+}
+
+const SCAN_FEEDBACK_COLORS = { success: "#0f766e", warning: "#a35c00", error: "" };
+
+// Sempre define a cor junto com o texto, para nao herdar a cor da mensagem anterior.
+function setScanFeedback(text, tone = "error", { sound = false } = {}) {
+  const message = $("#scanMessage");
+  if (message) {
+    message.style.color = SCAN_FEEDBACK_COLORS[tone] ?? "";
+    message.textContent = text;
+  }
+  if (sound) playScanFeedback(tone);
+  return message;
+}
+
+function playScanFeedback(tone) {
+  if (tone === "success") playTransferSuccessSound();
+  else if (tone === "warning") playTransferReadSound();
+  else playTransferErrorSound();
+  const page = $("#lotDetail .scan-page");
+  if (!page) return;
+  page.classList.remove("scan-flash-success", "scan-flash-warning", "scan-flash-error");
+  void page.offsetWidth;
+  page.classList.add(`scan-flash-${tone}`);
 }
 
 async function handleScanStockEntrySync(lotId, codigoRz, codigoMl, scanResponse, { printed = false } = {}) {
   if (!scanResponse?.bling) return syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed });
-  const message = $("#scanMessage");
   if (scanResponse.bling?.lot) renderScanPage(scanResponse.bling.lot, codigoRz, { lastCodigoMl: codigoMl });
-  const targetMessage = $("#scanMessage") || message;
-  if (!targetMessage) return scanResponse.bling;
-  targetMessage.style.color = scanResponse.bling.queued || scanResponse.bling.ok === false ? "" : "#0f766e";
-  targetMessage.textContent = scanResponse.bling.queued
+  const failed = scanResponse.bling.ok === false && !scanResponse.bling.queued;
+  setScanFeedback(scanResponse.bling.queued
     ? "Bipagem registrada e Bling sincronizando em segundo plano."
-    : scanResponse.bling.ok === false
-      ? `Bipagem registrada, mas a entrada no Bling falhou: ${scanResponse.bling.error || "verifique a integracao."}`
+    : failed
+      ? `Bipagem registrada, mas a entrada no Bling falhou: ${scanResponse.bling.error || "verifique a integração."}`
       : printed
-        ? `Bipagem registrada, etiqueta impressa e entrada lancada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`
-        : `Bipagem registrada e entrada lancada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`;
+        ? `Bipagem registrada, etiqueta impressa e entrada lançada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`
+        : `Bipagem registrada e entrada lançada no Bling (${scanResponse.bling.deposito?.descricao || "Geral"}).`,
+  failed ? "error" : "success");
   return scanResponse.bling;
 }
 

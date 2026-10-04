@@ -3497,9 +3497,45 @@ h3 {
 }
 
 .scan-page {
+  border-radius: 8px;
   display: grid;
   gap: 14px;
   margin-top: 18px;
+}
+
+.scan-page.scan-flash-success {
+  animation: scan-flash-success 0.5s ease-out;
+}
+
+.scan-page.scan-flash-warning {
+  animation: scan-flash-warning 0.7s ease-out;
+}
+
+.scan-page.scan-flash-error {
+  animation: scan-flash-error 0.9s ease-out;
+}
+
+@keyframes scan-flash-success {
+  from { box-shadow: 0 0 0 4px rgb(15 118 110 / 0.6); }
+  to { box-shadow: 0 0 0 4px rgb(15 118 110 / 0); }
+}
+
+@keyframes scan-flash-warning {
+  from { box-shadow: 0 0 0 5px rgb(163 92 0 / 0.65); }
+  to { box-shadow: 0 0 0 5px rgb(163 92 0 / 0); }
+}
+
+@keyframes scan-flash-error {
+  from { background: rgb(180 35 24 / 0.14); box-shadow: 0 0 0 6px rgb(180 35 24 / 0.75); }
+  to { background: transparent; box-shadow: 0 0 0 6px rgb(180 35 24 / 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-page.scan-flash-success,
+  .scan-page.scan-flash-warning,
+  .scan-page.scan-flash-error {
+    animation-duration: 0.01s;
+  }
 }
 
 .scan-heading {
