@@ -7212,6 +7212,8 @@ h3 {
 .dash2-split .is-good b { color: var(--d-good-ink); }
 .dash2-split .is-alert { background: var(--d-alert-bg); }
 .dash2-split .is-alert b { color: var(--d-alert-ink); }
+.dash2-split .is-neutral { background: var(--d-soft); border: 1px solid var(--d-soft-line); }
+.dash2-split .is-neutral b { color: var(--d-ink); }
 .dash2-table-scroll { overflow-x: auto; }
 .dash2-table { width: 100%; min-width: 440px; border-collapse: collapse; font-size: 14px; }
 .dash2-table th { text-align: right; padding: 8px 6px; color: var(--d-muted); font-weight: 600; border-bottom: 1px solid var(--d-line); }

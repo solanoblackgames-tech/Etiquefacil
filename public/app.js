@@ -200,7 +200,7 @@ function defaultPriceDisplaySettings() {
 function defaultTriageTransferSettings() {
   return {
     enabled: true,
-    defaultOriginDeposit: "Triagem",
+    defaultOriginDeposit: "Geral",
     destinations: [
       { code: "ECOMMERCE", label: "Ecommerce", depositName: "Ecommerce" },
       { code: "LOJA", label: "Loja", depositName: "Loja" },
@@ -3838,7 +3838,7 @@ function dash2FlowMarkup(overview) {
             ${destinations.length ? `<div class="dash2-bars">${destinations.map((row) => `
               <div class="dash2-bar-row">
                 <span>${escapeHtml(dash2Label(row.destination))}</span>
-                <div class="dash2-bar-track"><i class="${row.destination === "RMA" ? "is-alert" : row.saleable ? "" : "is-neutral"}" style="width: ${Math.round((Number(row.total || 0) / max) * 100)}%"></i></div>
+                <div class="dash2-bar-track"><i class="${row.saleable ? "" : "is-neutral"}" style="width: ${Math.round((Number(row.total || 0) / max) * 100)}%"></i></div>
                 <strong>${dash2Int(row.total)}</strong>
               </div>
             `).join("")}</div>` : '<p class="dash2-empty">Nenhum item triado no período.</p>'}
@@ -4061,11 +4061,11 @@ function dash2DestinationsMarkup(overview) {
     <section class="dash2-card">
       <div class="dash2-card-head">
         <h4 class="dash2-h">Valor da triagem por destino</h4>
-        <p>Vendável separado do que está em RMA ou na fila.</p>
+        <p>Canais normais separados do RMA, que segue em bag para venda direta em lote.</p>
       </div>
       <div class="dash2-split">
-        <div class="is-good"><span>Valor vendável</span><b>${dash2Money(totals.saleableValue)}</b></div>
-        <div class="is-alert"><span>Em RMA</span><b>${dash2Money(totals.rmaValue)}</b></div>
+        <div class="is-good"><span>Canais normais</span><b>${dash2Money(totals.saleableValue)}</b></div>
+        <div class="is-neutral"><span>RMA · venda direta em lote</span><b>${dash2Money(totals.rmaValue)}</b></div>
       </div>
       ${rows.length ? `
         <div class="dash2-table-scroll">

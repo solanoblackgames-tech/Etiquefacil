@@ -95,16 +95,16 @@ const PRICE_DISPLAY_DEFAULTS = Object.freeze({
 
 const DEFAULT_TRIAGE_TRANSFER_SETTINGS = Object.freeze({
   enabled: true,
-  defaultOriginDeposit: "Triagem",
+  defaultOriginDeposit: "Geral",
   diagnosisOptions: [
-    { code: "OK_VENDA_INTERNET", label: "OK venda internet", destination: "ECOMMERCE", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Ecommerce", requireAcceptance: true },
-    { code: "OK_VENDA_DIRETA", label: "OK venda direta", destination: "VENDA_DIRETA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Venda Direta", requireAcceptance: true },
-    { code: "OK_COM_DETALHES", label: "OK com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
-    { code: "RMA", label: "RMA", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true },
-    { code: "OK_FUNCIONANDO", label: "OK funcionando", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
-    { code: "FUNCIONANDO_COM_DETALHES", label: "Funcionando com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "Loja", requireAcceptance: true },
-    { code: "NAO_LIGA", label: "Nao liga", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true },
-    { code: "QUEBRADO_DANIFICADO", label: "Quebrado/danificado", destination: "RMA", transferEnabled: true, depositOrigin: "Triagem", depositDestination: "RMA", requireAcceptance: true }
+    { code: "OK_VENDA_INTERNET", label: "OK venda internet", destination: "ECOMMERCE", transferEnabled: true, depositOrigin: "Geral", depositDestination: "Ecommerce", requireAcceptance: true },
+    { code: "OK_VENDA_DIRETA", label: "OK venda direta", destination: "VENDA_DIRETA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "Venda Direta", requireAcceptance: true },
+    { code: "OK_COM_DETALHES", label: "OK com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "Loja", requireAcceptance: true },
+    { code: "RMA", label: "RMA", destination: "RMA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "RMA", requireAcceptance: true },
+    { code: "OK_FUNCIONANDO", label: "OK funcionando", destination: "LOJA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "Loja", requireAcceptance: true },
+    { code: "FUNCIONANDO_COM_DETALHES", label: "Funcionando com detalhes", destination: "LOJA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "Loja", requireAcceptance: true },
+    { code: "NAO_LIGA", label: "Nao liga", destination: "RMA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "RMA", requireAcceptance: true },
+    { code: "QUEBRADO_DANIFICADO", label: "Quebrado/danificado", destination: "RMA", transferEnabled: true, depositOrigin: "Geral", depositDestination: "RMA", requireAcceptance: true }
   ],
   destinations: [
     { code: "ECOMMERCE", label: "Ecommerce", depositName: "Ecommerce" },
@@ -3866,6 +3866,8 @@ export async function scanWmsExpeditionPick({ userId, orderId, positionCode, pro
   return { pick: result.pick, expedition: await listWmsExpedition(userId) };
 }
 
+// Finalizar baixa apenas o saldo WMS do Etiquefacil. Nao lancar saida no Bling aqui:
+// o pedido nasce no Bling, que ja baixou o estoque; lancar de novo baixaria em dobro.
 export async function completeWmsExpeditionOrder({ userId, orderId }) {
   await ensureStore();
   const completedAt = new Date().toISOString();
@@ -4004,7 +4006,7 @@ function formatCompactDate(value) {
 export async function createTransferLot({ userId, descricao = "", depositoOrigem, depositoDestino, type = "transferencia", tipo = "", createdByUserId = null }) {
   await ensureStore();
   type = normalizeTransferLotType(type || tipo);
-  const depositoOrigemValue = String(depositoOrigem || (type === "leilao" ? "Triagem" : "")).trim();
+  const depositoOrigemValue = String(depositoOrigem || (type === "leilao" ? "Geral" : "")).trim();
   const depositoDestinoValue = String(depositoDestino || (type === "leilao" ? "Leilao" : "")).trim();
   if (!depositoOrigemValue) throw new Error("Informe o estoque de origem.");
   if (!depositoDestinoValue) throw new Error("Informe o estoque de destino.");
@@ -10710,7 +10712,8 @@ function buildDashboardOverview(input) {
   const diagnosedTotal = destinations.filter((row) => row.destination !== "AGUARDANDO TRIAGEM").reduce((sum, row) => sum + row.total, 0);
   if (rmaRow.total && diagnosedTotal) {
     const share = Math.round((rmaRow.total / diagnosedTotal) * 100);
-    if (share >= 20) alerts.push({ key: "rma_share", severity: "high", value: rmaRow.value, title: `${share}% da triagem foi para RMA`, detail: `${rmaRow.total} itens, ${formatDashboardMoney(rmaRow.value)} em preço de venda parados em conserto ou garantia.` });
+    // RMA nao fica parado: segue em bag para venda direta em lote, por valor menor.
+    if (share >= 20) alerts.push({ key: "rma_share", severity: "medium", value: rmaRow.value, title: `${share}% da triagem foi para RMA`, detail: `${rmaRow.total} itens, ${formatDashboardMoney(rmaRow.value)} em preço de venda seguem em bag para venda direta em lote, com valor menor.` });
   }
   if (storeAwaiting.total) {
     alerts.push({ key: "store_awaiting", severity: "high", value: storeAwaiting.value, title: `${storeAwaiting.total} envios à loja sem conferência`, detail: `A loja não confirmou o recebimento de ${storeAwaiting.quantity} unidades.${storeAwaiting.oldestCreatedAt ? ` O mais antigo é de ${shortDate(storeAwaiting.oldestCreatedAt)}.` : ""}` });
