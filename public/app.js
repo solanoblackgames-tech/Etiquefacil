@@ -8248,12 +8248,13 @@ function renderLots() {
     const activeLotId = state.previewLotId || state.selectedLotId;
     const lotProgress = `${Number(lot.progress?.qtyPercent || 0).toLocaleString("pt-BR")}% conferido`;
     const lotMeta = `${escapeHtml(lot.prefixoSku)} · ${lotProgress} · ${escapeHtml(lot.fornecedor)}`;
-    card.className = `lot-card ${lot.id === activeLotId ? "active" : ""}`;
+    card.className = `lot-card ${lot.id === activeLotId ? "active" : ""} ${lot.ocultoOperadores ? "operator-hidden" : ""}`;
     card.innerHTML = `
       <strong>${escapeHtml(lot.nomeArquivo)}</strong>
       <span class="muted">${lot.totalProducts} SKUs · ${lot.rzs.length} Pallets</span>
       <span class="muted">${lotMeta}</span>
       ${lot.totalExcessExternal ? `<span class="badge excess">${lot.totalExcessExternal} excedente(s)</span>` : ""}
+      ${lot.ocultoOperadores ? '<span class="badge hidden-lot">Oculto para operadores</span>' : ""}
     `;
     card.addEventListener("click", () => {
       if (state.user?.role === "operator") selectLot(lot.id);
@@ -8334,9 +8335,11 @@ function renderLotPreview(lot) {
           <h2>${escapeHtml(lot.nomeArquivo)}</h2>
         </div>
         <div class="heading-actions">
+          ${canManage ? `<button type="button" class="ghost" id="toggleLotOperatorVisibilityButton">${lot.ocultoOperadores ? "Mostrar aos operadores" : "Ocultar dos operadores"}</button>` : ""}
           <button type="button" id="openLotButton">Abrir lote</button>
         </div>
       </div>
+      ${canManage && lot.ocultoOperadores ? '<p class="message hidden-lot-note">Lote oculto: operadores nao veem este lote e nao conseguem fazer entradas nele.</p>' : ""}
       ${canManage ? bulkLotEditorMarkup(lot, { includeDescription: true }) : ""}
       <p id="downloadMessage" class="message"></p>
       <div class="summary-grid">
@@ -8362,7 +8365,31 @@ function renderLotPreview(lot) {
     </section>
   `;
   $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
+  $("#toggleLotOperatorVisibilityButton")?.addEventListener("click", (event) => toggleLotOperatorVisibility(lot, event.currentTarget));
   bindBulkLotEditor(lot, detail);
+}
+
+async function toggleLotOperatorVisibility(lot, button) {
+  if (button) button.disabled = true;
+  try {
+    const response = await api(`/api/lots/${encodeURIComponent(lot.id)}/operator-visibility`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ocultoOperadores: !lot.ocultoOperadores })
+    });
+    state.lots = state.lots.map((item) => (item.id === lot.id ? { ...item, ocultoOperadores: response.lot.ocultoOperadores } : item));
+    renderLots();
+    if (state.previewLotId === lot.id) renderLotPreview(response.lot);
+  } catch (error) {
+    const message = $("#downloadMessage");
+    if (message) {
+      message.style.color = "";
+      message.textContent = error.message;
+    } else {
+      alert(error.message);
+    }
+    if (button) button.disabled = false;
+  }
 }
 
 function bulkLotEditorMarkup(lot, { includeDescription = false } = {}) {

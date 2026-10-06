@@ -3827,6 +3827,19 @@ h3 {
   color: #9a3412;
 }
 
+.badge.hidden-lot {
+  background: #e4e7ec;
+  color: #344054;
+}
+
+.lot-card.operator-hidden {
+  opacity: 0.7;
+}
+
+.hidden-lot-note {
+  color: #344054;
+}
+
 .badge.danger {
   background: #fee4e2;
   color: var(--danger);

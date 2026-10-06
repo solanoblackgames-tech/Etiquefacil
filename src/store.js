@@ -2345,6 +2345,37 @@ export async function updateUserLotDetails(userId, lotId, payload = {}) {
   return { lot: summarizeLot(db, lot, true), changedProducts };
 }
 
+export async function updateUserLotOperatorVisibility(userId, lotId, hidden) {
+  await ensureStore();
+  const ocultoOperadores = Boolean(hidden);
+  if (hasPostgres()) {
+    const result = await query(
+      "update lots set oculto_operadores = $3 where id = $1 and user_id = $2 returning id",
+      [lotId, userId, ocultoOperadores]
+    );
+    if (!result.rows.length) throw notFound("Lote nao encontrado.");
+    return getUserLotDetail(userId, lotId);
+  }
+
+  const db = await readDb();
+  const lot = getUserLotFromDb(db, userId, lotId);
+  if (!lot) throw notFound("Lote nao encontrado.");
+  lot.ocultoOperadores = ocultoOperadores;
+  await writeDb(db);
+  return summarizeLot(db, lot, true);
+}
+
+export async function isUserLotHiddenFromOperators(userId, lotId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select oculto_operadores from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+    return Boolean(result.rows[0]?.oculto_operadores);
+  }
+
+  const db = await readDb();
+  return Boolean(getUserLotFromDb(db, userId, lotId)?.ocultoOperadores);
+}
+
 export async function getStoreHealth() {
   await ensureStore();
   if (!hasPostgres()) return { ok: true, storage: "json" };
@@ -5638,6 +5669,7 @@ async function ensurePgStore() {
     alter table lots add column if not exists tipo_custo text not null default 'fixed';
     alter table lots add column if not exists percentual_custo numeric not null default 0;
     alter table lots add column if not exists no_sheet_suggestions jsonb not null default '[]'::jsonb;
+    alter table lots add column if not exists oculto_operadores boolean not null default false;
     alter table products add column if not exists ean text not null default '';
     alter table products add column if not exists ncm text not null default '';
     alter table products add column if not exists data_validade text not null default '';
@@ -9716,6 +9748,7 @@ function lotFromRow(row) {
     prefixoSku: row.prefixo_sku,
     proximoSequencialSku: Number(row.proximo_sequencial_sku),
     noSheetSuggestions: normalizeNoSheetSuggestions(row.no_sheet_suggestions || []),
+    ocultoOperadores: Boolean(row.oculto_operadores),
     createdAt: iso(row.created_at)
   };
 }
@@ -9733,6 +9766,7 @@ function lotFromPrefixedRow(row, prefix) {
     prefixoSku: row[`${prefix}prefixo_sku`],
     proximoSequencialSku: Number(row[`${prefix}proximo_sequencial_sku`]),
     noSheetSuggestions: normalizeNoSheetSuggestions(row[`${prefix}no_sheet_suggestions`] || []),
+    ocultoOperadores: Boolean(row[`${prefix}oculto_operadores`]),
     createdAt: iso(row[`${prefix}created_at`])
   };
 }

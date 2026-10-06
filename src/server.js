@@ -127,6 +127,8 @@ import {
   updateNoSheetSuggestions,
   updateLotProduct,
   updateUserLotDetails,
+  updateUserLotOperatorVisibility,
+  isUserLotHiddenFromOperators,
   updateOperatorTriageAccess,
   updateOperatorTransferAccess,
   updateOperatorStockTransferAcceptanceAccess,
@@ -424,7 +426,21 @@ app.delete("/api/admin/users/:userId", requireAdmin, async (req, res) => {
 app.get("/api/lots", requireAuth, async (req, res) => {
   try {
     await recordOperatorActivity(req.session.user, "view_lots");
-    res.json({ lots: await getUserLotSummaries(workspaceUserId(req)) });
+    const lots = await getUserLotSummaries(workspaceUserId(req));
+    res.json({ lots: isOperatorSession(req) ? lots.filter((lot) => !lot.ocultoOperadores) : lots });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Lotes ocultos nao podem ser abertos nem receber entradas de operadores.
+app.use("/api/lots/:lotId", async (req, res, next) => {
+  if (!req.session?.user || !isOperatorSession(req)) return next();
+  try {
+    if (await isUserLotHiddenFromOperators(workspaceUserId(req), req.params.lotId)) {
+      return res.status(403).json({ error: "Este lote nao esta ativo na producao." });
+    }
+    next();
   } catch (error) {
     sendError(res, error);
   }
@@ -1728,6 +1744,15 @@ app.patch("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
     }
 
     res.json({ lot, changedProducts: changedProducts.length, bling });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch("/api/lots/:lotId/operator-visibility", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const lot = await updateUserLotOperatorVisibility(workspaceUserId(req), req.params.lotId, req.body?.ocultoOperadores === true);
+    res.json({ lot });
   } catch (error) {
     sendError(res, error);
   }
