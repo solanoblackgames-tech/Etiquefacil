@@ -2368,8 +2368,14 @@ export async function updateUserLotOperatorVisibility(userId, lotId, hidden) {
 export async function isUserLotHiddenFromOperators(userId, lotId) {
   await ensureStore();
   if (hasPostgres()) {
-    const result = await query("select oculto_operadores from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
-    return Boolean(result.rows[0]?.oculto_operadores);
+    try {
+      const result = await query("select oculto_operadores from lots where id = $1 and user_id = $2 limit 1", [lotId, userId]);
+      return Boolean(result.rows[0]?.oculto_operadores);
+    } catch (error) {
+      // Sem a coluna no banco, nenhum lote esta oculto: nao bloqueia a operacao.
+      if (error.code === "42703") return false;
+      throw error;
+    }
   }
 
   const db = await readDb();
@@ -5217,6 +5223,7 @@ export async function createLabel(userId, productId, quantity = 1) {
 async function ensurePgStore() {
   if (shouldSkipPgMigrations()) {
     await assertPgSchemaReady();
+    await ensurePgLightweightColumns();
     return;
   }
 
@@ -5914,6 +5921,15 @@ async function ensurePgStore() {
   `);
   await query("delete from catalog_requests where status = 'rejected'");
   await backfillPgCatalogLotSuggestions();
+}
+
+// Colunas novas e baratas que precisam existir mesmo quando as migracoes completas estao desligadas.
+async function ensurePgLightweightColumns() {
+  try {
+    await query("alter table lots add column if not exists oculto_operadores boolean not null default false");
+  } catch (error) {
+    console.error("Falha ao garantir coluna lots.oculto_operadores:", error.message);
+  }
 }
 
 function shouldSkipPgMigrations() {
