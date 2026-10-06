@@ -2228,8 +2228,8 @@ async function deleteDiverseProduct(item, button) {
 function openProductEditModal(product, options = {}) {
   return new Promise((resolve) => {
     const includeLogisticsFields = options.includeLogisticsFields !== false;
-    const canEditSalePrice = isOwnerUser() && canViewSalePrice();
-    const canEditCost = isOwnerUser() && canViewCost();
+    const canEditSalePrice = canViewSalePrice();
+    const canEditCost = canViewCost();
     const modal = $("#productEditModal");
     const form = $("#productEditForm");
     const code = $("#productEditCode");

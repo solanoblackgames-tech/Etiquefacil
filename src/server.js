@@ -2012,9 +2012,9 @@ app.patch("/api/lots/:lotId/products/:productId", requireAuth, async (req, res) 
     const userId = workspaceUserId(req);
     const found = await getUserProductWithLot(userId, req.params.productId);
     if (!found || found.lot.id !== req.params.lotId) return res.status(404).json({ error: "Produto nao encontrado neste lote." });
-    const payload = isOwnerSession(req)
-      ? { ...found.product, ...req.body }
-      : { ...found.product, ...req.body, precoCusto: found.product.precoCusto };
+    const payload = req.session.user?.viewCostPriceAccess === false
+      ? { ...found.product, ...req.body, precoCusto: found.product.precoCusto }
+      : { ...found.product, ...req.body };
     const result = await updateLotProduct({
       userId,
       lotId: req.params.lotId,
@@ -2968,25 +2968,32 @@ function isOperatorSession(req) {
 
 function sanitizeOperatorCostPayload(req, payload) {
   if (!isOperatorSession(req) || payload == null) return payload;
-  return stripCostFields(payload);
+  return stripCostFields(payload, { allowUnitCost: Boolean(req.session.user?.viewCostPriceAccess) });
 }
 
-function stripCostFields(value) {
-  if (Array.isArray(value)) return value.map(stripCostFields);
+function stripCostFields(value, options = {}) {
+  if (Array.isArray(value)) return value.map((item) => stripCostFields(item, options));
   if (!value || typeof value !== "object") return value;
 
   const result = {};
   for (const [key, childValue] of Object.entries(value)) {
-    if (isOperatorHiddenCostField(key)) continue;
-    result[key] = stripCostFields(childValue);
+    if (isOperatorHiddenCostField(key, options)) continue;
+    result[key] = stripCostFields(childValue, options);
   }
   return result;
 }
 
-function isOperatorHiddenCostField(key) {
+function isOperatorHiddenCostField(key, { allowUnitCost = false } = {}) {
+  if (allowUnitCost && OPERATOR_ALLOWED_UNIT_COST_FIELDS.has(key)) return false;
   const normalized = String(key || "").toLowerCase();
   return normalized.includes("cost") || normalized.includes("custo") || OPERATOR_HIDDEN_COST_FIELDS.has(key);
 }
+
+const OPERATOR_ALLOWED_UNIT_COST_FIELDS = new Set([
+  "precoCusto",
+  "preco_custo",
+  "costPrice"
+]);
 
 const OPERATOR_HIDDEN_COST_FIELDS = new Set([
   "precoCusto",
