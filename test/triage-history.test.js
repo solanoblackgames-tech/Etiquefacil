@@ -5,7 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+let triageSerialSequence = 0;
 const completeTriagePayload = (payload = {}) => ({
+  serial: `SN-TESTE-${++triageSerialSequence}`,
   ean: "7891234567890",
   alturaCaixa: 10,
   larguraCaixa: 20,
@@ -130,7 +132,7 @@ test("updateTriageDiagnosis allows diagnosis when logistics data is incomplete",
     const item = await createTriageItem({
       userId: "owner-1",
       createdByUserId: "owner-1",
-      payload: { sku: "SKU-1" }
+      payload: { sku: "SKU-1", serial: "SN-1" }
     });
 
     const diagnosed = await updateTriageDiagnosis({

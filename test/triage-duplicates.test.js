@@ -68,10 +68,10 @@ test("createTriageItem reuses the pending label when the same operator scans the
 
 test("createTriageItem creates a new label once the pending one has serial or diagnosis", async () => {
   await withTriageStore("after-diagnosis", async ({ createTriageItem, updateTriageDiagnosis }) => {
-    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-CEL-1" } });
     await updateTriageDiagnosis({ userId: "owner-1", code: first.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } });
     const second = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
-    const withSerial = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV", serial: "SN-1" } });
+    const withSerial = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV", serial: "SN-TV-1" } });
     const nextTv = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV" } });
 
     assert.notEqual(second.code, first.code);
@@ -82,7 +82,7 @@ test("createTriageItem creates a new label once the pending one has serial or di
 
 test("updateTriageDiagnosis keeps the diagnosing operator when only a photo is added", async () => {
   await withTriageStore("photo-only", async ({ createTriageItem, updateTriageDiagnosis, listTriageDiagnosisHistory }) => {
-    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "SKU-CEL" } });
+    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-CEL-1" } });
     const diagnosed = await updateTriageDiagnosis({
       userId: "owner-1",
       code: item.code,
@@ -103,5 +103,38 @@ test("updateTriageDiagnosis keeps the diagnosing operator when only a photo is a
     assert.equal(withPhoto.diagnosedAt, diagnosed.diagnosedAt);
     assert.equal(withPhoto.diagnosisPhoto, "data:image/png;base64,iVBORw0KGgo=");
     assert.equal(history[0].operatorUserId, "operator-2");
+  });
+});
+
+test("updateTriageDiagnosis requires a serial number", async () => {
+  await withTriageStore("serial-required", async ({ createTriageItem, updateTriageDiagnosis, updateTriageItemDetails }) => {
+    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
+
+    await assert.rejects(
+      updateTriageDiagnosis({ userId: "owner-1", code: item.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } }),
+      /numero de serie/
+    );
+
+    await updateTriageItemDetails({ userId: "owner-1", code: item.code, payload: { sku: "SKU-CEL", serial: "SN-CEL-1" } });
+    const diagnosed = await updateTriageDiagnosis({ userId: "owner-1", code: item.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } });
+    assert.equal(diagnosed.status, "diagnosticado");
+  });
+});
+
+test("triage serial numbers cannot repeat across labels", async () => {
+  await withTriageStore("serial-unique", async ({ createTriageItem, updateTriageItemDetails }) => {
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "sn-abc-1" } });
+    const second = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-2", payload: { sku: "SKU-CEL" } });
+
+    await assert.rejects(
+      createTriageItem({ userId: "owner-1", createdByUserId: "operator-2", payload: { sku: "SKU-OUTRO", serial: "SN-ABC-1" } }),
+      new RegExp(first.code)
+    );
+    await assert.rejects(
+      updateTriageItemDetails({ userId: "owner-1", code: second.code, payload: { sku: "SKU-CEL", serial: " SN-ABC-1 " } }),
+      new RegExp(first.code)
+    );
+    const kept = await updateTriageItemDetails({ userId: "owner-1", code: first.code, payload: { sku: "SKU-CEL", serial: "SN-ABC-1" } });
+    assert.equal(kept.code, first.code);
   });
 });

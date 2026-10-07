@@ -12275,7 +12275,19 @@ async function handleTriageDetailSubmit(event) {
     }
   } catch (error) {
     message.textContent = error.message;
+    if (/numero de serie/i.test(error.message)) openTriageEditOnSerial();
   }
+}
+
+function openTriageEditOnSerial() {
+  const form = $("#triageDetail .triage-edit-form");
+  if (!form) return;
+  form.classList.remove("hidden");
+  const toggle = $("#triageDetail [data-toggle-triage-edit]");
+  if (toggle) toggle.textContent = "Fechar edicao";
+  const input = form.querySelector('input[name="serial"]');
+  input?.focus();
+  input?.select();
 }
 
 async function handleTriageEditSubmit(event) {

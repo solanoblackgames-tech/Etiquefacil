@@ -5,7 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+let triageSerialSequence = 0;
 const completeTriagePayload = (payload = {}) => ({
+  serial: `SN-TESTE-${++triageSerialSequence}`,
   ean: "7891234567890",
   alturaCaixa: 10,
   larguraCaixa: 20,

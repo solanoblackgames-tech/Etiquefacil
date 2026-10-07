@@ -1653,6 +1653,7 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
   const item = await hydrateTriageInputPrice(userId, input);
 
   await ensureTriageSecuritySealAvailable({ userId, securitySealCode: item.securitySealCode });
+  await ensureTriageSerialAvailable({ userId, serial: item.serial });
 
   if (hasPostgres()) {
     const client = await getPgPool().connect();
@@ -1768,6 +1769,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
         [userId, normalizeCode(code)]
       );
       if (!current.rows.length) throw notFound("Item de triagem nao encontrado.");
+      if (!photoOnly) ensureTriageSerialFilled(current.rows[0].serial);
       const result = await client.query(
         `update triage_items
          set status = 'diagnosticado',
@@ -1812,6 +1814,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const db = await readDb();
   const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalizeCode(code));
   if (!item) throw notFound("Item de triagem nao encontrado.");
+  if (!photoOnly) ensureTriageSerialFilled(item.serial);
   item.status = "diagnosticado";
   item.destination = destination;
   item.diagnosisCondition = diagnosisCondition;
@@ -1904,6 +1907,39 @@ async function ensureTriageSecuritySealAvailable({ userId, securitySealCode, ign
   if (duplicate) throw new Error("Este lacre de seguranca ja esta vinculado a outro item de triagem.");
 }
 
+function ensureTriageSerialFilled(serial) {
+  if (!String(serial || "").trim()) throw new Error("Informe o numero de serie em Editar dados antes de salvar o laudo.");
+}
+
+// Numero de serie, assim como o lacre, identifica uma unidade fisica e nao pode se repetir entre laudos.
+async function ensureTriageSerialAvailable({ userId, serial, ignoreCode = "" }) {
+  const normalizedSerial = normalizeCode(serial);
+  if (!normalizedSerial) return;
+  const ignored = normalizeCode(ignoreCode);
+
+  if (hasPostgres()) {
+    const result = await query(
+      `select code
+       from triage_items
+       where user_id = $1
+         and upper(trim(serial)) = $2
+         and ($3 = '' or upper(code) <> upper($3))
+       limit 1`,
+      [userId, normalizedSerial, ignored]
+    );
+    if (result.rows.length) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${result.rows[0].code}.`);
+    return;
+  }
+
+  const db = await readDb();
+  const duplicate = (db.triageItems || []).find((item) =>
+    item.userId === userId &&
+    normalizeCode(item.serial) === normalizedSerial &&
+    (!ignored || normalizeCode(item.code) !== ignored)
+  );
+  if (duplicate) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${duplicate.code}.`);
+}
+
 export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   await ensureStore();
   const currentCode = normalizeCode(code);
@@ -1934,6 +1970,7 @@ export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   }
   const now = new Date().toISOString();
   await ensureTriageSecuritySealAvailable({ userId, securitySealCode: details.securitySealCode, ignoreCode: currentCode });
+  await ensureTriageSerialAvailable({ userId, serial: details.serial, ignoreCode: currentCode });
 
   if (hasPostgres()) {
     if (nextCode !== currentCode) {
