@@ -138,3 +138,22 @@ test("triage serial numbers cannot repeat across labels", async () => {
     assert.equal(kept.code, first.code);
   });
 });
+
+test("labels saved with a repeated serial before the rule stay editable while the serial is unchanged", async () => {
+  await withTriageStore("serial-legacy", async ({ readDb, writeDb, createTriageItem, updateTriageItemDetails }) => {
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV", serial: "TV-123" } });
+    const second = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-2", payload: { sku: "SKU-TV" } });
+    const db = await readDb();
+    db.triageItems.find((item) => item.code === second.code).serial = "TV-123";
+    await writeDb(db);
+
+    const edited = await updateTriageItemDetails({ userId: "owner-1", code: second.code, payload: { sku: "SKU-TV", serial: "TV-123", descricao: "TV editada" } });
+    assert.equal(edited.descricao, "TV editada");
+    await assert.rejects(
+      updateTriageItemDetails({ userId: "owner-1", code: second.code, payload: { sku: "SKU-TV", serial: "TV-999" } }).then(() =>
+        updateTriageItemDetails({ userId: "owner-1", code: second.code, payload: { sku: "SKU-TV", serial: "TV-123" } })
+      ),
+      new RegExp(first.code)
+    );
+  });
+});

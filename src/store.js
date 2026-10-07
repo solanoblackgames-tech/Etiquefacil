@@ -1917,27 +1917,26 @@ async function ensureTriageSerialAvailable({ userId, serial, ignoreCode = "" }) 
   if (!normalizedSerial) return;
   const ignored = normalizeCode(ignoreCode);
 
+  // Ao editar um laudo sem trocar o serial, nao revalida: seriais repetidos gravados antes da regra continuam editaveis.
   if (hasPostgres()) {
     const result = await query(
       `select code
        from triage_items
        where user_id = $1
          and upper(trim(serial)) = $2
-         and ($3 = '' or upper(code) <> upper($3))
-       limit 1`,
+       order by (upper(code) = upper($3)) desc
+       limit 2`,
       [userId, normalizedSerial, ignored]
     );
+    if (ignored && result.rows.some((row) => normalizeCode(row.code) === ignored)) return;
     if (result.rows.length) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${result.rows[0].code}.`);
     return;
   }
 
   const db = await readDb();
-  const duplicate = (db.triageItems || []).find((item) =>
-    item.userId === userId &&
-    normalizeCode(item.serial) === normalizedSerial &&
-    (!ignored || normalizeCode(item.code) !== ignored)
-  );
-  if (duplicate) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${duplicate.code}.`);
+  const sameSerial = (db.triageItems || []).filter((item) => item.userId === userId && normalizeCode(item.serial) === normalizedSerial);
+  if (ignored && sameSerial.some((item) => normalizeCode(item.code) === ignored)) return;
+  if (sameSerial.length) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${sameSerial[0].code}.`);
 }
 
 export async function updateTriageItemDetails({ userId, code, payload = {} }) {
