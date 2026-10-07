@@ -194,8 +194,8 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
         transfers: 0,
         triageOnly: 1,
         quantity: 1,
-        value: 99,
-        cost: 33,
+        value: 10,
+        cost: 5,
         received: 0,
         pending: 1,
         receivedValue: 0,
@@ -217,28 +217,28 @@ test("getOperationalDashboardStats summarizes lots transfers and operator value"
     assert.equal(ana.transferReceivedCost, 10);
     assert.equal(stats.triage.total, 4);
     assert.equal(stats.triage.diagnosed, 4);
-    assert.equal(stats.triage.value, 399);
-    assert.equal(stats.triage.cost, 53);
-    assert.equal(stats.triage.diagnosedValue, 399);
-    assert.equal(stats.triage.diagnosedCost, 53);
+    assert.equal(stats.triage.value, 310);
+    assert.equal(stats.triage.cost, 25);
+    assert.equal(stats.triage.diagnosedValue, 310);
+    assert.equal(stats.triage.diagnosedCost, 25);
     assert.deepEqual(stats.triage.diagnosisConditions, [
       { condition: "OK_FUNCIONANDO", total: 1, totalValue: 125, totalCost: 0 },
       { condition: "OK_VENDA_DIRETA", total: 1, totalValue: 125, totalCost: 0 },
-      { condition: "NAO_LIGA", total: 1, totalValue: 99, totalCost: 33 }
+      { condition: "NAO_LIGA", total: 1, totalValue: 10, totalCost: 5 }
     ]);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").value, 30);
     assert.equal(stats.sectors.find((sector) => sector.key === "conference").cost, 13);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").value, 20);
     assert.equal(stats.sectors.find((sector) => sector.key === "transfer").cost, 10);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 399);
-    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 53);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").value, 310);
+    assert.equal(stats.sectors.find((sector) => sector.key === "triage").cost, 25);
     assert.equal(stats.recentTransfers[0].receivedValue, 20);
     assert.equal(stats.recentTransfers[0].receivedCost, 10);
     assert.equal(ana.triageCount, 4);
-    assert.equal(ana.triageValue, 399);
-    assert.equal(ana.triageCost, 53);
-    assert.equal(ana.totalValue, 429);
-    assert.equal(ana.totalCost, 68);
+    assert.equal(ana.triageValue, 310);
+    assert.equal(ana.triageCost, 25);
+    assert.equal(ana.totalValue, 340);
+    assert.equal(ana.totalCost, 40);
 
     const periodStats = await getOperationalDashboardStats("owner-1", { startDate: "2026-07-05", endDate: "2026-07-06" });
     assert.equal(periodStats.period.days, 2);

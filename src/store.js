@@ -1,4 +1,4 @@
-﻿import fs from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -1343,8 +1343,8 @@ export async function listTriageStatsRows(userId, period = {}) {
           t.created_at,
           t.updated_at,
           t.diagnosed_at,
-          coalesce(nullif(t.valor_unit, 0), nullif(p.valor_unit, 0), nullif(previous_triage.valor_unit, 0), 0) as valor_unit,
-          coalesce(nullif(t.preco_custo, 0), nullif(p.preco_custo, 0), 0) as preco_custo,
+          coalesce(nullif(p.valor_unit, 0), nullif(t.valor_unit, 0), nullif(previous_triage.valor_unit, 0), 0) as valor_unit,
+          coalesce(nullif(p.preco_custo, 0), nullif(t.preco_custo, 0), 0) as preco_custo,
           p.id as product__id,
           p.checked_qty as product__checked_qty,
           p.lot_id as product__lot_id,
@@ -1507,8 +1507,8 @@ export async function listTriageStatsRows(userId, period = {}) {
           triageTransferDepositDestination: triageTransferByItemId.get(item.id)?.depositoDestino || "",
           triageTransferStatus: triageTransferByItemId.get(item.id)?.status || ""
         },
-        salePrice: triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(db.triageItems || [], item)),
-        costPrice: triageStatMoney(item.precoCusto, product?.precoCusto),
+        salePrice: triageStatMoney(product?.valorUnit, item.valorUnit, findPreviousTriageItemPrice(db.triageItems || [], item)),
+        costPrice: triageStatMoney(product?.precoCusto, item.precoCusto),
         product,
         lot: product?.lotId ? lotsById.get(product.lotId) || null : null,
         user: userMap.get(responsibleUserId) || null
@@ -10325,8 +10325,8 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
   let triageDiagnosed = 0;
   for (const item of triageItems) {
     const product = findTriageStatsProduct(allProducts, allLotIds, item);
-    const value = triageStatMoney(item.valorUnit, product?.valorUnit, findPreviousTriageItemPrice(triageItems, item));
-    const cost = triageStatMoney(item.precoCusto, product?.precoCusto);
+    const value = triageStatMoney(product?.valorUnit, item.valorUnit, findPreviousTriageItemPrice(triageItems, item));
+    const cost = triageStatMoney(product?.precoCusto, item.precoCusto);
     const destination = String(item.destination || "").trim().toUpperCase() || TRIAGE_PENDING_DESTINATION_LABEL;
     const row = triageDestinationRows.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
     row.total += 1;
