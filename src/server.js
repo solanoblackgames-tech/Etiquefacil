@@ -2371,13 +2371,8 @@ app.post("/api/lots/:lotId/rz/:codigoRz/scan", requireAuth, async (req, res) => 
     await recordOperatorActivity(req.session.user, "scan_ml", { lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     const result = await scanLotRz({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, codigoMl });
     if (req.body?.autoStockEntry === true && ["ok", "excedente"].includes(result.scan?.status)) {
-      result.bling = await syncNoSheetScanStockEntry({
-        userId,
-        lotId: req.params.lotId,
-        codigoRz: req.params.codigoRz,
-        codigoMl
-      });
-      if (result.bling?.lot) result.lot = result.bling.lot;
+      const item = await getRzStockMovementItem(userId, req.params.lotId, req.params.codigoRz, codigoMl, result.lot);
+      result.bling = await queueScanStockEntry({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, item });
     }
     res.json(result);
   } catch (error) {
@@ -2405,41 +2400,11 @@ app.post("/api/lots/:lotId/rz/:codigoRz/items/:itemId/increment", requireAuth, a
       status: result.scan?.status || "ok"
     });
 
-    if (req.body?.autoStockEntry === true && ["ok", "excedente"].includes(result.scan?.status)) {
-      const lot = await getUserLotDetail(userId, req.params.lotId);
-      const product = (lot?.products || []).find((item) => item.id === result.product?.id) || result.product;
-      const stockItem = stockMovementItemFromProduct(lot || result.lot, product, 1);
-      try {
-        await syncSingleLotProductToBling(userId, lot || result.lot, product);
-        const integration = await getRequiredBlingCredentials(userId);
-        result.bling = await syncBlingStockMovement({
-          integration,
-          item: stockItem,
-          depositoName: BLING_STOCK_DEPOSIT,
-          operation: "entry",
-          observacao: `Entrada automatica por botao + RZ ${req.params.codigoRz}`,
-          saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-        });
-        const updatedLot = await updateLotProductBlingAlerts({ userId, lotId: req.params.lotId, syncResult: result.bling });
-        if (updatedLot) result.lot = updatedLot;
-      } catch (error) {
-        await enqueueProductSyncs({ userId, lot: lot || result.lot, products: [product], errorMessage: error.message });
-        await enqueueStockMovementSync({
-          userId,
-          lotId: req.params.lotId,
-          codigoRz: req.params.codigoRz,
-          item: stockItem,
-          operation: "entry",
-          errorMessage: error.message
-        });
-        scheduleBlingSyncQueue();
-        result.bling = {
-          ok: false,
-          queued: true,
-          status: "queued",
-          error: `Produto e entrada no Bling ficaram na fila para tentar novamente: ${error.message}`
-        };
-      }
+    if (req.body?.autoStockEntry === true && ["ok", "excedente"].includes(result.scan?.status) && result.product?.id) {
+      const lot = result.lot?.id ? result.lot : await getUserLotDetail(userId, req.params.lotId);
+      const product = (lot?.products || []).find((item) => item.id === result.product.id) || result.product;
+      const item = stockMovementItemFromProduct(lot || {}, product, 1);
+      result.bling = await queueScanStockEntry({ userId, lotId: req.params.lotId, codigoRz: req.params.codigoRz, item });
     }
 
     res.json(result);
@@ -3535,8 +3500,8 @@ async function getLotStockBalanceData(userId, lotId) {
   return { lot, items: [...productsById.values()].sort((a, b) => a.sku.localeCompare(b.sku)) };
 }
 
-async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
-  const lot = await getUserLotDetail(userId, lotId);
+async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl, knownLot = null) {
+  const lot = knownLot?.id === lotId && Array.isArray(knownLot.items) ? knownLot : await getUserLotDetail(userId, lotId);
   if (!lot) return null;
 
   const normalizedMl = String(codigoMl || "").trim().toUpperCase();
@@ -3578,47 +3543,17 @@ async function getRzStockMovementItem(userId, lotId, codigoRz, codigoMl) {
   };
 }
 
-async function syncNoSheetScanStockEntry({ userId, lotId, codigoRz, codigoMl }) {
-  const item = await getRzStockMovementItem(userId, lotId, codigoRz, codigoMl);
+// A bipagem ja esta gravada no Etiquefacil; a entrada vai para a fila persistente do Bling
+// para a resposta (e a impressao da etiqueta) nao esperar a API. Se o Bling cair, a fila tenta de novo.
+async function queueScanStockEntry({ userId, lotId, codigoRz, item }) {
   if (!item) return { ok: true, skipped: true, status: "not_needed" };
-
   try {
-    const integration = await getRequiredBlingCredentials(userId);
-    const lot = await getUserLotDetail(userId, lotId);
-    await syncBlingProducts({
-      integration,
-      products: withLotSupplier([item], lot),
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
-    const result = await syncBlingStockMovement({
-      integration,
-      item,
-      depositoName: BLING_STOCK_DEPOSIT,
-      operation: "entry",
-      observacao: `Entrada automatica por bipagem RZ ${codigoRz}`,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
-    const updatedLot = await updateLotProductBlingAlerts({ userId, lotId, syncResult: result });
-    return updatedLot ? { ...result, lot: updatedLot } : result;
-  } catch (error) {
-    const lot = await getUserLotDetail(userId, lotId);
-    if (lot) await enqueueProductSyncs({ userId, lot, products: [item], errorMessage: error.message });
-    await enqueueStockMovementSync({
-      userId,
-      lotId,
-      codigoRz,
-      item,
-      operation: "entry",
-      errorMessage: error.message
-    });
+    await enqueueStockMovementSync({ userId, lotId, codigoRz, item, operation: "entry", errorMessage: "" });
     scheduleBlingSyncQueue();
-    return {
-      ok: false,
-      queued: true,
-      status: "queued",
-      error: `Produto e entrada no Bling ficaram na fila para tentar novamente: ${error.message}`,
-      lot
-    };
+    return { ok: true, queued: true, status: "queued", operation: "entry", sku: item.sku };
+  } catch (error) {
+    console.error(`Falha ao enfileirar entrada Bling do SKU ${item.sku}:`, error);
+    return { ok: false, queued: false, status: "error", sku: item.sku, error: `Entrada no Bling nao foi enfileirada: ${error.message}` };
   }
 }
 
@@ -4396,8 +4331,14 @@ async function seedBlingAppConfigFromEnv() {
 
 let blingSyncQueueRunning = false;
 let blingSyncQueueScheduled = false;
+// Jobs enfileirados enquanto a fila roda (ex.: bipagens) disparam nova rodada ao terminar.
+let blingSyncQueueRerun = false;
 
 function scheduleBlingSyncQueue() {
+  if (blingSyncQueueRunning) {
+    blingSyncQueueRerun = true;
+    return;
+  }
   if (blingSyncQueueScheduled) return;
   blingSyncQueueScheduled = true;
   const handle = setImmediate(() => {
@@ -4412,6 +4353,7 @@ async function processBlingSyncQueue() {
   blingSyncQueueRunning = true;
   try {
     const jobs = await listDueBlingSyncJobs({ limit: 10 });
+    if (jobs.length === 10) blingSyncQueueRerun = true;
     for (const job of jobs) {
       try {
         const integration = await getUserBlingCredentials(job.userId);
@@ -4472,7 +4414,7 @@ async function processBlingSyncQueue() {
         }
 
         if (job.type === "stock_entry") {
-          await syncBlingStockMovement({
+          const result = await syncBlingStockMovement({
             integration,
             item: job.payload?.item,
             depositoName: job.payload?.depositoName || BLING_STOCK_DEPOSIT,
@@ -4480,7 +4422,9 @@ async function processBlingSyncQueue() {
             observacao: job.payload?.observacao || "Entrada pendente da fila Etiquefacil",
             saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
           });
-          await markBlingSyncJobSucceeded(job.id);
+          const done = await markBlingSyncJobSucceeded(job.id, { processedPayload: job.payload });
+          if (job.lotId && !done.remaining) await updateLotProductBlingAlerts({ userId: job.userId, lotId: job.lotId, syncResult: result });
+          if (done.remaining) blingSyncQueueRerun = true;
           continue;
         }
 
@@ -4493,7 +4437,8 @@ async function processBlingSyncQueue() {
             observacao: job.payload?.observacao || "Movimento pendente da fila Etiquefacil",
             saveIntegration: (payload) => saveUserBlingIntegration(job.userId, payload)
           });
-          await markBlingSyncJobSucceeded(job.id);
+          const done = await markBlingSyncJobSucceeded(job.id, { processedPayload: job.payload });
+          if (done.remaining) blingSyncQueueRerun = true;
           continue;
         }
 
@@ -4506,6 +4451,10 @@ async function processBlingSyncQueue() {
     console.error("Falha ao processar fila Bling:", error);
   } finally {
     blingSyncQueueRunning = false;
+    if (blingSyncQueueRerun) {
+      blingSyncQueueRerun = false;
+      scheduleBlingSyncQueue();
+    }
   }
 }
 

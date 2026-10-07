@@ -2881,23 +2881,72 @@ export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
     .slice(0, limit);
 }
 
-export async function markBlingSyncJobSucceeded(jobId) {
+export async function markBlingSyncJobSucceeded(jobId, { processedPayload = null } = {}) {
   await ensureStore();
+  // Bipagens novas do mesmo produto sao somadas no job enquanto ele roda; desconta so o que ja foi lancado.
+  const processed = stockMovementProcessedQuantities(processedPayload);
   if (hasPostgres()) {
-    const result = await query("delete from bling_sync_jobs where id = $1 returning *", [jobId]);
-    const job = result.rows[0] && blingSyncJobFromRow(result.rows[0]);
-    if (job) {
-      const remaining = await query(
-        "select 1 from bling_sync_jobs where product_id = $1 and status in ('pending', 'failed') limit 1",
-        [job.productId]
-      );
-      if (!remaining.rows.length && job.lotId) await clearProductBlingQueueAlert(job.userId, job.lotId, job.productId);
+    if (!processed) {
+      const result = await query("delete from bling_sync_jobs where id = $1 returning *", [jobId]);
+      return finishDeletedBlingSyncJobPg(result.rows[0] && blingSyncJobFromRow(result.rows[0]));
     }
-    return { ok: true, job };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const now = new Date().toISOString();
+      const kept = await query(
+        `
+          update bling_sync_jobs
+          set payload = jsonb_set(
+                jsonb_set(
+                  payload,
+                  '{item,quantidade}',
+                  to_jsonb(coalesce((payload #>> '{item,quantidade}')::numeric, 0) - $2)
+                ),
+                '{item,qtdConferida}',
+                to_jsonb(greatest(coalesce((payload #>> '{item,qtdConferida}')::numeric, 0) - $3, 0))
+              ),
+              status = 'pending',
+              attempts = 0,
+              error_message = '',
+              next_run_at = $4,
+              updated_at = $4
+          where id = $1
+            and coalesce((payload #>> '{item,quantidade}')::numeric, 0) > $2
+          returning *
+        `,
+        [jobId, processed.quantidade, processed.qtdConferida, now]
+      );
+      if (kept.rows.length) return { ok: true, job: blingSyncJobFromRow(kept.rows[0]), remaining: true };
+      const deleted = await query(
+        "delete from bling_sync_jobs where id = $1 and coalesce((payload #>> '{item,quantidade}')::numeric, 0) <= $2 returning *",
+        [jobId, processed.quantidade]
+      );
+      if (deleted.rows.length) return finishDeletedBlingSyncJobPg(blingSyncJobFromRow(deleted.rows[0]));
+      const exists = await query("select 1 from bling_sync_jobs where id = $1 limit 1", [jobId]);
+      if (!exists.rows.length) return { ok: true, job: null };
+    }
+    return { ok: true, job: null, remaining: true };
   }
 
   const db = await readDb();
-  const job = (db.blingSyncJobs || []).find((item) => item.id === jobId) || null;
+  const current = (db.blingSyncJobs || []).find((item) => item.id === jobId) || null;
+  const currentQuantity = Number(current?.payload?.item?.quantidade || 0);
+  if (current && processed && currentQuantity > processed.quantidade) {
+    const item = current.payload.item;
+    const now = new Date().toISOString();
+    current.payload = {
+      ...current.payload,
+      item: {
+        ...item,
+        quantidade: currentQuantity - processed.quantidade,
+        qtdConferida: Math.max(0, Number(item.qtdConferida || 0) - processed.qtdConferida)
+      }
+    };
+    Object.assign(current, { status: "pending", attempts: 0, errorMessage: "", nextRunAt: now, updatedAt: now });
+    await writeDb(db);
+    return { ok: true, job: current, remaining: true };
+  }
+
+  const job = current;
   db.blingSyncJobs = (db.blingSyncJobs || []).filter((item) => item.id !== jobId);
   if (job) {
     const hasRemaining = (db.blingSyncJobs || []).some((item) => item.productId === job.productId && ["pending", "failed"].includes(item.status));
@@ -2908,6 +2957,26 @@ export async function markBlingSyncJobSucceeded(jobId) {
     }
   }
   await writeDb(db);
+  return { ok: true, job };
+}
+
+function stockMovementProcessedQuantities(payload) {
+  const item = payload?.item;
+  if (!item) return null;
+  return {
+    quantidade: Number(item.quantidade ?? 1) || 0,
+    qtdConferida: Number(item.qtdConferida ?? 1) || 0
+  };
+}
+
+async function finishDeletedBlingSyncJobPg(job) {
+  if (job) {
+    const remaining = await query(
+      "select 1 from bling_sync_jobs where product_id = $1 and status in ('pending', 'failed') limit 1",
+      [job.productId]
+    );
+    if (!remaining.rows.length && job.lotId) await clearProductBlingQueueAlert(job.userId, job.lotId, job.productId);
+  }
   return { ok: true, job };
 }
 

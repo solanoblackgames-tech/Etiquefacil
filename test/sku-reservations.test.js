@@ -147,3 +147,42 @@ test("pending stock movement jobs accumulate quantity while Bling is queued", as
     assert.equal(updated.blingSyncJobs[0].payload.item.qtdConferida, 2);
   });
 });
+
+test("stock movement job keeps scans merged while it was being sent to Bling", async () => {
+  await withTempStore("bling-stock-queue-partial-success", async ({ enqueueBlingSyncJob, markBlingSyncJobSucceeded, readDb, writeDb }) => {
+    const db = baseDb();
+    db.products.push({
+      id: "product-1",
+      lotId: "lot-1",
+      codigoMl: "ABCD12345",
+      sku: "SKU0001",
+      descricao: "Produto",
+      valorUnit: 10,
+      precoCusto: 2,
+      qtdTotal: 1,
+      origem: "lote_sem_planilha",
+      createdAt: "2026-08-20T10:00:00.000Z"
+    });
+    await writeDb(db);
+
+    const item = { productId: "product-1", lotId: "lot-1", sku: "SKU0001", quantidade: 1, qtdConferida: 1 };
+    const job = await enqueueBlingSyncJob({ userId: "owner-1", lotId: "lot-1", productId: "product-1", sku: "SKU0001", type: "stock_entry", payload: { item } });
+    await enqueueBlingSyncJob({ userId: "owner-1", lotId: "lot-1", productId: "product-1", sku: "SKU0001", type: "stock_entry", payload: { item } });
+    const processing = (await readDb()).blingSyncJobs[0];
+
+    // Bipagem chega enquanto a fila envia as 2 unidades ao Bling.
+    await enqueueBlingSyncJob({ userId: "owner-1", lotId: "lot-1", productId: "product-1", sku: "SKU0001", type: "stock_entry", payload: { item } });
+    const partial = await markBlingSyncJobSucceeded(job.id, { processedPayload: processing.payload });
+    assert.equal(partial.remaining, true);
+
+    let updated = await readDb();
+    assert.equal(updated.blingSyncJobs.length, 1);
+    assert.equal(updated.blingSyncJobs[0].status, "pending");
+    assert.equal(updated.blingSyncJobs[0].payload.item.quantidade, 1);
+    assert.equal(updated.blingSyncJobs[0].payload.item.qtdConferida, 1);
+
+    await markBlingSyncJobSucceeded(job.id, { processedPayload: updated.blingSyncJobs[0].payload });
+    updated = await readDb();
+    assert.equal(updated.blingSyncJobs.length, 0);
+  });
+});
