@@ -81,7 +81,7 @@ test("createTriageItem keeps code sequence after deleting an earlier label", asy
   }
 });
 
-test("createTriageItem creates a new label every time the same SKU is scanned", async () => {
+test("createTriageItem creates a new label for the same SKU once the previous unit is identified", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-repeat-sku-"));
@@ -98,7 +98,7 @@ test("createTriageItem creates a new label every time the same SKU is scanned", 
     const first = await createTriageItem({
       userId: "owner-1",
       createdByUserId: "owner-1",
-      payload: { sku: "SKU-REPETIDO" }
+      payload: { sku: "SKU-REPETIDO", serial: "SN-1" }
     });
     const second = await createTriageItem({
       userId: "owner-1",

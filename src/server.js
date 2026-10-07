@@ -834,6 +834,9 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
       operatorUserId: operatorUserId(req),
       payload: req.body || {}
     });
+    if (item.reused) {
+      return res.json({ item: await withTriageQrData(req, item), reused: true });
+    }
     await updateProductRegistrationFromTriage({ userId, item });
     const bling = await syncTriageItemToBling(userId, item);
     await recordOperatorActivity(req.session.user, "triage_create", { code: item.code });
@@ -894,7 +897,8 @@ app.patch("/api/triage/items/:code/diagnosis", requireAuth, requireTriageAccess,
       userId,
       code: req.params.code,
       operatorUserId: operatorUserId(req) || req.session.user?.id,
-      payload: req.body || {}
+      payload: req.body || {},
+      photoOnly: String(req.body?.photoOnly || "") === "1"
     });
     const transfer = await createOrUpdateTriageTransfer({
       userId,

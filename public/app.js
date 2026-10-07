@@ -11311,6 +11311,9 @@ function destinationLabel(destination) {
 async function createTriageItem(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  // Leitor que manda Enter duas vezes nao pode gerar duas etiquetas.
+  if (state.creatingTriageItem) return;
+  state.creatingTriageItem = true;
   $("#triageMessage").textContent = "";
   try {
     await hydrateTriageProductFromSku(form);
@@ -11330,13 +11333,20 @@ async function createTriageItem(event) {
     });
     refreshTriageStatsIfVisible();
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
-    $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
-    $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
+    if (response.reused) {
+      $("#triageMessage").style.color = "";
+      $("#triageMessage").textContent = `Este SKU ja tem a etiqueta ${response.item.code} aberta e sem laudo. Nenhuma etiqueta nova foi gerada: finalize o laudo dela.`;
+    } else {
+      $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
+      $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
+    }
     schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
   } catch (error) {
     $("#triageMessage").style.color = "";
     $("#triageMessage").textContent = error.message;
     schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
+  } finally {
+    state.creatingTriageItem = false;
   }
 }
 
@@ -11975,6 +11985,7 @@ function triageDiagnosisPhotoFormMarkup(item) {
       <input type="hidden" name="destination" value="${escapeHtml(item.destination || "")}" />
       <input type="hidden" name="gradeAvaliada" value="${escapeHtml(item.gradeAvaliada || "")}" />
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
+      <input type="hidden" name="photoOnly" value="1" />
       <label>Foto do laudo
         <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required />
       </label>
