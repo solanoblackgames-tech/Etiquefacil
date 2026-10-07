@@ -28,8 +28,8 @@ const CATALOG_LOT_SUGGESTIONS_BACKFILL_KEY = "catalog_lot_suggestions_backfilled
 const CONFERENCE_SETTINGS_KEY = "conference_registration";
 const PRICE_DISPLAY_SETTINGS_KEY = "price_display";
 const TRIAGE_TRANSFER_SETTINGS_KEY = "triage_transfer";
-// Bipar o mesmo SKU de novo dentro dessa janela reaproveita a etiqueta pendente em vez de gerar outra.
-const TRIAGE_DUPLICATE_WINDOW_SECONDS = 5 * 60;
+// A partir desta data, o operador so gera etiqueta nova depois de dar laudo (ou excluir) a que deixou aberta.
+const TRIAGE_OPEN_LABEL_RULE_SINCE = "2026-10-07T03:00:00.000Z";
 const STANDARD_ML_CODE_PATTERN = /^[A-Z]{4}[0-9]{5}$/;
 const OPERATOR_DASHBOARD_ACTIONS = [
   "login",
@@ -1634,6 +1634,8 @@ export async function lookupTriageItemByScan(userId, value) {
 
 export async function createTriageItem({ userId, createdByUserId, operatorUserId = null, payload = {} }) {
   await ensureStore();
+  const scanned = await findTriageItemScannedAsSku(userId, payload.sku);
+  if (scanned) return { ...scanned, scanned: true };
   const now = new Date().toISOString();
   const input = await hydrateTriageInputProduct(userId, normalizeTriageInput({
     ...payload,
@@ -1659,25 +1661,21 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
     const client = await getPgPool().connect();
     try {
       await client.query("begin");
-      // Serializa criacoes do mesmo SKU/criador para que bipagens simultaneas nao gerem duas etiquetas.
-      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`triage-create:${userId}:${item.createdByUserId}:${normalizeCode(item.sku)}`]);
-      const recent = await client.query(
+      // Serializa criacoes do mesmo operador para que bipagens simultaneas nao gerem duas etiquetas.
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`triage-create:${userId}:${item.createdByUserId}`]);
+      const open = await client.query(
         `select * from triage_items
          where user_id = $1
            and created_by_user_id = $2
-           and $3 <> ''
-           and upper(trim(sku)) = upper(trim($3))
            and status = 'aguardando_teste'
-           and serial = ''
-           and security_seal_code = ''
-           and created_at > now() - ($4 || ' seconds')::interval
-         order by created_at desc
+           and created_at >= $3
+         order by created_at
          limit 1`,
-        [userId, item.createdByUserId, item.sku || "", String(TRIAGE_DUPLICATE_WINDOW_SECONDS)]
+        [userId, item.createdByUserId, TRIAGE_OPEN_LABEL_RULE_SINCE]
       );
-      if (recent.rows.length) {
+      if (open.rows.length) {
         await client.query("commit");
-        return { ...(await enrichTriageGradeComparison(userId, triageItemFromRow(recent.rows[0]))), reused: true };
+        return { ...(await enrichTriageGradeComparison(userId, triageItemFromRow(open.rows[0]))), openPending: true };
       }
       await insertTriageItemRows(client, [item]);
       await client.query("commit");
@@ -1692,10 +1690,10 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
 
   const db = await readDb();
   db.triageItems = db.triageItems || [];
-  const recent = findRecentPendingTriageDuplicate(db.triageItems, item);
-  if (recent) {
+  const open = findOpenTriageLabel(db.triageItems, item);
+  if (open) {
     const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
-    return { ...enrichTriageGradeComparisonFromDb(db, userId, recent, lotIds), reused: true };
+    return { ...enrichTriageGradeComparisonFromDb(db, userId, open, lotIds), openPending: true };
   }
   db.triageItems.push(item);
   await writeDb(db);
@@ -1703,19 +1701,25 @@ export async function createTriageItem({ userId, createdByUserId, operatorUserId
   return enrichTriageGradeComparisonFromDb(db, userId, item, lotIds);
 }
 
-function findRecentPendingTriageDuplicate(items = [], item = {}) {
-  const sku = normalizeCode(item.sku);
-  if (!sku) return null;
-  const since = Date.now() - TRIAGE_DUPLICATE_WINDOW_SECONDS * 1000;
+function findOpenTriageLabel(items = [], item = {}) {
   return items
     .filter((candidate) => candidate.userId === item.userId
       && candidate.createdByUserId === item.createdByUserId
-      && normalizeCode(candidate.sku) === sku
       && candidate.status === "aguardando_teste"
-      && !String(candidate.serial || "").trim()
-      && !String(candidate.securitySealCode || "").trim()
-      && new Date(candidate.createdAt).getTime() > since)
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] || null;
+      && String(candidate.createdAt || "") >= TRIAGE_OPEN_LABEL_RULE_SINCE)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0] || null;
+}
+
+// QR de etiqueta, codigo LAB-... ou lacre bipado no campo SKU abre o laudo existente em vez de criar outro.
+async function findTriageItemScannedAsSku(userId, sku) {
+  const raw = String(sku || "").trim();
+  if (!raw) return null;
+  const found = await lookupTriageItemByScan(userId, raw);
+  if (found) return getTriageItem(userId, found.code);
+  if (/LAB-\d{8}-\d{6}/i.test(raw) || /ETIQUEFACIL/i.test(raw)) {
+    throw new Error("O codigo bipado e o QR de uma etiqueta de laudo, nao um SKU, e essa etiqueta nao foi encontrada.");
+  }
+  return null;
 }
 
 async function hydrateTriageInputPrice(userId, item) {
@@ -1758,6 +1762,10 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const diagnosis = String(payload.diagnosis ?? payload.description ?? payload.descricaoDiagnostico ?? payload.descricao_diagnostico ?? "").trim();
   const diagnosisPhoto = normalizeTriageDiagnosisPhoto(payload.diagnosisPhoto ?? payload.photo ?? payload.foto ?? "");
   const gradeAvaliada = normalizeGradeValue(payload.gradeAvaliada ?? payload.grade_avaliada ?? payload.gradeTestada ?? payload.grade_testada ?? payload.grade);
+  const serial = !photoOnly && payload.serial !== undefined ? String(payload.serial || "").trim() : null;
+  const securitySealCode = !photoOnly && payload.securitySealCode !== undefined ? normalizeCode(payload.securitySealCode) : null;
+  if (serial !== null) await ensureTriageSerialAvailable({ userId, serial, ignoreCode: code });
+  if (securitySealCode !== null) await ensureTriageSecuritySealAvailable({ userId, securitySealCode, ignoreCode: code });
   const now = new Date().toISOString();
 
   if (hasPostgres()) {
@@ -1769,7 +1777,7 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
         [userId, normalizeCode(code)]
       );
       if (!current.rows.length) throw notFound("Item de triagem nao encontrado.");
-      if (!photoOnly) ensureTriageSerialFilled(current.rows[0].serial);
+      if (!photoOnly) ensureTriageSerialFilled(serial ?? current.rows[0].serial);
       const result = await client.query(
         `update triage_items
          set status = 'diagnosticado',
@@ -1780,10 +1788,12 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
              grade_avaliada = $7,
              operator_user_id = case when $10 then operator_user_id else coalesce($8, operator_user_id) end,
              updated_at = $9,
-             diagnosed_at = case when $10 then coalesce(diagnosed_at, $9) else $9 end
+             diagnosed_at = case when $10 then coalesce(diagnosed_at, $9) else $9 end,
+             serial = coalesce($11, serial),
+             security_seal_code = coalesce($12, security_seal_code)
          where user_id = $1 and upper(code) = upper($2)
          returning *`,
-        [userId, normalizeCode(code), destination, diagnosisCondition, diagnosis, diagnosisPhoto, gradeAvaliada, operatorUserId, now, Boolean(photoOnly)]
+        [userId, normalizeCode(code), destination, diagnosisCondition, diagnosis, diagnosisPhoto, gradeAvaliada, operatorUserId, now, Boolean(photoOnly), serial, securitySealCode]
       );
       if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
       const item = await enrichTriageGradeComparison(userId, triageItemFromRow(result.rows[0]));
@@ -1814,7 +1824,9 @@ export async function updateTriageDiagnosis({ userId, code, operatorUserId = nul
   const db = await readDb();
   const item = (db.triageItems || []).find((candidate) => candidate.userId === userId && normalizeCode(candidate.code) === normalizeCode(code));
   if (!item) throw notFound("Item de triagem nao encontrado.");
-  if (!photoOnly) ensureTriageSerialFilled(item.serial);
+  if (!photoOnly) ensureTriageSerialFilled(serial ?? item.serial);
+  if (serial !== null) item.serial = serial;
+  if (securitySealCode !== null) item.securitySealCode = securitySealCode;
   item.status = "diagnosticado";
   item.destination = destination;
   item.diagnosisCondition = diagnosisCondition;
@@ -2103,22 +2115,27 @@ export async function canDeleteTriageItem({ userId, code, requesterUserId = null
        limit 5`,
       [userId, requesterId]
     );
-    return result.rows.some((row) => normalizeCode(row.code) === normalized);
+    if (result.rows.some((row) => normalizeCode(row.code) === normalized)) return true;
+    const pending = await query(
+      "select 1 from triage_items where user_id = $1 and created_by_user_id = $2 and upper(code) = upper($3) and status = 'aguardando_teste' limit 1",
+      [userId, requesterId, normalized]
+    );
+    return pending.rows.length > 0;
   }
 
   const db = await readDb();
-  return (db.triageItems || [])
+  const own = (db.triageItems || [])
     .filter((item) => item.userId === userId && item.createdByUserId === requesterId)
-    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
-    .slice(0, 5)
-    .some((item) => normalizeCode(item.code) === normalized);
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  return own.slice(0, 5).some((item) => normalizeCode(item.code) === normalized)
+    || own.some((item) => item.status === "aguardando_teste" && normalizeCode(item.code) === normalized);
 }
 
 export async function deleteTriageItem({ userId, code, requesterUserId = null, isOwner = true }) {
   await ensureStore();
   const normalized = normalizeCode(code);
   if (!(await canDeleteTriageItem({ userId, code: normalized, requesterUserId, isOwner }))) {
-    const error = new Error("Operador pode excluir apenas as 5 ultimas etiquetas que ele gerou.");
+    const error = new Error("Operador pode excluir apenas as 5 ultimas etiquetas que gerou ou as suas que ainda estao sem laudo.");
     error.status = 403;
     throw error;
   }

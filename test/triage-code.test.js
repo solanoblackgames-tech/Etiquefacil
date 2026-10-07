@@ -52,12 +52,12 @@ test("createTriageItem keeps code sequence after deleting an earlier label", asy
     });
     const second = await createTriageItem({
       userId: "owner-1",
-      createdByUserId: "owner-1",
+      createdByUserId: "operator-2",
       payload: { descricao: "Produto 2", sku: "SKU-2" }
     });
     const third = await createTriageItem({
       userId: "owner-1",
-      createdByUserId: "owner-1",
+      createdByUserId: "operator-3",
       payload: { descricao: "Produto 3", sku: "SKU-3" }
     });
 
@@ -65,7 +65,7 @@ test("createTriageItem keeps code sequence after deleting an earlier label", asy
 
     const next = await createTriageItem({
       userId: "owner-1",
-      createdByUserId: "owner-1",
+      createdByUserId: "operator-4",
       payload: { descricao: "Produto 4", sku: "SKU-4" }
     });
 
@@ -81,7 +81,7 @@ test("createTriageItem keeps code sequence after deleting an earlier label", asy
   }
 });
 
-test("createTriageItem creates a new label for the same SKU once the previous unit is identified", async () => {
+test("createTriageItem creates a new label for the same SKU once the previous unit has a diagnosis", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-repeat-sku-"));
@@ -92,7 +92,7 @@ test("createTriageItem creates a new label for the same SKU once the previous un
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-repeat-sku`;
-    const { createTriageItem, writeDb } = await import(storeUrl.href);
+    const { createTriageItem, updateTriageDiagnosis, writeDb } = await import(storeUrl.href);
     await writeDb(emptyDb());
 
     const first = await createTriageItem({
@@ -100,6 +100,7 @@ test("createTriageItem creates a new label for the same SKU once the previous un
       createdByUserId: "owner-1",
       payload: { sku: "SKU-REPETIDO", serial: "SN-1" }
     });
+    await updateTriageDiagnosis({ userId: "owner-1", code: first.code, operatorUserId: "owner-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } });
     const second = await createTriageItem({
       userId: "owner-1",
       createdByUserId: "owner-1",
@@ -165,7 +166,7 @@ test("createTriageItem hydrates product description from scanned SKU", async () 
   }
 });
 
-test("operator can delete only their last five generated triage labels", async () => {
+test("operator can delete their last five labels or any own label still without diagnosis", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-delete-"));
@@ -192,7 +193,7 @@ test("operator can delete only their last five generated triage labels", async (
       codigoBling2: "",
       descricao: `Produto ${index + 1}`,
       serial: "",
-      status: "aguardando_teste",
+      status: "diagnosticado",
       destination: "",
       diagnosis: "",
       diagnosisPhoto: "",
@@ -209,8 +210,17 @@ test("operator can delete only their last five generated triage labels", async (
       createdAt: "2026-07-07T10:06:00.000Z",
       updatedAt: "2026-07-07T10:06:00.000Z"
     });
+    db.triageItems.push({
+      ...db.triageItems[0],
+      id: "triage-old-pending",
+      code: "LAB-20260706-000001",
+      status: "aguardando_teste",
+      createdAt: "2026-07-06T10:00:00.000Z",
+      updatedAt: "2026-07-06T10:00:00.000Z"
+    });
     await writeDb(db);
 
+    assert.equal(await canDeleteTriageItem({ userId: "owner-1", code: "LAB-20260706-000001", requesterUserId: "operator-1" }), true);
     assert.equal(await canDeleteTriageItem({ userId: "owner-1", code: "LAB-20260707-000006", requesterUserId: "operator-1" }), true);
     assert.equal(await canDeleteTriageItem({ userId: "owner-1", code: "LAB-20260707-000001", requesterUserId: "operator-1" }), false);
     assert.equal(await canDeleteTriageItem({ userId: "owner-1", code: "LAB-20260707-000007", requesterUserId: "operator-1" }), false);

@@ -834,8 +834,12 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
       operatorUserId: operatorUserId(req),
       payload: req.body || {}
     });
-    if (item.reused) {
-      return res.json({ item: await withTriageQrData(req, item), reused: true });
+    if (item.openPending || item.scanned) {
+      return res.json({
+        item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req), includeTransfer: true }),
+        openPending: Boolean(item.openPending),
+        scanned: Boolean(item.scanned)
+      });
     }
     await updateProductRegistrationFromTriage({ userId, item });
     const bling = await syncTriageItemToBling(userId, item);

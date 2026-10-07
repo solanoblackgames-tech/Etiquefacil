@@ -11333,14 +11333,21 @@ async function createTriageItem(event) {
     });
     refreshTriageStatsIfVisible();
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
-    if (response.reused) {
+    if (response.openPending) {
       $("#triageMessage").style.color = "";
-      $("#triageMessage").textContent = `Este SKU ja tem a etiqueta ${response.item.code} aberta e sem laudo. Nenhuma etiqueta nova foi gerada: finalize o laudo dela.`;
-    } else {
-      $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
-      $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
+      $("#triageMessage").textContent = `Nenhuma etiqueta nova foi gerada: voce tem a etiqueta ${response.item.code} (${response.item.descricao || response.item.sku || "sem descricao"}) sem laudo. Salve o laudo dela, ou exclua a etiqueta se foi criada por engano.`;
+      schedulePrimaryInputFocus(["#triageDetail .triage-diagnosis-form input[name='serial']"]);
+      return;
     }
-    schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
+    if (response.scanned) {
+      $("#triageMessage").style.color = "#0f766e";
+      $("#triageMessage").textContent = `Isso e uma etiqueta existente: ${response.item.code} aberta. Para gerar etiqueta nova, bipe o SKU do produto.`;
+      schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
+      return;
+    }
+    $("#triageMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";
+    $("#triageMessage").textContent = triageBlingMessage(response.bling, "Etiqueta QR gerada.");
+    schedulePrimaryInputFocus(["#triageDetail .triage-diagnosis-form input[name='serial']", "#triageCreateForm input[name='sku']"]);
   } catch (error) {
     $("#triageMessage").style.color = "";
     $("#triageMessage").textContent = error.message;
@@ -11878,7 +11885,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
     </section>
     ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
     ${triageDiagnosisHistoryMarkup(item.diagnosisHistory)}
-    <form class="triage-edit-form ${openEdit ? "" : "hidden"}">
+    <form class="triage-edit-form ${openEdit ? "" : "hidden"}" data-triage-code="${escapeHtml(item.code)}">
       <div class="panel-heading">
         <span class="muted">Dados da etiqueta</span>
         <h3>Editar identificacao e informacoes</h3>
@@ -11975,9 +11982,9 @@ function transferReceivePath(lot) {
 
 function triageDiagnosisPhotoFormMarkup(item) {
   return `
-    <form class="triage-diagnosis-form triage-photo-only-form">
+    <form class="triage-diagnosis-form triage-photo-only-form" data-triage-code="${escapeHtml(item.code)}" data-had-photo="${item.diagnosisPhoto ? "1" : ""}">
       <div class="panel-heading">
-        <span class="muted">Laudo</span>
+        <span class="muted">Laudo ${escapeHtml(item.code)}</span>
         <h3>Adicionar foto ao laudo</h3>
       </div>
       <input type="hidden" name="diagnosisCondition" value="${escapeHtml(item.diagnosisCondition || "")}" />
@@ -11993,7 +12000,7 @@ function triageDiagnosisPhotoFormMarkup(item) {
         ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
         <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
       </div>
-      <button type="submit">Salvar foto</button>
+      <button type="submit">Salvar foto na ${escapeHtml(item.code)}</button>
       <p class="message" id="triageDetailMessage"></p>
     </form>
   `;
@@ -12006,11 +12013,13 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
   const automaticDestination = selectedRule?.destination || item.destination || "";
   const automaticDestinationLabel = automaticDestination ? destinationLabel(automaticDestination) : "Selecione um diagnostico";
   return `
-    <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}">
+    <form class="triage-diagnosis-form ${qrMode ? "triage-qr-diagnosis-form" : ""}" data-triage-code="${escapeHtml(item.code)}" data-had-photo="${item.diagnosisPhoto ? "1" : ""}">
       <div class="panel-heading">
-        <span class="muted">${qrMode ? "QR Code" : "Diagnostico"}</span>
+        <span class="muted">${qrMode ? "QR Code" : "Diagnostico"} ${escapeHtml(item.code)}</span>
         <h3>${qrMode ? "Atualizar laudo" : "Saida do teste"}</h3>
       </div>
+      <label>Numero de serie<input name="serial" value="${escapeHtml(item.serial || "")}" required autocomplete="off" placeholder="Bipe ou digite o serial/IMEI" /></label>
+      <label>Lacre de seguranca<input name="securitySealCode" value="${escapeHtml(item.securitySealCode || "")}" autocomplete="off" placeholder="Bipe o lacre quando utilizado" /></label>
       <label>Diagnostico
         <select name="diagnosisCondition" required>
           <option value="">Selecione</option>
@@ -12034,7 +12043,7 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
         <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
       </div>
-      <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"}</button>
+      <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"} da ${escapeHtml(item.code)}</button>
     </form>
   `;
 }
@@ -12225,6 +12234,7 @@ function loadImage(src) {
 }
 
 function updateTriagePhotoPreview(form, photo) {
+  if (form) form.dataset.photoChanged = "1";
   const preview = form?.querySelector("[data-triage-photo-preview]");
   const hiddenInput = form?.elements?.diagnosisPhoto;
   if (hiddenInput) hiddenInput.value = photo || "";
@@ -12251,10 +12261,15 @@ async function handleTriageDetailSubmit(event) {
       const destination = form.elements?.destination?.value;
       if (!condition || !destination) throw new Error("Antes de adicionar foto, salve o diagnostico e o destino do laudo na triagem.");
     }
+    const code = form.dataset.triageCode || state.selectedTriageCode;
+    if (form.dataset.hadPhoto && form.elements?.diagnosisPhotoFile?.files?.length
+      && !confirm(`A etiqueta ${code} ja tem foto. Substituir pela foto nova?`)) {
+      throw new Error(`Foto nao substituida. Confira se o aparelho e mesmo o da etiqueta ${code}.`);
+    }
     const formData = new FormData(form);
     formData.delete("diagnosisPhotoFile");
     formData.set("diagnosisPhoto", await readTriageDiagnosisPhoto(form));
-    const response = await api(`/api/triage/items/${encodeURIComponent(state.selectedTriageCode)}/diagnosis`, {
+    const response = await api(`/api/triage/items/${encodeURIComponent(code)}/diagnosis`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(Object.fromEntries(formData))
@@ -12280,6 +12295,12 @@ async function handleTriageDetailSubmit(event) {
 }
 
 function openTriageEditOnSerial() {
+  const diagnosisSerial = $("#triageDetail .triage-diagnosis-form input[name='serial']");
+  if (diagnosisSerial) {
+    diagnosisSerial.focus();
+    diagnosisSerial.select();
+    return;
+  }
   const form = $("#triageDetail .triage-edit-form");
   if (!form) return;
   form.classList.remove("hidden");
@@ -12290,12 +12311,48 @@ function openTriageEditOnSerial() {
   input?.select();
 }
 
+// O que foi preenchido no laudo e ainda nao salvo sobrevive a um "Salvar dados" (que redesenha a tela).
+// Serial e lacre ficam com o valor recem-salvo em "Editar dados".
+const TRIAGE_DIAGNOSIS_DRAFT_FIELDS = ["diagnosisCondition", "gradeAvaliada", "diagnosis", "diagnosisPhoto"];
+
+function snapshotUnsavedTriageDiagnosis() {
+  const form = $("#triageDetail .triage-diagnosis-form:not(.triage-photo-only-form)");
+  if (!form) return null;
+  const values = {};
+  for (const name of TRIAGE_DIAGNOSIS_DRAFT_FIELDS) {
+    const field = form.elements?.[name];
+    const changed = name === "diagnosisPhoto" ? form.dataset.photoChanged === "1" : field && isTriageFieldChanged(field);
+    if (field && changed) values[name] = field.value;
+  }
+  return Object.keys(values).length ? { code: form.dataset.triageCode, values } : null;
+}
+
+function isTriageFieldChanged(field) {
+  if (field.tagName === "SELECT") {
+    const original = [...field.options].find((option) => option.defaultSelected)?.value ?? "";
+    return field.value !== original;
+  }
+  return field.value !== field.defaultValue;
+}
+
+function restoreUnsavedTriageDiagnosis(snapshot, previousCode, nextCode) {
+  if (!snapshot || snapshot.code !== previousCode) return;
+  const form = $("#triageDetail .triage-diagnosis-form:not(.triage-photo-only-form)");
+  if (!form || form.dataset.triageCode !== nextCode) return;
+  for (const [name, value] of Object.entries(snapshot.values)) {
+    if (form.elements?.[name]) form.elements[name].value = value;
+  }
+  if (snapshot.values.diagnosisCondition !== undefined) updateTriageAutomaticDestination(form, snapshot.values.diagnosisCondition);
+  if (snapshot.values.diagnosisPhoto !== undefined) updateTriagePhotoPreview(form, snapshot.values.diagnosisPhoto);
+}
+
 async function handleTriageEditSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const message = $("#triageEditMessage");
   try {
-    const previousCode = state.selectedTriageCode;
+    const previousCode = form.dataset.triageCode || state.selectedTriageCode;
+    const unsavedDiagnosis = snapshotUnsavedTriageDiagnosis();
     const payload = Object.fromEntries(new FormData(form));
     delete payload.valorUnit;
     delete payload.precoCusto;
@@ -12312,6 +12369,7 @@ async function handleTriageEditSubmit(event) {
       openEdit: shouldOpenTriageEditForBling(response.bling),
       focusSelector: triageBlingCorrectionSelector(response.bling)
     });
+    restoreUnsavedTriageDiagnosis(unsavedDiagnosis, previousCode, response.item.code);
     refreshTriageStatsIfVisible();
     updateRoute(`/triagem/${encodeURIComponent(response.item.code)}`);
     $("#triageDetailMessage").style.color = response.bling?.ok === false ? "" : "#0f766e";

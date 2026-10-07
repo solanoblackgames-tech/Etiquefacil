@@ -179,13 +179,6 @@ test("triage transfer marks WMS only for destinations with generated WMS deposit
       operatorUserId: "operator-1",
       payload: completeTriagePayload({ sku: "SKU-ECOM", descricao: "Produto internet" })
     });
-    const rmaItem = await createTriageItem({
-      userId: "owner-1",
-      createdByUserId: "operator-1",
-      operatorUserId: "operator-1",
-      payload: completeTriagePayload({ sku: "SKU-RMA", descricao: "Produto RMA" })
-    });
-
     await createOrUpdateTriageTransfer({
       userId: "owner-1",
       createdByUserId: "operator-1",
@@ -195,6 +188,12 @@ test("triage transfer marks WMS only for destinations with generated WMS deposit
         operatorUserId: "operator-1",
         payload: { diagnosisCondition: "OK_VENDA_INTERNET", destination: "ECOMMERCE", diagnosis: "Aprovado" }
       })
+    });
+    const rmaItem = await createTriageItem({
+      userId: "owner-1",
+      createdByUserId: "operator-1",
+      operatorUserId: "operator-1",
+      payload: completeTriagePayload({ sku: "SKU-RMA", descricao: "Produto RMA" })
     });
     await createOrUpdateTriageTransfer({
       userId: "owner-1",

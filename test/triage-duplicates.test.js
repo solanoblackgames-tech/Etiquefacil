@@ -52,31 +52,82 @@ async function withTriageStore(suffix, run) {
   }
 }
 
-test("createTriageItem reuses the pending label when the same operator scans the same SKU again", async () => {
-  await withTriageStore("duplicate", async ({ createTriageItem, readDb }) => {
+test("operator cannot generate a new label while one of theirs is still without diagnosis", async () => {
+  await withTriageStore("open-label", async ({ createTriageItem, deleteTriageItem, readDb }) => {
     const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "SKU-CEL" } });
-    const repeated = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "sku-cel" } });
+    const sameSku = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "sku-cel" } });
+    const otherSku = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "SKU-TV", serial: "SN-TV-1" } });
     const otherOperator = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-2", operatorUserId: "operator-2", payload: { sku: "SKU-CEL" } });
 
-    assert.equal(first.reused, undefined);
-    assert.equal(repeated.reused, true);
-    assert.equal(repeated.code, first.code);
+    assert.equal(first.openPending, undefined);
+    assert.equal(sameSku.openPending, true);
+    assert.equal(sameSku.code, first.code);
+    assert.equal(otherSku.openPending, true);
+    assert.equal(otherSku.code, first.code);
     assert.notEqual(otherOperator.code, first.code);
     assert.equal((await readDb()).triageItems.length, 2);
+
+    await deleteTriageItem({ userId: "owner-1", code: first.code, requesterUserId: "operator-1", isOwner: false });
+    const afterDelete = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", operatorUserId: "operator-1", payload: { sku: "SKU-TV" } });
+    assert.equal(afterDelete.openPending, undefined);
+    assert.notEqual(afterDelete.code, first.code);
   });
 });
 
-test("createTriageItem creates a new label once the pending one has serial or diagnosis", async () => {
-  await withTriageStore("after-diagnosis", async ({ createTriageItem, updateTriageDiagnosis }) => {
-    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-CEL-1" } });
-    await updateTriageDiagnosis({ userId: "owner-1", code: first.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } });
-    const second = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
-    const withSerial = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV", serial: "SN-TV-1" } });
-    const nextTv = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-TV" } });
+test("open label rule ignores pending labels created before the rule started", async () => {
+  await withTriageStore("open-label-legacy", async ({ createTriageItem, readDb, writeDb }) => {
+    const old = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-VELHO" } });
+    const db = await readDb();
+    db.triageItems.find((item) => item.code === old.code).createdAt = "2026-10-06T15:00:00.000Z";
+    await writeDb(db);
 
-    assert.notEqual(second.code, first.code);
-    assert.equal(second.reused, undefined);
-    assert.notEqual(nextTv.code, withSerial.code);
+    const next = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-NOVO" } });
+    assert.equal(next.openPending, undefined);
+    assert.notEqual(next.code, old.code);
+  });
+});
+
+test("scanning a label QR or security seal in the SKU field opens the existing label", async () => {
+  await withTriageStore("scan-in-sku", async ({ createTriageItem, updateTriageDiagnosis, readDb }) => {
+    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-CEL-1", securitySealCode: "1000042881758" } });
+    await updateTriageDiagnosis({ userId: "owner-1", code: item.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO" } });
+
+    const byMangledQr = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: `HTTPSÇ;;ETIQUEFACIL.COM.BR;LAUDO;${item.code}` } });
+    const bySeal = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "1000042881758" } });
+
+    assert.equal(byMangledQr.scanned, true);
+    assert.equal(byMangledQr.code, item.code);
+    assert.equal(bySeal.scanned, true);
+    assert.equal(bySeal.code, item.code);
+    await assert.rejects(
+      createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "LAB-20990101-000001" } }),
+      /QR de uma etiqueta/
+    );
+    assert.equal((await readDb()).triageItems.length, 1);
+  });
+});
+
+test("updateTriageDiagnosis saves serial and seal together with the diagnosis", async () => {
+  await withTriageStore("diagnosis-with-serial", async ({ createTriageItem, updateTriageDiagnosis }) => {
+    const first = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
+    const saved = await updateTriageDiagnosis({
+      userId: "owner-1",
+      code: first.code,
+      operatorUserId: "operator-1",
+      payload: { diagnosisCondition: "OK_FUNCIONANDO", serial: "IMEI-1", securitySealCode: "LACRE-1" }
+    });
+    assert.equal(saved.serial, "IMEI-1");
+    assert.equal(saved.securitySealCode, "LACRE-1");
+
+    const second = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL" } });
+    await assert.rejects(
+      updateTriageDiagnosis({ userId: "owner-1", code: second.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO", serial: "imei-1" } }),
+      new RegExp(first.code)
+    );
+    await assert.rejects(
+      updateTriageDiagnosis({ userId: "owner-1", code: second.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO", serial: "IMEI-2", securitySealCode: "LACRE-1" } }),
+      /lacre/
+    );
   });
 });
 
