@@ -36,6 +36,7 @@ import {
   addImportedRzsToLot,
   addDiverseLotItem,
   canDeleteTriageItem,
+  getTriageDeletePolicy,
   confirmPublicTransferLotTotal,
   completeWmsExpeditionOrder,
   createExternalExcess,
@@ -695,7 +696,7 @@ app.patch("/api/profile/triage-transfer-settings", requireAuth, requireOwner, re
 app.get("/api/triage/items", requireAuth, requireTriageAccess, async (req, res) => {
   try {
     res.json({
-      items: await withTriageQrData(req, await listTriageItems(workspaceUserId(req), {
+      items: await withTriageListData(req, await listTriageItems(workspaceUserId(req), {
         lotId: req.query.lotId
       }))
     });
@@ -2995,6 +2996,35 @@ async function publicUserForId(userId) {
     if (error.status && error.status !== 404) throw error;
     return null;
   }
+}
+
+// Versao leve para a fila: sem foto e sem QR (o detalhe busca a etiqueta completa), usuarios e
+// permissao de exclusao resolvidos uma vez por carregamento em vez de consultas por etiqueta.
+async function withTriageListData(req, items = []) {
+  const users = new Map();
+  const userFor = (id) => {
+    if (!id) return null;
+    if (!users.has(id)) users.set(id, publicUserForId(id));
+    return users.get(id);
+  };
+  const canDelete = await getTriageDeletePolicy({
+    userId: workspaceUserId(req),
+    requesterUserId: req.session.user?.id,
+    isOwner: isOwnerSession(req)
+  });
+  return Promise.all(items.map(async (item) => {
+    const [operatorUser, createdByUser] = await Promise.all([userFor(item.operatorUserId), userFor(item.createdByUserId)]);
+    return {
+      ...item,
+      diagnosisPhoto: "",
+      hasDiagnosisPhoto: item.hasDiagnosisPhoto ?? Boolean(item.diagnosisPhoto),
+      operatorUser,
+      createdByUser,
+      diagnosedByUser: item.diagnosedAt ? operatorUser : null,
+      canDelete: canDelete(item),
+      statusUrl: triageStatusUrl(req, item.code)
+    };
+  }));
 }
 
 async function withTriageQrData(req, value, { includeHistory = false, includeTransfer = false } = {}) {

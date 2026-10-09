@@ -1246,7 +1246,11 @@ export async function listTriageItems(userId, filters = {}) {
     const result = await query(
       `
         select
-          t.*,
+          t.id, t.user_id, t.created_by_user_id, t.operator_user_id, t.code, t.product_code, t.sku, t.ean, t.asin,
+          t.codigo_bling2, t.descricao, t.valor_unit, t.preco_custo, t.serial, t.grade_avaliada, t.security_seal_code,
+          t.altura_caixa, t.largura_caixa, t.comprimento_caixa, t.peso_caixa, t.status, t.destination,
+          t.diagnosis_condition, t.diagnosis, t.created_at, t.updated_at, t.diagnosed_at,
+          (t.diagnosis_photo <> '') as has_diagnosis_photo,
           p.lot_id as matched_lot_id,
           l.nome_arquivo as matched_lot_name,
           l.prefixo_sku as matched_lot_sku_prefix
@@ -1273,12 +1277,15 @@ export async function listTriageItems(userId, filters = {}) {
       `,
       [userId, lotId]
     );
-    return Promise.all(result.rows.map(async (row) => enrichTriageGradeComparison(userId, {
+    const items = result.rows.map((row) => ({
       ...triageItemFromRow(row),
+      hasDiagnosisPhoto: Boolean(row.has_diagnosis_photo),
       lotId: row.matched_lot_id || "",
       lotName: row.matched_lot_name || "",
       lotSkuPrefix: row.matched_lot_sku_prefix || ""
-    }, lotId)));
+    }));
+    const gradeDataFor = await findExpectedGradeDataForItems(userId, items, lotId);
+    return items.map((item) => applyTriageGradeComparison(item, gradeDataFor(item)));
   }
 
   const db = await readDb();
@@ -2097,6 +2104,30 @@ export async function updateProductRegistrationFromTriage({ userId, item }) {
   if (asin) product.codigoMl = asin;
   await writeDb(db);
   return product;
+}
+
+export async function getTriageDeletePolicy({ userId, requesterUserId = null, isOwner = false }) {
+  await ensureStore();
+  const requesterId = String(requesterUserId || "").trim();
+  let recentCodes = new Set();
+  if (!isOwner && requesterId) {
+    if (hasPostgres()) {
+      const result = await query(
+        "select code from triage_items where user_id = $1 and created_by_user_id = $2 order by created_at desc limit 5",
+        [userId, requesterId]
+      );
+      recentCodes = new Set(result.rows.map((row) => normalizeCode(row.code)));
+    } else {
+      const db = await readDb();
+      recentCodes = new Set((db.triageItems || [])
+        .filter((item) => item.userId === userId && item.createdByUserId === requesterId)
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+        .slice(0, 5)
+        .map((item) => normalizeCode(item.code)));
+    }
+  }
+  return (item = {}) => isOwner || Boolean(requesterId && item.createdByUserId === requesterId
+    && (item.status === "aguardando_teste" || recentCodes.has(normalizeCode(item.code))));
 }
 
 export async function canDeleteTriageItem({ userId, code, requesterUserId = null, isOwner = false }) {
@@ -11306,6 +11337,55 @@ function findTriageStatsProduct(products = [], lotIds = new Set(), item = {}) {
 async function enrichTriageGradeComparison(userId, item = {}, lotId = "") {
   const gradeData = await findExpectedGradeData(userId, item, lotId);
   return applyTriageGradeComparison(item, gradeData);
+}
+
+// Mesma regra de findExpectedGradeData, mas com uma consulta para a lista inteira em vez de uma por etiqueta.
+async function findExpectedGradeDataForItems(userId, items = [], lotId = "") {
+  const itemCodes = (item) => [item.productCode, item.codigoBling2, item.asin].map(normalizeCode).filter(Boolean);
+  const skus = [...new Set(items.map((item) => normalizeCode(item.sku)).filter(Boolean))];
+  const codes = [...new Set(items.flatMap(itemCodes))];
+  const bySku = new Map();
+  const byCode = new Map();
+  const add = (map, key, grades) => {
+    if (!key) return;
+    if (!map.has(key)) map.set(key, new Set());
+    for (const grade of grades) map.get(key).add(grade);
+  };
+  if (skus.length || codes.length) {
+    const result = await query(
+      `
+        select
+          upper(trim(p.sku)) as sku_key,
+          regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') as sku_code39,
+          upper(trim(p.codigo_ml)) as code_key,
+          array_agg(distinct nullif(trim(ri.condicao_grade), '')) filter (where nullif(trim(ri.condicao_grade), '') is not null) as expected_grades
+        from products p
+        join lots l on l.id = p.lot_id
+        left join rz_items ri on ri.product_id = p.id and ri.lot_id = p.lot_id
+        where l.user_id = $1
+          and ($4::text = '' or l.id = $4::text)
+          and (
+            upper(trim(p.sku)) = any($2::text[])
+            or regexp_replace(upper(trim(p.sku)), '[^0-9A-Z .$/+%-]', '-', 'g') = any($2::text[])
+            or upper(trim(p.codigo_ml)) = any($3::text[])
+          )
+        group by 1, 2, 3
+      `,
+      [userId, skus, codes, String(lotId || "").trim()]
+    );
+    for (const row of result.rows) {
+      const grades = row.expected_grades || [];
+      add(bySku, row.sku_key, grades);
+      add(bySku, row.sku_code39, grades);
+      add(byCode, row.code_key, grades);
+    }
+  }
+  return (item) => {
+    const sku = normalizeCode(item.sku);
+    const found = [...(bySku.get(sku) || []), ...itemCodes(item).flatMap((code) => [...(byCode.get(code) || [])])];
+    const expectedGrades = normalizeGradeList(found);
+    return { expectedGrades, expectedGrade: expectedGrades.join(", ") };
+  };
 }
 
 async function findExpectedGradeData(userId, item = {}, lotId = "") {
