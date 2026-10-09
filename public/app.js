@@ -11311,12 +11311,21 @@ function destinationLabel(destination) {
 async function createTriageItem(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  // Leitor que manda Enter duas vezes nao pode gerar duas etiquetas.
-  if (state.creatingTriageItem) return;
-  state.creatingTriageItem = true;
-  $("#triageMessage").textContent = "";
+  // Leitor que manda Enter duas vezes nao pode gerar duas etiquetas; avisa em vez de ignorar em silencio.
+  if (state.creatingTriageItem && Date.now() - state.creatingTriageItem < TRIAGE_CREATE_LOCK_MS) {
+    $("#triageMessage").style.color = "";
+    $("#triageMessage").textContent = "Aguarde: ainda gerando a etiqueta anterior...";
+    return;
+  }
+  state.creatingTriageItem = Date.now();
+  $("#triageMessage").style.color = "";
+  $("#triageMessage").textContent = "Gerando etiqueta...";
   try {
-    await hydrateTriageProductFromSku(form);
+    // A busca no Bling so completa dados; se demorar, a etiqueta sai com os dados do lote.
+    await Promise.race([
+      hydrateTriageProductFromSku(form).catch(() => null),
+      new Promise((resolve) => setTimeout(resolve, TRIAGE_CREATE_LOOKUP_WAIT_MS))
+    ]);
     const response = await api("/api/triage/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -11353,9 +11362,12 @@ async function createTriageItem(event) {
     $("#triageMessage").textContent = error.message;
     schedulePrimaryInputFocus(["#triageCreateForm input[name='sku']"]);
   } finally {
-    state.creatingTriageItem = false;
+    state.creatingTriageItem = 0;
   }
 }
+
+const TRIAGE_CREATE_LOCK_MS = 45000;
+const TRIAGE_CREATE_LOOKUP_WAIT_MS = 3000;
 
 async function lookupTriageSku() {
   const form = $("#triageCreateForm");
@@ -11371,9 +11383,11 @@ async function hydrateTriageProductFromSku(form, { showNotFound = false } = {}) 
   try {
     response = await api(`/api/triage/lookup?code=${encodeURIComponent(sku)}`);
   } catch {
+    if (String(form?.elements?.sku?.value || "").trim() !== sku) return null;
     if (showNotFound) renderTriageLookupPreview(null, "SKU nao encontrado na base. A etiqueta sera criada somente com o codigo bipado.");
     return null;
   }
+  if (String(form?.elements?.sku?.value || "").trim() !== sku) return null;
   if (response.product) {
     fillTriageProduct(response.product);
     renderTriageLookupPreview(response.product);
