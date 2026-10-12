@@ -6283,9 +6283,10 @@ function adminCatalogRequestRow(request) {
         <div class="catalog-card-meta">
           <span class="catalog-code">${escapeHtml(request.codigoMl)}</span>
           ${request.ean ? `<span>EAN ${escapeHtml(request.ean)}</span>` : ""}
-          <span>${escapeHtml(actor)}</span>
+          ${hasChoices ? "" : `<span>${escapeHtml(actor)}</span>`}
           <span>${formatDate(request.createdAt)}</span>
         </div>
+        ${hasChoices ? catalogRequestActorsHtml(options) : ""}
         ${reasons.length ? `<ul class="catalog-reasons ${info.tone}">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
         ${request.alertMessage ? `<span class="catalog-alert">${escapeHtml(request.alertMessage)}</span>` : ""}
       </div>
@@ -6298,6 +6299,21 @@ function adminCatalogRequestRow(request) {
       </div>
       ${choiceHtml}
     </article>
+  `;
+}
+
+// Quem fez cada cadastro do grupo (cadastro inicial + double checks), visivel mesmo sem abrir a comparacao.
+function catalogRequestActorsHtml(options) {
+  return `
+    <div class="catalog-actors">
+      ${options.map((option, index) => `
+        <span class="catalog-actor">
+          <b>${index === 0 ? "Cadastro" : `Double check ${index}`}</b>
+          ${escapeHtml(catalogActorLabel(option))}
+          <small>${formatDate(option.createdAt)}</small>
+        </span>
+      `).join("")}
+    </div>
   `;
 }
 

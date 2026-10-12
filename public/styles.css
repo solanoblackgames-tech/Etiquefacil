@@ -8420,3 +8420,35 @@ h3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.catalog-actors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.catalog-actor {
+  align-items: baseline;
+  background: #f5f7f9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 3px 8px;
+}
+
+.catalog-actor b {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.catalog-actor small {
+  color: var(--muted);
+  white-space: nowrap;
+}
