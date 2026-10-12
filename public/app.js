@@ -3,16 +3,25 @@ const state = {
   adminUsers: [],
   adminBlingIntegrations: [],
   adminLots: [],
-  adminTriageTransferSettings: null,
-  adminTriageTransferUserId: "",
   adminCatalogRequests: [],
   adminCatalogRejectedRequests: [],
   adminCatalogProducts: [],
+  adminLoaded: {},
+  adminFetched: new Set(),
+  adminUserSearch: "",
+  adminOpenOperatorLists: new Set(),
   adminCatalogRequestFilters: {
-    creator: "",
+    q: "",
+    scope: "",
     date: "",
-    doubleCheckOnly: false
+    status: ""
   },
+  adminCatalogView: "pending",
+  adminCatalogLimit: 30,
+  adminCatalogRejectedLimit: 30,
+  adminCatalogSelected: new Set(),
+  adminCatalogProductsStale: false,
+  adminCatalogFilterTimer: null,
   blingIntegration: null,
   blingIntegrationLoaded: false,
   operators: [],
@@ -357,21 +366,48 @@ function bindEvents() {
   });
 
   $("#adminCreateUserForm").addEventListener("submit", createAdminUser);
+  $("#adminNewUserButton").addEventListener("click", () => toggleAdminCreateForm(true));
+  $("#adminCreateUserForm [data-admin-cancel-create]").addEventListener("click", () => toggleAdminCreateForm(false));
+  $("#adminUserSearch").addEventListener("input", (event) => {
+    state.adminUserSearch = event.target.value;
+    renderAdminUsers();
+  });
+  $("#adminOverview").addEventListener("click", (event) => {
+    const card = event.target.closest("[data-admin-overview-tab]");
+    if (card) setAdminTab(card.dataset.adminOverviewTab);
+  });
+  $("#adminUsers").addEventListener("toggle", (event) => {
+    const list = event.target.closest?.("[data-admin-operators-of]");
+    if (!list || list !== event.target) return;
+    if (list.open) state.adminOpenOperatorLists.add(list.dataset.adminOperatorsOf);
+    else state.adminOpenOperatorLists.delete(list.dataset.adminOperatorsOf);
+  }, true);
+  document.addEventListener("click", (event) => {
+    document.querySelectorAll(".admin-user-menu[open]").forEach((menu) => {
+      if (!menu.contains(event.target)) menu.open = false;
+    });
+  });
 
   $("#adminRefreshButton").addEventListener("click", loadAdminUsers);
   $("#adminBlingRefreshButton").addEventListener("click", loadAdminBlingIntegrations);
   $("#adminLotsRefreshButton").addEventListener("click", loadAdminLots);
-  $("#adminTriageRulesRefreshButton").addEventListener("click", loadAdminTriageTransferSettings);
   $("#adminCatalogRefreshButton").addEventListener("click", loadAdminCatalogReviewLists);
   $("#adminCatalogSearchForm").addEventListener("submit", loadAdminCatalogProducts);
-  $("#adminTriageRulesForm").addEventListener("submit", saveAdminTriageTransferSettings);
-  $("#adminTriageRulesForm").elements.userId.addEventListener("change", (event) => loadAdminTriageTransferSettings(event.target.value));
 
   $("#adminUsers").addEventListener("click", handleAdminUsersClick);
   $("#adminBlingIntegrations").addEventListener("click", handleAdminBlingIntegrationsClick);
   $("#adminCatalogRequests").addEventListener("click", handleAdminCatalogRequestsClick);
   $("#adminCatalogRequests").addEventListener("submit", handleAdminCatalogRequestsFilter);
   $("#adminCatalogRequests").addEventListener("change", handleAdminCatalogRequestsChange);
+  $("#adminCatalogRequests").addEventListener("input", handleAdminCatalogRequestsInput);
+  $("#adminCatalogRejectedRequests").addEventListener("click", (event) => {
+    if (!event.target.closest("[data-catalog-rejected-load-more]")) return;
+    state.adminCatalogRejectedLimit += adminCatalogPageSize();
+    renderAdminCatalogRejectedRequests();
+  });
+  document.querySelectorAll("[data-catalog-view]").forEach((button) => {
+    button.addEventListener("click", () => setAdminCatalogView(button.dataset.catalogView));
+  });
   $("#adminCatalogProducts").addEventListener("click", handleAdminCatalogProductsClick);
 
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
@@ -2567,13 +2603,11 @@ async function showApp(user) {
     $("#app").classList.add("hidden");
     $("#adminApp").classList.remove("hidden");
     $("#adminName").textContent = `${user.name} (${user.email})`;
-    await loadAdminUsers();
-    await loadAdminBlingIntegrations();
-    await loadAdminLots();
-    await loadAdminTriageTransferSettings();
-    await loadAdminCatalogReviewLists();
-    await loadAdminCatalogProducts();
-    schedulePrimaryInputFocus();
+    state.adminLoaded = {};
+    state.adminFetched = new Set();
+    renderAdminOverview();
+    setAdminTab("users");
+    loadAdminOverviewInBackground();
     return;
   }
 
@@ -4634,7 +4668,7 @@ function renderOperators() {
           <span>Dias trab.</span>
           <span>Entrada/dia</span>
           <span>Ultima ativ.</span>
-          <span>Acoes</span>
+          <span>Ações</span>
           <span>Senha</span>
         </div>
         ${operators
@@ -5573,35 +5607,33 @@ async function logout() {
 async function loadAdminUsers() {
   const response = await api("/api/admin/users");
   state.adminUsers = response.users;
+  state.adminFetched.add("users");
   renderAdminUsers();
+  renderAdminOverview();
 }
 
 async function loadAdminBlingIntegrations() {
   const response = await api("/api/admin/bling-integrations");
   state.adminBlingIntegrations = response.integrations || [];
+  state.adminFetched.add("bling");
   renderAdminBlingIntegrations();
+  renderAdminOverview();
 }
 
 async function loadAdminLots() {
   const response = await api("/api/admin/lots");
   state.adminLots = response.lots;
+  state.adminFetched.add("lots");
   renderAdminLots();
-}
-
-async function loadAdminTriageTransferSettings(userId = "") {
-  const selectedUserId = userId || state.adminTriageTransferUserId || firstAdminOwnerId();
-  renderAdminTriageUserOptions(selectedUserId);
-  if (!selectedUserId) return;
-  const response = await api(`/api/admin/users/${encodeURIComponent(selectedUserId)}/triage-transfer-settings`);
-  state.adminTriageTransferUserId = selectedUserId;
-  state.adminTriageTransferSettings = normalizeTriageTransferSettings(response.settings);
-  renderAdminTriageTransferSettings();
+  renderAdminOverview();
 }
 
 async function loadAdminCatalogRequests() {
   const response = await api("/api/admin/catalog-requests");
   state.adminCatalogRequests = response.requests;
+  state.adminFetched.add("catalogRequests");
   renderAdminCatalogRequests();
+  renderAdminOverview();
 }
 
 async function loadAdminCatalogRejectedRequests() {
@@ -5625,109 +5657,116 @@ async function loadAdminCatalogProducts(event) {
   renderAdminCatalogProducts();
 }
 
+function adminTabLoaders() {
+  return {
+    users: () => loadAdminUsers(),
+    bling: () => loadAdminBlingIntegrations(),
+    lots: () => loadAdminLots(),
+    catalog: () => Promise.all([loadAdminCatalogReviewLists(), loadAdminCatalogProducts()])
+  };
+}
+
+function adminTabErrorTarget(tab) {
+  return {
+    users: "#adminUsers",
+    bling: "#adminBlingIntegrations",
+    lots: "#adminLots",
+    catalog: "#adminCatalogPendingList"
+  }[tab];
+}
+
+function ensureAdminTabLoaded(tab) {
+  if (state.adminLoaded[tab]) return state.adminLoaded[tab];
+  const loader = adminTabLoaders()[tab];
+  if (!loader) return Promise.resolve();
+  state.adminLoaded[tab] = loader().catch((error) => {
+    state.adminLoaded[tab] = null;
+    showAdminLoadError(tab, error);
+  });
+  return state.adminLoaded[tab];
+}
+
+function showAdminLoadError(tab, error) {
+  const target = $(adminTabErrorTarget(tab));
+  if (!target) return;
+  target.innerHTML = `
+    <div class="admin-empty-state is-error">
+      <strong>Não foi possível carregar esta aba.</strong>
+      <span>${escapeHtml(error.message || "Erro desconhecido.")} Use "Atualizar" para tentar de novo.</span>
+    </div>
+  `;
+}
+
+function loadAdminOverviewInBackground() {
+  ensureAdminTabLoaded("bling");
+  ensureAdminTabLoaded("lots");
+  loadAdminCatalogRequests().catch((error) => console.warn("Sugestoes pendentes:", error.message));
+}
+
 function setAdminTab(tab) {
   document.querySelectorAll("[data-admin-tab]").forEach((button) => button.classList.toggle("active", button.dataset.adminTab === tab));
   $("#adminUsersTab").classList.toggle("hidden", tab !== "users");
   $("#adminBlingTab").classList.toggle("hidden", tab !== "bling");
-  $("#adminTriageRulesTab").classList.toggle("hidden", tab !== "triageRules");
   $("#adminLotsTab").classList.toggle("hidden", tab !== "lots");
   $("#adminCatalogTab").classList.toggle("hidden", tab !== "catalog");
+  ensureAdminTabLoaded(tab);
   schedulePrimaryInputFocus();
 }
 
-function firstAdminOwnerId() {
-  return (state.adminUsers || []).find((user) => user.role !== "operator")?.id || state.adminUsers?.[0]?.id || "";
+function adminOverviewStats() {
+  const fetched = state.adminFetched;
+  const owners = (state.adminUsers || []).filter((user) => user.role !== "operator");
+  const operatorCount = owners.reduce((total, user) => total + (user.operators || []).length, 0);
+  const blingConnected = (state.adminBlingIntegrations || []).filter((entry) => entry.integration?.connected && entry.integration?.hasAccessToken).length;
+  const blingTotal = (state.adminBlingIntegrations || []).length;
+  const pending = (state.adminCatalogRequests || []).length;
+  const lots = state.adminLots || [];
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const lotsThisMonth = lots.filter((lot) => new Date(lot.createdAt) >= monthStart).length;
+  return {
+    users: fetched.has("users") ? { value: owners.length, detail: `${operatorCount} ${operatorCount === 1 ? "operador" : "operadores"}` } : null,
+    bling: fetched.has("bling") ? { value: blingConnected, detail: adminBlingDetail(blingConnected, blingTotal), warn: blingTotal > blingConnected } : null,
+    catalog: fetched.has("catalogRequests") ? { value: pending, detail: pending ? "aguardando revisão" : "nada pendente", warn: pending > 0 } : null,
+    lots: fetched.has("lots") ? { value: lots.length, detail: `${lotsThisMonth} neste mês` } : null
+  };
 }
 
-function renderAdminTriageUserOptions(selectedUserId = "") {
-  const select = $("#adminTriageRulesForm")?.elements?.userId;
-  if (!select) return;
-  const users = state.adminUsers || [];
-  select.innerHTML = users
-    .filter((user) => user.role !== "operator")
-    .map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name || user.email)} (${escapeHtml(user.email || "")})</option>`)
-    .join("");
-  select.value = selectedUserId || firstAdminOwnerId();
+function adminBlingDetail(connected, total) {
+  if (!total) return "nenhuma conta autorizada";
+  if (total > connected) return `${total - connected} sem token válido`;
+  return total === 1 ? "token válido" : `todas as ${total} com token válido`;
 }
 
-function renderAdminTriageTransferSettings() {
-  const form = $("#adminTriageRulesForm");
-  if (!form) return;
-  renderAdminTriageUserOptions(state.adminTriageTransferUserId);
-  const settings = state.adminTriageTransferSettings || defaultTriageTransferSettings();
-  form.elements.enabled.checked = Boolean(settings.enabled);
-  form.elements.defaultOriginDeposit.value = settings.defaultOriginDeposit || "";
-  form.elements.destinations.value = (settings.destinations || [])
-    .map((item) => [item.code, item.label, item.depositName].join(" | "))
-    .join("\n");
-  form.elements.diagnosisOptions.value = (settings.diagnosisOptions || [])
-    .map((item) => [
-      item.code,
-      item.label,
-      item.destination,
-      item.depositOrigin,
-      item.depositDestination,
-      item.transferEnabled ? "sim" : "nao"
-    ].join(" | "))
-    .join("\n");
-}
+function renderAdminOverview() {
+  const wrapper = $("#adminOverview");
+  if (!wrapper) return;
+  const stats = adminOverviewStats();
+  const cards = [
+    { tab: "users", label: "Contas principais", stat: stats.users },
+    { tab: "bling", label: "Bling conectado", stat: stats.bling },
+    { tab: "catalog", label: "Sugestões pendentes", stat: stats.catalog },
+    { tab: "lots", label: "Lotes", stat: stats.lots }
+  ];
+  wrapper.innerHTML = cards.map(({ tab, label, stat }) => `
+    <button type="button" class="admin-stat${stat?.warn ? " is-warn" : ""}" data-admin-overview-tab="${tab}">
+      <span class="admin-stat-label">${label}</span>
+      <strong class="admin-stat-value">${stat ? stat.value : '<span class="admin-skeleton"></span>'}</strong>
+      <span class="admin-stat-detail">${stat ? escapeHtml(stat.detail) : "carregando..."}</span>
+    </button>
+  `).join("");
 
-async function saveAdminTriageTransferSettings(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector("button[type='submit']");
-  const message = $("#adminTriageRulesMessage");
-  const userId = form.elements.userId.value;
-  if (!userId) {
-    message.textContent = "Selecione uma conta Etiquefacil.";
-    return;
-  }
-  button.disabled = true;
-  message.textContent = "";
-  try {
-    const payload = {
-      enabled: form.elements.enabled.checked,
-      defaultOriginDeposit: form.elements.defaultOriginDeposit.value,
-      destinations: parseAdminTriageDestinations(form.elements.destinations.value),
-      diagnosisOptions: parseAdminTriageDiagnosisOptions(form.elements.diagnosisOptions.value),
-      wmsDeposits: state.adminTriageTransferSettings?.wmsDeposits || []
-    };
-    const response = await api(`/api/admin/users/${encodeURIComponent(userId)}/triage-transfer-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    state.adminTriageTransferUserId = userId;
-    state.adminTriageTransferSettings = normalizeTriageTransferSettings(response.settings);
-    renderAdminTriageTransferSettings();
-    message.style.color = "#0f766e";
-    message.textContent = "Regras de triagem salvas.";
-  } catch (error) {
-    message.style.color = "";
-    message.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function parseAdminTriageDestinations(value) {
-  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-    const [code, label, depositName] = line.split("|").map((part) => part.trim());
-    return { code, label, depositName };
-  });
-}
-
-function parseAdminTriageDiagnosisOptions(value) {
-  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-    const [code, label, destination, depositOrigin, depositDestination, transferEnabled = "sim"] = line.split("|").map((part) => part.trim());
-    return {
-      code,
-      label,
-      destination,
-      depositOrigin,
-      depositDestination,
-      transferEnabled: !/^n(a|ã)?o|false|0$/i.test(transferEnabled)
-    };
+  const counts = {
+    users: stats.users?.value,
+    bling: stats.bling?.value,
+    lots: stats.lots?.value,
+    catalog: stats.catalog?.value || ""
+  };
+  document.querySelectorAll("[data-admin-tab-count]").forEach((badge) => {
+    const value = counts[badge.dataset.adminTabCount];
+    badge.textContent = value === undefined || value === "" ? "" : String(value);
+    badge.classList.toggle("hidden", badge.textContent === "");
   });
 }
 
@@ -5744,37 +5783,113 @@ async function createAdminUser(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    form.reset();
-    $("#adminMessage").style.color = "#0f766e";
-    $("#adminMessage").textContent = "Usuario criado.";
+    toggleAdminCreateForm(false);
+    setAdminMessage(`Usuário ${payload.name} criado.`);
     await loadAdminUsers();
   } catch (error) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = error.message;
+    setAdminMessage(error.message, false);
   } finally {
     button.disabled = false;
-    schedulePrimaryInputFocus(["#adminCreateUserForm input[name='name']"]);
   }
+}
+
+function toggleAdminCreateForm(show) {
+  const form = $("#adminCreateUserForm");
+  form.classList.toggle("hidden", !show);
+  $("#adminNewUserButton").classList.toggle("hidden", show);
+  if (show) {
+    $("#adminMessage").textContent = "";
+    form.elements.name.focus();
+  } else {
+    form.reset();
+  }
+}
+
+function adminPermissions() {
+  return [
+    { key: "triageAccess", label: "Triagem", path: "triage-access" },
+    { key: "transferAccess", label: "Transferência", path: "transfer-access" },
+    { key: "stockTransferAcceptanceAccess", label: "Entrada WMS", path: "stock-transfer-acceptance-access" },
+    { key: "operatorStatsAccess", label: "Operadores/estat.", path: "operator-stats-access" },
+    { key: "viewSalePriceAccess", label: "Preço venda", path: "view-sale-price-access" },
+    { key: "viewCostPriceAccess", label: "Preço custo", path: "view-cost-price-access" }
+  ];
+}
+
+function adminUserMatches(user, query) {
+  return [user.name, user.email, user.tenantName, user.operatorCode]
+    .some((value) => String(value || "").toLowerCase().includes(query));
+}
+
+function filteredAdminUsers() {
+  const query = state.adminUserSearch.trim().toLowerCase();
+  if (!query) return state.adminUsers.map((user) => ({ user, operators: user.operators || [], forceOpen: false }));
+  return state.adminUsers.flatMap((user) => {
+    const operators = user.operators || [];
+    if (adminUserMatches(user, query)) return [{ user, operators, forceOpen: false }];
+    const matchedOperators = operators.filter((operator) => adminUserMatches(operator, query));
+    return matchedOperators.length ? [{ user, operators: matchedOperators, forceOpen: true }] : [];
+  });
 }
 
 function renderAdminUsers() {
   const wrapper = $("#adminUsers");
   if (!state.adminUsers.length) {
-    wrapper.innerHTML = '<p class="muted">Nenhum usuario cadastrado ainda.</p>';
+    wrapper.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhum usuário cadastrado ainda.</strong>
+        <span>Use "+ Novo usuário" para criar a primeira conta principal.</span>
+      </div>
+    `;
     return;
   }
 
-  wrapper.innerHTML = `
-    <div class="admin-table">
-      <div class="admin-row admin-row-head">
-        <span>Usuario</span>
-        <span>Lotes</span>
-        <span>Produtos</span>
-        <span>Criado em</span>
-        <span>Acoes</span>
+  const entries = filteredAdminUsers();
+  if (!entries.length) {
+    wrapper.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhum usuário encontrado.</strong>
+        <span>Nada corresponde a "${escapeHtml(state.adminUserSearch)}".</span>
       </div>
-      ${state.adminUsers.map(adminUserRow).join("")}
-    </div>
+    `;
+    return;
+  }
+
+  wrapper.innerHTML = `<div class="admin-user-list">${entries.map(adminUserRow).join("")}</div>`;
+}
+
+function adminInitials(name) {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+function adminPermissionChips(user) {
+  return adminPermissions().map(({ key, label }) => {
+    const enabled = Boolean(user[key]);
+    return `
+      <button type="button" class="admin-perm${enabled ? " is-on" : ""}" role="switch" aria-checked="${enabled}"
+        data-admin-permission="${key}" data-admin-permission-user="${escapeHtml(user.id)}"
+        title="${enabled ? "Clique para bloquear" : "Clique para liberar"} ${escapeHtml(label)}">
+        <span class="admin-perm-dot" aria-hidden="true"></span>${escapeHtml(label)}
+      </button>
+    `;
+  }).join("");
+}
+
+function adminUserMenu(user, isOperator) {
+  return `
+    <details class="admin-user-menu">
+      <summary aria-label="Mais ações para ${escapeHtml(user.email)}" title="Mais ações">&#8943;</summary>
+      <div class="admin-user-menu-panel">
+        <form class="password-form">
+          <label>Nova senha
+            <input name="password" type="password" autocomplete="new-password" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
+          </label>
+          <button type="submit">Salvar senha</button>
+        </form>
+        <button class="danger admin-menu-delete" type="button" data-delete-user="${escapeHtml(user.id)}">${isOperator ? "Excluir operador" : "Excluir conta e lotes"}</button>
+      </div>
+    </details>
   `;
 }
 
@@ -5793,11 +5908,11 @@ function renderAdminBlingIntegrations() {
   wrapper.innerHTML = `
     <div class="admin-table">
       <div class="admin-row admin-bling-row admin-row-head">
-        <span>Usuario</span>
-        <span>Aplicativo</span>
+        <span>Usuário</span>
+        <span>Status</span>
         <span>Token</span>
         <span>Atualizado em</span>
-        <span>Acoes</span>
+        <span>Ações</span>
       </div>
       ${state.adminBlingIntegrations.map(adminBlingIntegrationRow).join("")}
     </div>
@@ -5815,15 +5930,21 @@ function renderAdminLots() {
     <div class="admin-table">
       <div class="admin-row admin-lot-row admin-row-head">
         <span>Lote</span>
-        <span>Usuario</span>
+        <span>Usuário</span>
         <span>SKUs</span>
         <span>Pallets</span>
-        <span>Conferencia</span>
+        <span>Conferência</span>
         <span>Criado em</span>
       </div>
       ${state.adminLots.map(adminLotRow).join("")}
     </div>
   `;
+}
+
+function adminProgressPercent(done, total) {
+  const expected = Number(total) || 0;
+  if (!expected) return 0;
+  return Math.min(100, Math.round(((Number(done) || 0) / expected) * 100));
 }
 
 function adminLotRow(lot) {
@@ -5841,7 +5962,11 @@ function adminLotRow(lot) {
       </div>
       <span>${lot.totalProducts || 0}</span>
       <span>${(lot.rzs || []).length}</span>
-      <span>${qty.checkedQty || 0}/${qty.expectedQty || 0}<small class="muted">${money(qty.checkedValue || 0)} / ${money(qty.expectedValue || 0)}</small></span>
+      <div class="admin-progress-cell">
+        <span>${qty.checkedQty || 0}/${qty.expectedQty || 0}</span>
+        <span class="admin-progress" aria-hidden="true"><span style="width: ${adminProgressPercent(qty.checkedQty, qty.expectedQty)}%"></span></span>
+        <small class="muted">${money(qty.checkedValue || 0)} / ${money(qty.expectedValue || 0)}</small>
+      </div>
       <span>${formatDate(lot.createdAt)}</span>
     </article>
   `;
@@ -5858,8 +5983,8 @@ function adminBlingIntegrationRow(entry) {
         <span class="muted">${escapeHtml(user.email || "")}</span>
       </div>
       <div>
-        <strong>${escapeHtml(integration.clientId || "--")}</strong>
-        <span class="muted">${connected ? "Autorizado" : "Sem access token"}</span>
+        <span class="admin-pill ${connected ? "is-ok" : "is-warn"}">${connected ? "Autorizado" : "Sem access token"}</span>
+        <span class="muted">${escapeHtml(integration.clientId || "--")}</span>
       </div>
       <div>
         <strong>${integration.hasRefreshToken ? "Refresh token salvo" : "Sem refresh token"}</strong>
@@ -5873,119 +5998,180 @@ function adminBlingIntegrationRow(entry) {
   `;
 }
 
+function adminCatalogPageSize() {
+  return 30;
+}
+
+function setAdminCatalogView(view) {
+  state.adminCatalogView = view;
+  document.querySelectorAll("[data-catalog-view]").forEach((button) => button.classList.toggle("active", button.dataset.catalogView === view));
+  document.querySelectorAll("[data-catalog-pane]").forEach((pane) => pane.classList.toggle("hidden", pane.dataset.catalogPane !== view));
+  if (view === "official" && state.adminCatalogProductsStale) {
+    state.adminCatalogProductsStale = false;
+    loadAdminCatalogProducts().catch((error) => setAdminCatalogMessage(error.message, false));
+  }
+}
+
+function setAdminCatalogMessage(text, ok = true) {
+  const message = $("#adminCatalogMessage");
+  message.style.color = ok ? "#0f766e" : "";
+  message.textContent = text;
+}
+
+function renderAdminCatalogCounts() {
+  const counts = {
+    pending: state.adminCatalogRequests.length,
+    rejected: state.adminCatalogRejectedRequests.length >= 200 ? "200+" : state.adminCatalogRejectedRequests.length
+  };
+  document.querySelectorAll("[data-catalog-count]").forEach((badge) => {
+    const value = counts[badge.dataset.catalogCount];
+    badge.textContent = value ? String(value) : "";
+    badge.classList.toggle("hidden", !value);
+  });
+}
+
 function renderAdminCatalogRequests() {
-  const wrapper = $("#adminCatalogRequests");
+  renderAdminCatalogCounts();
+  const list = $("#adminCatalogPendingList");
+  const bulkBar = $("#adminCatalogBulkBar");
+  const filtersForm = $("[data-catalog-request-filters]");
+  const pendingIds = new Set(state.adminCatalogRequests.map((request) => request.id));
+  state.adminCatalogSelected.forEach((id) => { if (!pendingIds.has(id)) state.adminCatalogSelected.delete(id); });
+
+  renderAdminCatalogSummary();
   if (!state.adminCatalogRequests.length) {
-    wrapper.innerHTML = `
-      <div class="admin-empty-state">
-        <strong>Nenhuma sugestao pendente agora.</strong>
-        <span>Quando alguem cadastrar ou confirmar um produto novo, ele aparece aqui para aprovar, rejeitar, filtrar por criador/data ou selecionar varios de uma vez.</span>
+    filtersForm.classList.add("hidden");
+    bulkBar.innerHTML = "";
+    list.innerHTML = `
+      <div class="admin-empty-state catalog-all-clear">
+        <strong>Tudo revisado. Nenhuma sugestão pendente.</strong>
+        <span>Quando alguém cadastrar ou confirmar um produto novo, ele aparece aqui para aprovar ou rejeitar.</span>
       </div>
     `;
     return;
   }
 
-  const filteredRequests = filteredAdminCatalogRequests();
-  const lotRequests = filteredRequests.filter((request) => request.scope === "lot");
-  const individualRequests = filteredRequests.filter((request) => request.scope !== "lot");
-  wrapper.innerHTML = `
-    ${adminCatalogRequestFiltersHtml()}
-    ${adminCatalogRequestSection("Sugestoes de lotes", lotRequests)}
-    ${adminCatalogRequestSection("Sugestoes individuais", individualRequests)}
+  filtersForm.classList.remove("hidden");
+  const filtered = filteredAdminCatalogRequests();
+  const visible = filtered.slice(0, state.adminCatalogLimit);
+  bulkBar.innerHTML = adminCatalogBulkBarHtml(filtered, visible);
+
+  if (!filtered.length) {
+    list.innerHTML = `
+      <div class="admin-empty-state">
+        <strong>Nenhuma sugestão com esses filtros.</strong>
+        <span>Ajuste a busca ou clique em "Limpar".</span>
+      </div>
+    `;
+    return;
+  }
+
+  const remaining = filtered.length - visible.length;
+  list.innerHTML = `
+    <div class="catalog-card-list">${visible.map(adminCatalogRequestRow).join("")}</div>
+    ${remaining > 0 ? `<button type="button" class="ghost catalog-load-more" data-catalog-load-more>Mostrar mais ${Math.min(remaining, adminCatalogPageSize())} (${remaining} restantes)</button>` : ""}
   `;
 }
 
-function adminCatalogRequestFiltersHtml() {
-  const filters = state.adminCatalogRequestFilters;
-  const visibleCount = filteredAdminCatalogRequests().length;
+function adminCatalogBulkBarHtml(filtered, visible) {
+  const selected = state.adminCatalogSelected.size;
+  const allVisibleSelected = visible.length > 0 && visible.every((request) => state.adminCatalogSelected.has(request.id));
+  const total = state.adminCatalogRequests.length;
+  const countLabel = filtered.length === total
+    ? `${total} ${total === 1 ? "sugestão" : "sugestões"}`
+    : `${filtered.length} de ${total} ${total === 1 ? "sugestão" : "sugestões"}`;
   return `
-    <form class="catalog-request-filters" data-catalog-request-filters>
-      <label>Login criador
-        <input name="creator" value="${escapeHtml(filters.creator)}" placeholder="E-mail, nome ou operador" autocomplete="off" />
-      </label>
-      <label>Data
-        <input name="date" type="date" value="${escapeHtml(filters.date)}" />
-      </label>
-      <label class="catalog-check-filter">
-        <input name="doubleCheckOnly" type="checkbox" ${filters.doubleCheckOnly ? "checked" : ""} />
-        Com double check
-      </label>
-      <button type="submit">Filtrar</button>
-      <button type="button" class="ghost" data-clear-catalog-filters>Limpar filtros</button>
-      <span class="catalog-filter-count">${visibleCount} sugestao${visibleCount === 1 ? "" : "es"}</span>
-    </form>
+    <label class="catalog-select-all">
+      <input type="checkbox" data-select-catalog-visible ${allVisibleSelected ? "checked" : ""} ${visible.length ? "" : "disabled"} />
+      Selecionar as ${visible.length} da tela
+    </label>
+    ${filtered.length > visible.length ? `<button type="button" class="link-button" data-select-catalog-filtered>Selecionar todas as ${filtered.length} filtradas</button>` : ""}
+    <span class="catalog-filter-count">${countLabel}</span>
+    <div class="catalog-bulk-actions${selected ? " has-selection" : ""}">
+      <strong>${selected ? `${selected} ${selected === 1 ? "selecionada" : "selecionadas"}` : "Nenhuma selecionada"}</strong>
+      ${selected ? '<button type="button" class="link-button" data-clear-catalog-selection>Limpar seleção</button>' : ""}
+      <button type="button" data-review-catalog-bulk="approve" ${selected ? "" : "disabled"}>Aprovar</button>
+      <button type="button" class="catalog-reject-button" data-review-catalog-bulk="reject" ${selected ? "" : "disabled"}>Rejeitar</button>
+    </div>
   `;
+}
+
+function catalogReviewStatus(request) {
+  return request.reviewSignals?.status || (catalogApprovalOptions(request).length > 1 ? "revisar" : "unico");
+}
+
+function catalogRequestMatchesStatus(request, status) {
+  const current = catalogReviewStatus(request);
+  if (status === "doublecheck") return current !== "unico";
+  return current === status;
+}
+
+function catalogReviewStatusInfo(status) {
+  return {
+    concordante: { label: "Concordante", tone: "is-ok", hint: "cadastros batem entre si" },
+    revisar: { label: "Revisar", tone: "is-warn", hint: "parecidos, com alguma dúvida" },
+    divergente: { label: "Divergência forte", tone: "is-danger", hint: "provável Código ML errado" },
+    unico: { label: "Sem double check", tone: "is-muted", hint: "só um cadastro" }
+  }[status] || { label: status, tone: "is-muted", hint: "" };
+}
+
+function renderAdminCatalogSummary() {
+  const wrapper = $("#adminCatalogSummary");
+  if (!state.adminCatalogRequests.length) {
+    wrapper.innerHTML = "";
+    return;
+  }
+  const counts = { concordante: 0, revisar: 0, divergente: 0, unico: 0 };
+  state.adminCatalogRequests.forEach((request) => { counts[catalogReviewStatus(request)] = (counts[catalogReviewStatus(request)] || 0) + 1; });
+  const active = state.adminCatalogRequestFilters.status;
+  wrapper.innerHTML = ["divergente", "revisar", "concordante", "unico"].map((status) => {
+    const info = catalogReviewStatusInfo(status);
+    return `
+      <button type="button" class="catalog-summary-item ${info.tone}${active === status ? " active" : ""}" data-catalog-status-filter="${status}" aria-pressed="${active === status}">
+        <strong>${counts[status]}</strong>
+        <span>${info.label}</span>
+        <small>${info.hint}</small>
+      </button>
+    `;
+  }).join("");
 }
 
 function filteredAdminCatalogRequests() {
   const filters = state.adminCatalogRequestFilters;
-  const creator = normalizeFilterText(filters.creator);
+  const query = normalizeFilterText(filters.q);
   const date = String(filters.date || "").trim();
   return state.adminCatalogRequests.filter((request) => {
-    if (creator && !normalizeFilterText(catalogActorSearchText(request)).includes(creator)) return false;
+    if (query) {
+      const haystack = normalizeFilterText([request.codigoMl, request.descricao, request.ean, catalogActorSearchText(request)].join(" "));
+      if (!haystack.includes(query)) return false;
+    }
+    if (filters.scope === "lot" && request.scope !== "lot") return false;
+    if (filters.scope === "single" && request.scope === "lot") return false;
     if (date && !isSameInputDate(request.createdAt, date)) return false;
-    if (filters.doubleCheckOnly && catalogApprovalOptions(request).length < 2) return false;
+    if (filters.status && !catalogRequestMatchesStatus(request, filters.status)) return false;
     return true;
   });
 }
 
-function adminCatalogRequestSection(title, requests) {
-  return `
-    <section class="catalog-request-section">
-      <h3>${escapeHtml(title)}</h3>
-      ${
-        requests.length
-          ? `
-            <div class="catalog-bulk-actions">
-              <label class="catalog-select-all">
-                <input type="checkbox" data-select-catalog-visible />
-                Selecionar visiveis
-              </label>
-              <button type="button" data-review-catalog-bulk="approve">Aprovar selecionadas</button>
-              <button type="button" class="danger" data-review-catalog-bulk="reject">Rejeitar selecionadas</button>
-            </div>
-            <div class="admin-table">
-              <div class="admin-row catalog-request-row admin-row-head">
-                <span>Sel.</span>
-                <span>Sugestao</span>
-                <span>Codigo ML</span>
-                <span>Preco</span>
-                <span>Cadastros</span>
-                <span>Status</span>
-                <span>Acoes</span>
-              </div>
-              ${requests.map(adminCatalogRequestRow).join("")}
-            </div>
-          `
-          : '<p class="muted">Nenhuma sugestao nesta lista.</p>'
-      }
-    </section>
-  `;
-}
-
 function renderAdminCatalogRejectedRequests() {
+  renderAdminCatalogCounts();
   const wrapper = $("#adminCatalogRejectedRequests");
   if (!state.adminCatalogRejectedRequests.length) {
     wrapper.innerHTML = `
       <div class="admin-empty-state">
-        <strong>Nenhuma sugestao rejeitada ainda.</strong>
-        <span>As sugestoes rejeitadas ficam listadas aqui depois que voce clicar em Rejeitar.</span>
+        <strong>Nenhuma sugestão rejeitada ainda.</strong>
+        <span>As sugestões rejeitadas ficam listadas aqui para consulta.</span>
       </div>
     `;
     return;
   }
 
+  const visible = state.adminCatalogRejectedRequests.slice(0, state.adminCatalogRejectedLimit);
+  const remaining = state.adminCatalogRejectedRequests.length - visible.length;
   wrapper.innerHTML = `
-    <div class="admin-table">
-      <div class="admin-row catalog-rejected-row admin-row-head">
-        <span>Sugestao</span>
-        <span>Codigo ML</span>
-        <span>Preco</span>
-        <span>Cadastros</span>
-        <span>Rejeitada em</span>
-      </div>
-      ${state.adminCatalogRejectedRequests.map(adminCatalogRejectedRequestRow).join("")}
-    </div>
+    <p class="admin-subtitle catalog-pane-note">Últimas ${state.adminCatalogRejectedRequests.length} sugestões rejeitadas, das mais recentes para as mais antigas.</p>
+    <div class="catalog-card-list">${visible.map(adminCatalogRejectedRequestRow).join("")}</div>
+    ${remaining > 0 ? `<button type="button" class="ghost catalog-load-more" data-catalog-rejected-load-more>Mostrar mais ${Math.min(remaining, adminCatalogPageSize())} (${remaining} restantes)</button>` : ""}
   `;
 }
 
@@ -5994,23 +6180,24 @@ function renderAdminCatalogProducts() {
   if (!state.adminCatalogProducts.length) {
     wrapper.innerHTML = `
       <div class="admin-empty-state">
-        <strong>Nenhum produto encontrado no banco historico oficial.</strong>
-        <span>Se voce buscou por Codigo ML, EAN ou descricao, tente limpar a busca. Produtos aprovados aparecem aqui.</span>
+        <strong>Nenhum produto encontrado no banco histórico oficial.</strong>
+        <span>Se você buscou por código ML, EAN ou descrição, tente limpar a busca. Produtos aprovados aparecem aqui.</span>
       </div>
     `;
     return;
   }
 
   wrapper.innerHTML = `
+    <p class="admin-subtitle catalog-pane-note">${state.adminCatalogProducts.length >= 200 ? "Mostrando os 200 atualizados mais recentemente. Use a busca para encontrar outros." : `${state.adminCatalogProducts.length} ${state.adminCatalogProducts.length === 1 ? "produto" : "produtos"}.`}</p>
     <div class="admin-table">
       <div class="admin-row catalog-product-row admin-row-head">
         <span>Produto</span>
-        <span>Codigo ML</span>
+        <span>Código ML</span>
         <span>EAN</span>
-        <span>Preco</span>
+        <span>Preço</span>
         <span>Custo</span>
         <span>Atualizado</span>
-        <span>Acoes</span>
+        <span></span>
       </div>
       ${state.adminCatalogProducts.map(adminCatalogProductRow).join("")}
     </div>
@@ -6019,21 +6206,24 @@ function renderAdminCatalogProducts() {
 
 function adminCatalogRejectedRequestRow(request) {
   const actor = catalogActorLabel(request);
-  const options = catalogApprovalOptions(request);
   return `
-    <article class="admin-row catalog-rejected-row" data-catalog-rejected-request-id="${escapeHtml(request.id)}">
-      <div class="catalog-request-summary">
-        ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
-        <div>
-          <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
-          <span class="muted">${escapeHtml(actor)} - ${formatDate(request.createdAt)}</span>
-          <span class="muted">${escapeHtml(request.descricao)}</span>
+    <article class="catalog-card is-rejected" data-catalog-rejected-request-id="${escapeHtml(request.id)}">
+      ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
+      <div class="catalog-card-body">
+        <div class="catalog-card-tags">
+          <span class="catalog-tag">${request.type === "update" ? "Alteração" : "Cadastro"}</span>
+          <span class="catalog-tag is-muted">Rejeitada em ${formatDate(request.rejectedAt)}</span>
+        </div>
+        <strong class="catalog-card-title">${escapeHtml(request.descricao || "Sem descrição")}</strong>
+        <div class="catalog-card-meta">
+          <span class="catalog-code">${escapeHtml(request.codigoMl)}</span>
+          <span>${escapeHtml(actor)}</span>
+          <span>sugerida em ${formatDate(request.createdAt)}</span>
         </div>
       </div>
-      <span>${escapeHtml(request.codigoMl)}</span>
-      <span>${money(request.valorUnit)}</span>
-      <span><strong class="check-count">${options.length} cadastro${options.length === 1 ? "" : "s"}</strong></span>
-      <span>${formatDate(request.rejectedAt)}</span>
+      <div class="catalog-card-side">
+        <strong class="catalog-card-price">${money(request.valorUnit)}</strong>
+      </div>
     </article>
   `;
 }
@@ -6045,13 +6235,13 @@ function adminCatalogProductRow(product) {
         <strong>${escapeHtml(product.descricao)}</strong>
         <span class="muted">${escapeHtml(product.categoria || "-")} ${escapeHtml(product.subcategoria || "")}</span>
       </div>
-      <span>${escapeHtml(product.codigoMl)}</span>
+      <span class="catalog-code">${escapeHtml(product.codigoMl)}</span>
       <span>${escapeHtml(product.ean || "-")}</span>
       <span>${money(product.valorUnit)}</span>
       <span>${money(product.precoCusto)}</span>
       <span>${formatDate(product.updatedAt || product.createdAt)}</span>
       <div class="admin-actions">
-        <button type="button" class="danger" data-delete-catalog-product="${escapeHtml(product.id)}">Excluir do banco</button>
+        <button type="button" class="catalog-reject-button is-small" data-delete-catalog-product="${escapeHtml(product.id)}">Excluir</button>
       </div>
     </article>
   `;
@@ -6059,44 +6249,67 @@ function adminCatalogProductRow(product) {
 
 function adminCatalogRequestRow(request) {
   const actor = catalogActorLabel(request);
-  const pending = request.status === "pending";
   const options = catalogApprovalOptions(request);
-  const alertHtml = request.alertMessage ? `<span class="catalog-alert">${escapeHtml(request.alertMessage)}</span>` : "";
-  const choiceHtml = options.length > 1
+  const selected = state.adminCatalogSelected.has(request.id);
+  const status = catalogReviewStatus(request);
+  const info = catalogReviewStatusInfo(status);
+  const reasons = request.reviewSignals?.reasons || [];
+  const hasChoices = options.length > 1;
+  const showChoices = hasChoices && status !== "concordante";
+  const choiceHtml = showChoices
     ? `
-      <details class="double-checks" open>
-        <summary>Escolher cadastro para aprovar</summary>
+      <div class="catalog-choices">
+        <span class="catalog-choices-title">Escolha qual cadastro vai para o banco oficial · <mark>palavras diferentes</mark> em destaque</span>
         <div class="double-check-list">
-          ${options.map((option, index) => catalogApprovalOptionRow(request.id, option, index)).join("")}
+          ${options.map((option, index) => catalogApprovalOptionRow(request.id, option, index, request.descricao)).join("")}
         </div>
-      </details>
+      </div>
     `
     : "";
   return `
-    <article class="admin-row catalog-request-row" data-catalog-request-id="${escapeHtml(request.id)}">
-      <label class="catalog-select-row" title="Selecionar sugestao">
-        <input type="checkbox" data-select-catalog-request ${pending ? "" : "disabled"} />
+    <article class="catalog-card is-${status}${selected ? " is-selected" : ""}" data-catalog-request-id="${escapeHtml(request.id)}">
+      <label class="catalog-select-row" title="Selecionar sugestão">
+        <input type="checkbox" data-select-catalog-request ${selected ? "checked" : ""} />
       </label>
-      <div class="catalog-request-summary">
-        ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
-        <div>
-        <strong>${request.type === "update" ? "Alteracao" : "Cadastro"}</strong>
-        <span class="muted">${escapeHtml(actor)} - ${formatDate(request.createdAt)}</span>
-        <span class="muted">${escapeHtml(request.descricao)}</span>
-        ${alertHtml}
+      ${catalogPhotoFrame(request.foto, "catalog-photo-main")}
+      <div class="catalog-card-body">
+        <div class="catalog-card-tags">
+          <span class="catalog-tag catalog-status-tag ${info.tone}">${escapeHtml(info.label)}</span>
+          <span class="catalog-tag is-muted">${request.type === "update" ? "Alteração" : "Cadastro"}</span>
+          <span class="catalog-tag is-muted">${request.scope === "lot" ? "De lote" : "Individual"}</span>
+          ${hasChoices ? `<span class="catalog-tag is-muted">${options.length} cadastros</span>` : ""}
         </div>
+        <strong class="catalog-card-title">${escapeHtml(request.descricao || "Sem descrição")}</strong>
+        <div class="catalog-card-meta">
+          <span class="catalog-code">${escapeHtml(request.codigoMl)}</span>
+          ${request.ean ? `<span>EAN ${escapeHtml(request.ean)}</span>` : ""}
+          <span>${escapeHtml(actor)}</span>
+          <span>${formatDate(request.createdAt)}</span>
+        </div>
+        ${reasons.length ? `<ul class="catalog-reasons ${info.tone}">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
+        ${request.alertMessage ? `<span class="catalog-alert">${escapeHtml(request.alertMessage)}</span>` : ""}
       </div>
-      <span>${escapeHtml(request.codigoMl)}</span>
-      <span>${money(request.valorUnit)}</span>
-      <span><strong class="check-count">${options.length} cadastro${options.length === 1 ? "" : "s"}</strong></span>
-      <span>${catalogRequestStatus(request.status)}</span>
-      <div class="admin-actions">
-        <button type="button" ${pending ? "" : "disabled"} data-review-catalog="approve">Aprovar</button>
-        <button type="button" class="danger" ${pending ? "" : "disabled"} data-review-catalog="reject">Rejeitar</button>
+      <div class="catalog-card-side">
+        <strong class="catalog-card-price">${money(request.valorUnit)}</strong>
+        <div class="catalog-card-actions">
+          <button type="button" data-review-catalog="approve">Aprovar</button>
+          <button type="button" class="catalog-reject-button" data-review-catalog="reject">Rejeitar</button>
+        </div>
       </div>
       ${choiceHtml}
     </article>
   `;
+}
+
+// Destaca as palavras de uma descricao que nao aparecem na descricao de referencia.
+function highlightCatalogDifferences(text, reference) {
+  const normalizeWord = (word) => String(word || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const referenceWords = new Set(String(reference || "").split(/\s+/).map(normalizeWord).filter(Boolean));
+  return String(text || "").split(/(\s+)/).map((part) => {
+    const word = normalizeWord(part);
+    if (!word || referenceWords.has(word)) return escapeHtml(part);
+    return `<mark>${escapeHtml(part)}</mark>`;
+  }).join("");
 }
 
 function catalogApprovalOptions(request) {
@@ -6106,7 +6319,7 @@ function catalogApprovalOptions(request) {
   ];
 }
 
-function catalogApprovalOptionRow(requestId, option, index) {
+function catalogApprovalOptionRow(requestId, option, index, referenceText = "") {
   const optionId = option.id || "base";
   const actor = catalogActorLabel(option);
   const link = String(option.link || "").trim();
@@ -6119,12 +6332,11 @@ function catalogApprovalOptionRow(requestId, option, index) {
       <input type="radio" name="catalog-choice-${escapeHtml(requestId)}" value="${escapeHtml(optionId)}" ${index === 0 ? "checked" : ""} />
       ${catalogPhotoFrame(photo, "catalog-photo-option")}
       <div>
-        <strong>${escapeHtml(option.label || "Cadastro")}</strong>
-        <span>${escapeHtml(actor)} - ${formatDate(option.createdAt)} - ${money(option.valorUnit)}</span>
-        <span>${escapeHtml(option.descricao || "")}</span>
-        <span>Caixa: ${escapeHtml(dimensions)}</span>
-        <span>Peso: ${escapeHtml(weight)}</span>
-        <span>EAN: ${escapeHtml(ean || "-")}${link ? ` - <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
+        <strong>${escapeHtml(option.label || "Cadastro")} <em>${money(option.valorUnit)}</em></strong>
+        <span class="double-check-desc">${index === 0 ? escapeHtml(option.descricao || "") : highlightCatalogDifferences(option.descricao, referenceText)}</span>
+        <span>${escapeHtml(actor)} · ${formatDate(option.createdAt)}</span>
+        <span>Caixa ${escapeHtml(dimensions)} · ${escapeHtml(weight)}</span>
+        <span>EAN ${escapeHtml(ean || "-")}${link ? ` · <a class="catalog-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Abrir link</a>` : ""}</span>
       </div>
     </label>
   `;
@@ -6168,41 +6380,38 @@ function catalogRequestStatus(status) {
   return "Pendente";
 }
 
-function adminUserRow(user) {
+function adminUserRow({ user, operators, forceOpen }) {
+  const createdAt = user.createdAt ? `desde ${formatDate(user.createdAt)}` : "";
   return `
-    <article class="admin-row admin-user-row" data-user-id="${escapeHtml(user.id)}">
-      <div class="admin-user-main">
-        <div>
+    <article class="admin-user-card" data-user-id="${escapeHtml(user.id)}">
+      <div class="admin-user-head">
+        <span class="admin-avatar" aria-hidden="true">${escapeHtml(adminInitials(user.name || user.email))}</span>
+        <div class="admin-user-identity">
           <strong>${escapeHtml(user.name)}</strong>
           <span class="muted">${escapeHtml(user.email)}</span>
         </div>
-        <span>${user.totalLots}</span>
-        <span>${user.totalProducts}</span>
-        <span>${formatDate(user.createdAt)}</span>
-        <div class="admin-actions">
-          <form class="password-form">
-            <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(user.email)}" required />
-            <button type="submit">Salvar senha</button>
-          </form>
-          <button type="button" data-toggle-admin-triage="${escapeHtml(user.id)}" data-triage-access="${user.triageAccess ? "false" : "true"}">${user.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-          <button type="button" data-toggle-admin-transfer="${escapeHtml(user.id)}" data-transfer-access="${user.transferAccess ? "false" : "true"}">${user.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
-          <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(user.id)}" data-stock-transfer-acceptance-access="${user.stockTransferAcceptanceAccess ? "false" : "true"}">${user.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
-          <button type="button" data-toggle-admin-operator-stats="${escapeHtml(user.id)}" data-operator-stats-access="${user.operatorStatsAccess ? "false" : "true"}">${user.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
-          <button type="button" data-toggle-admin-view-sale-price="${escapeHtml(user.id)}" data-view-sale-price-access="${user.viewSalePriceAccess ? "false" : "true"}">${user.viewSalePriceAccess ? "Bloquear preço venda" : "Liberar preço venda"}</button>
-          <button type="button" data-toggle-admin-view-cost-price="${escapeHtml(user.id)}" data-view-cost-price-access="${user.viewCostPriceAccess ? "false" : "true"}">${user.viewCostPriceAccess ? "Bloquear preço custo" : "Liberar preço custo"}</button>
-          <button class="danger" type="button" data-delete-user="${escapeHtml(user.id)}">Excluir</button>
+        <div class="admin-user-stats">
+          <span><b>${user.totalLots || 0}</b> ${user.totalLots === 1 ? "lote" : "lotes"}</span>
+          <span><b>${user.totalProducts || 0}</b> produtos</span>
+          ${createdAt ? `<span>${escapeHtml(createdAt)}</span>` : ""}
         </div>
+        ${adminUserMenu(user, false)}
       </div>
-      ${adminOperatorList(user.operators || [])}
+      <div class="admin-perms" aria-label="Acessos de ${escapeHtml(user.name)}">${adminPermissionChips(user)}</div>
+      ${adminOperatorList(user, operators, forceOpen)}
     </article>
   `;
 }
 
-function adminOperatorList(operators) {
+function adminOperatorList(user, operators, forceOpen) {
   if (!operators.length) return "";
-  const operatorLabel = operators.length === 1 ? "1 operador" : `${operators.length} operadores`;
+  const total = (user.operators || []).length;
+  const operatorLabel = operators.length === total
+    ? (total === 1 ? "1 operador" : `${total} operadores`)
+    : `${operators.length} de ${total} operadores`;
+  const open = forceOpen || state.adminOpenOperatorLists.has(user.id);
   return `
-    <details class="admin-operators">
+    <details class="admin-operators" data-admin-operators-of="${escapeHtml(user.id)}"${open ? " open" : ""}>
       <summary>
         <strong>Operadores</strong>
         <span>${operatorLabel}</span>
@@ -6217,24 +6426,16 @@ function adminOperatorList(operators) {
 function adminOperatorRow(operator) {
   return `
     <div class="admin-operator-item" data-user-id="${escapeHtml(operator.id)}">
-      <div>
-        <strong>${escapeHtml(operator.name)}</strong>
-        <span class="muted">${escapeHtml(operator.email)}</span>
+      <div class="admin-user-head">
+        <span class="admin-avatar is-small" aria-hidden="true">${escapeHtml(adminInitials(operator.name || operator.email))}</span>
+        <div class="admin-user-identity">
+          <strong>${escapeHtml(operator.name)}</strong>
+          <span class="muted">${escapeHtml(operator.email)}</span>
+        </div>
+        <span class="admin-operator-code" title="Código do operador">${escapeHtml(operator.operatorCode || "--")}</span>
+        ${adminUserMenu(operator, true)}
       </div>
-      <span class="admin-operator-code">${escapeHtml(operator.operatorCode || "--")}</span>
-      <div class="admin-actions">
-        <form class="password-form">
-          <input name="password" type="password" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
-          <button type="submit">Salvar senha</button>
-        </form>
-        <button type="button" data-toggle-admin-triage="${escapeHtml(operator.id)}" data-triage-access="${operator.triageAccess ? "false" : "true"}">${operator.triageAccess ? "Bloquear triagem" : "Liberar triagem"}</button>
-        <button type="button" data-toggle-admin-transfer="${escapeHtml(operator.id)}" data-transfer-access="${operator.transferAccess ? "false" : "true"}">${operator.transferAccess ? "Bloquear transferencia" : "Liberar transferencia"}</button>
-        <button type="button" data-toggle-admin-stock-transfer-acceptance="${escapeHtml(operator.id)}" data-stock-transfer-acceptance-access="${operator.stockTransferAcceptanceAccess ? "false" : "true"}">${operator.stockTransferAcceptanceAccess ? "Bloquear entrada WMS" : "Liberar entrada WMS"}</button>
-        <button type="button" data-toggle-admin-operator-stats="${escapeHtml(operator.id)}" data-operator-stats-access="${operator.operatorStatsAccess ? "false" : "true"}">${operator.operatorStatsAccess ? "Bloquear operadores/estat." : "Liberar operadores/estat."}</button>
-        <button type="button" data-toggle-admin-view-sale-price="${escapeHtml(operator.id)}" data-view-sale-price-access="${operator.viewSalePriceAccess ? "false" : "true"}">${operator.viewSalePriceAccess ? "Bloquear preço venda" : "Liberar preço venda"}</button>
-        <button type="button" data-toggle-admin-view-cost-price="${escapeHtml(operator.id)}" data-view-cost-price-access="${operator.viewCostPriceAccess ? "false" : "true"}">${operator.viewCostPriceAccess ? "Bloquear preço custo" : "Liberar preço custo"}</button>
-        <button class="danger" type="button" data-delete-user="${escapeHtml(operator.id)}">Excluir</button>
-      </div>
+      <div class="admin-perms">${adminPermissionChips(operator)}</div>
     </div>
   `;
 }
@@ -6267,11 +6468,12 @@ async function handleAdminPasswordSubmit(event) {
       body: JSON.stringify({ password })
     });
     form.reset();
-    $("#adminMessage").style.color = "#0f766e";
-    $("#adminMessage").textContent = "Senha atualizada.";
+    const menu = form.closest("details");
+    if (menu) menu.open = false;
+    const user = findAdminUser(row.dataset.userId);
+    setAdminMessage(`Senha de ${user?.name || "usuário"} atualizada.`);
   } catch (error) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = error.message;
+    setAdminMessage(error.message, false);
   } finally {
     button.disabled = false;
   }
@@ -6300,130 +6502,41 @@ async function handleAdminBlingIntegrationsClick(event) {
   }
 }
 
+function setAdminMessage(text, ok = true) {
+  const message = $("#adminMessage");
+  message.style.color = ok ? "#0f766e" : "";
+  message.textContent = text;
+}
+
+async function toggleAdminPermission(button) {
+  const permission = adminPermissions().find((item) => item.key === button.dataset.adminPermission);
+  const user = findAdminUser(button.dataset.adminPermissionUser);
+  if (!permission || !user) return;
+  const nextValue = !user[permission.key];
+  button.disabled = true;
+  button.classList.toggle("is-on", nextValue);
+  button.setAttribute("aria-checked", String(nextValue));
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(user.id)}/${permission.path}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [permission.key]: nextValue })
+    });
+    setAdminMessage(`Acesso "${permission.label}" ${nextValue ? "liberado" : "bloqueado"} para ${user.name}.`);
+    await loadAdminUsers();
+  } catch (error) {
+    button.classList.toggle("is-on", !nextValue);
+    button.setAttribute("aria-checked", String(!nextValue));
+    setAdminMessage(error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function handleAdminUsersClick(event) {
-  const stockTransferAcceptanceButton = event.target.closest("[data-toggle-admin-stock-transfer-acceptance]");
-  if (stockTransferAcceptanceButton) {
-    stockTransferAcceptanceButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(stockTransferAcceptanceButton.dataset.toggleAdminStockTransferAcceptance)}/stock-transfer-acceptance-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockTransferAcceptanceAccess: stockTransferAcceptanceButton.dataset.stockTransferAcceptanceAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de entrada WMS atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      stockTransferAcceptanceButton.disabled = false;
-    }
-    return;
-  }
-
-  const transferButton = event.target.closest("[data-toggle-admin-transfer]");
-  if (transferButton) {
-    transferButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(transferButton.dataset.toggleAdminTransfer)}/transfer-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transferAccess: transferButton.dataset.transferAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de transferencia atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      transferButton.disabled = false;
-    }
-    return;
-  }
-
-  const triageButton = event.target.closest("[data-toggle-admin-triage]");
-  if (triageButton) {
-    triageButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(triageButton.dataset.toggleAdminTriage)}/triage-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ triageAccess: triageButton.dataset.triageAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de triagem atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      triageButton.disabled = false;
-    }
-    return;
-  }
-
-  const operatorStatsButton = event.target.closest("[data-toggle-admin-operator-stats]");
-  if (operatorStatsButton) {
-    operatorStatsButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(operatorStatsButton.dataset.toggleAdminOperatorStats)}/operator-stats-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operatorStatsAccess: operatorStatsButton.dataset.operatorStatsAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de operadores e estatisticas atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      operatorStatsButton.disabled = false;
-    }
-    return;
-  }
-
-  const viewSalePriceButton = event.target.closest("[data-toggle-admin-view-sale-price]");
-  if (viewSalePriceButton) {
-    viewSalePriceButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(viewSalePriceButton.dataset.toggleAdminViewSalePrice)}/view-sale-price-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ viewSalePriceAccess: viewSalePriceButton.dataset.viewSalePriceAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de preco de venda atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      viewSalePriceButton.disabled = false;
-    }
-    return;
-  }
-
-  const viewCostPriceButton = event.target.closest("[data-toggle-admin-view-cost-price]");
-  if (viewCostPriceButton) {
-    viewCostPriceButton.disabled = true;
-    try {
-      await api(`/api/admin/users/${encodeURIComponent(viewCostPriceButton.dataset.toggleAdminViewCostPrice)}/view-cost-price-access`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ viewCostPriceAccess: viewCostPriceButton.dataset.viewCostPriceAccess === "true" })
-      });
-      $("#adminMessage").style.color = "#0f766e";
-      $("#adminMessage").textContent = "Permissao de preco de custo atualizada.";
-      await loadAdminUsers();
-    } catch (error) {
-      $("#adminMessage").style.color = "";
-      $("#adminMessage").textContent = error.message;
-    } finally {
-      viewCostPriceButton.disabled = false;
-    }
+  const permissionButton = event.target.closest("[data-admin-permission]");
+  if (permissionButton) {
+    await toggleAdminPermission(permissionButton);
     return;
   }
 
@@ -6451,37 +6564,64 @@ async function handleAdminUsersClick(event) {
 }
 
 async function handleAdminCatalogRequestsClick(event) {
-  const clearFiltersButton = event.target.closest("[data-clear-catalog-filters]");
-  if (clearFiltersButton) {
-    state.adminCatalogRequestFilters = { creator: "", date: "", doubleCheckOnly: false };
+  if (event.target.closest("[data-clear-catalog-filters]")) {
+    const form = $("[data-catalog-request-filters]");
+    form.reset();
+    updateAdminCatalogRequestFilters(form);
+    return;
+  }
+
+  const statusFilter = event.target.closest("[data-catalog-status-filter]");
+  if (statusFilter) {
+    const form = $("[data-catalog-request-filters]");
+    const next = statusFilter.dataset.catalogStatusFilter;
+    form.elements.status.value = state.adminCatalogRequestFilters.status === next ? "" : next;
+    updateAdminCatalogRequestFilters(form);
+    return;
+  }
+
+  if (event.target.closest("[data-catalog-load-more]")) {
+    state.adminCatalogLimit += adminCatalogPageSize();
+    renderAdminCatalogRequests();
+    return;
+  }
+
+  if (event.target.closest("[data-select-catalog-filtered]")) {
+    filteredAdminCatalogRequests().forEach((request) => state.adminCatalogSelected.add(request.id));
+    renderAdminCatalogRequests();
+    return;
+  }
+
+  if (event.target.closest("[data-clear-catalog-selection]")) {
+    state.adminCatalogSelected.clear();
     renderAdminCatalogRequests();
     return;
   }
 
   const bulkButton = event.target.closest("[data-review-catalog-bulk]");
   if (bulkButton) {
-    await reviewSelectedCatalogRequests(bulkButton.dataset.reviewCatalogBulk, bulkButton);
+    await reviewSelectedCatalogRequests(bulkButton.dataset.reviewCatalogBulk);
     return;
   }
 
   const button = event.target.closest("[data-review-catalog]");
   if (!button) return;
   const row = button.closest("[data-catalog-request-id]");
+  const request = state.adminCatalogRequests.find((item) => item.id === row.dataset.catalogRequestId);
+  if (!request) return;
   const action = button.dataset.reviewCatalog;
+  if (action === "reject" && !confirm(`Rejeitar a sugestão ${request.codigoMl}?`)) return;
   const selectedCheckId = row.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base";
-  const actionLabel = action === "approve" ? "aprovar" : "rejeitar";
-  if (!confirm(`Deseja ${actionLabel} esta sugestao?`)) return;
-  button.disabled = true;
+  row.querySelectorAll("button").forEach((control) => { control.disabled = true; });
+  row.classList.add("is-busy");
   try {
-    await reviewCatalogRequestById(row.dataset.catalogRequestId, action, selectedCheckId);
-    $("#adminMessage").style.color = "#0f766e";
-    $("#adminMessage").textContent = action === "approve" ? "Sugestao aprovada." : "Sugestao rejeitada.";
-    await loadAdminCatalogReviewLists();
+    await reviewCatalogRequestById(request.id, action, selectedCheckId);
+    removeReviewedCatalogRequests([request.id], action);
+    setAdminCatalogMessage(`${request.codigoMl} ${action === "approve" ? "aprovada e enviada ao banco oficial" : "rejeitada"}.`);
   } catch (error) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = error.message;
-  } finally {
-    button.disabled = false;
+    row.classList.remove("is-busy");
+    row.querySelectorAll("button").forEach((control) => { control.disabled = false; });
+    setAdminCatalogMessage(error.message, false);
   }
 }
 
@@ -6492,60 +6632,107 @@ function handleAdminCatalogRequestsFilter(event) {
   updateAdminCatalogRequestFilters(form);
 }
 
+function handleAdminCatalogRequestsInput(event) {
+  const form = event.target.closest("[data-catalog-request-filters]");
+  if (!form) return;
+  clearTimeout(state.adminCatalogFilterTimer);
+  state.adminCatalogFilterTimer = setTimeout(() => updateAdminCatalogRequestFilters(form), 180);
+}
+
 function handleAdminCatalogRequestsChange(event) {
   const selectVisible = event.target.closest("[data-select-catalog-visible]");
   if (selectVisible) {
-    selectVisible.closest(".catalog-request-section")
-      ?.querySelectorAll("[data-select-catalog-request]:not(:disabled)")
-      .forEach((checkbox) => { checkbox.checked = selectVisible.checked; });
+    const visible = filteredAdminCatalogRequests().slice(0, state.adminCatalogLimit);
+    visible.forEach((request) => {
+      if (selectVisible.checked) state.adminCatalogSelected.add(request.id);
+      else state.adminCatalogSelected.delete(request.id);
+    });
+    renderAdminCatalogRequests();
     return;
   }
 
-  const filterInput = event.target.closest("[data-catalog-request-filters] input");
-  if (filterInput) {
-    updateAdminCatalogRequestFilters(event.target.form);
+  const rowCheckbox = event.target.closest("[data-select-catalog-request]");
+  if (rowCheckbox) {
+    const row = rowCheckbox.closest("[data-catalog-request-id]");
+    if (rowCheckbox.checked) state.adminCatalogSelected.add(row.dataset.catalogRequestId);
+    else state.adminCatalogSelected.delete(row.dataset.catalogRequestId);
+    row.classList.toggle("is-selected", rowCheckbox.checked);
+    const filtered = filteredAdminCatalogRequests();
+    $("#adminCatalogBulkBar").innerHTML = adminCatalogBulkBarHtml(filtered, filtered.slice(0, state.adminCatalogLimit));
+    return;
   }
+
+  const filterField = event.target.closest("[data-catalog-request-filters] select, [data-catalog-request-filters] input:not([type='search'])");
+  if (filterField) updateAdminCatalogRequestFilters(filterField.form);
 }
 
 function updateAdminCatalogRequestFilters(form) {
   const data = new FormData(form);
   state.adminCatalogRequestFilters = {
-    creator: String(data.get("creator") || ""),
+    q: String(data.get("q") || ""),
+    scope: String(data.get("scope") || ""),
     date: String(data.get("date") || ""),
-    doubleCheckOnly: data.get("doubleCheckOnly") === "on"
+    status: String(data.get("status") || "")
   };
+  state.adminCatalogLimit = adminCatalogPageSize();
   renderAdminCatalogRequests();
 }
 
-async function reviewSelectedCatalogRequests(action, button) {
-  const rows = [...document.querySelectorAll("#adminCatalogRequests [data-catalog-request-id]")]
-    .filter((row) => row.querySelector("[data-select-catalog-request]:checked"));
-  if (!rows.length) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = "Selecione pelo menos uma sugestao.";
+function removeReviewedCatalogRequests(ids, action) {
+  const reviewed = new Set(ids);
+  state.adminCatalogRequests = state.adminCatalogRequests.filter((request) => !reviewed.has(request.id));
+  ids.forEach((id) => state.adminCatalogSelected.delete(id));
+  renderAdminCatalogRequests();
+  renderAdminOverview();
+  if (action === "reject") {
+    loadAdminCatalogRejectedRequests().catch((error) => console.warn("Sugestoes rejeitadas:", error.message));
+  } else {
+    state.adminCatalogProductsStale = true;
+  }
+}
+
+async function reviewSelectedCatalogRequests(action) {
+  const requests = state.adminCatalogRequests.filter((request) => state.adminCatalogSelected.has(request.id));
+  if (!requests.length) {
+    setAdminCatalogMessage("Selecione pelo menos uma sugestão.", false);
     return;
   }
 
   const actionLabel = action === "approve" ? "aprovar" : "rejeitar";
-  if (!confirm(`Deseja ${actionLabel} ${rows.length} sugestao${rows.length === 1 ? "" : "es"} selecionada${rows.length === 1 ? "" : "s"}?`)) return;
+  const plural = requests.length === 1 ? "sugestão" : "sugestões";
+  const risky = action === "approve" ? requests.filter((request) => catalogReviewStatus(request) === "divergente").length : 0;
+  const warning = risky ? `\n\nAtenção: ${risky} ${risky === 1 ? "tem" : "têm"} divergência forte (provável Código ML errado).` : "";
+  if (!confirm(`Deseja ${actionLabel} ${requests.length} ${plural}?${warning}`)) return;
 
-  const buttons = [...document.querySelectorAll("#adminCatalogRequests button, #adminCatalogRequests input")];
-  buttons.forEach((control) => { control.disabled = true; });
-  button.disabled = true;
+  const pane = $("#adminCatalogRequests");
+  pane.classList.add("is-busy");
+  pane.querySelectorAll("button, input, select").forEach((control) => { control.disabled = true; });
+  const items = requests.map((request) => {
+    const row = pane.querySelector(`[data-catalog-request-id="${CSS.escape(request.id)}"]`);
+    return { id: request.id, selectedCheckId: row?.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base" };
+  });
+  const done = [];
+  const failed = [];
   try {
-    for (const row of rows) {
-      const selectedCheckId = row.querySelector('input[type="radio"][name^="catalog-choice-"]:checked')?.value || "base";
-      await reviewCatalogRequestById(row.dataset.catalogRequestId, action, selectedCheckId);
+    for (let start = 0; start < items.length; start += 100) {
+      setAdminCatalogMessage(`${action === "approve" ? "Aprovando" : "Rejeitando"} ${Math.min(start + 100, items.length)} de ${items.length}...`);
+      const result = await api("/api/admin/catalog-requests/bulk-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, items: items.slice(start, start + 100) })
+      });
+      done.push(...(result.done || []));
+      failed.push(...(result.failed || []));
     }
-    $("#adminMessage").style.color = "#0f766e";
-    $("#adminMessage").textContent = action === "approve"
-      ? `${rows.length} sugestao${rows.length === 1 ? "" : "es"} aprovada${rows.length === 1 ? "" : "s"}.`
-      : `${rows.length} sugestao${rows.length === 1 ? "" : "es"} rejeitada${rows.length === 1 ? "" : "s"}.`;
-    await loadAdminCatalogReviewLists();
+    const doneLabel = `${done.length} ${done.length === 1 ? "sugestão" : "sugestões"} ${action === "approve" ? (done.length === 1 ? "aprovada" : "aprovadas") : (done.length === 1 ? "rejeitada" : "rejeitadas")}`;
+    if (failed.length) setAdminCatalogMessage(`${doneLabel}. ${failed.length} com erro: ${failed[0].error}`, false);
+    else setAdminCatalogMessage(`${doneLabel}.`);
   } catch (error) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = error.message;
-    await loadAdminCatalogReviewLists();
+    setAdminCatalogMessage(`Parou em ${done.length} de ${items.length}: ${error.message}`, false);
+  } finally {
+    pane.classList.remove("is-busy");
+    pane.querySelectorAll("[data-catalog-request-filters] input, [data-catalog-request-filters] select, [data-catalog-request-filters] button").forEach((control) => { control.disabled = false; });
+    removeReviewedCatalogRequests(done, action);
   }
 }
 
@@ -6561,17 +6748,15 @@ async function handleAdminCatalogProductsClick(event) {
   const button = event.target.closest("[data-delete-catalog-product]");
   if (!button) return;
   const product = state.adminCatalogProducts.find((item) => item.id === button.dataset.deleteCatalogProduct);
-  if (!product || !confirm(`Excluir ${product.codigoMl} do banco historico oficial?`)) return;
+  if (!product || !confirm(`Excluir ${product.codigoMl} do banco histórico oficial?`)) return;
 
   button.disabled = true;
   try {
     await api(`/api/admin/catalog-products/${encodeURIComponent(product.id)}`, { method: "DELETE" });
-    $("#adminMessage").style.color = "#0f766e";
-    $("#adminMessage").textContent = "Produto removido do banco historico.";
+    setAdminCatalogMessage(`${product.codigoMl} removido do banco histórico.`);
     await loadAdminCatalogProducts();
   } catch (error) {
-    $("#adminMessage").style.color = "";
-    $("#adminMessage").textContent = error.message;
+    setAdminCatalogMessage(error.message, false);
   } finally {
     button.disabled = false;
   }
@@ -7888,7 +8073,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
             <span>${auction ? "Qtd" : "CD"}</span>
             <span>${auction ? "Foto" : "Loja"}</span>
             <span>${auction ? "Laudo" : "Falta"}</span>
-            <span>Acoes</span>
+            <span>Ações</span>
           </div>
         ${displayItems.length ? displayItems.map((item) => transferItemRow(item, synced || cdLocked)).join("") : '<p class="muted transfer-empty">Nenhum produto bipado.</p>'}
       </div>
@@ -10411,8 +10596,8 @@ function primaryInputSelectors() {
     "#transferScanInput",
     "#transferLotForm input[name='descricao']",
     "#loginForm input[name='email']",
-    "#adminUsersTab:not(.hidden) #adminCreateUserForm input[name='name']",
-    "#adminCatalogTab:not(.hidden) #adminCatalogSearchForm input[name='q']",
+    "#adminUsersTab:not(.hidden) #adminUserSearch",
+    "#adminCatalogTab:not(.hidden) [data-catalog-request-filters] input[name='q']",
     "#uploadForm input[name='file']"
   ];
 }

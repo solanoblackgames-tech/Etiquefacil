@@ -8,6 +8,7 @@ import { findApprovedProductHistory, findProductHistory, getBlingProducts, summa
 import { insertRows } from "./pg-bulk.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { normalizeWmsDeposits } from "./wms-labels.js";
+import { computeCatalogReviewSignals } from "./catalog-review.js";
 
 const { Pool } = pg;
 
@@ -5105,18 +5106,22 @@ export async function listCatalogRequestsForAdmin() {
       query("select id, name, email, created_at from users")
     ]);
     const usersById = new Map(usersResult.rows.map((row) => [row.id, sanitizeUser(userFromRow(row))]));
-    return result.rows.map((row) => enrichCatalogRequestDoubleChecks(catalogRequestFromRow(row), usersById));
+    return result.rows.map((row) => withCatalogReviewSignals(enrichCatalogRequestDoubleChecks(catalogRequestFromRow(row), usersById)));
   }
 
   const db = await readDb();
   const usersById = new Map(db.users.map((user) => [user.id, sanitizeUser(user)]));
   return (db.catalogRequests || [])
     .filter((request) => request.status === "pending" && isStandardMlCode(request.codigoMl))
-    .map((request) => enrichCatalogRequestDoubleChecks({
+    .map((request) => withCatalogReviewSignals(enrichCatalogRequestDoubleChecks({
       ...request,
       user: usersById.get(request.userId) || null
-    }, usersById))
+    }, usersById)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function withCatalogReviewSignals(request) {
+  return { ...request, reviewSignals: computeCatalogReviewSignals(request) };
 }
 
 export async function listRejectedCatalogRequestsForAdmin() {
@@ -5199,6 +5204,12 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
   if (hasPostgres()) return reviewCatalogRequestPg(requestId, action, options);
 
   const db = await readDb();
+  applyCatalogReview(db, requestId, action, options);
+  await writeDb(db);
+  return { ok: true };
+}
+
+function applyCatalogReview(db, requestId, action, options = {}) {
   const request = (db.catalogRequests || []).find((item) => item.id === requestId);
   if (!request) throw notFound("Sugestao nao encontrada.");
   if (request.status !== "pending") throw new Error("Esta sugestao ja foi analisada.");
@@ -5215,8 +5226,41 @@ export async function reviewCatalogRequest(requestId, action, options = {}) {
   } else {
     throw new Error("Acao invalida.");
   }
-  await writeDb(db);
-  return { ok: true };
+}
+
+// Revisa varias sugestoes de uma vez. Cada item e independente: uma falha nao desfaz as outras.
+export async function reviewCatalogRequests(items, action) {
+  await ensureStore();
+  if (!["approve", "reject"].includes(action)) throw new Error("Acao invalida.");
+  const list = (Array.isArray(items) ? items : [])
+    .map((item) => ({ id: String(item?.id || ""), selectedCheckId: item?.selectedCheckId || "base" }))
+    .filter((item) => item.id);
+  const done = [];
+  const failed = [];
+
+  if (hasPostgres()) {
+    for (const item of list) {
+      try {
+        await reviewCatalogRequestPg(item.id, action, { selectedCheckId: item.selectedCheckId });
+        done.push(item.id);
+      } catch (error) {
+        failed.push({ id: item.id, error: error.message });
+      }
+    }
+    return { done, failed };
+  }
+
+  const db = await readDb();
+  for (const item of list) {
+    try {
+      applyCatalogReview(db, item.id, action, { selectedCheckId: item.selectedCheckId });
+      done.push(item.id);
+    } catch (error) {
+      failed.push({ id: item.id, error: error.message });
+    }
+  }
+  if (done.length) await writeDb(db);
+  return { done, failed };
 }
 
 export async function searchProducts(userId, search) {

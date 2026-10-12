@@ -8,6 +8,7 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
+import bcrypt from "bcryptjs";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import QRCode from "qrcode";
@@ -116,6 +117,7 @@ import {
   releaseTransferLotForStore,
   reportTransferLotDivergence,
   reviewCatalogRequest,
+  reviewCatalogRequests,
   scanLotRz,
   scanTransferLot,
   scanWmsExpeditionPick,
@@ -165,8 +167,11 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
-const ADMIN_EMAIL = "lucassolano@jz";
-const ADMIN_PASSWORD = "Jz2026";
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+const ADMIN_PASSWORD_HASH = String(process.env.ADMIN_PASSWORD_HASH || "").trim();
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const loginFailures = new Map();
 const LARGE_QR_LABEL_EMAIL = "solanoblackgames@gmail.com";
 const BLING_STOCK_DEPOSIT = process.env.BLING_STOCK_DEPOSIT || "Geral";
 const usePgSessionStore = hasPostgres();
@@ -266,13 +271,25 @@ app.post("/api/register", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   try {
-    if (isAdminLogin(req.body.email, req.body.password)) {
+    const attemptKey = loginAttemptKey(req);
+    const lockedForMs = loginLockRemainingMs(attemptKey);
+    if (lockedForMs > 0) {
+      const minutes = Math.ceil(lockedForMs / 60000);
+      return res.status(429).json({ error: `Muitas tentativas de login. Tente novamente em ${minutes} min.` });
+    }
+
+    if (await isAdminLogin(req.body.email, req.body.password)) {
+      loginFailures.delete(attemptKey);
       req.session.user = ADMIN_USER;
       return res.json({ user: ADMIN_USER });
     }
 
     const user = await userWithLargeQrLabelAccess(await verifyUser(req.body.email || "", req.body.password || ""));
-    if (!user) return res.status(401).json({ error: "Login ou senha inválidos." });
+    if (!user) {
+      registerLoginFailure(attemptKey);
+      return res.status(401).json({ error: "Login ou senha inválidos." });
+    }
+    loginFailures.delete(attemptKey);
     req.session.user = user;
     await recordOperatorActivity(user, "login");
     res.json({ user });
@@ -305,22 +322,6 @@ app.get("/api/admin/lots", requireAdmin, async (req, res) => {
   res.json({ lots: await listLotsForAdmin() });
 });
 
-app.get("/api/admin/users/:userId/triage-transfer-settings", requireAdmin, async (req, res) => {
-  try {
-    res.json({ settings: await getUserTriageTransferSettings(req.params.userId) });
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
-app.put("/api/admin/users/:userId/triage-transfer-settings", requireAdmin, async (req, res) => {
-  try {
-    res.json({ settings: await saveUserTriageTransferSettings(req.params.userId, req.body || {}) });
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
 app.get("/api/admin/catalog-requests", requireAdmin, async (req, res) => {
   res.json({ requests: await listCatalogRequestsForAdmin() });
 });
@@ -336,6 +337,17 @@ app.get("/api/admin/catalog-products", requireAdmin, async (req, res) => {
 app.delete("/api/admin/catalog-products/:productId", requireAdmin, async (req, res) => {
   try {
     res.json(await deleteCatalogProductForAdmin(req.params.productId));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/admin/catalog-requests/bulk-review", requireAdmin, async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) throw new Error("Nenhuma sugestao selecionada.");
+    if (items.length > 200) throw new Error("Envie no maximo 200 sugestoes por vez.");
+    res.json(await reviewCatalogRequests(items, req.body?.action));
   } catch (error) {
     sendError(res, error);
   }
@@ -3121,8 +3133,40 @@ async function scanTransferLotWithBlingFallback({ userId, transferLotId, code })
   return scanTransferLot({ userId, transferLotId, code, externalProduct: product });
 }
 
-function isAdminLogin(email, password) {
-  return String(email || "").trim().toLowerCase() === ADMIN_EMAIL && String(password || "") === ADMIN_PASSWORD;
+async function isAdminLogin(email, password) {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH) return false;
+  if (String(email || "").trim().toLowerCase() !== ADMIN_EMAIL) return false;
+  return bcrypt.compare(String(password || ""), ADMIN_PASSWORD_HASH);
+}
+
+function loginAttemptKey(req) {
+  return `${req.ip}|${String(req.body?.email || "").trim().toLowerCase()}`;
+}
+
+function loginLockRemainingMs(key) {
+  const entry = loginFailures.get(key);
+  if (!entry?.lockedUntil) return 0;
+  const remaining = entry.lockedUntil - Date.now();
+  if (remaining > 0) return remaining;
+  loginFailures.delete(key);
+  return 0;
+}
+
+function registerLoginFailure(key) {
+  const now = Date.now();
+  const entry = loginFailures.get(key);
+  const withinWindow = entry && now - entry.firstFailureAt < LOGIN_LOCK_MS;
+  const failures = withinWindow ? entry.failures + 1 : 1;
+  loginFailures.set(key, {
+    failures,
+    firstFailureAt: withinWindow ? entry.firstFailureAt : now,
+    lockedUntil: failures >= LOGIN_MAX_FAILURES ? now + LOGIN_LOCK_MS : 0
+  });
+  if (loginFailures.size > 5000) {
+    for (const [storedKey, stored] of loginFailures) {
+      if (!stored.lockedUntil && now - stored.firstFailureAt > LOGIN_LOCK_MS) loginFailures.delete(storedKey);
+    }
+  }
 }
 
 function parsePositiveInteger(value, message) {
@@ -4517,6 +4561,9 @@ app.get(["/transferencias/*", "/lotes/*", "/perfil", "/entradas", "/busca", "/bl
 
 app.listen(config.port, () => {
   console.log(`Etiquefácil rodando em http://localhost:${config.port}`);
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH) {
+    console.warn("Back office desativado: defina ADMIN_EMAIL e ADMIN_PASSWORD_HASH (gere o hash com: npm run admin:hash -- <senha>).");
+  }
 });
 
 setInterval(processBlingSyncQueue, 60_000).unref();

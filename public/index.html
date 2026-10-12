@@ -9,7 +9,7 @@
         window.location.replace("http://localhost:3105/");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20261004-rma-geral" />
+    <link rel="stylesheet" href="/styles.css?v=20261012-backoffice4" />
   </head>
   <body>
     <main id="auth" class="auth auth-login">
@@ -546,41 +546,51 @@
 
     </main>
 
-    <main id="adminApp" class="app hidden">
-      <header class="topbar">
-        <div>
-          <h1>Back office</h1>
-          <span id="adminName"></span>
+    <main id="adminApp" class="app hidden admin-app">
+      <header class="topbar admin-topbar">
+        <div class="admin-brand">
+          <span class="admin-brand-mark" aria-hidden="true">EF</span>
+          <div>
+            <h1>Back office</h1>
+            <span id="adminName"></span>
+          </div>
         </div>
         <button id="adminLogoutButton" class="ghost">Sair</button>
       </header>
 
       <nav class="tabs admin-tabs">
-        <button data-admin-tab="users" class="active">Usuarios</button>
-        <button data-admin-tab="bling">Bling</button>
-        <button data-admin-tab="triageRules">Triagem/WMS</button>
-        <button data-admin-tab="lots">Lotes</button>
-        <button data-admin-tab="catalog">Banco historico</button>
+        <button data-admin-tab="users" class="active">Usuários<span class="admin-tab-count" data-admin-tab-count="users"></span></button>
+        <button data-admin-tab="bling">Bling<span class="admin-tab-count" data-admin-tab-count="bling"></span></button>
+        <button data-admin-tab="lots">Lotes<span class="admin-tab-count" data-admin-tab-count="lots"></span></button>
+        <button data-admin-tab="catalog">Banco histórico<span class="admin-tab-count is-alert" data-admin-tab-count="catalog"></span></button>
       </nav>
 
       <section class="admin-shell">
+        <section id="adminOverview" class="admin-overview" aria-label="Resumo do back office"></section>
+
         <section id="adminUsersTab">
           <section class="admin-panel">
-            <h2>Gestao de usuarios</h2>
-            <form id="adminCreateUserForm" class="admin-form">
+            <div class="admin-heading">
+              <div>
+                <h2>Usuários</h2>
+                <p class="admin-subtitle">Contas principais, operadores e o que cada um pode acessar.</p>
+              </div>
+              <div class="admin-toolbar">
+                <input id="adminUserSearch" type="search" placeholder="Buscar nome, e-mail ou código" aria-label="Buscar usuários" />
+                <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
+                <button id="adminNewUserButton" type="button">+ Novo usuário</button>
+              </div>
+            </div>
+            <form id="adminCreateUserForm" class="admin-form admin-create-form hidden">
               <label>Nome<input name="name" required /></label>
               <label>E-mail<input name="email" type="email" required /></label>
               <label>Senha<input name="password" type="password" required /></label>
-              <button type="submit">Criar usuario</button>
+              <div class="admin-create-actions">
+                <button type="submit">Criar usuário</button>
+                <button type="button" class="ghost" data-admin-cancel-create>Cancelar</button>
+              </div>
             </form>
             <p id="adminMessage" class="message"></p>
-          </section>
-
-          <section class="admin-panel">
-            <div class="admin-heading">
-              <h2>Usuarios cadastrados</h2>
-              <button id="adminRefreshButton" class="ghost" type="button">Atualizar</button>
-            </div>
             <div id="adminUsers" class="admin-users"></div>
           </section>
         </section>
@@ -588,45 +598,13 @@
         <section id="adminBlingTab" class="hidden">
           <section class="admin-panel">
             <div class="admin-heading">
-              <h2>Integracoes Bling autorizadas</h2>
+              <h2>Integrações Bling autorizadas</h2>
               <button id="adminBlingRefreshButton" class="ghost" type="button">Atualizar</button>
             </div>
             <p id="adminBlingMessage" class="message"></p>
             <div id="adminBlingIntegrations" class="admin-users">
-              <p class="muted admin-empty-state">Carregando integracoes Bling...</p>
+              <p class="muted admin-empty-state">Carregando integrações Bling...</p>
             </div>
-          </section>
-        </section>
-
-        <section id="adminTriageRulesTab" class="hidden">
-          <section class="admin-panel">
-            <div class="admin-heading">
-              <div>
-                <h2>Regras de triagem e WMS</h2>
-                <p>Defina laudos, destinos e depositos usados para gerar estruturas de transferencia automaticas no mesmo Bling.</p>
-              </div>
-              <button id="adminTriageRulesRefreshButton" class="ghost" type="button">Atualizar</button>
-            </div>
-            <form id="adminTriageRulesForm" class="admin-form triage-rules-form">
-              <label>Conta Etiquefacil
-                <select name="userId"></select>
-              </label>
-              <label>Deposito origem padrao
-                <input name="defaultOriginDeposit" placeholder="Ex: Geral" />
-              </label>
-              <label class="wide-field checkbox-field">
-                <input name="enabled" type="checkbox" />
-                <span>Gerar estruturas automaticamente pela triagem</span>
-              </label>
-              <label class="wide-field">Destinos e depositos
-                <textarea name="destinations" rows="5" placeholder="ECOMMERCE | Ecommerce | Ecommerce&#10;LOJA | Loja | Loja"></textarea>
-              </label>
-              <label class="wide-field">Laudos e regras do agrupamento de transferencia
-                <textarea name="diagnosisOptions" rows="8" placeholder="OK_VENDA_INTERNET | OK venda internet | ECOMMERCE | Triagem | Ecommerce | sim&#10;OK_COM_DETALHES | OK com detalhes | LOJA | Triagem | Loja | sim"></textarea>
-              </label>
-              <button type="submit">Salvar regras</button>
-              <p id="adminTriageRulesMessage" class="message"></p>
-            </form>
           </section>
         </section>
 
@@ -643,33 +621,61 @@
         <section id="adminCatalogTab" class="hidden">
           <section class="admin-panel">
             <div class="admin-heading">
-              <h2>Sugestoes para banco historico</h2>
-              <button id="adminCatalogRefreshButton" class="ghost" type="button">Atualizar</button>
+              <div>
+                <h2>Banco histórico</h2>
+                <p class="admin-subtitle">Revise as sugestões de cadastro antes de entrarem no banco oficial.</p>
+              </div>
+              <div class="admin-toolbar">
+                <button id="adminCatalogRefreshButton" class="ghost" type="button">Atualizar</button>
+              </div>
             </div>
-            <div id="adminCatalogRequests" class="admin-users">
-              <p class="muted admin-empty-state">Carregando sugestoes pendentes...</p>
-            </div>
-          </section>
 
-          <section class="admin-panel">
-            <div class="admin-heading">
-              <h2>Sugestoes rejeitadas</h2>
-            </div>
-            <div id="adminCatalogRejectedRequests" class="admin-users">
-              <p class="muted admin-empty-state">Carregando sugestoes rejeitadas...</p>
-            </div>
-          </section>
+            <nav class="admin-segmented" aria-label="Visões do banco histórico">
+              <button type="button" class="active" data-catalog-view="pending">Pendentes<span class="admin-tab-count is-alert hidden" data-catalog-count="pending"></span></button>
+              <button type="button" data-catalog-view="rejected">Rejeitadas<span class="admin-tab-count hidden" data-catalog-count="rejected"></span></button>
+              <button type="button" data-catalog-view="official">Banco oficial</button>
+            </nav>
 
-          <section class="admin-panel">
-            <div class="admin-heading">
-              <h2>Banco historico oficial</h2>
-              <form id="adminCatalogSearchForm" class="search-bar">
-                <input name="q" placeholder="Buscar por Codigo ML, EAN ou descricao" />
+            <p id="adminCatalogMessage" class="message"></p>
+
+            <div id="adminCatalogRequests" data-catalog-pane="pending">
+              <div id="adminCatalogSummary" class="catalog-summary"></div>
+              <form class="catalog-request-filters" data-catalog-request-filters>
+                <input name="q" type="search" placeholder="Buscar código ML, descrição ou quem cadastrou" aria-label="Buscar sugestões" autocomplete="off" />
+                <select name="scope" aria-label="Origem">
+                  <option value="">Lotes e individuais</option>
+                  <option value="lot">Só de lotes</option>
+                  <option value="single">Só individuais</option>
+                </select>
+                <select name="status" aria-label="Situação da revisão">
+                  <option value="">Todas as situações</option>
+                  <option value="doublecheck">Com double check</option>
+                  <option value="concordante">Concordantes</option>
+                  <option value="revisar">Revisar</option>
+                  <option value="divergente">Divergência forte</option>
+                  <option value="unico">Sem double check</option>
+                </select>
+                <input name="date" type="date" aria-label="Data da sugestão" />
+                <button type="button" class="ghost" data-clear-catalog-filters>Limpar</button>
+              </form>
+              <div id="adminCatalogBulkBar" class="catalog-bulk-bar"></div>
+              <div id="adminCatalogPendingList">
+                <p class="muted admin-empty-state">Carregando sugestões pendentes...</p>
+              </div>
+            </div>
+
+            <div id="adminCatalogRejectedRequests" class="hidden" data-catalog-pane="rejected">
+              <p class="muted admin-empty-state">Carregando sugestões rejeitadas...</p>
+            </div>
+
+            <div class="hidden" data-catalog-pane="official">
+              <form id="adminCatalogSearchForm" class="search-bar admin-catalog-search">
+                <input name="q" type="search" placeholder="Buscar por código ML, EAN ou descrição" />
                 <button type="submit">Buscar</button>
               </form>
-            </div>
-            <div id="adminCatalogProducts" class="admin-users">
-              <p class="muted admin-empty-state">Carregando banco historico...</p>
+              <div id="adminCatalogProducts">
+                <p class="muted admin-empty-state">Carregando banco histórico...</p>
+              </div>
             </div>
           </section>
         </section>
@@ -843,6 +849,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20261004-rma-geral" type="module"></script>
+    <script src="/app.js?v=20261012-backoffice4" type="module"></script>
   </body>
 </html>
