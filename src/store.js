@@ -3697,7 +3697,9 @@ export async function splitLotProduct({ userId, operatorUserId = null, lotId, pr
   const split = calculateSplitProductValues(product, item, { kitQuantity, sellableQuantity, descricao });
   const existingSplit = findSplitProductForOriginal(db.products, lot.id, product.id);
   const reservationOperatorId = skuReservationOperatorKey(userId, operatorUserId);
-  const originalProduct = { ...product, qtdTotal: Math.max(0, Number(product.qtdTotal || 0) - 1) };
+  const fromExcess = isSplitSourceUnitExcess(item);
+  const totalDecrement = !fromExcess || product.origem === "excedente_externo" ? 1 : 0;
+  const originalProduct = { ...product, qtdTotal: Math.max(0, Number(product.qtdTotal || 0) - totalDecrement) };
   let newProduct = existingSplit;
   if (newProduct) {
     newProduct.descricao = split.descricao;
@@ -3727,19 +3729,19 @@ export async function splitLotProduct({ userId, operatorUserId = null, lotId, pr
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   }
   product.qtdTotal = originalProduct.qtdTotal;
-  item.qtdEsperada = Math.max(0, Number(item.qtdEsperada || 0) - 1);
+  if (!fromExcess) item.qtdEsperada = Math.max(0, Number(item.qtdEsperada || 0) - 1);
   item.qtdConferida = Math.max(0, Number(item.qtdConferida || 0) - 1);
   item.valorTotal = roundMoney(Number(product.valorUnit || 0) * Number(item.qtdEsperada || 0));
-  item.tipoItem = splitItemType(item.tipoItem);
+  item.tipoItem = splitItemType(item.tipoItem, item.qtdConferida, item.qtdEsperada);
 
   const splitItem = db.rzItems.find((candidate) => candidate.lotId === lot.id && candidate.productId === newProduct.id && candidate.codigoRz === codigoRz);
   if (splitItem) {
-    splitItem.qtdEsperada = Number(splitItem.qtdEsperada || 0) + sellableQuantity;
+    if (!fromExcess) splitItem.qtdEsperada = Number(splitItem.qtdEsperada || 0) + sellableQuantity;
     splitItem.qtdConferida = Number(splitItem.qtdConferida || 0) + sellableQuantity;
     splitItem.valorTotal = roundMoney(Number(splitItem.qtdEsperada || 0) * Number(newProduct.valorUnit || 0));
-    splitItem.tipoItem = splitItemType(splitItem.tipoItem);
+    splitItem.tipoItem = splitItemType(splitItem.tipoItem, splitItem.qtdConferida, splitItem.qtdEsperada);
   } else {
-    db.rzItems.push(buildSplitRzItem(lot, newProduct, codigoRz, sellableQuantity));
+    db.rzItems.push(buildSplitRzItem(lot, newProduct, codigoRz, sellableQuantity, { fromExcess, sourceType: item.tipoItem }));
   }
 
   await writeDb(db);
@@ -7440,12 +7442,14 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
     if (!item) throw notFound("Item nao encontrado nesta RZ.");
 
     const split = calculateSplitProductValues(current, rzItemFromRow(item), { kitQuantity, sellableQuantity, descricao });
+    const fromExcess = isSplitSourceUnitExcess(rzItemFromRow(item));
+    const totalDecrement = !fromExcess || current.origem === "excedente_externo" ? 1 : 0;
     const updatedOriginal = await client.query(
       `update products
-       set qtd_total = greatest(qtd_total - 1, 0)
+       set qtd_total = greatest(qtd_total - $3, 0)
        where id = $1 and lot_id = $2
        returning *`,
-      [current.id, lot.id]
+      [current.id, lot.id, totalDecrement]
     );
     originalProduct = productFromRow(updatedOriginal.rows[0]);
 
@@ -7521,14 +7525,24 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
       await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
     }
 
+    const nextOriginalEsperada = Math.max(0, Number(item.qtd_esperada || 0) - (fromExcess ? 0 : 1));
+    const nextOriginalConferida = Math.max(0, Number(item.qtd_conferida || 0) - 1);
     await client.query(
       `update rz_items
-       set qtd_esperada = greatest(qtd_esperada - 1, 0),
-           qtd_conferida = greatest(qtd_conferida - 1, 0),
-           valor_total = round((greatest(qtd_esperada - 1, 0) * $4::numeric)::numeric, 2),
+       set qtd_esperada = $6,
+           qtd_conferida = $7,
+           valor_total = round(($6 * $4::numeric)::numeric, 2),
            tipo_item = $5
        where id = $1 and lot_id = $2 and product_id = $3`,
-      [item.id, lot.id, current.id, current.valorUnit || 0, splitItemType(item.tipo_item)]
+      [
+        item.id,
+        lot.id,
+        current.id,
+        current.valorUnit || 0,
+        splitItemType(item.tipo_item, nextOriginalConferida, nextOriginalEsperada),
+        nextOriginalEsperada,
+        nextOriginalConferida
+      ]
     );
 
     const splitItemResult = await client.query(
@@ -7536,17 +7550,20 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
       [lot.id, product.id, codigoRz]
     );
     if (splitItemResult.rows[0]) {
+      const splitRow = splitItemResult.rows[0];
+      const nextSplitEsperada = Number(splitRow.qtd_esperada || 0) + (fromExcess ? 0 : sellableQuantity);
+      const nextSplitConferida = Number(splitRow.qtd_conferida || 0) + sellableQuantity;
       await client.query(
         `update rz_items
-         set qtd_esperada = qtd_esperada + $2,
-             qtd_conferida = qtd_conferida + $2,
-             valor_total = round(((qtd_esperada + $2) * $3::numeric)::numeric, 2),
-             tipo_item = $4
+         set qtd_esperada = $2,
+             qtd_conferida = $3,
+             valor_total = round(($2 * $4::numeric)::numeric, 2),
+             tipo_item = $5
          where id = $1`,
-        [splitItemResult.rows[0].id, sellableQuantity, product.valorUnit || 0, splitItemType(splitItemResult.rows[0].tipo_item)]
+        [splitRow.id, nextSplitEsperada, nextSplitConferida, product.valorUnit || 0, splitItemType(splitRow.tipo_item, nextSplitConferida, nextSplitEsperada)]
       );
     } else {
-      await insertLotRows(client, { rzItems: [buildSplitRzItem(lot, product, codigoRz, sellableQuantity)] });
+      await insertLotRows(client, { rzItems: [buildSplitRzItem(lot, product, codigoRz, sellableQuantity, { fromExcess, sourceType: item.tipo_item })] });
     }
     await client.query("commit");
   } catch (error) {
@@ -9260,22 +9277,31 @@ function findSplitProductForOriginal(products = [], lotId, originalProductId) {
     .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))[0] || null;
 }
 
-function splitItemType(type) {
-  return type === "excedente_outro_rz" ? "esperado" : type || "esperado";
+// A unidade desmembrada sai primeiro do excedente (bipado acima do esperado),
+// para nao consumir a quantidade esperada da planilha.
+export function isSplitSourceUnitExcess(item) {
+  return Number(item?.qtdConferida || 0) > Number(item?.qtdEsperada || 0);
 }
 
-function buildSplitRzItem(lot, product, codigoRz, quantity) {
+export function splitItemType(type, qtdConferida, qtdEsperada) {
+  if (type && type !== "esperado" && type !== "excedente_outro_rz") return type;
+  return Number(qtdConferida || 0) > Number(qtdEsperada || 0) ? "excedente_outro_rz" : "esperado";
+}
+
+export function buildSplitRzItem(lot, product, codigoRz, quantity, { fromExcess = false, sourceType = "esperado" } = {}) {
+  const qtdConferida = Number(quantity || 0);
+  const qtdEsperada = fromExcess ? 0 : qtdConferida;
   return {
     id: randomUUID(),
     lotId: lot.id,
     productId: product.id,
     codigoRz,
     enderecoWms: "",
-    qtdEsperada: Number(quantity || 0),
-    qtdConferida: Number(quantity || 0),
+    qtdEsperada,
+    qtdConferida,
     condicaoGrade: "",
-    valorTotal: roundMoney(Number(product.valorUnit || 0) * Number(quantity || 0)),
-    tipoItem: "esperado",
+    valorTotal: roundMoney(Number(product.valorUnit || 0) * qtdEsperada),
+    tipoItem: fromExcess ? splitItemType(sourceType, qtdConferida, qtdEsperada) : "esperado",
     createdAt: new Date().toISOString()
   };
 }

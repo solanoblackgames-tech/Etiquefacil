@@ -246,3 +246,95 @@ test("splitLotProduct reuses the previous split SKU for the same original produc
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+async function runSplitScenario(name, { product, item, sellableQuantity }) {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `etiquefacil-split-${name}-`));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-split-${name}`;
+    const { ensureActiveSkuReservation, readDb, splitLotProduct, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [
+        {
+          id: "lot-1",
+          userId: "user-1",
+          nomeArquivo: "Lote",
+          percentualArremate: 50,
+          fornecedor: "Fornecedor",
+          prefixoSku: "ABC",
+          proximoSequencialSku: 7,
+          createdAt: "2026-08-04T00:00:00.000Z"
+        }
+      ],
+      products: [{ id: "product-original", lotId: "lot-1", codigoMl: "ABCD12345", sku: "ABC0001", createdAt: "2026-08-04T00:00:00.000Z", ...product }],
+      rzItems: [{ id: "item-1", lotId: "lot-1", productId: "product-original", codigoRz: "RZ-1", createdAt: "2026-08-04T00:00:00.000Z", ...item }],
+      skuReservations: [],
+      scans: [],
+      labels: []
+    });
+
+    await ensureActiveSkuReservation({ userId: "user-1", lotId: "lot-1", operatorUserId: "user-1" });
+    const result = await splitLotProduct({
+      userId: "user-1",
+      operatorUserId: "user-1",
+      lotId: "lot-1",
+      productId: "product-original",
+      codigoRz: "RZ-1",
+      payload: { kitQuantity: 6, sellableQuantity, descricao: "AGUA" }
+    });
+    const db = await readDb();
+    return {
+      result,
+      original: db.products.find((candidate) => candidate.id === "product-original"),
+      originalItem: db.rzItems.find((candidate) => candidate.id === "item-1"),
+      splitItem: db.rzItems.find((candidate) => candidate.productId === result.product.id)
+    };
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+test("splitLotProduct keeps external excess as excess on both items", async () => {
+  const { result, original, originalItem, splitItem } = await runSplitScenario("external-excess", {
+    product: { descricao: "FARDO 6 AGUAS", valorUnit: 30, precoCusto: 12, qtdTotal: 2, origem: "excedente_externo" },
+    item: { qtdEsperada: 0, qtdConferida: 2, valorTotal: 0, tipoItem: "excedente_externo" },
+    sellableQuantity: 6
+  });
+
+  assert.equal(original.qtdTotal, 1);
+  assert.equal(result.originalProduct.qtdTotal, 1);
+  assert.equal(originalItem.qtdConferida, 1);
+  assert.equal(originalItem.qtdEsperada, 0);
+  assert.equal(originalItem.tipoItem, "excedente_externo");
+  assert.equal(splitItem.qtdConferida, 6);
+  assert.equal(splitItem.qtdEsperada, 0);
+  assert.equal(splitItem.tipoItem, "excedente_externo");
+  assert.equal(result.product.qtdTotal, 6);
+});
+
+test("splitLotProduct consumes the excess unit before the expected quantity", async () => {
+  const { original, originalItem, splitItem } = await runSplitScenario("planilha-excess", {
+    product: { descricao: "FARDO 6 AGUAS", valorUnit: 30, precoCusto: 12, qtdTotal: 2, origem: "planilha" },
+    item: { qtdEsperada: 2, qtdConferida: 3, valorTotal: 60, tipoItem: "excedente_outro_rz" },
+    sellableQuantity: 6
+  });
+
+  assert.equal(original.qtdTotal, 2);
+  assert.equal(originalItem.qtdEsperada, 2);
+  assert.equal(originalItem.qtdConferida, 2);
+  assert.equal(originalItem.tipoItem, "esperado");
+  assert.equal(splitItem.qtdEsperada, 0);
+  assert.equal(splitItem.qtdConferida, 6);
+  assert.equal(splitItem.tipoItem, "excedente_outro_rz");
+});
