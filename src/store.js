@@ -5183,6 +5183,21 @@ export async function listCatalogProductsForAdmin(search = "") {
     .slice(0, 200);
 }
 
+export async function countCatalogProductsForAdmin(search = "") {
+  await ensureStore();
+  const term = String(search || "").trim();
+  if (hasPostgres()) {
+    const params = [];
+    const where = term ? `where ${sqlAllTermsCondition("lower(concat_ws(' ', codigo_ml, descricao, ean))", term, params)}` : "";
+    const result = await query(`select count(*)::int as total from catalog_products ${where}`, params);
+    return result.rows[0]?.total || 0;
+  }
+
+  const products = (await readDb()).catalogProducts || [];
+  if (!term) return products.length;
+  return products.filter((product) => searchTermsMatch([product.codigoMl, product.descricao, product.ean].join(" "), term)).length;
+}
+
 export async function deleteCatalogProductForAdmin(productId) {
   await ensureStore();
   if (hasPostgres()) {

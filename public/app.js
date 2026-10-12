@@ -21,6 +21,8 @@ const state = {
   adminCatalogRejectedLimit: 30,
   adminCatalogSelected: new Set(),
   adminCatalogProductsStale: false,
+  adminCatalogProductTotal: null,
+  adminCatalogProductMatching: 0,
   adminCatalogFilterTimer: null,
   blingIntegration: null,
   blingIntegrationLoaded: false,
@@ -374,7 +376,9 @@ function bindEvents() {
   });
   $("#adminOverview").addEventListener("click", (event) => {
     const card = event.target.closest("[data-admin-overview-tab]");
-    if (card) setAdminTab(card.dataset.adminOverviewTab);
+    if (!card) return;
+    setAdminTab(card.dataset.adminOverviewTab);
+    if (card.dataset.adminOverviewView) setAdminCatalogView(card.dataset.adminOverviewView);
   });
   $("#adminUsers").addEventListener("toggle", (event) => {
     const list = event.target.closest?.("[data-admin-operators-of]");
@@ -5654,7 +5658,21 @@ async function loadAdminCatalogProducts(event) {
   const query = $("#adminCatalogSearchForm") ? new FormData($("#adminCatalogSearchForm")).get("q") : "";
   const response = await api(`/api/admin/catalog-products?q=${encodeURIComponent(query || "")}`);
   state.adminCatalogProducts = response.products;
+  state.adminCatalogProductMatching = Number(response.matching) || response.products.length;
+  if (!query) setAdminCatalogProductTotal(state.adminCatalogProductMatching);
   renderAdminCatalogProducts();
+}
+
+async function loadAdminCatalogProductCount() {
+  const response = await api("/api/admin/catalog-products/count");
+  setAdminCatalogProductTotal(Number(response.total) || 0);
+}
+
+function setAdminCatalogProductTotal(total) {
+  state.adminCatalogProductTotal = total;
+  state.adminFetched.add("catalogProducts");
+  renderAdminOverview();
+  renderAdminCatalogCounts();
 }
 
 function adminTabLoaders() {
@@ -5701,6 +5719,7 @@ function loadAdminOverviewInBackground() {
   ensureAdminTabLoaded("bling");
   ensureAdminTabLoaded("lots");
   loadAdminCatalogRequests().catch((error) => console.warn("Sugestoes pendentes:", error.message));
+  loadAdminCatalogProductCount().catch((error) => console.warn("Banco historico:", error.message));
 }
 
 function setAdminTab(tab) {
@@ -5729,6 +5748,7 @@ function adminOverviewStats() {
     users: fetched.has("users") ? { value: owners.length, detail: `${operatorCount} ${operatorCount === 1 ? "operador" : "operadores"}` } : null,
     bling: fetched.has("bling") ? { value: blingConnected, detail: adminBlingDetail(blingConnected, blingTotal), warn: blingTotal > blingConnected } : null,
     catalog: fetched.has("catalogRequests") ? { value: pending, detail: pending ? "aguardando revisão" : "nada pendente", warn: pending > 0 } : null,
+    catalogProducts: fetched.has("catalogProducts") ? { value: state.adminCatalogProductTotal, detail: "produtos aprovados" } : null,
     lots: fetched.has("lots") ? { value: lots.length, detail: `${lotsThisMonth} neste mês` } : null
   };
 }
@@ -5746,11 +5766,12 @@ function renderAdminOverview() {
   const cards = [
     { tab: "users", label: "Contas principais", stat: stats.users },
     { tab: "bling", label: "Bling conectado", stat: stats.bling },
-    { tab: "catalog", label: "Sugestões pendentes", stat: stats.catalog },
+    { tab: "catalog", view: "pending", label: "Sugestões pendentes", stat: stats.catalog },
+    { tab: "catalog", view: "official", label: "Banco histórico", stat: stats.catalogProducts },
     { tab: "lots", label: "Lotes", stat: stats.lots }
   ];
-  wrapper.innerHTML = cards.map(({ tab, label, stat }) => `
-    <button type="button" class="admin-stat${stat?.warn ? " is-warn" : ""}" data-admin-overview-tab="${tab}">
+  wrapper.innerHTML = cards.map(({ tab, view, label, stat }) => `
+    <button type="button" class="admin-stat${stat?.warn ? " is-warn" : ""}" data-admin-overview-tab="${tab}"${view ? ` data-admin-overview-view="${view}"` : ""}>
       <span class="admin-stat-label">${label}</span>
       <strong class="admin-stat-value">${stat ? stat.value : '<span class="admin-skeleton"></span>'}</strong>
       <span class="admin-stat-detail">${stat ? escapeHtml(stat.detail) : "carregando..."}</span>
@@ -6021,11 +6042,12 @@ function setAdminCatalogMessage(text, ok = true) {
 function renderAdminCatalogCounts() {
   const counts = {
     pending: state.adminCatalogRequests.length,
-    rejected: state.adminCatalogRejectedRequests.length >= 200 ? "200+" : state.adminCatalogRejectedRequests.length
+    rejected: state.adminCatalogRejectedRequests.length >= 200 ? "200+" : state.adminCatalogRejectedRequests.length,
+    official: state.adminCatalogProductTotal
   };
   document.querySelectorAll("[data-catalog-count]").forEach((badge) => {
     const value = counts[badge.dataset.catalogCount];
-    badge.textContent = value ? String(value) : "";
+    badge.textContent = value ? (typeof value === "number" ? value.toLocaleString("pt-BR") : String(value)) : "";
     badge.classList.toggle("hidden", !value);
   });
 }
@@ -6188,7 +6210,7 @@ function renderAdminCatalogProducts() {
   }
 
   wrapper.innerHTML = `
-    <p class="admin-subtitle catalog-pane-note">${state.adminCatalogProducts.length >= 200 ? "Mostrando os 200 atualizados mais recentemente. Use a busca para encontrar outros." : `${state.adminCatalogProducts.length} ${state.adminCatalogProducts.length === 1 ? "produto" : "produtos"}.`}</p>
+    <p class="admin-subtitle catalog-pane-note">${adminCatalogProductsNote()}</p>
     <div class="admin-table">
       <div class="admin-row catalog-product-row admin-row-head">
         <span>Produto</span>
@@ -6202,6 +6224,15 @@ function renderAdminCatalogProducts() {
       ${state.adminCatalogProducts.map(adminCatalogProductRow).join("")}
     </div>
   `;
+}
+
+function adminCatalogProductsNote() {
+  const shown = state.adminCatalogProducts.length;
+  const matching = Math.max(state.adminCatalogProductMatching, shown);
+  const total = state.adminCatalogProductTotal;
+  const totalLabel = total !== null && total !== matching ? ` (${total.toLocaleString("pt-BR")} no banco)` : "";
+  if (matching > shown) return `Mostrando os ${shown} atualizados mais recentemente de ${matching.toLocaleString("pt-BR")} encontrados${totalLabel}. Use a busca para achar outros.`;
+  return `${matching.toLocaleString("pt-BR")} ${matching === 1 ? "produto" : "produtos"}${totalLabel}.`;
 }
 
 function adminCatalogRejectedRequestRow(request) {
@@ -6704,6 +6735,7 @@ function removeReviewedCatalogRequests(ids, action) {
     loadAdminCatalogRejectedRequests().catch((error) => console.warn("Sugestoes rejeitadas:", error.message));
   } else {
     state.adminCatalogProductsStale = true;
+    loadAdminCatalogProductCount().catch((error) => console.warn("Banco historico:", error.message));
   }
 }
 

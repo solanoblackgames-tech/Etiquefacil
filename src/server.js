@@ -100,6 +100,7 @@ import {
   markBlingSyncJobFailed,
   markBlingSyncJobSucceeded,
   markTransferLotSynced,
+  countCatalogProductsForAdmin,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
   listLotsForAdmin,
@@ -331,7 +332,15 @@ app.get("/api/admin/catalog-rejected-requests", requireAdmin, async (req, res) =
 });
 
 app.get("/api/admin/catalog-products", requireAdmin, async (req, res) => {
-  res.json({ products: await listCatalogProductsForAdmin(req.query.q) });
+  const [products, matching] = await Promise.all([
+    listCatalogProductsForAdmin(req.query.q),
+    countCatalogProductsForAdmin(req.query.q)
+  ]);
+  res.json({ products, matching });
+});
+
+app.get("/api/admin/catalog-products/count", requireAdmin, async (req, res) => {
+  res.json({ total: await countCatalogProductsForAdmin() });
 });
 
 app.delete("/api/admin/catalog-products/:productId", requireAdmin, async (req, res) => {
