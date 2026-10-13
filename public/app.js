@@ -467,6 +467,8 @@ function bindEvents() {
   $("#expeditionOrderForm select[name='storeKey']")?.addEventListener("change", handleExpeditionStoreChange);
   $("#expeditionOrders")?.addEventListener("click", handleExpeditionOrdersClick);
   $("#expeditionDetail")?.addEventListener("submit", handleExpeditionDetailSubmit);
+  $("#stockTab")?.addEventListener("submit", handleWmsStockSubmit);
+  $("#stockTab")?.addEventListener("click", handleWmsStockClick);
   $("#expeditionDetail")?.addEventListener("click", handleExpeditionDetailClick);
   $("#triageCreateForm").addEventListener("submit", createTriageItem);
   $("#securitySealsForm").addEventListener("submit", generateSecuritySealsPdf);
@@ -2666,6 +2668,7 @@ function applyUserPermissions(user) {
   document.querySelector('#app [data-tab="profile"]')?.classList.remove("hidden");
   document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="expedition"]')?.classList.toggle("hidden", !user.transferAccess);
+  document.querySelector('#app [data-tab="stock"]')?.classList.toggle("hidden", !(user.transferAccess || user.stockTransferAcceptanceAccess));
   document.querySelector('#app [data-tab="triage"]')?.classList.toggle("hidden", !user.triageAccess);
   document.querySelectorAll(".sync-shortcut").forEach((button) => button.classList.toggle("hidden", operator));
   document.querySelector('[data-profile-section="help"]')?.classList.remove("hidden");
@@ -2942,6 +2945,58 @@ function renderTriageWmsDepositList(settings) {
   wrapper.innerHTML = wmsDeposits.length
     ? wmsDeposits.map((wms) => triageWmsDepositCard(wms, deposits)).join("")
     : '<p class="muted transfer-empty">Nenhum destino usando WMS. Destinos sem WMS continuam no aceite/conferencia normal.</p>';
+  if (!wrapper.dataset.channelsBound) {
+    wrapper.dataset.channelsBound = "1";
+    wrapper.addEventListener("change", handleWmsStoreChannelChange);
+  }
+  if (!state.blingSalesChannels) loadBlingSalesChannels();
+}
+
+// Lojas da conta Bling para o usuario escolher quais expedem por cada deposito WMS.
+async function loadBlingSalesChannels() {
+  if (state.loadingBlingSalesChannels) return;
+  state.loadingBlingSalesChannels = true;
+  try {
+    const response = await api("/api/bling/sales-channels");
+    state.blingSalesChannels = response.channels || [];
+    state.blingSalesChannelsError = "";
+  } catch (error) {
+    state.blingSalesChannels = [];
+    state.blingSalesChannelsError = error.message;
+  } finally {
+    state.loadingBlingSalesChannels = false;
+  }
+  document.querySelectorAll("[data-wms-store]").forEach((row) => {
+    const select = row.querySelector("[data-wms-store-channel]");
+    if (select) select.innerHTML = wmsStoreChannelOptions(row.querySelector('[name="wmsStoreId"]')?.value || "");
+  });
+}
+
+function wmsStoreChannelOptions(selectedId = "") {
+  const channels = state.blingSalesChannels;
+  if (!channels) return '<option value="">Carregando lojas do Bling...</option>';
+  if (!channels.length) {
+    return `<option value="">${escapeHtml(state.blingSalesChannelsError ? "Lojas do Bling indisponiveis - preencha abaixo" : "Nenhuma loja no Bling")}</option>`;
+  }
+  const known = channels.some((channel) => channel.id === String(selectedId));
+  return [
+    `<option value="">${known || !selectedId ? "Escolha a loja do Bling" : "Loja digitada manualmente"}</option>`,
+    ...channels.map((channel) => `
+      <option value="${escapeHtml(channel.id)}" ${channel.id === String(selectedId) ? "selected" : ""}>
+        ${escapeHtml(channel.name)}${channel.type ? ` (${escapeHtml(channel.type)})` : ""}${channel.active ? "" : " - inativa"}
+      </option>
+    `)
+  ].join("");
+}
+
+function handleWmsStoreChannelChange(event) {
+  const select = event.target.closest("[data-wms-store-channel]");
+  if (!select) return;
+  const row = select.closest("[data-wms-store]");
+  const channel = (state.blingSalesChannels || []).find((candidate) => candidate.id === select.value);
+  if (!row || !channel) return;
+  row.querySelector('[name="wmsStoreName"]').value = channel.name;
+  row.querySelector('[name="wmsStoreId"]').value = channel.id;
 }
 
 function triageWmsDepositCard(wms = {}, deposits = []) {
@@ -2989,11 +3044,20 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
 function triageWmsStoreRow(store = {}) {
   return `
     <div class="triage-wms-store-row" data-wms-store>
+      <label>Loja do Bling
+        <select data-wms-store-channel>${wmsStoreChannelOptions(store.blingStoreId)}</select>
+      </label>
       <label>Nome da loja
         <input name="wmsStoreName" value="${escapeHtml(store.name || "")}" placeholder="Ex: Mercado Livre" />
       </label>
       <label>ID da loja no Bling
         <input name="wmsStoreId" value="${escapeHtml(store.blingStoreId || "")}" placeholder="Opcional" />
+      </label>
+      <label>Documento da expedicao
+        <select name="wmsStoreDocument">
+          <option value="shipping_label" ${store.expeditionDocument === "picking_report" ? "" : "selected"}>Etiqueta de envio + DANFE key (marketplace)</option>
+          <option value="picking_report" ${store.expeditionDocument === "picking_report" ? "selected" : ""}>Relatorio de produtos coletados (venda direta)</option>
+        </select>
       </label>
       <button type="button" class="ghost danger" data-remove-wms-store>Remover loja</button>
     </div>
@@ -3021,7 +3085,8 @@ function normalizeWmsStores(input = []) {
   const rows = Array.isArray(input) ? input : [];
   return rows.map((store) => ({
     name: String(store.name || store.nome || store.lojaNome || "").trim(),
-    blingStoreId: String(store.blingStoreId || store.idLoja || store.id || "").trim()
+    blingStoreId: String(store.blingStoreId || store.idLoja || store.id || "").trim(),
+    expeditionDocument: store.expeditionDocument === "picking_report" ? "picking_report" : "shipping_label"
   })).filter((store) => store.name || store.blingStoreId);
 }
 
@@ -3082,7 +3147,8 @@ function readWmsRowsConfig(card) {
 function readWmsStores(card) {
   return [...card.querySelectorAll("[data-wms-store]")].map((row) => ({
     name: String(row.querySelector('[name="wmsStoreName"]')?.value || "").trim(),
-    blingStoreId: String(row.querySelector('[name="wmsStoreId"]')?.value || "").trim()
+    blingStoreId: String(row.querySelector('[name="wmsStoreId"]')?.value || "").trim(),
+    expeditionDocument: row.querySelector('[name="wmsStoreDocument"]')?.value || "shipping_label"
   })).filter((store) => store.name || store.blingStoreId);
 }
 
@@ -3324,7 +3390,7 @@ function addTriageWmsStore(card) {
   if (!list) return;
   list.querySelector(".transfer-empty")?.remove();
   list.insertAdjacentHTML("beforeend", triageWmsStoreRow({ name: "", blingStoreId: "" }));
-  list.querySelector("[data-wms-store]:last-child input")?.focus();
+  list.querySelector("[data-wms-store]:last-child select")?.focus();
 }
 
 function nextWmsRowLabel(rowsConfig) {
@@ -5478,6 +5544,7 @@ function parseRoute(pathname) {
   if (parts[0] === "transferencias" && parts[1] && parts[2] === "loja") return { view: "transferReceive", transferLotId: parts[1] };
   if (parts[0] === "transferencias") return { view: "transfers" };
   if (parts[0] === "expedicao") return { view: "expedition" };
+  if (parts[0] === "estoque") return { view: "stock" };
   if (parts[0] === "laudo" && parts[1]) return { view: "triageView", triageCode: parts[1] };
   if (parts[0] === "triagem" && parts[1] === "visualizar" && parts[2]) return { view: "triageView", triageCode: parts[2] };
   if (parts[0] === "triagem" && parts[1]) return { view: "triage", triageCode: parts[1] };
@@ -5493,6 +5560,7 @@ function routePathForView(view) {
   if (view === "search") return "/busca";
   if (view === "transfers") return "/transferencias";
   if (view === "expedition") return "/expedicao";
+  if (view === "stock") return "/estoque";
   if (view === "triage") return "/triagem";
   if (view === "profile") return "/perfil";
   return "/perfil";
@@ -5516,6 +5584,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   let target = tab || "profile";
   if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "expedition" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
+  if (target === "stock" && !canUseWmsStock()) target = state.user?.role === "operator" ? "lots" : "profile";
   if (target === "triage" && !state.user?.triageAccess && !(triageViewOnly && state.user?.stockTransferAcceptanceAccess)) target = state.user?.role === "operator" ? "lots" : "profile";
   if (resetSelection) {
     state.selectedLotId = null;
@@ -5540,6 +5609,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   toggleClass("#searchTab", "hidden", target !== "search");
   toggleClass("#transfersTab", "hidden", target !== "transfers");
   toggleClass("#expeditionTab", "hidden", target !== "expedition");
+  toggleClass("#stockTab", "hidden", target !== "stock");
   toggleClass("#triageTab", "hidden", target !== "triage");
   toggleClass("#triageTab", "triage-view-only", target === "triage" && triageViewOnly);
   toggleClass("#profileTab", "hidden", target !== "profile");
@@ -5552,6 +5622,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
     loadTransferLots(state.selectedTransferLotId);
   }
   if (target === "expedition") loadExpedition(state.selectedExpeditionOrderId);
+  if (target === "stock") loadWmsStock();
   if (target === "triage" && !triageViewOnly && !skipTriageLoad) loadTriageItems(state.selectedTriageCode);
   schedulePrimaryInputFocus();
 }
@@ -6938,6 +7009,7 @@ function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
         </label>
         <button type="submit">Alocar produto</button>
       </form>
+      <p id="transferWmsSuggestion" class="wms-suggestion"></p>
       ${state.pendingTransferConfirmation ? transferPendingConfirmation(state.pendingTransferConfirmation) : ""}
       <div id="transferReceiveMessage" class="message"></div>
       ${transferDivergenceReportPanel(lot)}
@@ -7286,13 +7358,15 @@ function prepareTransferReceiveConfirmation(lot) {
   const input = $("#transferReceiveInput");
   const wmsInput = $("#transferWmsLocationInput");
   if (!input) return;
-  const code = normalizeCode(input.value);
+  const scannedLaudo = String(input.value || "").toUpperCase().match(/LAB-\d{8}-\d{6}/)?.[0] || "";
+  const code = normalizeCode(scannedLaudo || input.value);
   const wmsLocation = String(wmsInput?.value || "").trim().toUpperCase();
   input.value = code;
   if (!code) return;
   if (lot.wmsEnabled && !wmsLocation) {
     $("#transferReceiveMessage").style.color = "";
     $("#transferReceiveMessage").textContent = "Informe a posicao WMS para alocar o produto.";
+    showWmsPlacementSuggestion(lot, code);
     schedulePrimaryInputFocus(["#transferWmsLocationInput"]);
     return;
   }
@@ -7565,7 +7639,7 @@ function expeditionWmsStores() {
       const name = String(store.name || "").trim();
       const blingStoreId = String(store.blingStoreId || "").trim();
       const key = [wmsDepositName, blingStoreId || name].join("|");
-      stores.push({ key, name, blingStoreId, wmsDepositName });
+      stores.push({ key, name, blingStoreId, wmsDepositName, expeditionDocument: store.expeditionDocument });
     }
   }
   return stores.sort((a, b) => (a.name || a.blingStoreId).localeCompare(b.name || b.blingStoreId, "pt-BR"));
@@ -7689,20 +7763,21 @@ function renderExpeditionDetail(order) {
         ${metric("Itens", order.totalQty || 0)}
         ${metric("Separado", order.totalPicked || 0)}
         ${metric("Falta", order.totalPending || 0)}
-        ${metric("Saldo WMS", state.expedition?.totalStock || 0)}
+        ${metric("Saldo WMS", order.depositStock ?? state.expedition?.totalStock ?? 0)}
       </div>
       <form id="expeditionPickForm" class="transfer-total-form wms-entry-form">
         <label>Posicao WMS
           <input name="positionCode" placeholder="Bipe a posicao" autocomplete="off" ${completed ? "disabled" : "autofocus"} required />
         </label>
-        <label>Etiqueta/produto
-          <input name="productCode" placeholder="Bipe etiqueta da triagem, SKU, ASIN ou Cod ML" autocomplete="off" ${completed ? "disabled" : ""} required />
+        <label>Laudo/produto
+          <input name="productCode" placeholder="Bipe o laudo (SKU so se a unidade nao tiver laudo)" autocomplete="off" ${completed ? "disabled" : ""} required />
         </label>
         <button type="submit" ${completed ? "disabled" : ""}>Coletar produto</button>
       </form>
       <p id="expeditionPickMessage" class="message"></p>
       <div class="actions">
-        <button type="button" data-complete-expedition="${escapeHtml(order.id)}" ${completed || Number(order.totalPending || 0) > 0 ? "disabled" : ""}>Finalizar pedido</button>
+        <button type="button" data-print-expedition-label="${escapeHtml(order.id)}" ${Number(order.totalPending || 0) > 0 ? "disabled" : ""}>${expeditionDocumentForOrder(order) === "picking_report" ? "Imprimir relatorio de coleta" : "Imprimir etiqueta ML"}</button>
+        <button type="button" data-complete-expedition="${escapeHtml(order.id)}" ${completed || Number(order.totalPending || 0) > 0 ? "disabled" : ""}>Marcar como Atendido</button>
         <button type="button" class="ghost" data-refresh-expedition>Atualizar rota</button>
       </div>
       <section class="expedition-route">
@@ -7731,7 +7806,7 @@ function expeditionRouteMarkup(order) {
     <article class="diverse-row transfer-row expedition-row">
       <strong>${escapeHtml(step.wmsLocation)}</strong>
       <span>${escapeHtml(step.sku || step.codigoMl || "")}</span>
-      <span>${escapeHtml(step.descricao || "")}</span>
+      <span>${escapeHtml(step.descricao || "")}${(step.laudos || []).length ? `<br><strong>Laudo: ${step.laudos.map(escapeHtml).join(", ")}</strong>` : '<br><span class="muted">Sem laudo: bipe o SKU</span>'}</span>
       <span>Qtd ${Number(step.quantidade || 0)}</span>
     </article>
   `).join("");
@@ -7752,32 +7827,108 @@ async function handleExpeditionDetailSubmit(event) {
   if (event.target.id !== "expeditionPickForm") return;
   event.preventDefault();
   if (!state.selectedExpeditionOrderId || state.pendingExpeditionPick) return;
-  const form = event.currentTarget;
+  const form = event.target;
   const button = form.querySelector("button");
   const message = $("#expeditionPickMessage");
   const payload = Object.fromEntries(new FormData(form).entries());
+  const orderId = state.selectedExpeditionOrderId;
+  const before = (state.expedition?.orders || []).find((candidate) => candidate.id === orderId);
+  // Como no JZ Transfer: a ultima unidade do pedido ja sai com etiqueta + DANFE key.
+  // A janela abre aqui, ainda no gesto da bipagem, para o navegador nao bloquear.
+  const labelWindow = Number(before?.totalPending || 0) === 1 ? openPendingLabelWindow() : null;
   state.pendingExpeditionPick = true;
   button.disabled = true;
   try {
-    const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(state.selectedExpeditionOrderId)}/pick`, {
+    const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(orderId)}/pick`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     state.expedition = response.expedition;
-    const order = (state.expedition.orders || []).find((candidate) => candidate.id === state.selectedExpeditionOrderId);
+    const order = (state.expedition.orders || []).find((candidate) => candidate.id === orderId);
     renderExpeditionOrders();
     renderExpeditionDetail(order);
-    $("#expeditionPickMessage").style.color = "#0f766e";
-    $("#expeditionPickMessage").textContent = `${response.pick?.code || "Produto"} coletado em ${response.pick?.wmsLocation || ""}.`;
+    const pickedText = `${response.pick?.code || "Produto"} coletado em ${response.pick?.wmsLocation || ""}.`;
+    if (Number(order?.totalPending || 0) > 0) {
+      labelWindow?.close();
+      playTransferReadSound();
+      showExpeditionMessage(pickedText, true);
+      return;
+    }
+    await printAndFinishExpeditionOrder(order, labelWindow, pickedText);
   } catch (error) {
-    message.style.color = "";
-    message.textContent = error.message;
-    form.querySelector("input[name='positionCode']")?.select();
+    labelWindow?.close();
+    playTransferErrorSound();
+    showExpeditionMessage(error.message, false);
+    $("#expeditionPickForm input[name='positionCode']")?.select();
   } finally {
     state.pendingExpeditionPick = false;
-    button.disabled = false;
+    if (button.isConnected) button.disabled = false;
   }
+}
+
+async function printAndFinishExpeditionOrder(order, labelWindow, pickedText = "") {
+  const prefix = pickedText ? `${pickedText} ` : "";
+  try {
+    await printExpeditionShippingLabel(order.id, labelWindow);
+  } catch (error) {
+    labelWindow?.close();
+    playTransferErrorSound();
+    showExpeditionMessage(`${prefix}Pedido completo, mas o(a) ${expeditionDocumentName(order)} nao saiu: ${error.message}`, false);
+    return;
+  }
+  try {
+    await finishExpeditionOrder(order.id);
+    playToneSequence([880, 1175]);
+    showExpeditionMessage(`${prefix}Pedido ${order.pedidoNumero} completo, ${expeditionDocumentName(order)} aberto(a) e marcado como Atendido.`, true);
+  } catch (error) {
+    playTransferErrorSound();
+    showExpeditionMessage(`${prefix}${expeditionDocumentName(order)} aberto(a), mas o pedido nao finalizou: ${error.message}`, false);
+  }
+}
+
+function openPendingLabelWindow() {
+  const labelWindow = window.open("about:blank", "_blank");
+  if (!labelWindow) return null;
+  labelWindow.document.write('<p style="font-family: Arial, sans-serif; padding: 16px;">Preparando etiqueta...</p>');
+  labelWindow.document.close();
+  return labelWindow;
+}
+
+function expeditionDocumentForOrder(order = {}) {
+  const storeName = normalizeSearchText(order.lojaNome);
+  const store = expeditionWmsStores().find((candidate) => storeName && normalizeSearchText(candidate.name) === storeName);
+  return store?.expeditionDocument === "picking_report" ? "picking_report" : "shipping_label";
+}
+
+function expeditionDocumentName(order) {
+  return expeditionDocumentForOrder(order) === "picking_report" ? "relatorio de coleta" : "etiqueta";
+}
+
+async function printExpeditionShippingLabel(orderId, labelWindow) {
+  const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(orderId)}/document`, { method: "POST" });
+  const printUrl = `${response.printUrl}?t=${Date.now()}`;
+  if (labelWindow && !labelWindow.closed) {
+    labelWindow.location.href = printUrl;
+    labelWindow.focus();
+    return;
+  }
+  if (!window.open(printUrl, "_blank")) throw new Error("Permita pop-ups para este site e tente novamente.");
+}
+
+async function finishExpeditionOrder(orderId) {
+  const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(orderId)}/complete`, { method: "POST" });
+  state.expedition = response.expedition;
+  renderExpeditionOrders();
+  renderExpeditionDetail((state.expedition.orders || []).find((candidate) => candidate.id === orderId));
+  return response;
+}
+
+function showExpeditionMessage(text, ok) {
+  const message = $("#expeditionPickMessage");
+  if (!message) return;
+  message.style.color = ok ? "#0f766e" : "";
+  message.textContent = text;
 }
 
 async function handleExpeditionDetailClick(event) {
@@ -7786,21 +7937,324 @@ async function handleExpeditionDetailClick(event) {
     await loadExpedition(state.selectedExpeditionOrderId);
     return;
   }
+  const printLabel = event.target.closest("[data-print-expedition-label]");
+  if (printLabel) {
+    const labelWindow = openPendingLabelWindow();
+    printLabel.disabled = true;
+    showExpeditionMessage("Preparando impressao...", true);
+    try {
+      await printExpeditionShippingLabel(printLabel.dataset.printExpeditionLabel, labelWindow);
+      showExpeditionMessage("Documento aberto para impressao.", true);
+    } catch (error) {
+      labelWindow?.close();
+      showExpeditionMessage(error.message, false);
+    } finally {
+      printLabel.disabled = false;
+    }
+    return;
+  }
   const complete = event.target.closest("[data-complete-expedition]");
   if (!complete) return;
   complete.disabled = true;
   try {
-    const response = await api(`/api/wms/expedition/orders/${encodeURIComponent(complete.dataset.completeExpedition)}/complete`, { method: "POST" });
-    state.expedition = response.expedition;
-    const order = (state.expedition.orders || []).find((candidate) => candidate.id === complete.dataset.completeExpedition);
-    renderExpeditionOrders();
-    renderExpeditionDetail(order);
-    $("#expeditionPickMessage").style.color = "#0f766e";
-    $("#expeditionPickMessage").textContent = "Pedido finalizado. Proxima etapa: impressao da etiqueta Bling/DANFE.";
+    await finishExpeditionOrder(complete.dataset.completeExpedition);
+    showExpeditionMessage("Pedido marcado como Atendido.", true);
   } catch (error) {
-    $("#expeditionPickMessage").textContent = error.message;
+    showExpeditionMessage(error.message, false);
   } finally {
-    complete.disabled = false;
+    if (complete.isConnected) complete.disabled = false;
+  }
+}
+
+// ---- Estoque WMS: gestao de saldos por posicao/laudo, inventario, reenderecamento ----
+
+function canUseWmsStock() {
+  return Boolean(state.user?.transferAccess || state.user?.stockTransferAcceptanceAccess || state.user?.role === "admin");
+}
+
+function wmsStockDeposits() {
+  return state.wmsStock?.deposits || [];
+}
+
+async function loadWmsStock() {
+  const form = $("#wmsStockFilterForm");
+  if (!form) return;
+  renderWmsStockDepositSelect();
+  const params = new URLSearchParams();
+  if (form.elements.deposit.value) params.set("deposit", form.elements.deposit.value);
+  if (form.elements.q.value.trim()) params.set("q", form.elements.q.value.trim());
+  try {
+    state.wmsStock = await api(`/api/wms/stock?${params}`);
+    state.wmsCompare = null;
+    renderWmsStockDepositSelect();
+    renderWmsStock();
+  } catch (error) {
+    showWmsStockMessage(error.message, false);
+  }
+}
+
+function renderWmsStockDepositSelect() {
+  const deposits = wmsStockDeposits();
+  document.querySelectorAll("[data-wms-deposit-select]").forEach((select) => {
+    const current = select.value;
+    const allowAll = select.dataset.wmsDepositSelect === "filter";
+    select.innerHTML = (allowAll ? '<option value="">Todos os depositos</option>' : "") + deposits
+      .map((name) => `<option value="${escapeHtml(name)}" ${name === current ? "selected" : ""}>${escapeHtml(name)}</option>`)
+      .join("");
+    if (!allowAll && !select.value && deposits[0]) select.value = deposits[0];
+  });
+}
+
+function renderWmsStock() {
+  const data = state.wmsStock || { rows: [], units: [], totals: {} };
+  const totals = data.totals || {};
+  $("#wmsStockTotals").innerHTML = [
+    metric("Unidades", totals.units || 0),
+    metric("Livres", totals.stored || 0),
+    metric("Reservadas", (totals.reserved || 0) + (totals.picked || 0)),
+    metric("Posicoes", totals.positions || 0),
+    metric("Sem laudo", totals.withoutLaudo || 0, "inventario inicial"),
+    metric("Nao validadas", totals.notValidated || 0, "Bling nao respondeu")
+  ].join("");
+  const rows = data.rows || [];
+  $("#wmsStockRows").innerHTML = rows.length ? `
+    <div class="wms-stock-table-wrap">
+      <table class="wms-stock-table">
+        <thead>
+          <tr><th>Posicao</th><th>SKU</th><th>Cod ML / ASIN</th><th>Descricao</th><th class="num">Livre</th><th class="num">Reservado</th><th>Laudos (FIFO)</th><th>Alertas</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td><strong>${escapeHtml(row.location)}</strong><br><span class="muted">${escapeHtml(row.depositName)}</span></td>
+              <td>${escapeHtml(row.sku)}</td>
+              <td>${escapeHtml(row.codigoMl || "")}</td>
+              <td>${escapeHtml(row.descricao || "")}</td>
+              <td class="num">${Number(row.stored || 0)}</td>
+              <td class="num">${Number(row.reserved || 0) + Number(row.picked || 0)}</td>
+              <td class="wms-stock-laudos">${row.laudos.length ? row.laudos.map((code) => `<span>${escapeHtml(code)}</span>`).join("") : '<span class="muted">-</span>'}</td>
+              <td>${[
+                row.withoutLaudo ? `<span class="badge excess">${row.withoutLaudo} sem laudo</span>` : "",
+                row.notValidated ? `<span class="badge danger">${row.notValidated} nao validada(s)</span>` : ""
+              ].join(" ")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  ` : '<p class="muted transfer-empty">Nenhuma unidade no WMS com este filtro. Use o Inventario para guardar o estoque que ja existe.</p>';
+  if (state.wmsCompare) renderWmsCompare();
+}
+
+function openWmsStockPanel(panel) {
+  state.wmsStockPanel = state.wmsStockPanel === panel ? "" : panel;
+  document.querySelectorAll("[data-wms-panel]").forEach((button) => button.classList.toggle("ghost", button.dataset.wmsPanel !== state.wmsStockPanel));
+  const target = $("#wmsStockPanel");
+  if (state.wmsStockPanel === "inventory") {
+    target.innerHTML = `
+      <form id="wmsInventoryForm" class="wms-stock-form">
+        <p class="muted">Guarda no WMS o estoque que ja existe. Nao muda o saldo do Bling. Bipe o laudo; sem laudo, bipe o SKU (precisa estar cadastrado no Bling) e informe a quantidade.</p>
+        <label>Deposito<select name="depositName" data-wms-deposit-select="form" required></select></label>
+        <label>Posicao<input name="location" placeholder="Bipe a posicao" autocomplete="off" required /></label>
+        <label>Laudo ou SKU<input name="code" placeholder="Bipe o laudo ou o SKU" autocomplete="off" required /></label>
+        <label>Quantidade<input name="quantity" type="number" min="1" max="500" value="1" required /></label>
+        <button type="submit">Guardar no WMS</button>
+      </form>
+      <div id="wmsInventoryLog" class="wms-stock-log"></div>
+    `;
+  } else if (state.wmsStockPanel === "relocate") {
+    target.innerHTML = `
+      <form id="wmsRelocateForm" class="wms-stock-form">
+        <p class="muted">Move unidades livres de uma posicao para outra. Unidades reservadas para pedidos nao podem ser movidas.</p>
+        <label>Posicao de origem<input name="fromLocation" placeholder="Bipe a posicao atual" autocomplete="off" required /></label>
+        <label>Laudo ou SKU<input name="code" placeholder="Bipe o laudo ou o SKU" autocomplete="off" required /></label>
+        <label>Quantidade<input name="quantity" type="number" min="1" value="1" required /></label>
+        <label>Posicao de destino<input name="toLocation" placeholder="Bipe a nova posicao" autocomplete="off" required /></label>
+        <label>Motivo<input name="reason" placeholder="Ex: organizacao, posicao cheia" required /></label>
+        <button type="submit">Reenderecar</button>
+      </form>
+    `;
+  } else if (state.wmsStockPanel === "movements") {
+    target.innerHTML = '<p class="muted">Carregando movimentacoes...</p>';
+    loadWmsMovements();
+  } else {
+    target.innerHTML = "";
+  }
+  renderWmsStockDepositSelect();
+  target.querySelector("input[name='location'], input[name='fromLocation']")?.focus();
+}
+
+async function loadWmsMovements() {
+  const search = $("#wmsStockFilterForm")?.elements.q.value.trim() || "";
+  try {
+    const response = await api(`/api/wms/movements?limit=200${search ? `&q=${encodeURIComponent(search)}` : ""}`);
+    const labels = { entrada: "Entrada", inventario: "Inventario", reenderecamento: "Reenderecamento", coleta: "Coleta", expedicao: "Expedido", estorno_entrada: "Entrada desfeita", migracao: "Saldo anterior" };
+    const movements = response.movements || [];
+    $("#wmsStockPanel").innerHTML = movements.length ? `
+      <div class="wms-stock-table-wrap">
+        <table class="wms-stock-table">
+          <thead><tr><th>Data</th><th>Tipo</th><th>SKU</th><th>Laudo</th><th>De</th><th>Para</th><th>Motivo</th><th>Operador</th></tr></thead>
+          <tbody>
+            ${movements.map((movement) => `
+              <tr>
+                <td>${escapeHtml(new Date(movement.createdAt).toLocaleString("pt-BR"))}</td>
+                <td>${escapeHtml(labels[movement.type] || movement.type)}</td>
+                <td>${escapeHtml(movement.sku)}</td>
+                <td>${escapeHtml(movement.triageCode || "-")}</td>
+                <td>${escapeHtml(movement.fromLocation || "-")}</td>
+                <td>${escapeHtml(movement.toLocation || "-")}</td>
+                <td>${escapeHtml(movement.reason || "")}</td>
+                <td>${escapeHtml(movement.operatorName || "")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    ` : '<p class="muted">Nenhuma movimentacao encontrada.</p>';
+  } catch (error) {
+    $("#wmsStockPanel").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function handleWmsStockSubmit(event) {
+  const form = event.target;
+  if (form.id === "wmsStockFilterForm") {
+    event.preventDefault();
+    await loadWmsStock();
+    if (state.wmsStockPanel === "movements") loadWmsMovements();
+    return;
+  }
+  if (form.id !== "wmsInventoryForm" && form.id !== "wmsRelocateForm") return;
+  event.preventDefault();
+  const button = form.querySelector("button[type='submit']");
+  const payload = Object.fromEntries(new FormData(form).entries());
+  button.disabled = true;
+  try {
+    if (form.id === "wmsInventoryForm") {
+      const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const first = result.units?.[0] || {};
+      const note = result.blingValidated === false ? " (Bling nao respondeu: ficou como nao validada)" : "";
+      $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
+      playTransferReadSound();
+      form.elements.code.value = "";
+      form.elements.quantity.value = "1";
+      form.elements.code.focus();
+    } else {
+      const result = await api("/api/wms/relocate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      showWmsStockMessage(`${result.moved} unidade(s) movida(s) de ${result.from} para ${result.to}.`, true);
+      playTransferReadSound();
+      form.reset();
+      form.elements.fromLocation.focus();
+    }
+    await loadWmsStock();
+  } catch (error) {
+    playTransferErrorSound();
+    showWmsStockMessage(error.message, false);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleWmsStockClick(event) {
+  const panel = event.target.closest("[data-wms-panel]");
+  if (panel) {
+    openWmsStockPanel(panel.dataset.wmsPanel);
+    return;
+  }
+  if (event.target.closest("[data-wms-export]")) {
+    exportWmsStock();
+    return;
+  }
+  if (event.target.closest("[data-wms-compare]")) {
+    await compareWmsStockWithBling();
+  }
+}
+
+async function compareWmsStockWithBling() {
+  const deposit = $("#wmsStockFilterForm").elements.deposit.value || wmsStockDeposits()[0] || "";
+  if (!deposit) {
+    showWmsStockMessage("Configure um deposito WMS para comparar.", false);
+    return;
+  }
+  showWmsStockMessage(`Comparando ${deposit} com o Bling...`, true);
+  try {
+    state.wmsCompare = await api(`/api/wms/bling-compare?deposit=${encodeURIComponent(deposit)}`);
+    renderWmsCompare();
+    showWmsStockMessage("", true);
+  } catch (error) {
+    showWmsStockMessage(error.message, false);
+  }
+}
+
+function renderWmsCompare() {
+  const compare = state.wmsCompare;
+  if (!compare) return;
+  const divergent = compare.rows.filter((row) => row.diff !== 0);
+  $("#wmsStockPanel").innerHTML = `
+    <div class="wms-stock-compare-heading">
+      <strong>WMS x Bling - ${escapeHtml(compare.depositName)}</strong>
+      <span>${divergent.length} SKU(s) com diferenca de ${compare.rows.length}</span>
+    </div>
+    <div class="wms-stock-table-wrap">
+      <table class="wms-stock-table">
+        <thead><tr><th>SKU</th><th>Descricao</th><th class="num">WMS</th><th class="num">Bling</th><th class="num">Diferenca</th></tr></thead>
+        <tbody>
+          ${compare.rows.map((row) => `
+            <tr class="${row.diff ? "wms-stock-divergent" : ""}">
+              <td>${escapeHtml(row.sku)}</td>
+              <td>${escapeHtml(row.descricao || (row.blingStatus === "not_found" ? "Nao encontrado no Bling" : ""))}</td>
+              <td class="num">${row.wms}</td>
+              <td class="num">${row.bling === null ? "-" : row.bling}</td>
+              <td class="num">${row.diff > 0 ? `+${row.diff}` : row.diff}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function exportWmsStock() {
+  const units = state.wmsStock?.units || [];
+  const statusLabel = { stored: "Livre", reserved: "Reservada", picked: "Coletada" };
+  const header = ["Deposito", "Posicao", "SKU", "Cod ML/ASIN", "EAN", "Descricao", "Laudo", "Situacao", "Origem", "Data FIFO", "Validado no Bling"];
+  const lines = units.map((unit) => [
+    unit.depositName, unit.location, unit.sku, unit.codigoMl, unit.ean, unit.descricao, unit.triageCode,
+    statusLabel[unit.status] || unit.status, unit.source === "inventory" ? "Inventario" : "Transferencia",
+    unit.source === "inventory" && !unit.triageCode ? "" : String(unit.fifoAt || "").slice(0, 10),
+    unit.blingValidated === false ? "Nao" : "Sim"
+  ]);
+  const csv = [header, ...lines].map((line) => line.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `estoque-wms-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+function showWmsStockMessage(text, ok) {
+  const message = $("#wmsStockMessage");
+  if (!message) return;
+  message.style.color = ok ? "#0f766e" : "";
+  message.textContent = text;
+}
+
+// Sugestao de posicao na entrada WMS: onde o mesmo produto ja esta guardado.
+async function showWmsPlacementSuggestion(lot, code) {
+  const target = $("#transferWmsSuggestion");
+  if (!target || !lot?.wmsEnabled || !code) return;
+  target.textContent = "";
+  try {
+    const url = state.transferReceiveOnly && state.transferReceivePublic
+      ? `/api/public/transfer-lots/${encodeURIComponent(lot.id)}/wms-suggestion?code=${encodeURIComponent(code)}`
+      : `/api/wms/suggestion?code=${encodeURIComponent(code)}&deposit=${encodeURIComponent(lot.depositoDestino || "")}`;
+    const { suggestions = [] } = await api(url);
+    target.textContent = suggestions.length
+      ? `Sugestao: guardar junto em ${suggestions.map((item) => `${item.location} (${item.quantity} un.)`).join(", ")}`
+      : "Produto novo neste deposito: escolha uma posicao livre.";
+  } catch {
+    target.textContent = "";
   }
 }
 
@@ -7809,7 +8263,7 @@ function expeditionStatusLabel(status) {
     open: "Aberto",
     picking: "Separando",
     ready_print: "Pronto para etiqueta",
-    completed: "Finalizado"
+    completed: "Atendido"
   })[status] || "Aberto";
 }
 

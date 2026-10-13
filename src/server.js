@@ -17,6 +17,10 @@ import {
   deleteBlingProductBySku,
   listBlingDeposits,
   listBlingSalesOrdersForStore,
+  getBlingShippingLabelPdf,
+  getBlingStockBalancesForSkus,
+  listBlingSalesChannels,
+  findBlingProductForWms,
   lookupBlingProductForTriage,
   refreshBlingIntegrationToken,
   revokeBlingIntegrationTokens,
@@ -32,7 +36,8 @@ import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, b
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
-import { buildWmsLocationLabelsPdf, buildWmsPositionCodes, normalizeWmsDeposit } from "./wms-labels.js";
+import { buildWmsLocationLabelsPdf, buildWmsPositionCodes, normalizeExpeditionDocument, normalizeWmsDeposit } from "./wms-labels.js";
+import { buildPickingReportPage, buildShippingLabelPrintPage, buildShippingLabelWithDanfeKey } from "./shipping-labels.js";
 import {
   addImportedRzsToLot,
   addDiverseLotItem,
@@ -97,6 +102,11 @@ import {
   listDueBlingSyncJobs,
   listTransferLots,
   listWmsExpedition,
+  listWmsMovements,
+  listWmsStock,
+  registerWmsInventory,
+  relocateWmsUnits,
+  suggestWmsLocationsForCode,
   markBlingSyncJobFailed,
   markBlingSyncJobSucceeded,
   markTransferLotSynced,
@@ -170,6 +180,10 @@ const config = buildRuntimeConfig();
 const PostgresSessionStore = pgSession(session);
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.ADMIN_PASSWORD_HASH || "").trim();
+const EXPEDITION_LABEL_CACHE_MS = 30 * 60 * 1000;
+const WMS_BLING_LOOKUP_TIMEOUT_MS = 6000;
+const WMS_BLING_COMPARE_MAX_SKUS = 500;
+const expeditionLabelCache = new Map();
 const LOGIN_MAX_FAILURES = 5;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const loginFailures = new Map();
@@ -1012,6 +1026,142 @@ app.get("/api/bling/deposits", requireAuth, requireTransferOrTriageAccess, async
   }
 });
 
+// Lojas (canais de venda) da conta Bling, para cada usuario escolher quais entram na expedicao.
+app.get("/api/bling/sales-channels", requireAuth, requireTransferOrTriageAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const channels = await listBlingSalesChannels({
+      integration: await getRequiredBlingCredentials(userId),
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    res.json({ channels });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// ---- Gestao de saldos WMS (por unidade/laudo) ----
+app.get("/api/wms/stock", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const [stock, settings] = await Promise.all([
+      listWmsStock(userId, { depositName: req.query.deposit || "", search: req.query.q || "" }),
+      getUserTriageTransferSettings(userId)
+    ]);
+    res.json({ ...stock, deposits: (settings.wmsDeposits || []).map((deposit) => deposit.depositName).filter(Boolean) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Compara o saldo fisico do WMS (unidades guardadas, reservadas e coletadas) com o saldo do Bling por SKU.
+app.get("/api/wms/bling-compare", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const depositName = String(req.query.deposit || "").trim();
+    if (!depositName) throw new Error("Escolha o deposito para comparar.");
+    const stock = await listWmsStock(userId, { depositName });
+    const bySku = new Map();
+    for (const unit of stock.units) {
+      const row = bySku.get(unit.sku) || { sku: unit.sku, descricao: unit.descricao, wms: 0 };
+      row.wms += 1;
+      bySku.set(unit.sku, row);
+    }
+    const skus = [...bySku.keys()].filter(Boolean).slice(0, WMS_BLING_COMPARE_MAX_SKUS);
+    const integration = await getRequiredBlingCredentials(userId);
+    const balances = skus.length
+      ? await getBlingStockBalancesForSkus({ integration, skus, depositoName: depositName, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) })
+      : { results: [] };
+    const bySkuBling = new Map(balances.results.map((result) => [result.sku, result]));
+    const rows = skus.map((sku) => {
+      const blingResult = bySkuBling.get(sku);
+      const bling = blingResult?.status === "found" ? Number(blingResult.balance || 0) : null;
+      const wms = bySku.get(sku).wms;
+      return { ...bySku.get(sku), bling, blingStatus: blingResult?.status || "not_found", diff: wms - (bling ?? 0) };
+    }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.sku.localeCompare(b.sku));
+    res.json({ depositName, rows, truncated: bySku.size > skus.length });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/wms/movements", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    res.json({ movements: await listWmsMovements(workspaceUserId(req), { search: req.query.q || "", limit: req.query.limit }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/wms/suggestion", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    res.json({ suggestions: await suggestWmsLocationsForCode(workspaceUserId(req), { code: req.query.code || "", depositName: req.query.deposit || "" }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/public/transfer-lots/:transferLotId/wms-suggestion", async (req, res) => {
+  try {
+    const lot = await getPublicTransferLotDetail(req.params.transferLotId);
+    if (!lot?.wmsEnabled) return res.json({ suggestions: [] });
+    res.json({ suggestions: await suggestWmsLocationsForCode(lot.userId, { code: req.query.code || "", depositName: lot.depositoDestino }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Inventario: guarda no WMS o estoque que ja existia. Nao mexe no saldo do Bling; so valida
+// que o SKU existe la. Se o Bling nao responder, entra como "nao validado" sem travar.
+app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const integration = await getRequiredBlingCredentials(userId).catch(() => null);
+    const lookupProduct = async (code) => {
+      if (!integration) throw Object.assign(new Error("Bling nao conectado."), { wmsLookupUnavailable: true });
+      try {
+        return await withTimeout(
+          findBlingProductForWms({ integration, code, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) }),
+          WMS_BLING_LOOKUP_TIMEOUT_MS
+        );
+      } catch (error) {
+        throw Object.assign(error, { wmsLookupUnavailable: true });
+      }
+    };
+    const result = await registerWmsInventory({
+      userId,
+      depositName: req.body?.depositName,
+      location: req.body?.location,
+      code: req.body?.code,
+      quantity: req.body?.quantity,
+      operatorName: req.session.user?.name || "",
+      lookupProduct
+    });
+    await recordOperatorActivity(req.session.user, "wms_inventory", { location: req.body?.location, code: req.body?.code, quantity: result.units.length });
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/wms/relocate", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    const result = await relocateWmsUnits({
+      userId: workspaceUserId(req),
+      fromLocation: req.body?.fromLocation,
+      toLocation: req.body?.toLocation,
+      code: req.body?.code,
+      quantity: req.body?.quantity,
+      reason: req.body?.reason,
+      operatorName: req.session.user?.name || ""
+    });
+    await recordOperatorActivity(req.session.user, "wms_relocate", result);
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/wms/expedition", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     res.json(await listWmsExpedition(workspaceUserId(req)));
@@ -1027,6 +1177,7 @@ app.post("/api/wms/expedition/orders", requireAuth, requireTransferAccess, async
       pedidoNumero: req.body?.pedidoNumero || req.body?.numero,
       lojaNome: req.body?.lojaNome,
       blingPedidoId: req.body?.blingPedidoId,
+      blingStoreId: req.body?.blingStoreId,
       wmsDepositName: req.body?.wmsDepositName || req.body?.depositoWms,
       items: req.body?.items || []
     });
@@ -1104,7 +1255,8 @@ app.post("/api/wms/expedition/orders/:orderId/pick", requireAuth, requireTransfe
       userId: workspaceUserId(req),
       orderId: req.params.orderId,
       positionCode: req.body?.positionCode || req.body?.posicaoWms,
-      productCode: req.body?.productCode || req.body?.code
+      productCode: req.body?.productCode || req.body?.code,
+      operatorName: req.session.user?.name || ""
     });
     await recordOperatorActivity(req.session.user, "pick_wms_expedition", {
       orderId: req.params.orderId,
@@ -1117,14 +1269,78 @@ app.post("/api/wms/expedition/orders/:orderId/pick", requireAuth, requireTransfe
   }
 });
 
+// O pedido ja chega Atendido do Bling (o vendedor marca). Aqui ele vira Atendido so no Etiquefacil.
 app.post("/api/wms/expedition/orders/:orderId/complete", requireAuth, requireTransferAccess, async (req, res) => {
   try {
-    const result = await completeWmsExpeditionOrder({ userId: workspaceUserId(req), orderId: req.params.orderId });
+    const result = await completeWmsExpeditionOrder({ userId: workspaceUserId(req), orderId: req.params.orderId, operatorName: req.session.user?.name || "" });
     await recordOperatorActivity(req.session.user, "complete_wms_expedition_order", { orderId: req.params.orderId });
     res.json(result);
   } catch (error) {
     sendError(res, error);
   }
+});
+
+// Prepara o documento da expedicao conforme a loja: etiqueta de envio + DANFE key 10x15
+// (marketplace, baixada do Bling) ou relatorio de produtos coletados (venda direta).
+app.post("/api/wms/expedition/orders/:orderId/document", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const order = await findWmsExpeditionOrder(userId, req.params.orderId);
+    if (Number(order.totalPending || 0) > 0) throw new Error("Separe todos os produtos antes de imprimir.");
+    const kind = await expeditionDocumentForOrder(userId, order);
+    const base = `/api/wms/expedition/orders/${encodeURIComponent(order.id)}`;
+    if (kind === "shipping_label") await getExpeditionShippingLabel(userId, order);
+    await recordOperatorActivity(req.session.user, "print_wms_expedition_label", { orderId: order.id, pedidoNumero: order.pedidoNumero, kind });
+    res.json({ kind, printUrl: kind === "picking_report" ? `${base}/picking-report` : `${base}/shipping-label/print` });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/wms/expedition/orders/:orderId/picking-report", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const order = await findWmsExpeditionOrder(workspaceUserId(req), req.params.orderId);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buildPickingReportPage({ order, printedBy: req.session.user?.name || "", printedAt: new Date() }));
+  } catch (error) {
+    res.status(error.status || 400).type("text/plain").send(error.message);
+  }
+});
+
+app.get("/api/wms/expedition/orders/:orderId/shipping-label.pdf", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const order = await findWmsExpeditionOrder(userId, req.params.orderId);
+    const buffer = await getExpeditionShippingLabel(userId, order);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="etiqueta-pedido-${safeFileName(order.pedidoNumero)}-danfe-key-100x150.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buffer);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/wms/expedition/orders/:orderId/shipping-label/print", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const order = await findWmsExpeditionOrder(workspaceUserId(req), req.params.orderId);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buildShippingLabelPrintPage({
+      title: `Etiqueta pedido ${order.pedidoNumero}`,
+      pdfUrl: `/api/wms/expedition/orders/${encodeURIComponent(order.id)}/shipping-label.pdf?t=${Date.now()}`
+    }));
+  } catch (error) {
+    res.status(error.status || 400).type("text/plain").send(error.message);
+  }
+});
+
+app.get("/vendor/pdfjs/:file", (req, res) => {
+  const file = String(req.params.file || "");
+  if (!["pdf.mjs", "pdf.worker.mjs"].includes(file)) return res.status(404).send("Arquivo nao encontrado.");
+  res.type("text/javascript");
+  res.sendFile(path.join(__dirname, "..", "node_modules", "pdfjs-dist", "build", file));
 });
 
 app.get("/api/transfer-lots", requireAuth, requireTransferAccess, async (req, res) => {
@@ -2760,7 +2976,7 @@ app.use((error, req, res, next) => {
   sendError(res, error);
 });
 
-app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/triagem", "/triagem/*", "/laudo", "/laudo/*", "/perfil", "/operadores/cadastro/*"], (req, res) => {
+app.get(["/", "/entradas", "/lotes", "/lotes/*", "/busca", "/transferencias", "/expedicao", "/estoque", "/triagem", "/triagem/*", "/laudo", "/laudo/*", "/perfil", "/operadores/cadastro/*"], (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
@@ -3111,6 +3327,56 @@ async function syncTriageItemToBling(userId, item) {
   } catch (error) {
     return { ok: false, error: error.message };
   }
+}
+
+async function expeditionDocumentForOrder(userId, order) {
+  const settings = await getUserTriageTransferSettings(userId);
+  const storeName = String(order.lojaNome || "").trim().toLowerCase();
+  for (const deposit of settings.wmsDeposits || []) {
+    const store = (deposit.stores || []).find((candidate) => storeName && String(candidate.name || "").trim().toLowerCase() === storeName);
+    if (store) return normalizeExpeditionDocument(store.expeditionDocument);
+  }
+  return "shipping_label";
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Tempo esgotado")), ms);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function findWmsExpeditionOrder(userId, orderId) {
+  const expedition = await listWmsExpedition(userId);
+  const order = (expedition.orders || []).find((candidate) => candidate.id === orderId);
+  if (!order) throw Object.assign(new Error("Pedido de expedicao nao encontrado."), { status: 404 });
+  return order;
+}
+
+// Etiqueta montada fica em memoria por um tempo: a tela de impressao busca o PDF logo depois
+// do preparo, e a reimpressao nao precisa ir ao Bling de novo.
+async function getExpeditionShippingLabel(userId, order) {
+  const key = `${userId}:${order.id}`;
+  const cached = expeditionLabelCache.get(key);
+  if (cached && Date.now() - cached.createdAt < EXPEDITION_LABEL_CACHE_MS) return cached.promise;
+
+  const promise = (async () => {
+    const pdf = await getBlingShippingLabelPdf({
+      integration: await getRequiredBlingCredentials(userId),
+      blingPedidoId: order.blingPedidoId,
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    });
+    return buildShippingLabelWithDanfeKey(pdf);
+  })();
+  expeditionLabelCache.set(key, { promise, createdAt: Date.now() });
+  promise.catch(() => expeditionLabelCache.delete(key));
+  for (const [cacheKey, entry] of expeditionLabelCache) {
+    if (Date.now() - entry.createdAt >= EXPEDITION_LABEL_CACHE_MS) expeditionLabelCache.delete(cacheKey);
+  }
+  return promise;
 }
 
 async function scanTransferLotWithBlingFallback({ userId, transferLotId, code }) {

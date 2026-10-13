@@ -186,6 +186,8 @@ test("Bling sales orders map store orders to WMS expedition items", async () => 
   const originalFetch = globalThis.fetch;
   const calls = [];
   const responses = [
+    { data: [{ id: 98, nome: "Vendas", descricao: "Pedidos de Venda" }] },
+    { data: [{ id: 6, nome: "Em aberto" }, { id: 9, nome: "Atendido" }, { id: 12, nome: "Cancelado" }, { id: 15, nome: "Em andamento" }] },
     { data: [{ id: 101, numero: "PV-101", loja: { id: 203, nome: "Mercado Livre" } }] },
     {
       data: {
@@ -214,8 +216,12 @@ test("Bling sales orders map store orders to WMS expedition items", async () => 
       storeId: "203"
     });
 
-    assert.equal(calls[0].url.includes("/pedidos/vendas?limite=50&idLoja=203"), true);
-    assert.equal(calls[1].url.includes("/pedidos/vendas/101"), true);
+    const listUrl = new URL(calls[2].url);
+    assert.equal(listUrl.pathname.endsWith("/pedidos/vendas"), true);
+    assert.deepEqual(listUrl.searchParams.getAll("idsSituacoes[]"), ["9"]);
+    assert.equal(listUrl.searchParams.get("idLoja"), "203");
+    assert.match(listUrl.searchParams.get("dataAlteracaoInicial"), /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(calls[3].url.includes("/pedidos/vendas/101"), true);
     assert.equal(orders[0].pedidoNumero, "PV-101");
     assert.equal(orders[0].lojaNome, "Mercado Livre");
     assert.equal(orders[0].blingPedidoId, "101");

@@ -8452,3 +8452,93 @@ h3 {
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* Estoque WMS (gestao de saldos) */
+.wms-stock-filter,
+.wms-stock-form {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  margin-top: 8px;
+}
+
+.wms-stock-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.wms-stock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.wms-stock-table-wrap {
+  margin-top: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.wms-stock-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 760px;
+  width: 100%;
+}
+
+.wms-stock-table th,
+.wms-stock-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.wms-stock-table th {
+  color: #475569;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.wms-stock-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.wms-stock-laudos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.wms-stock-laudos span {
+  background: #f1f5f9;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 5px;
+}
+
+.wms-stock-divergent td {
+  background: #fff7ed;
+}
+
+.wms-stock-compare-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.wms-stock-log p {
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+.wms-suggestion {
+  color: #0f766e;
+  font-weight: 700;
+  margin: 6px 0 0;
+}

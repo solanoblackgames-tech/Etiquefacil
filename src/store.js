@@ -8,6 +8,21 @@ import { findApprovedProductHistory, findProductHistory, getBlingProducts, summa
 import { insertRows } from "./pg-bulk.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { normalizeWmsDeposits } from "./wms-labels.js";
+import {
+  WMS_UNIT_STATUS,
+  assertValidWmsPosition,
+  buildWmsMovement,
+  buildWmsUnit,
+  compareWmsLocation,
+  compareWmsUnitsFifo,
+  extractTriageCode,
+  normalizeWmsLocation,
+  reserveWmsUnitsFifo,
+  resolveWmsPick,
+  suggestWmsLocations,
+  summarizeWmsUnits,
+  wmsUnitMatchesCode
+} from "./wms-units.js";
 import { computeCatalogReviewSignals } from "./catalog-review.js";
 
 const { Pool } = pg;
@@ -22,6 +37,7 @@ const DEFAULT_PG_POOL_MAX = 10;
 let pool;
 let storeReady;
 let blingSyncJobsNullableLotIdReady = false;
+let wmsUnitTablesReady = false;
 
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
@@ -65,6 +81,8 @@ const emptyDb = () => ({
   wmsExpeditionItems: [],
   wmsExpeditionReservations: [],
   wmsExpeditionPicks: [],
+  wmsUnits: [],
+  wmsMovements: [],
   operatorActivities: [],
   operatorInvites: [],
   catalogProducts: [],
@@ -3882,72 +3900,12 @@ export async function getPublicTransferLotDetail(transferLotId) {
 }
 
 export async function listWmsExpedition(userId) {
-  await ensureStore();
-  if (hasPostgres()) {
-    await ensureWmsExpeditionTablesPg();
-    const [orders, items, reservations, picks, stockLots, stockItems] = await Promise.all([
-      query("select * from wms_expedition_orders where user_id = $1 order by created_at desc", [userId]),
-      query(
-        `select i.*
-         from wms_expedition_items i
-         join wms_expedition_orders o on o.id = i.order_id
-         where o.user_id = $1
-         order by i.created_at asc`,
-        [userId]
-      ),
-      query(
-        `select r.*
-         from wms_expedition_reservations r
-         join wms_expedition_orders o on o.id = r.order_id
-         where o.user_id = $1
-         order by r.created_at asc`,
-        [userId]
-      ),
-      query(
-        `select p.*
-         from wms_expedition_picks p
-         join wms_expedition_orders o on o.id = p.order_id
-         where o.user_id = $1
-         order by p.created_at asc`,
-        [userId]
-      ),
-      query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]),
-      query(
-        `select ti.*
-         from transfer_items ti
-         join transfer_lots tl on tl.id = ti.transfer_lot_id
-         where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
-        [userId]
-      )
-    ]);
-    const stock = buildWmsStock(
-      stockLots.rows.map(transferLotFromRow),
-      stockItems.rows.map(transferItemFromRow),
-      picks.rows.map(wmsExpeditionPickFromRow),
-      reservations.rows.map(wmsExpeditionReservationFromRow)
-    );
-    return summarizeWmsExpedition(
-      orders.rows.map(wmsExpeditionOrderFromRow),
-      items.rows.map(wmsExpeditionItemFromRow),
-      reservations.rows.map(wmsExpeditionReservationFromRow),
-      picks.rows.map(wmsExpeditionPickFromRow),
-      stock
-    );
-  }
-
-  const db = await readDb();
-  const orders = (db.wmsExpeditionOrders || []).filter((order) => order.userId === userId).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-  const orderIds = new Set(orders.map((order) => order.id));
-  const items = (db.wmsExpeditionItems || []).filter((item) => orderIds.has(item.orderId));
-  const reservations = (db.wmsExpeditionReservations || []).filter((reservation) => orderIds.has(reservation.orderId));
-  const picks = (db.wmsExpeditionPicks || []).filter((pick) => orderIds.has(pick.orderId));
-  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
-  const lotIds = new Set(lots.map((lot) => lot.id));
-  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
-  return summarizeWmsExpedition(orders, items, reservations, picks, buildWmsStock(lots, stockItems, picks, reservations));
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => ({ result: summarizeWmsExpedition(state) }), { readOnly: true });
 }
 
-export async function createWmsExpeditionOrder({ userId, pedidoNumero, lojaNome = "", blingPedidoId = "", wmsDepositName = "", items = [] }) {
+// Reserva as unidades FIFO (inventario primeiro, depois laudo mais antigo) do deposito do pedido.
+export async function createWmsExpeditionOrder({ userId, pedidoNumero, lojaNome = "", blingPedidoId = "", blingStoreId = "", wmsDepositName = "", items = [] }) {
   await ensureStore();
   const settings = await getUserTriageTransferSettings(userId);
   const order = normalizeWmsExpeditionOrder({
@@ -3955,186 +3913,299 @@ export async function createWmsExpeditionOrder({ userId, pedidoNumero, lojaNome 
     pedidoNumero,
     lojaNome,
     blingPedidoId,
-    wmsDepositName: wmsDepositName || resolveWmsDepositForStore(settings, { lojaNome, blingStoreId: blingPedidoId })
+    wmsDepositName: wmsDepositName || resolveWmsDepositForStore(settings, { lojaNome, blingStoreId })
   });
   const normalizedItems = normalizeWmsExpeditionItems(order.id, items);
   if (!normalizedItems.length) throw new Error("Adicione pelo menos um produto ao pedido.");
+  await ensureWmsUnitsBackfilled(userId);
 
-  if (hasPostgres()) {
-    await ensureWmsExpeditionTablesPg();
-    const client = await getPgPool().connect();
-    try {
-      await client.query("begin");
-      await insertWmsExpeditionOrderRows(client, [order]);
-      await insertWmsExpeditionItemRows(client, normalizedItems);
-      const [lotRows, stockItemRows, pickRows, reservationRows] = await Promise.all([
-        client.query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]),
-        client.query(
-          `select ti.*
-           from transfer_items ti
-           join transfer_lots tl on tl.id = ti.transfer_lot_id
-           where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
-          [userId]
-        ),
-        client.query(
-          `select p.*
-           from wms_expedition_picks p
-           join wms_expedition_orders o on o.id = p.order_id
-           where o.user_id = $1`,
-          [userId]
-        ),
-        client.query(
-          `select r.*
-           from wms_expedition_reservations r
-           join wms_expedition_orders o on o.id = r.order_id
-           where o.user_id = $1 and r.status = 'active'`,
-          [userId]
-        )
-      ]);
-      const stock = filterWmsStockForOrder(
-        buildWmsStock(
-          lotRows.rows.map(transferLotFromRow),
-          stockItemRows.rows.map(transferItemFromRow),
-          pickRows.rows.map(wmsExpeditionPickFromRow),
-          reservationRows.rows.map(wmsExpeditionReservationFromRow)
-        ),
-        order
-      );
-      await insertWmsExpeditionReservationRows(client, buildWmsReservationsForOrder(order, normalizedItems, stock));
-      await client.query("commit");
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
-    } finally {
-      client.release();
-    }
-    return { order: (await listWmsExpedition(userId)).orders.find((candidate) => candidate.id === order.id) };
-  }
-
-  const db = await readDb();
-  db.wmsExpeditionOrders = db.wmsExpeditionOrders || [];
-  db.wmsExpeditionItems = db.wmsExpeditionItems || [];
-  db.wmsExpeditionReservations = db.wmsExpeditionReservations || [];
-  db.wmsExpeditionPicks = db.wmsExpeditionPicks || [];
-  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
-  const lotIds = new Set(lots.map((lot) => lot.id));
-  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
-  const stock = filterWmsStockForOrder(buildWmsStock(lots, stockItems, db.wmsExpeditionPicks || [], db.wmsExpeditionReservations || []), order);
-  const reservations = buildWmsReservationsForOrder(order, normalizedItems, stock);
-  db.wmsExpeditionOrders.push(order);
-  db.wmsExpeditionItems.push(...normalizedItems);
-  db.wmsExpeditionReservations.push(...reservations);
-  await writeDb(db);
-  return { order: (await listWmsExpedition(userId)).orders.find((candidate) => candidate.id === order.id) };
-}
-
-export async function scanWmsExpeditionPick({ userId, orderId, positionCode, productCode }) {
-  await ensureStore();
-  const normalizedPosition = normalizeWmsPositionCode(positionCode);
-  const normalizedProductCode = normalizeCode(productCode);
-  if (!normalizedPosition) throw new Error("Bipe a posicao WMS.");
-  if (!normalizedProductCode) throw new Error("Bipe a etiqueta ou codigo do produto.");
-
-  if (hasPostgres()) {
-    await ensureWmsExpeditionTablesPg();
-    const client = await getPgPool().connect();
-    let pick;
-    try {
-      await client.query("begin");
-      const orderResult = await client.query("select * from wms_expedition_orders where id = $1 and user_id = $2 limit 1 for update", [orderId, userId]);
-      const order = orderResult.rows[0] && wmsExpeditionOrderFromRow(orderResult.rows[0]);
-      if (!order) throw notFound("Pedido de expedicao nao encontrado.");
-      if (order.status === "completed") throw new Error("Este pedido ja foi finalizado.");
-      const itemRows = await client.query("select * from wms_expedition_items where order_id = $1 order by created_at asc for update", [order.id]);
-      const reservationRows = await client.query("select * from wms_expedition_reservations where order_id = $1 order by created_at asc for update", [order.id]);
-      const pickRows = await client.query("select * from wms_expedition_picks where order_id = $1 order by created_at asc", [order.id]);
-      const stockLots = await client.query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]);
-      const stockItems = await client.query(
-        `select ti.*
-         from transfer_items ti
-         join transfer_lots tl on tl.id = ti.transfer_lot_id
-         where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> ''`,
-        [userId]
-      );
-      const items = itemRows.rows.map(wmsExpeditionItemFromRow);
-      const reservations = reservationRows.rows.map(wmsExpeditionReservationFromRow);
-      const picks = pickRows.rows.map(wmsExpeditionPickFromRow);
-      const stock = filterWmsStockForOrder(buildWmsStock(stockLots.rows.map(transferLotFromRow), stockItems.rows.map(transferItemFromRow), picks), order);
-      const result = buildWmsPick({ order, items, reservations, picks, stock, positionCode: normalizedPosition, productCode: normalizedProductCode });
-      pick = result.pick;
-      await insertWmsExpeditionPickRows(client, [pick]);
-      if (result.reservation.id) {
-        await client.query("update wms_expedition_reservations set status = 'picked', picked_at = $2 where id = $1", [result.reservation.id, pick.createdAt]);
-      }
-      await client.query("update wms_expedition_items set quantidade_separada = quantidade_separada + 1 where id = $1", [pick.itemId]);
-      await client.query("update wms_expedition_orders set status = $2 where id = $1", [order.id, result.nextStatus]);
-      await client.query("commit");
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
-    } finally {
-      client.release();
-    }
-    return { pick, expedition: await listWmsExpedition(userId) };
-  }
-
-  const db = await readDb();
-  const order = (db.wmsExpeditionOrders || []).find((candidate) => candidate.id === orderId && candidate.userId === userId);
-  if (!order) throw notFound("Pedido de expedicao nao encontrado.");
-  if (order.status === "completed") throw new Error("Este pedido ja foi finalizado.");
-  const items = (db.wmsExpeditionItems || []).filter((item) => item.orderId === order.id);
-  const reservations = (db.wmsExpeditionReservations || []).filter((reservation) => reservation.orderId === order.id);
-  const picks = (db.wmsExpeditionPicks || []).filter((pick) => pick.orderId === order.id);
-  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
-  const lotIds = new Set(lots.map((lot) => lot.id));
-  const stockItems = (db.transferItems || []).filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim());
-  const result = buildWmsPick({
-    order,
-    items,
-    reservations,
-    picks,
-    stock: filterWmsStockForOrder(buildWmsStock(lots, stockItems, db.wmsExpeditionPicks || []), order),
-    positionCode: normalizedPosition,
-    productCode: normalizedProductCode
+  return runWmsOperation(userId, async (state) => {
+    const { reservations, missing } = reserveWmsUnitsFifo({ order, items: normalizedItems, units: state.units });
+    if (missing.length) throw new Error(`Saldo WMS insuficiente para o produto ${missing[0].sku}.`);
+    const reservedUnits = reservations.map((reservation) => ({
+      ...state.units.find((unit) => unit.id === reservation.unitId),
+      status: WMS_UNIT_STATUS.reserved,
+      orderId: order.id,
+      updatedAt: order.createdAt
+    }));
+    const nextState = {
+      ...state,
+      orders: [order, ...state.orders],
+      items: [...state.items, ...normalizedItems],
+      reservations: [...state.reservations, ...reservations],
+      units: mergeById(state.units, reservedUnits)
+    };
+    return {
+      changes: {
+        orders: { insert: [order] },
+        items: { insert: normalizedItems },
+        reservations: { insert: reservations },
+        units: { update: reservedUnits }
+      },
+      result: { order: summarizeWmsExpedition(nextState).orders.find((candidate) => candidate.id === order.id) }
+    };
   });
-  db.wmsExpeditionPicks = db.wmsExpeditionPicks || [];
-  db.wmsExpeditionPicks.push(result.pick);
-  const reservation = (db.wmsExpeditionReservations || []).find((candidate) => candidate.id === result.reservation.id);
-  if (reservation) {
-    reservation.status = "picked";
-    reservation.pickedAt = result.pick.createdAt;
-  }
-  const item = (db.wmsExpeditionItems || []).find((candidate) => candidate.id === result.pick.itemId);
-  if (item) item.quantidadeSeparada = Number(item.quantidadeSeparada || 0) + 1;
-  order.status = result.nextStatus;
-  await writeDb(db);
-  return { pick: result.pick, expedition: await listWmsExpedition(userId) };
 }
 
-// Finalizar baixa apenas o saldo WMS do Etiquefacil. Nao lancar saida no Bling aqui:
-// o pedido nasce no Bling, que ja baixou o estoque; lancar de novo baixaria em dobro.
-export async function completeWmsExpeditionOrder({ userId, orderId }) {
+// Coleta: posicao + laudo (ou SKU quando a unidade nao tem laudo). Segue a rota e a FIFO.
+export async function scanWmsExpeditionPick({ userId, orderId, positionCode, productCode, operatorName = "" }) {
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => {
+    const order = state.orders.find((candidate) => candidate.id === orderId);
+    if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+    if (order.status === "completed") throw new Error("Este pedido ja foi finalizado.");
+    const reservations = state.reservations.filter((reservation) => reservation.orderId === order.id);
+    const resolved = resolveWmsPick({ reservations, units: state.units, positionCode, productCode });
+    const now = new Date().toISOString();
+    const item = state.items.find((candidate) => candidate.id === resolved.reservation.itemId);
+    if (!item) throw notFound("Produto nao esta pendente neste pedido.");
+
+    const pick = {
+      id: randomUUID(),
+      orderId: order.id,
+      itemId: item.id,
+      unitId: resolved.unit?.id || resolved.reservation.unitId || null,
+      wmsLocation: resolved.reservation.wmsLocation,
+      code: resolved.code,
+      createdAt: now
+    };
+    const reservation = { ...resolved.reservation, status: "picked", pickedAt: now };
+    const updatedItem = { ...item, quantidadeSeparada: Number(item.quantidadeSeparada || 0) + 1 };
+    const orderItems = state.items.filter((candidate) => candidate.orderId === order.id).map((candidate) => candidate.id === item.id ? updatedItem : candidate);
+    const complete = orderItems.every((candidate) => Number(candidate.quantidadeSeparada || 0) >= Number(candidate.quantidade || 0));
+    const updatedOrder = { ...order, status: complete ? "ready_print" : "picking" };
+    const unit = resolved.unit ? { ...resolved.unit, status: WMS_UNIT_STATUS.picked, orderId: order.id, updatedAt: now } : null;
+    const movement = buildWmsMovement({ userId, unit: unit || { depositName: order.wmsDepositName, sku: item.sku }, type: "coleta", fromLocation: pick.wmsLocation, code: pick.code, orderId: order.id, operatorName, now });
+
+    const nextState = {
+      ...state,
+      orders: mergeById(state.orders, [updatedOrder]),
+      items: mergeById(state.items, [updatedItem]),
+      reservations: mergeById(state.reservations, [reservation]),
+      picks: [...state.picks, pick],
+      units: unit ? mergeById(state.units, [unit]) : state.units
+    };
+    return {
+      changes: {
+        orders: { update: [updatedOrder] },
+        items: { update: [updatedItem] },
+        reservations: { update: [reservation] },
+        picks: { insert: [pick] },
+        units: { update: unit ? [unit] : [] },
+        movements: { insert: [movement] }
+      },
+      result: { pick, expedition: summarizeWmsExpedition(nextState) }
+    };
+  });
+}
+
+// Marca como Atendido so no Etiquefacil (o pedido ja chegou Atendido do Bling). Nao lancar saida
+// no Bling aqui: o pedido nasce no Bling, que ja baixou o estoque; lancar de novo baixaria em dobro.
+export async function completeWmsExpeditionOrder({ userId, orderId, operatorName = "" }) {
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => {
+    const order = state.orders.find((candidate) => candidate.id === orderId);
+    if (!order) throw notFound("Pedido de expedicao nao encontrado.");
+    const items = state.items.filter((item) => item.orderId === order.id);
+    if (items.some((item) => Number(item.quantidadeSeparada || 0) < Number(item.quantidade || 0))) throw new Error("Separe todos os produtos antes de finalizar.");
+    const now = new Date().toISOString();
+    const updatedOrder = { ...order, status: "completed", completedAt: order.completedAt || now };
+    const shippedUnits = state.units
+      .filter((unit) => unit.orderId === order.id && unit.status === WMS_UNIT_STATUS.picked)
+      .map((unit) => ({ ...unit, status: WMS_UNIT_STATUS.shipped, updatedAt: now }));
+    const movements = shippedUnits.map((unit) => buildWmsMovement({ userId, unit, type: "expedicao", fromLocation: unit.location, orderId: order.id, operatorName, now }));
+    const nextState = {
+      ...state,
+      orders: mergeById(state.orders, [updatedOrder]),
+      units: state.units.filter((unit) => !shippedUnits.some((shipped) => shipped.id === unit.id))
+    };
+    return {
+      changes: { orders: { update: [updatedOrder] }, units: { update: shippedUnits }, movements: { insert: movements } },
+      result: { expedition: summarizeWmsExpedition(nextState) }
+    };
+  });
+}
+
+// Saldo do WMS para a tela de gestao: linhas por posicao/produto e as unidades (laudos).
+export async function listWmsStock(userId, { depositName = "", search = "" } = {}) {
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => {
+    const deposit = normalizeText(depositName);
+    const term = normalizeCode(search);
+    const units = state.units.filter((unit) => (
+      (!deposit || normalizeText(unit.depositName) === deposit) &&
+      (!term || [unit.location, unit.sku, unit.codigoMl, unit.ean, unit.triageCode].some((value) => String(value || "").includes(term)) || normalizeCode(unit.descricao).includes(term))
+    ));
+    const rows = summarizeWmsUnits(units);
+    return {
+      result: {
+        rows,
+        units: units.sort(compareWmsUnitsFifo),
+        totals: {
+          units: units.length,
+          stored: units.filter((unit) => unit.status === WMS_UNIT_STATUS.stored).length,
+          reserved: units.filter((unit) => unit.status === WMS_UNIT_STATUS.reserved).length,
+          picked: units.filter((unit) => unit.status === WMS_UNIT_STATUS.picked).length,
+          withoutLaudo: units.filter((unit) => !unit.triageCode).length,
+          notValidated: units.filter((unit) => unit.blingValidated === false).length,
+          positions: new Set(units.map((unit) => unit.location)).size
+        }
+      }
+    };
+  }, { readOnly: true });
+}
+
+export async function listWmsMovements(userId, { limit = 200, search = "" } = {}) {
   await ensureStore();
-  const completedAt = new Date().toISOString();
+  const term = normalizeCode(search);
+  const max = Math.min(1000, Math.max(1, Number(limit) || 200));
   if (hasPostgres()) {
     await ensureWmsExpeditionTablesPg();
-    const detail = await listWmsExpedition(userId);
-    const order = detail.orders.find((candidate) => candidate.id === orderId);
-    if (!order) throw notFound("Pedido de expedicao nao encontrado.");
-    if (Number(order.totalPending || 0) > 0) throw new Error("Separe todos os produtos antes de finalizar.");
-    await query("update wms_expedition_orders set status = 'completed', completed_at = $3 where id = $1 and user_id = $2", [orderId, userId, completedAt]);
-    return { expedition: await listWmsExpedition(userId) };
+    const result = term
+      ? await query(
+        `select * from wms_movements
+         where user_id = $1 and (sku = $2 or triage_code = $2 or from_location = $2 or to_location = $2 or code = $2)
+         order by created_at desc limit $3`,
+        [userId, term, max]
+      )
+      : await query("select * from wms_movements where user_id = $1 order by created_at desc limit $2", [userId, max]);
+    return result.rows.map(wmsMovementFromRow);
+  }
+  const db = await readDb();
+  return (db.wmsMovements || [])
+    .filter((movement) => movement.userId === userId && (!term || [movement.sku, movement.triageCode, movement.fromLocation, movement.toLocation, movement.code].includes(term)))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, max);
+}
+
+// Posicoes onde o mesmo produto ja esta: sugestao na entrada WMS para guardar junto.
+export async function suggestWmsLocationsForCode(userId, { code = "", depositName = "" } = {}) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return [];
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => {
+    const triageCode = extractTriageCode(normalized);
+    const reference = triageCode
+      ? await findTriageItemByCode(userId, triageCode)
+      : { sku: normalized, codigoMl: normalized, ean: normalized };
+    if (!reference) return { result: [] };
+    const product = {
+      sku: reference.sku || reference.productCode || "",
+      codigoMl: reference.codigoMl || reference.asin || "",
+      ean: reference.ean || ""
+    };
+    return { result: suggestWmsLocations(state.units, { ...product, depositName }).slice(0, 5) };
+  }, { readOnly: true });
+}
+
+// Inventario inicial: guarda no WMS o estoque que ja existia antes (com ou sem laudo).
+// Nao mexe no saldo do Bling, so registra onde cada unidade esta.
+export async function registerWmsInventory({ userId, depositName, location, code, quantity = 1, operatorName = "", lookupProduct = null }) {
+  await ensureStore();
+  const settings = await getUserTriageTransferSettings(userId);
+  const deposit = triageDestinationWmsConfig(settings, depositName);
+  if (!deposit) throw new Error("Escolha um deposito com WMS configurado.");
+  const normalizedLocation = assertValidWmsPosition(deposit, location);
+  const normalizedCode = normalizeCode(code);
+  if (!normalizedCode) throw new Error("Bipe o laudo ou o SKU do produto.");
+  const triageCode = extractTriageCode(normalizedCode);
+  const now = new Date().toISOString();
+  let units = [];
+
+  if (triageCode) {
+    const triageItem = await findTriageItemByCode(userId, triageCode);
+    if (!triageItem) throw notFound(`Laudo ${triageCode} nao encontrado.`);
+    units = [buildWmsUnit({
+      userId,
+      depositName: deposit.depositName,
+      location: normalizedLocation,
+      source: "inventory",
+      sku: triageItem.sku || triageItem.productCode,
+      codigoMl: triageItem.asin || triageItem.productCode,
+      ean: triageItem.ean,
+      descricao: triageItem.descricao,
+      triageItemId: triageItem.id,
+      triageCode,
+      fifoAt: triageItem.diagnosedAt || triageItem.createdAt,
+      blingValidated: true,
+      createdBy: operatorName,
+      now
+    })];
+  } else {
+    const qty = Math.floor(Number(quantity) || 0);
+    if (qty < 1 || qty > 500) throw new Error("Informe uma quantidade entre 1 e 500.");
+    let product = null;
+    let blingValidated = null;
+    if (lookupProduct) {
+      try {
+        product = await lookupProduct(normalizedCode);
+        if (!product) throw new Error(`SKU ${normalizedCode} nao esta cadastrado no Bling.`);
+        blingValidated = true;
+      } catch (error) {
+        if (error.wmsLookupUnavailable !== true) throw error;
+        blingValidated = false;
+      }
+    }
+    units = Array.from({ length: qty }, () => buildWmsUnit({
+      userId,
+      depositName: deposit.depositName,
+      location: normalizedLocation,
+      source: "inventory",
+      sku: product?.sku || normalizedCode,
+      codigoMl: product?.codigoMl || "",
+      ean: product?.ean || "",
+      descricao: product?.descricao || "",
+      fifoAt: "2000-01-01T00:00:00.000Z",
+      blingValidated,
+      createdBy: operatorName,
+      now
+    }));
   }
 
-  const db = await readDb();
-  const order = (db.wmsExpeditionOrders || []).find((candidate) => candidate.id === orderId && candidate.userId === userId);
-  if (!order) throw notFound("Pedido de expedicao nao encontrado.");
-  const items = (db.wmsExpeditionItems || []).filter((item) => item.orderId === order.id);
-  if (items.some((item) => Number(item.quantidadeSeparada || 0) < Number(item.quantidade || 0))) throw new Error("Separe todos os produtos antes de finalizar.");
-  order.status = "completed";
-  order.completedAt = completedAt;
-  await writeDb(db);
-  return { expedition: await listWmsExpedition(userId) };
+  return runWmsOperation(userId, async (state) => {
+    if (triageCode) {
+      const existing = state.units.find((unit) => unit.triageCode === triageCode);
+      if (existing) throw new Error(`O laudo ${triageCode} ja esta no WMS na posicao ${existing.location}.`);
+    }
+    const movements = units.map((unit) => buildWmsMovement({ userId, unit, type: "inventario", toLocation: unit.location, code: normalizedCode, operatorName, now }));
+    return {
+      changes: { units: { insert: units }, movements: { insert: movements } },
+      result: { units, blingValidated: units[0]?.blingValidated ?? null }
+    };
+  });
+}
+
+// Reenderecar: move unidades de uma posicao para outra (laudo especifico ou N unidades do SKU).
+export async function relocateWmsUnits({ userId, fromLocation, toLocation, code, quantity = 1, reason = "", operatorName = "" }) {
+  await ensureStore();
+  const from = normalizeWmsLocation(fromLocation);
+  const normalizedCode = normalizeCode(code);
+  if (!from) throw new Error("Bipe a posicao de origem.");
+  if (!normalizedCode) throw new Error("Bipe o laudo ou o SKU do produto.");
+  const settings = await getUserTriageTransferSettings(userId);
+  await ensureWmsUnitsBackfilled(userId);
+  return runWmsOperation(userId, async (state) => {
+    const triageCode = extractTriageCode(normalizedCode);
+    const atOrigin = state.units
+      .filter((unit) => unit.location === from && unit.status === WMS_UNIT_STATUS.stored)
+      .filter((unit) => (triageCode ? unit.triageCode === triageCode : wmsUnitMatchesCode(unit, normalizedCode)))
+      .sort(compareWmsUnitsFifo);
+    if (!atOrigin.length) {
+      const reserved = state.units.find((unit) => unit.location === from && unit.status !== WMS_UNIT_STATUS.stored && (triageCode ? unit.triageCode === triageCode : wmsUnitMatchesCode(unit, normalizedCode)));
+      if (reserved) throw new Error("Esta unidade esta reservada para um pedido e nao pode ser movida agora.");
+      throw new Error(`Produto nao encontrado na posicao ${from}.`);
+    }
+    const qty = triageCode ? 1 : Math.floor(Number(quantity) || 0);
+    if (qty < 1) throw new Error("Informe a quantidade a mover.");
+    if (qty > atOrigin.length) throw new Error(`So ha ${atOrigin.length} unidade(s) livres deste produto em ${from}.`);
+    const deposit = triageDestinationWmsConfig(settings, atOrigin[0].depositName);
+    const to = assertValidWmsPosition(deposit, toLocation);
+    if (to === from) throw new Error("A posicao de destino e igual a de origem.");
+    const now = new Date().toISOString();
+    const moved = atOrigin.slice(0, qty).map((unit) => ({ ...unit, location: to, updatedAt: now }));
+    const movements = moved.map((unit) => buildWmsMovement({ userId, unit, type: "reenderecamento", fromLocation: from, toLocation: to, code: normalizedCode, reason, operatorName, now }));
+    return { changes: { units: { update: moved }, movements: { insert: movements } }, result: { moved: moved.length, from, to } };
+  });
 }
 
 export async function reportTransferLotDivergence({ userId = null, transferLotId, type, description, code = "", reporterName = "", reporterUserId = null }) {
@@ -4456,7 +4527,7 @@ export async function releaseTransferLotForStore({ userId, transferLotId }) {
 
 export async function receiveTransferLotScan({ userId, transferLotId, code, wmsLocation = "" }) {
   await ensureStore();
-  const normalized = normalizeCode(code);
+  const normalized = normalizeCode(extractTriageCode(code) || code);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
   if (hasPostgres()) return receiveTransferLotScanPg({ userId, transferLotId, code: normalized, wmsLocation });
 
@@ -4465,7 +4536,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code, wmsL
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
-  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
+  const normalizedWmsLocation = await resolveTransferWmsLocation(lot, wmsLocation);
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized, db.triageItems || []);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
@@ -4473,6 +4544,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code, wmsL
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
   if (normalizedWmsLocation) item.wmsLocation = normalizedWmsLocation;
   item.createdAt = new Date().toISOString();
+  if (normalizedWmsLocation) addWmsUnitForReceivedItemJson(db, { lot, item, location: normalizedWmsLocation, code: normalized });
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
@@ -4480,7 +4552,7 @@ export async function receiveTransferLotScan({ userId, transferLotId, code, wmsL
 
 export async function receivePublicTransferLotScan({ transferLotId, code, wmsLocation = "" }) {
   await ensureStore();
-  const normalized = normalizeCode(code);
+  const normalized = normalizeCode(extractTriageCode(code) || code);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
   if (hasPostgres()) return receiveTransferLotScanPg({ transferLotId, code: normalized, wmsLocation });
 
@@ -4489,7 +4561,7 @@ export async function receivePublicTransferLotScan({ transferLotId, code, wmsLoc
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
-  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
+  const normalizedWmsLocation = await resolveTransferWmsLocation(lot, wmsLocation);
 
   const item = findTransferItemForReceive(db.transferItems || [], lot.id, normalized, db.triageItems || []);
   if (!item) throw notFound("Produto nao previsto nesta remessa.");
@@ -4497,6 +4569,7 @@ export async function receivePublicTransferLotScan({ transferLotId, code, wmsLoc
   item.quantidadeConferida = Number(item.quantidadeConferida || 0) + 1;
   if (normalizedWmsLocation) item.wmsLocation = normalizedWmsLocation;
   item.createdAt = new Date().toISOString();
+  if (normalizedWmsLocation) addWmsUnitForReceivedItemJson(db, { lot, item, location: normalizedWmsLocation, code: normalized });
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
   return { status: item.quantidadeConferida > Number(item.quantidade || 0) ? "over" : "received", item, lot: summarizeTransferLot(lot, db.transferItems || []) };
@@ -4504,7 +4577,7 @@ export async function receivePublicTransferLotScan({ transferLotId, code, wmsLoc
 
 export async function forceReceivePublicTransferLotScan({ transferLotId, code, reason, wmsLocation = "" }) {
   await ensureStore();
-  const normalized = normalizeCode(code);
+  const normalized = normalizeCode(extractTriageCode(code) || code);
   const normalizedReason = normalizeForceTransferReason(reason);
   if (!normalized) throw new Error("Informe o Codigo ML, SKU ou EAN.");
   if (hasPostgres()) return forceReceiveTransferLotScanPg({ transferLotId, code: normalized, reason: normalizedReason, wmsLocation });
@@ -4514,7 +4587,7 @@ export async function forceReceivePublicTransferLotScan({ transferLotId, code, r
   if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
   if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
   if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
-  const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
+  const normalizedWmsLocation = await resolveTransferWmsLocation(lot, wmsLocation);
 
   const product = findTransferProduct(db, lot.userId, normalized);
   if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
@@ -4547,9 +4620,11 @@ export async function forceReceivePublicTransferLotScan({ transferLotId, code, r
     occurrence.itemId = item.id;
   }
   db.transferForcedOccurrences.push(occurrence);
+  const forcedItem = (db.transferItems || []).find((candidate) => candidate.id === occurrence.itemId);
+  if (normalizedWmsLocation && forcedItem) addWmsUnitForReceivedItemJson(db, { lot, item: forcedItem, location: normalizedWmsLocation, code: normalized });
   updateTransferLotReceivingStatus(lot, db.transferItems || []);
   await writeDb(db);
-  const item = (db.transferItems || []).find((candidate) => candidate.id === occurrence.itemId);
+  const item = forcedItem;
   return { status: "forced", item, occurrence, lot: summarizeTransferLot(lot, db.transferItems || []) };
 }
 
@@ -4562,6 +4637,17 @@ export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
     );
     if (!result.rows.length) return null;
     const changedItem = transferItemFromRow(result.rows[0]);
+    await ensureWmsExpeditionTablesPg();
+    const undoneUnit = await query(
+      `delete from wms_units where id = (
+         select id from wms_units where transfer_item_id = $1 and status = 'stored' order by created_at desc limit 1
+       ) returning *`,
+      [itemId]
+    );
+    if (undoneUnit.rows[0]) {
+      const unit = wmsUnitFromRow(undoneUnit.rows[0]);
+      await insertWmsMovementRows({ query }, [buildWmsMovement({ userId: unit.userId, unit, type: "estorno_entrada", fromLocation: unit.location, reason: "Bipagem desfeita na entrada" })]);
+    }
     if (Number(changedItem.quantidade || 0) === 0 && Number(changedItem.quantidadeConferida || 0) === 0) {
       await query("delete from transfer_items where id = $1 and transfer_lot_id = $2", [itemId, transferLotId]);
     }
@@ -4579,6 +4665,14 @@ export async function undoPublicTransferLotScan({ transferLotId, itemId }) {
   const item = (db.transferItems || []).find((candidate) => candidate.id === itemId && candidate.transferLotId === transferLotId);
   if (!item) return null;
   item.quantidadeConferida = Math.max(0, Number(item.quantidadeConferida || 0) - 1);
+  const undoneUnit = (db.wmsUnits || [])
+    .filter((unit) => unit.transferItemId === item.id && unit.status === WMS_UNIT_STATUS.stored)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
+  if (undoneUnit) {
+    db.wmsUnits = db.wmsUnits.filter((unit) => unit.id !== undoneUnit.id);
+    db.wmsMovements = db.wmsMovements || [];
+    db.wmsMovements.push(buildWmsMovement({ userId: undoneUnit.userId, unit: undoneUnit, type: "estorno_entrada", fromLocation: undoneUnit.location, reason: "Bipagem desfeita na entrada" }));
+  }
   if (Number(item.quantidade || 0) === 0 && Number(item.quantidadeConferida || 0) === 0) {
     db.transferItems = (db.transferItems || []).filter((candidate) => candidate.id !== item.id);
   }
@@ -6953,7 +7047,7 @@ async function insertWmsExpeditionReservationRows(client, reservations = []) {
   await insertRows(
     target,
     "wms_expedition_reservations",
-    ["id", "order_id", "item_id", "wms_location", "sku", "codigo_ml", "ean", "status", "created_at", "picked_at", "released_at"],
+    ["id", "order_id", "item_id", "wms_location", "sku", "codigo_ml", "ean", "status", "created_at", "picked_at", "released_at", "unit_id", "triage_code"],
     reservations.map((reservation) => [
       reservation.id,
       reservation.orderId,
@@ -6965,7 +7059,9 @@ async function insertWmsExpeditionReservationRows(client, reservations = []) {
       reservation.status || "active",
       reservation.createdAt,
       reservation.pickedAt || null,
-      reservation.releasedAt || null
+      reservation.releasedAt || null,
+      reservation.unitId || null,
+      reservation.triageCode || ""
     ])
   );
 }
@@ -6976,14 +7072,15 @@ async function insertWmsExpeditionPickRows(client, picks = []) {
   await insertRows(
     target,
     "wms_expedition_picks",
-    ["id", "order_id", "item_id", "wms_location", "code", "created_at"],
+    ["id", "order_id", "item_id", "wms_location", "code", "created_at", "unit_id"],
     picks.map((pick) => [
       pick.id,
       pick.orderId,
       pick.itemId,
       pick.wmsLocation,
       pick.code,
-      pick.createdAt
+      pick.createdAt,
+      pick.unitId || null
     ])
   );
 }
@@ -7040,6 +7137,7 @@ async function ensureWmsExpeditionTablesPg(target = { query }) {
       created_at timestamptz not null default now()
     );
   `);
+  await ensureWmsUnitTablesPg(target);
 }
 
 async function insertOperatorActivityRows(client, activities = []) {
@@ -8096,10 +8194,11 @@ async function receiveTransferLotScanPg({ userId, transferLotId, code, wmsLocati
 
     const item = transferItemFromRow(itemResult.rows[0]);
     if (Number(item.quantidadeConferida || 0) >= Number(item.quantidade || 0)) throw new Error("Produto ja conferido nesta remessa.");
-    const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
+    const normalizedWmsLocation = await resolveTransferWmsLocation(lot, wmsLocation);
     const nextReceived = Number(item.quantidadeConferida || 0) + 1;
     const now = new Date().toISOString();
     await client.query("update transfer_items set quantidade_conferida = $2, wms_location = $3, created_at = $4 where id = $1", [item.id, nextReceived, normalizedWmsLocation || item.wmsLocation || "", now]);
+    if (normalizedWmsLocation) await addWmsUnitForReceivedItemPg(client, { lot, item, location: normalizedWmsLocation, code, now });
 
     const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
     const items = itemsResult.rows.map((row) => row.id === item.id ? { ...transferItemFromRow(row), quantidadeConferida: nextReceived, wmsLocation: normalizedWmsLocation || item.wmsLocation || "", createdAt: now } : transferItemFromRow(row));
@@ -8159,7 +8258,7 @@ async function forceReceiveTransferLotScanPg({ transferLotId, code, reason, wmsL
     if (!lot) throw notFound("Remessa de transferencia nao encontrada.");
     if (lot.status === "synced") throw new Error("Esta transferencia ja foi enviada ao Bling.");
     if (lot.status === "open") throw new Error("A remessa ainda nao foi liberada pelo CD.");
-    const normalizedWmsLocation = normalizeTransferWmsLocation(lot, wmsLocation);
+    const normalizedWmsLocation = await resolveTransferWmsLocation(lot, wmsLocation);
 
     const product = await findPgTransferProduct(client, lot.userId, code);
     if (!product) throw notFound("Produto nao encontrado nos lotes deste usuario.");
@@ -8193,6 +8292,7 @@ async function forceReceiveTransferLotScanPg({ transferLotId, code, reason, wmsL
     }
     const occurrence = buildForcedTransferOccurrence({ transferLotId: lot.id, itemId: item.id, code, reason, createdAt: now });
     await insertTransferForcedOccurrenceRows(client, [occurrence]);
+    if (normalizedWmsLocation) await addWmsUnitForReceivedItemPg(client, { lot, item, location: normalizedWmsLocation, code, now });
 
     const itemsResult = await client.query("select * from transfer_items where transfer_lot_id = $1", [lot.id]);
     updateTransferLotReceivingStatus(lot, itemsResult.rows.map(transferItemFromRow));
@@ -9439,272 +9539,544 @@ function transferItemReceiveStatus(item) {
   return "sobra";
 }
 
-function summarizeWmsExpedition(orders, items, reservations, picks, stock) {
-  const summarizedOrders = (orders || []).map((order) => summarizeWmsExpeditionOrder(order, items, reservations, picks, stock));
+// ---- WMS por unidade: estado, gravacao e migracao ----
+
+// Carrega o estado WMS da conta, calcula com funcoes puras e grava as mudancas de uma vez.
+// No Postgres roda numa transacao com trava por conta: duas bipagens ao mesmo tempo nao
+// reservam nem coletam a mesma unidade.
+async function runWmsOperation(userId, compute, { readOnly = false } = {}) {
+  await ensureStore();
+  if (hasPostgres()) {
+    await ensureWmsExpeditionTablesPg();
+    if (readOnly) {
+      const { result } = await compute(await loadWmsStatePg({ query }, userId));
+      return result;
+    }
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`wms:${userId}`]);
+      const { changes, result } = await compute(await loadWmsStatePg(client, userId));
+      await applyWmsChangesPg(client, changes || {});
+      await client.query("commit");
+      return result;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  const db = await readDb();
+  const { changes, result } = await compute(loadWmsStateJson(db, userId));
+  if (!readOnly && changes) {
+    applyWmsChangesJson(db, changes);
+    await writeDb(db);
+  }
+  return result;
+}
+
+async function loadWmsStatePg(target, userId) {
+  const [orders, items, reservations, picks, units] = await Promise.all([
+    target.query("select * from wms_expedition_orders where user_id = $1 order by created_at desc", [userId]),
+    target.query(
+      `select i.* from wms_expedition_items i
+       join wms_expedition_orders o on o.id = i.order_id
+       where o.user_id = $1 order by i.created_at asc`,
+      [userId]
+    ),
+    target.query(
+      `select r.* from wms_expedition_reservations r
+       join wms_expedition_orders o on o.id = r.order_id
+       where o.user_id = $1 order by r.created_at asc`,
+      [userId]
+    ),
+    target.query(
+      `select p.* from wms_expedition_picks p
+       join wms_expedition_orders o on o.id = p.order_id
+       where o.user_id = $1 order by p.created_at asc`,
+      [userId]
+    ),
+    target.query("select * from wms_units where user_id = $1 and status <> 'shipped' order by created_at asc", [userId])
+  ]);
   return {
-    stock,
-    totalStock: stock.reduce((sum, item) => sum + Number(item.balance || 0), 0),
-    orders: summarizedOrders
+    userId,
+    orders: orders.rows.map(wmsExpeditionOrderFromRow),
+    items: items.rows.map(wmsExpeditionItemFromRow),
+    reservations: reservations.rows.map(wmsExpeditionReservationFromRow),
+    picks: picks.rows.map(wmsExpeditionPickFromRow),
+    units: units.rows.map(wmsUnitFromRow)
   };
 }
 
-function summarizeWmsExpeditionOrder(order, items, reservations, picks, stock) {
+function loadWmsStateJson(db, userId) {
+  const orders = (db.wmsExpeditionOrders || [])
+    .filter((order) => order.userId === userId)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const orderIds = new Set(orders.map((order) => order.id));
+  const copy = (rows) => rows.map((row) => ({ ...row }));
+  return {
+    userId,
+    orders: copy(orders),
+    items: copy((db.wmsExpeditionItems || []).filter((item) => orderIds.has(item.orderId))),
+    reservations: copy((db.wmsExpeditionReservations || []).filter((reservation) => orderIds.has(reservation.orderId))),
+    picks: copy((db.wmsExpeditionPicks || []).filter((pick) => orderIds.has(pick.orderId))),
+    units: copy((db.wmsUnits || []).filter((unit) => unit.userId === userId && unit.status !== WMS_UNIT_STATUS.shipped))
+  };
+}
+
+function mergeById(rows, updates) {
+  const byId = new Map((updates || []).map((row) => [row.id, row]));
+  return (rows || []).map((row) => byId.get(row.id) || row);
+}
+
+const WMS_JSON_COLLECTIONS = {
+  orders: "wmsExpeditionOrders",
+  items: "wmsExpeditionItems",
+  reservations: "wmsExpeditionReservations",
+  picks: "wmsExpeditionPicks",
+  units: "wmsUnits",
+  movements: "wmsMovements"
+};
+
+function applyWmsChangesJson(db, changes) {
+  for (const [key, collection] of Object.entries(WMS_JSON_COLLECTIONS)) {
+    const change = changes[key];
+    if (!change) continue;
+    db[collection] = db[collection] || [];
+    if (change.update?.length) db[collection] = mergeById(db[collection], change.update);
+    if (change.delete?.length) {
+      const ids = new Set(change.delete);
+      db[collection] = db[collection].filter((row) => !ids.has(row.id));
+    }
+    if (change.insert?.length) db[collection].push(...change.insert);
+  }
+}
+
+async function applyWmsChangesPg(client, changes) {
+  if (changes.orders?.insert?.length) await insertWmsExpeditionOrderRows(client, changes.orders.insert);
+  if (changes.items?.insert?.length) await insertWmsExpeditionItemRows(client, changes.items.insert);
+  if (changes.units?.insert?.length) await insertWmsUnitRows(client, changes.units.insert);
+  if (changes.reservations?.insert?.length) await insertWmsExpeditionReservationRows(client, changes.reservations.insert);
+  if (changes.picks?.insert?.length) await insertWmsExpeditionPickRows(client, changes.picks.insert);
+  if (changes.movements?.insert?.length) await insertWmsMovementRows(client, changes.movements.insert);
+  for (const order of changes.orders?.update || []) {
+    await client.query("update wms_expedition_orders set status = $2, completed_at = $3 where id = $1", [order.id, order.status, order.completedAt || null]);
+  }
+  for (const item of changes.items?.update || []) {
+    await client.query("update wms_expedition_items set quantidade_separada = $2 where id = $1", [item.id, Number(item.quantidadeSeparada || 0)]);
+  }
+  for (const reservation of changes.reservations?.update || []) {
+    await client.query(
+      "update wms_expedition_reservations set status = $2, picked_at = $3, released_at = $4, unit_id = $5 where id = $1",
+      [reservation.id, reservation.status, reservation.pickedAt || null, reservation.releasedAt || null, reservation.unitId || null]
+    );
+  }
+  for (const pick of changes.picks?.update || []) {
+    await client.query("update wms_expedition_picks set unit_id = $2 where id = $1", [pick.id, pick.unitId || null]);
+  }
+  for (const unit of changes.units?.update || []) {
+    await client.query(
+      "update wms_units set location = $2, status = $3, order_id = $4, bling_validated = $5, updated_at = $6 where id = $1",
+      [unit.id, unit.location, unit.status, unit.orderId || null, unit.blingValidated ?? null, unit.updatedAt]
+    );
+  }
+  if (changes.units?.delete?.length) await client.query("delete from wms_units where id = any($1::text[])", [changes.units.delete]);
+}
+
+async function findTriageItemByCode(userId, code) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return null;
+  if (hasPostgres()) {
+    const result = await query("select * from triage_items where user_id = $1 and upper(code) = upper($2) limit 1", [userId, normalized]);
+    return result.rows[0] ? triageItemFromRow(result.rows[0]) : null;
+  }
+  const db = await readDb();
+  return (db.triageItems || []).find((item) => item.userId === userId && normalizeCode(item.code) === normalized) || null;
+}
+
+// Unidade WMS criada na entrada da transferencia (bipagem do produto + posicao).
+function buildWmsUnitFromTransferItem({ lot, item, location, triageItem = null, now }) {
+  return buildWmsUnit({
+    userId: lot.userId,
+    depositName: lot.depositoDestino,
+    location,
+    source: "transfer",
+    sku: item.sku,
+    codigoMl: item.codigoMl,
+    ean: item.ean,
+    descricao: item.descricao || triageItem?.descricao,
+    triageItemId: item.triageItemId || triageItem?.id || null,
+    triageCode: item.triageCode || triageItem?.code || "",
+    transferItemId: item.id,
+    fifoAt: triageItem?.diagnosedAt || triageItem?.createdAt || now,
+    now
+  });
+}
+
+function addWmsUnitForReceivedItemJson(db, { lot, item, location, code }) {
+  const now = new Date().toISOString();
+  const triageItem = (db.triageItems || []).find((candidate) => candidate.id === item.triageItemId) || null;
+  const unit = buildWmsUnitFromTransferItem({ lot, item, location, triageItem, now });
+  db.wmsUnits = db.wmsUnits || [];
+  db.wmsMovements = db.wmsMovements || [];
+  db.wmsUnits.push(unit);
+  db.wmsMovements.push(buildWmsMovement({ userId: lot.userId, unit, type: "entrada", toLocation: location, code, now }));
+  return unit;
+}
+
+async function addWmsUnitForReceivedItemPg(client, { lot, item, location, code, now }) {
+  await ensureWmsExpeditionTablesPg(client);
+  const triageResult = item.triageItemId
+    ? await client.query("select * from triage_items where id = $1 limit 1", [item.triageItemId])
+    : { rows: [] };
+  const triageItem = triageResult.rows[0] ? triageItemFromRow(triageResult.rows[0]) : null;
+  const unit = buildWmsUnitFromTransferItem({ lot, item, location, triageItem, now });
+  await insertWmsUnitRows(client, [unit]);
+  await insertWmsMovementRows(client, [buildWmsMovement({ userId: lot.userId, unit, type: "entrada", toLocation: location, code, now })]);
+  return unit;
+}
+
+// Valida a posicao da entrada: prefixo do deposito e existencia na grade configurada.
+async function resolveTransferWmsLocation(lot, value) {
+  const location = normalizeTransferWmsLocation(lot, value);
+  if (!location) return "";
+  const settings = await getUserTriageTransferSettings(lot.userId);
+  const deposit = triageDestinationWmsConfig(settings, lot.depositoDestino);
+  return deposit ? assertValidWmsPosition(deposit, location) : location;
+}
+
+// Estoque WMS antigo (posicao gravada no item de transferencia) vira unidades uma unica vez.
+// Coletas e reservas antigas sao ligadas as unidades para o saldo continuar o mesmo.
+const wmsBackfilledUsers = new Set();
+
+async function ensureWmsUnitsBackfilled(userId) {
+  if (!userId || wmsBackfilledUsers.has(userId)) return;
+  await ensureStore();
+  const legacy = hasPostgres() ? await loadLegacyWmsStockPg(userId) : await loadLegacyWmsStockJson(userId);
+  if (legacy.items.length) {
+    await runWmsOperation(userId, async (state) => ({ changes: buildWmsBackfillChanges(state, legacy) }));
+  }
+  wmsBackfilledUsers.add(userId);
+}
+
+async function loadLegacyWmsStockPg(userId) {
+  await ensureWmsExpeditionTablesPg();
+  const [lots, items, unitCounts] = await Promise.all([
+    query("select * from transfer_lots where user_id = $1 and wms_enabled = true", [userId]),
+    query(
+      `select ti.*, coalesce(nullif(ti.triage_code, ''), tri.code, '') as triage_code,
+              tri.diagnosed_at as triage_diagnosed_at, tri.created_at as triage_created_at
+       from transfer_items ti
+       join transfer_lots tl on tl.id = ti.transfer_lot_id
+       left join triage_items tri on tri.id = ti.triage_item_id
+       where tl.user_id = $1 and tl.wms_enabled = true and trim(coalesce(ti.wms_location, '')) <> '' and ti.quantidade_conferida > 0`,
+      [userId]
+    ),
+    query("select transfer_item_id, count(*)::int as total from wms_units where user_id = $1 and transfer_item_id is not null group by transfer_item_id", [userId])
+  ]);
+  const counted = new Map(unitCounts.rows.map((row) => [row.transfer_item_id, Number(row.total || 0)]));
+  return {
+    lots: lots.rows.map(transferLotFromRow),
+    items: items.rows
+      .map((row) => ({
+        ...transferItemFromRow(row),
+        triageFifoAt: row.triage_diagnosed_at ? iso(row.triage_diagnosed_at) : row.triage_created_at ? iso(row.triage_created_at) : null
+      }))
+      .filter((item) => Number(item.quantidadeConferida || 0) > Number(counted.get(item.id) || 0)),
+    counted
+  };
+}
+
+async function loadLegacyWmsStockJson(userId) {
+  const db = await readDb();
+  const lots = (db.transferLots || []).filter((lot) => lot.userId === userId && lot.wmsEnabled);
+  const lotIds = new Set(lots.map((lot) => lot.id));
+  const triageById = new Map((db.triageItems || []).map((item) => [item.id, item]));
+  const counted = new Map();
+  for (const unit of db.wmsUnits || []) {
+    if (unit.userId === userId && unit.transferItemId) counted.set(unit.transferItemId, (counted.get(unit.transferItemId) || 0) + 1);
+  }
+  return {
+    lots,
+    items: (db.transferItems || [])
+      .filter((item) => lotIds.has(item.transferLotId) && String(item.wmsLocation || "").trim() && Number(item.quantidadeConferida || 0) > Number(counted.get(item.id) || 0))
+      .map((item) => {
+        const triage = triageById.get(item.triageItemId);
+        return { ...item, triageCode: item.triageCode || triage?.code || "", triageFifoAt: triage?.diagnosedAt || triage?.createdAt || null };
+      }),
+    counted
+  };
+}
+
+function buildWmsBackfillChanges(state, legacy) {
+  const now = new Date().toISOString();
+  const lotsById = new Map(legacy.lots.map((lot) => [lot.id, lot]));
+  const newUnits = [];
+  for (const item of legacy.items) {
+    const lot = lotsById.get(item.transferLotId);
+    if (!lot) continue;
+    const missing = Number(item.quantidadeConferida || 0) - Number(legacy.counted.get(item.id) || 0);
+    for (let index = 0; index < missing; index += 1) {
+      newUnits.push(buildWmsUnit({
+        userId: lot.userId,
+        depositName: lot.depositoDestino,
+        location: item.wmsLocation,
+        source: "transfer",
+        sku: item.sku,
+        codigoMl: item.codigoMl,
+        ean: item.ean,
+        descricao: item.descricao,
+        triageItemId: item.triageItemId,
+        triageCode: item.triageCode,
+        transferItemId: item.id,
+        fifoAt: item.triageFifoAt || item.createdAt || now,
+        now
+      }));
+    }
+  }
+
+  // Coletas antigas (sem unidade) consomem unidades; reservas antigas ativas reservam.
+  const pool = newUnits.slice().sort(compareWmsUnitsFifo);
+  const take = (location, codes) => {
+    const index = pool.findIndex((unit) => unit.location === normalizeWmsLocation(location) && codes.some((code) => code && wmsUnitMatchesCode(unit, code)));
+    return index >= 0 ? pool.splice(index, 1)[0] : null;
+  };
+  const ordersById = new Map(state.orders.map((order) => [order.id, order]));
+  const updatedPicks = [];
+  for (const pick of state.picks.filter((candidate) => !candidate.unitId)) {
+    const unit = take(pick.wmsLocation, [pick.code]);
+    if (!unit) continue;
+    const completed = ordersById.get(pick.orderId)?.status === "completed";
+    unit.status = completed ? WMS_UNIT_STATUS.shipped : WMS_UNIT_STATUS.picked;
+    unit.orderId = pick.orderId;
+    updatedPicks.push({ ...pick, unitId: unit.id });
+  }
+  const updatedReservations = [];
+  for (const reservation of state.reservations.filter((candidate) => candidate.status === "active" && !candidate.unitId)) {
+    const unit = take(reservation.wmsLocation, [reservation.sku, reservation.codigoMl, reservation.ean]);
+    if (!unit) continue;
+    unit.status = WMS_UNIT_STATUS.reserved;
+    unit.orderId = reservation.orderId;
+    updatedReservations.push({ ...reservation, unitId: unit.id, triageCode: unit.triageCode });
+  }
+  return {
+    units: { insert: newUnits },
+    picks: { update: updatedPicks },
+    reservations: { update: updatedReservations },
+    movements: { insert: newUnits.map((unit) => buildWmsMovement({ userId: unit.userId, unit, type: "migracao", toLocation: unit.location, reason: "Saldo WMS anterior", now })) }
+  };
+}
+
+function summarizeWmsExpedition(state) {
+  const stock = summarizeWmsUnits(state.units)
+    .map((row) => ({ ...row, wmsLocation: row.location, depositoDestino: row.depositName, balance: row.stored }));
+  const unitsById = new Map(state.units.map((unit) => [unit.id, unit]));
+  return {
+    stock,
+    totalStock: stock.reduce((sum, row) => sum + Number(row.balance || 0), 0),
+    orders: (state.orders || []).map((order) => summarizeWmsExpeditionOrder(order, state.items, state.reservations, state.picks, unitsById, stock))
+  };
+}
+
+function summarizeWmsExpeditionOrder(order, items, reservations, picks, unitsById, stock) {
   const orderItems = (items || []).filter((item) => item.orderId === order.id);
   const orderReservations = (reservations || []).filter((reservation) => reservation.orderId === order.id);
   const orderPicks = (picks || []).filter((pick) => pick.orderId === order.id);
-  const scopedStock = filterWmsStockForOrder(stock, order);
-  const route = orderReservations.length ? buildWmsRouteFromReservations(orderItems, orderReservations) : buildWmsExpeditionRoute(orderItems, scopedStock);
+  const route = buildWmsRouteFromReservations(orderItems, orderReservations, unitsById);
   const totalQty = orderItems.reduce((sum, item) => sum + Number(item.quantidade || 0), 0);
   const totalPicked = orderItems.reduce((sum, item) => sum + Number(item.quantidadeSeparada || 0), 0);
+  const deposit = normalizeText(order.wmsDepositName);
   return {
     ...order,
     totalQty,
     totalPicked,
     totalPending: Math.max(0, totalQty - totalPicked),
+    depositStock: (stock || []).filter((row) => !deposit || normalizeText(row.depositName) === deposit).reduce((sum, row) => sum + Number(row.balance || 0), 0),
     items: orderItems.map((item) => ({
       ...item,
       falta: Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeSeparada || 0)),
       route: route.filter((step) => step.itemId === item.id)
     })),
-    reservations: orderReservations.sort(compareWmsReservedRouteSteps),
+    reservations: orderReservations.sort((a, b) => compareWmsLocation(a.wmsLocation, b.wmsLocation) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""))),
     picks: orderPicks.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
     route
   };
 }
 
-function filterWmsStockForOrder(stock, order = {}) {
-  const expected = normalizeText(order.wmsDepositName);
-  if (!expected) return stock || [];
-  return (stock || []).filter((item) => normalizeText(item.depositoDestino) === expected);
-}
-
-function buildWmsStock(lots, items, picks = [], reservations = []) {
-  const rowsByKey = new Map();
-  for (const item of items || []) {
-    const qty = Number(item.quantidadeConferida || 0);
-    const location = normalizeWmsPositionCode(item.wmsLocation);
-    if (!qty || !location) continue;
-    const lot = (lots || []).find((candidate) => candidate.id === item.transferLotId);
-    const key = [location, normalizeCode(item.sku), normalizeCode(item.codigoMl), normalizeCode(item.ean)].join("|");
-    const current = rowsByKey.get(key) || {
-      wmsLocation: location,
-      depositoDestino: lot?.depositoDestino || "",
-      sku: normalizeCode(item.sku),
-      codigoMl: normalizeCode(item.codigoMl),
-      ean: normalizeCode(item.ean),
-      descricao: item.descricao || "",
-      received: 0,
-      reserved: 0,
-      picked: 0,
-      balance: 0
-    };
-    current.received += qty;
-    rowsByKey.set(key, current);
-  }
-  const rows = [...rowsByKey.values()];
-  for (const pick of picks || []) {
-    const location = normalizeWmsPositionCode(pick.wmsLocation);
-    const row = rows.find((candidate) => candidate.wmsLocation === location && wmsStockMatchesCode(candidate, pick.code));
-    if (row) row.picked += 1;
-  }
-  for (const reservation of reservations || []) {
-    if (reservation.status !== "active") continue;
-    const location = normalizeWmsPositionCode(reservation.wmsLocation);
-    const row = rows.find((candidate) => candidate.wmsLocation === location && wmsStockMatchesReservation(candidate, reservation));
-    if (row) row.reserved += 1;
-  }
-  return rows
-    .map((row) => ({ ...row, balance: Math.max(0, Number(row.received || 0) - Number(row.picked || 0) - Number(row.reserved || 0)) }))
-    .filter((row) => row.balance > 0)
-    .sort((a, b) => a.wmsLocation.localeCompare(b.wmsLocation) || a.sku.localeCompare(b.sku));
-}
-
-function buildWmsReservationsForOrder(order, items, stock) {
-  const reservations = [];
-  const route = buildWmsExpeditionRoute(items, stock);
-  const now = new Date().toISOString();
-  const pendingByItem = new Map((items || []).map((item) => [item.id, Number(item.quantidade || 0)]));
-  for (const step of route) {
-    for (let index = 0; index < Number(step.quantidade || 0); index += 1) {
-      if (Number(pendingByItem.get(step.itemId) || 0) <= 0) continue;
-      reservations.push({
-        id: randomUUID(),
-        orderId: order.id,
-        itemId: step.itemId,
-        wmsLocation: step.wmsLocation,
-        sku: step.sku || "",
-        codigoMl: step.codigoMl || "",
-        ean: step.ean || "",
-        status: "active",
-        createdAt: now,
-        pickedAt: null,
-        releasedAt: null
-      });
-      pendingByItem.set(step.itemId, Number(pendingByItem.get(step.itemId) || 0) - 1);
-    }
-  }
-  const missing = [...pendingByItem.entries()].find(([, quantity]) => Number(quantity || 0) > 0);
-  if (missing) {
-    const item = (items || []).find((candidate) => candidate.id === missing[0]);
-    throw new Error(`Saldo WMS insuficiente para o produto ${item?.sku || item?.codigoMl || ""}.`);
-  }
-  return reservations;
-}
-
-function buildWmsRouteFromReservations(items, reservations) {
+// Rota do pedido: posicoes em ordem de caminhada, com os laudos que devem ser coletados (FIFO).
+function buildWmsRouteFromReservations(items, reservations, unitsById = new Map()) {
   const itemsById = new Map((items || []).map((item) => [item.id, item]));
-  const activeReservations = (reservations || []).filter((reservation) => reservation.status === "active");
   const grouped = new Map();
-  for (const reservation of activeReservations) {
+  for (const reservation of (reservations || []).filter((candidate) => candidate.status === "active")) {
     const item = itemsById.get(reservation.itemId);
+    const unit = unitsById.get(reservation.unitId);
     const key = [reservation.itemId, reservation.wmsLocation].join("|");
     const current = grouped.get(key) || {
       itemId: reservation.itemId,
       sku: item?.sku || reservation.sku || "",
       codigoMl: item?.codigoMl || reservation.codigoMl || "",
       ean: item?.ean || reservation.ean || "",
-      descricao: item?.descricao || "",
+      descricao: item?.descricao || unit?.descricao || "",
       wmsLocation: reservation.wmsLocation,
-      quantidade: 0
+      quantidade: 0,
+      laudos: []
     };
     current.quantidade += 1;
+    const laudo = unit?.triageCode || reservation.triageCode;
+    if (laudo) current.laudos.push(laudo);
     grouped.set(key, current);
   }
-  return [...grouped.values()].sort(compareWmsRouteSteps);
+  return [...grouped.values()].sort((a, b) => compareWmsLocation(a.wmsLocation, b.wmsLocation) || String(a.sku || "").localeCompare(String(b.sku || "")));
 }
 
-function buildWmsExpeditionRoute(items, stock) {
-  const route = [];
-  const simulatedBalance = new Map(stock.map((row, index) => [index, Number(row.balance || 0)]));
-  for (const item of items || []) {
-    let pending = Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeSeparada || 0));
-    if (!pending) continue;
-    for (const [index, row] of stock.entries()) {
-      if (!wmsStockMatchesExpeditionItem(row, item)) continue;
-      const available = Math.min(pending, Number(simulatedBalance.get(index) || 0));
-      if (!available) continue;
-      route.push({
-        itemId: item.id,
-        sku: item.sku,
-        codigoMl: item.codigoMl,
-        ean: item.ean,
-        descricao: item.descricao,
-        wmsLocation: row.wmsLocation,
-        quantidade: available
-      });
-      simulatedBalance.set(index, Number(simulatedBalance.get(index) || 0) - available);
-      pending -= available;
-      if (!pending) break;
-    }
-  }
-  return route.sort(compareWmsRouteSteps);
+async function ensureWmsUnitTablesPg(target = { query }) {
+  if (!hasPostgres() || wmsUnitTablesReady) return;
+  await target.query(`
+    create table if not exists wms_units (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      deposit_name text not null default '',
+      location text not null default '',
+      source text not null default 'transfer',
+      sku text not null default '',
+      codigo_ml text not null default '',
+      ean text not null default '',
+      descricao text not null default '',
+      triage_item_id text,
+      triage_code text not null default '',
+      transfer_item_id text,
+      fifo_at timestamptz not null default now(),
+      status text not null default 'stored',
+      order_id text,
+      bling_validated boolean,
+      created_by text not null default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists wms_units_user_status_idx on wms_units(user_id, status);
+    create index if not exists wms_units_transfer_item_idx on wms_units(transfer_item_id);
+    create index if not exists wms_units_triage_code_idx on wms_units(user_id, triage_code);
+
+    create table if not exists wms_movements (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      unit_id text,
+      deposit_name text not null default '',
+      sku text not null default '',
+      triage_code text not null default '',
+      type text not null,
+      from_location text not null default '',
+      to_location text not null default '',
+      code text not null default '',
+      reason text not null default '',
+      order_id text,
+      operator_name text not null default '',
+      created_at timestamptz not null default now()
+    );
+    create index if not exists wms_movements_user_created_idx on wms_movements(user_id, created_at desc);
+
+    alter table wms_expedition_reservations add column if not exists unit_id text;
+    alter table wms_expedition_reservations add column if not exists triage_code text not null default '';
+    alter table wms_expedition_picks add column if not exists unit_id text;
+  `);
+  wmsUnitTablesReady = true;
 }
 
-function buildWmsPick({ order, items, reservations = [], picks, stock, positionCode, productCode }) {
-  const item = (items || []).find((candidate) => {
-    const pending = Number(candidate.quantidade || 0) - Number(candidate.quantidadeSeparada || 0);
-    return pending > 0 && wmsExpeditionItemMatchesCode(candidate, productCode);
-  });
-  if (!item) throw notFound("Produto nao esta pendente neste pedido.");
-
-  let reservation = (reservations || []).find((candidate) => (
-    candidate.status === "active" &&
-    candidate.itemId === item.id &&
-    normalizeWmsPositionCode(candidate.wmsLocation) === positionCode &&
-    wmsReservationMatchesCode(candidate, productCode)
-  ));
-  if (!reservation && !(reservations || []).length) {
-    const stockRow = (stock || []).find((candidate) => candidate.wmsLocation === positionCode && wmsStockMatchesExpeditionItem(candidate, item));
-    if (!stockRow || Number(stockRow.balance || 0) <= 0) throw new Error("Produto nao possui saldo nesta posicao WMS.");
-    reservation = {
-      id: "",
-      orderId: order.id,
-      itemId: item.id,
-      wmsLocation: positionCode,
-      sku: item.sku,
-      codigoMl: item.codigoMl,
-      ean: item.ean,
-      status: "active",
-      createdAt: new Date().toISOString()
-    };
-  }
-  if (!reservation) throw new Error("Produto nao esta reservado para esta posicao WMS neste pedido.");
-
-  const expectedLocations = (reservations || []).length
-    ? buildWmsRouteFromReservations(items, reservations)
-    : buildWmsExpeditionRoute(items, stock);
-  const expectedItemLocations = expectedLocations
-    .filter((step) => step.itemId === item.id)
-    .map((step) => step.wmsLocation);
-  if (expectedItemLocations.length && expectedItemLocations[0] !== positionCode) {
-    throw new Error(`Colete primeiro na posicao ${expectedItemLocations[0]}.`);
-  }
-
-  const pick = {
-    id: randomUUID(),
-    orderId: order.id,
-    itemId: item.id,
-    wmsLocation: positionCode,
-    code: productCode,
-    createdAt: new Date().toISOString()
-  };
-  const nextItems = items.map((candidate) => candidate.id === item.id ? { ...candidate, quantidadeSeparada: Number(candidate.quantidadeSeparada || 0) + 1 } : candidate);
-  const nextStatus = nextItems.every((candidate) => Number(candidate.quantidadeSeparada || 0) >= Number(candidate.quantidade || 0)) ? "ready_print" : "picking";
-  return { pick, reservation, nextStatus };
-}
-
-function wmsStockMatchesExpeditionItem(stockItem, item) {
-  return (
-    (normalizeCode(item.sku) && normalizeCode(stockItem.sku) === normalizeCode(item.sku)) ||
-    (normalizeCode(item.codigoMl) && normalizeCode(stockItem.codigoMl) === normalizeCode(item.codigoMl)) ||
-    (normalizeCode(item.ean) && normalizeCode(stockItem.ean) === normalizeCode(item.ean))
+async function insertWmsUnitRows(client, units = []) {
+  await insertRows(
+    client,
+    "wms_units",
+    ["id", "user_id", "deposit_name", "location", "source", "sku", "codigo_ml", "ean", "descricao", "triage_item_id", "triage_code", "transfer_item_id", "fifo_at", "status", "order_id", "bling_validated", "created_by", "created_at", "updated_at"],
+    units.map((unit) => [
+      unit.id,
+      unit.userId,
+      unit.depositName || "",
+      unit.location || "",
+      unit.source || "transfer",
+      unit.sku || "",
+      unit.codigoMl || "",
+      unit.ean || "",
+      unit.descricao || "",
+      unit.triageItemId || null,
+      unit.triageCode || "",
+      unit.transferItemId || null,
+      unit.fifoAt || unit.createdAt,
+      unit.status || WMS_UNIT_STATUS.stored,
+      unit.orderId || null,
+      unit.blingValidated ?? null,
+      unit.createdBy || "",
+      unit.createdAt,
+      unit.updatedAt || unit.createdAt
+    ])
   );
 }
 
-function wmsExpeditionItemMatchesCode(item, code) {
-  return [item.sku, item.codigoMl, item.ean, code39BarcodeValue(item.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
-}
-
-function wmsStockMatchesCode(stockItem, code) {
-  return [stockItem.sku, stockItem.codigoMl, stockItem.ean, code39BarcodeValue(stockItem.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
-}
-
-function wmsStockMatchesReservation(stockItem, reservation) {
-  return (
-    (normalizeCode(reservation.sku) && normalizeCode(stockItem.sku) === normalizeCode(reservation.sku)) ||
-    (normalizeCode(reservation.codigoMl) && normalizeCode(stockItem.codigoMl) === normalizeCode(reservation.codigoMl)) ||
-    (normalizeCode(reservation.ean) && normalizeCode(stockItem.ean) === normalizeCode(reservation.ean))
+async function insertWmsMovementRows(client, movements = []) {
+  await insertRows(
+    client,
+    "wms_movements",
+    ["id", "user_id", "unit_id", "deposit_name", "sku", "triage_code", "type", "from_location", "to_location", "code", "reason", "order_id", "operator_name", "created_at"],
+    movements.map((movement) => [
+      movement.id,
+      movement.userId,
+      movement.unitId || null,
+      movement.depositName || "",
+      movement.sku || "",
+      movement.triageCode || "",
+      movement.type,
+      movement.fromLocation || "",
+      movement.toLocation || "",
+      movement.code || "",
+      movement.reason || "",
+      movement.orderId || null,
+      movement.operatorName || "",
+      movement.createdAt
+    ])
   );
 }
 
-function wmsReservationMatchesCode(reservation, code) {
-  return [reservation.sku, reservation.codigoMl, reservation.ean, code39BarcodeValue(reservation.sku)].some((value) => normalizeCode(value) === normalizeCode(code));
-}
-
-function compareWmsRouteSteps(a, b) {
-  return compareWmsPosition(a.wmsLocation, b.wmsLocation) || String(a.sku || "").localeCompare(String(b.sku || ""));
-}
-
-function compareWmsReservedRouteSteps(a, b) {
-  return compareWmsPosition(a.wmsLocation, b.wmsLocation) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
-}
-
-function compareWmsPosition(a, b) {
-  const left = parseWmsPosition(a);
-  const right = parseWmsPosition(b);
-  return left.prefix.localeCompare(right.prefix) || left.row.localeCompare(right.row) || left.column - right.column || left.position - right.position || String(a || "").localeCompare(String(b || ""));
-}
-
-function parseWmsPosition(value) {
-  const parts = normalizeWmsPositionCode(value).split("-");
-  const position = Number(parts.pop() || 0);
-  const column = Number(parts.pop() || 0);
-  const row = parts.pop() || "";
+function wmsUnitFromRow(row) {
   return {
-    prefix: parts.join("-"),
-    row,
-    column: Number.isFinite(column) ? column : 0,
-    position: Number.isFinite(position) ? position : 0
+    id: row.id,
+    userId: row.user_id,
+    depositName: row.deposit_name || "",
+    location: row.location || "",
+    source: row.source || "transfer",
+    sku: row.sku || "",
+    codigoMl: row.codigo_ml || "",
+    ean: row.ean || "",
+    descricao: row.descricao || "",
+    triageItemId: row.triage_item_id || null,
+    triageCode: row.triage_code || "",
+    transferItemId: row.transfer_item_id || null,
+    fifoAt: iso(row.fifo_at),
+    status: row.status || WMS_UNIT_STATUS.stored,
+    orderId: row.order_id || null,
+    blingValidated: row.bling_validated === null || row.bling_validated === undefined ? null : Boolean(row.bling_validated),
+    createdBy: row.created_by || "",
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at || row.created_at)
+  };
+}
+
+function wmsMovementFromRow(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    unitId: row.unit_id || null,
+    depositName: row.deposit_name || "",
+    sku: row.sku || "",
+    triageCode: row.triage_code || "",
+    type: row.type,
+    fromLocation: row.from_location || "",
+    toLocation: row.to_location || "",
+    code: row.code || "",
+    reason: row.reason || "",
+    orderId: row.order_id || null,
+    operatorName: row.operator_name || "",
+    createdAt: iso(row.created_at)
   };
 }
 
@@ -11916,7 +12288,9 @@ function wmsExpeditionReservationFromRow(row) {
     status: row.status || "active",
     createdAt: iso(row.created_at),
     pickedAt: row.picked_at ? iso(row.picked_at) : null,
-    releasedAt: row.released_at ? iso(row.released_at) : null
+    releasedAt: row.released_at ? iso(row.released_at) : null,
+    unitId: row.unit_id || null,
+    triageCode: row.triage_code || ""
   };
 }
 
@@ -11927,7 +12301,8 @@ function wmsExpeditionPickFromRow(row) {
     itemId: row.item_id,
     wmsLocation: row.wms_location,
     code: row.code,
-    createdAt: iso(row.created_at)
+    createdAt: iso(row.created_at),
+    unitId: row.unit_id || null
   };
 }
 

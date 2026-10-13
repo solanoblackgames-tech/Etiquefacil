@@ -29,10 +29,16 @@ function normalizeWmsStores(input = []) {
     const blingStoreId = String(row?.blingStoreId ?? row?.bling_store_id ?? row?.idLoja ?? row?.id_loja ?? row?.id ?? "").trim();
     const key = normalizeWmsPrefix(blingStoreId || name);
     if (!key || seen.has(key)) continue;
-    normalized.push({ name, blingStoreId });
+    normalized.push({ name, blingStoreId, expeditionDocument: normalizeExpeditionDocument(row?.expeditionDocument) });
     seen.add(key);
   }
   return normalized;
+}
+
+// O que sai na impressora ao completar a coleta: etiqueta de envio (marketplace)
+// ou relatorio de produtos coletados (venda direta, grampeado no pedido).
+export function normalizeExpeditionDocument(value) {
+  return value === "picking_report" ? "picking_report" : "shipping_label";
 }
 
 export function normalizeWmsDeposits(input = []) {

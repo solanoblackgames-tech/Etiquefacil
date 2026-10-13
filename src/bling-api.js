@@ -5,6 +5,8 @@ const BLING_REQUEST_DELAY_MS = 450;
 const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
 const BLING_FETCH_TIMEOUT_MS = 12_000;
+const WMS_EXPEDITION_LOOKBACK_DAYS = 7;
+const WMS_EXPEDITION_MAX_PAGES = 5;
 const blingSupplierCache = new Map();
 
 export async function runBlingHomologation({ integration, saveIntegration, fetchImpl = globalThis.fetch } = {}) {
@@ -454,6 +456,52 @@ export async function listBlingSalesOrdersForStore({ integration, storeName = ""
   return client.listSalesOrdersForStore({ storeName, storeId });
 }
 
+// PDF da etiqueta de envio (ex.: Mercado Envios) com a DANFE simplificada, como o Bling devolve.
+export async function getBlingShippingLabelPdf({ integration, blingPedidoId, saveIntegration }) {
+  const orderId = String(blingPedidoId || "").trim();
+  if (!orderId) throw new Error("Pedido sem vinculo com o Bling.");
+  const client = new BlingApiClient(integration, saveIntegration);
+
+  const labels = await client.getShippingLabelLinks([orderId], "PDF");
+  const label = labels.find((row) => String(row?.id) === orderId) || labels[0];
+  if (!label) throw new Error("Etiqueta nao disponivel para este pedido.");
+  if (!label.link) {
+    const note = String(label.observacao || label.dataLiberacao || label.mensagem || "");
+    const releaseDate = note.match(/\d{2}\/\d{2}\/\d{4}/)?.[0] || note.match(/\d{4}-\d{2}-\d{2}/)?.[0]?.split("-").reverse().join("/");
+    throw new Error(releaseDate
+      ? `Aguardando liberacao da etiqueta. Disponivel em: ${releaseDate}`
+      : "Etiqueta ainda nao liberada pela logistica do pedido (Mercado Livre ou transportadora).");
+  }
+
+  const response = await fetchWithTimeout(label.link);
+  if (!response.ok) throw new Error("Nao foi possivel carregar a etiqueta PDF.");
+  const content = Buffer.from(await response.arrayBuffer());
+  if (content.subarray(0, 4).toString("latin1") !== "%PDF") {
+    throw new Error(label.observacao || "O Bling devolveu a etiqueta em formato diferente de PDF. Configure a logistica para PDF.");
+  }
+  return content;
+}
+
+// Busca leve (so o cadastro) para validar SKU no inventario do WMS.
+export async function findBlingProductForWms({ integration, code, saveIntegration }) {
+  const normalizedCode = normalizeCode(code);
+  if (!normalizedCode) return null;
+  const client = new BlingApiClient(integration, saveIntegration);
+  const product = await client.findProductBySku(normalizedCode);
+  if (!product) return null;
+  return {
+    sku: normalizeCode(product.codigo || normalizedCode),
+    codigoMl: normalizeCode(product.marca),
+    ean: String(product.gtin || product.gtinEmbalagem || "").trim(),
+    descricao: product.nome || product.descricao || normalizedCode
+  };
+}
+
+export async function listBlingSalesChannels({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  return client.listSalesChannels();
+}
+
 export async function deleteBlingProductBySku({ integration, sku, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   const product = await client.findProductBySku(sku);
@@ -720,11 +768,21 @@ class BlingApiClient {
     }));
   }
 
-  async listSalesOrdersForStore({ storeName = "", storeId = "" } = {}) {
-    const query = { limite: 50 };
+  // O vendedor marca o pedido como Atendido no Bling e isso libera a expedicao. Busca os pedidos
+  // que viraram Atendido nos ultimos dias (o ID da situacao muda de conta para conta).
+  async listSalesOrdersForStore({ storeName = "", storeId = "", sinceDays = WMS_EXPEDITION_LOOKBACK_DAYS } = {}) {
+    const situations = await this.listSalesOrderSituations();
+    const attendedIds = situations.filter((situation) => normalizeText(situation.name) === "atendido").map((situation) => situation.id);
+    if (!attendedIds.length) throw new Error("Situacao Atendido nao encontrada no modulo Vendas do Bling.");
+    const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const query = { limite: 100, "idsSituacoes[]": attendedIds, dataAlteracaoInicial: since };
     if (storeId) query.idLoja = storeId;
-    const payload = await this.request("/pedidos/vendas", { query });
-    const rows = payload?.data || [];
+    const rows = [];
+    for (let pagina = 1; pagina <= WMS_EXPEDITION_MAX_PAGES; pagina += 1) {
+      const page = (await this.request("/pedidos/vendas", { query: { pagina, ...query } }))?.data || [];
+      rows.push(...page);
+      if (page.length < query.limite) break;
+    }
     const filtered = storeId
       ? rows
       : rows.filter((order) => blingOrderStoreMatches(order, { storeName }));
@@ -745,6 +803,44 @@ class BlingApiClient {
       if (order.items.length) orders.push(order);
     }
     return orders;
+  }
+
+  async getSalesOrder(id) {
+    const payload = await this.request(`/pedidos/vendas/${encodeURIComponent(id)}`);
+    return payload?.data || null;
+  }
+
+  async listSalesChannels() {
+    const payload = await this.request("/canais-venda", { query: { pagina: 1, limite: 100 } });
+    return (payload?.data || [])
+      .map((channel) => ({
+        id: String(channel.id || "").trim(),
+        name: String(channel.descricao || channel.nome || `Loja ${channel.id}`).trim(),
+        type: String(channel.tipo || "").trim(),
+        active: channel.situacao === undefined ? true : Number(channel.situacao) === 1
+      }))
+      .filter((channel) => channel.id && channel.id !== "0");
+  }
+
+  // Situacoes do modulo Vendas da conta (os IDs variam de conta para conta).
+  async listSalesOrderSituations() {
+    const modules = (await this.request("/situacoes/modulos"))?.data || [];
+    const salesModule = modules.find((module) => normalizeText(module.nome) === "vendas")
+      || modules.find((module) => /pedidos de venda/.test(normalizeText(module.descricao)));
+    if (!salesModule?.id) return [];
+    const payload = await this.request(`/situacoes/modulos/${encodeURIComponent(salesModule.id)}`);
+    return (payload?.data || []).map((situation) => ({
+      id: Number(situation.id),
+      name: String(situation.nome || "").trim(),
+      inheritedId: Number(situation.idHerdado || 0)
+    }));
+  }
+
+  async getShippingLabelLinks(orderIds = [], formato = "PDF") {
+    const payload = await this.request("/logisticas/etiquetas", {
+      query: { formato, "idsVendas[]": orderIds }
+    });
+    return payload?.data || [];
   }
 
   async createStockEntry(payload) {

@@ -44,11 +44,13 @@ test("normalizeWmsDeposit keeps stores configured for expedition", () => {
     stores: [
       { name: "Mercado Livre", blingStoreId: "203" },
       { nome: "Mercado Livre", idLoja: "203" },
-      { nome: "Shopee" }
+      { nome: "Shopee" },
+      { name: "Venda atacado", blingStoreId: "204", expeditionDocument: "picking_report" }
     ]
   }).stores, [
-    { name: "Mercado Livre", blingStoreId: "203" },
-    { name: "Shopee", blingStoreId: "" }
+    { name: "Mercado Livre", blingStoreId: "203", expeditionDocument: "shipping_label" },
+    { name: "Shopee", blingStoreId: "", expeditionDocument: "shipping_label" },
+    { name: "Venda atacado", blingStoreId: "204", expeditionDocument: "picking_report" }
   ]);
 });
 

@@ -129,6 +129,7 @@
           <button data-tab="search" type="button">Busca Produtos</button>
           <button data-tab="transfers" type="button">Agrupamentos</button>
           <button data-tab="expedition" type="button">Expedicao</button>
+          <button data-tab="stock" class="hidden" type="button">Estoque WMS</button>
           <button data-tab="triage" class="hidden" type="button">Triagem</button>
           <button data-tab="profile" class="active" type="button">Perfil</button>
         </nav>
@@ -468,6 +469,33 @@
             <div id="transferLots"></div>
           </aside>
           <section id="transferDetail" class="detail empty">Crie ou selecione um agrupamento.</section>
+        </section>
+      </section>
+
+      <section id="stockTab" class="transfer-shell hidden">
+        <section class="entry-panel">
+          <div class="panel-heading">
+            <span class="muted">WMS</span>
+            <h3>Gestao de saldos</h3>
+          </div>
+          <form id="wmsStockFilterForm" class="wms-stock-filter">
+            <label>Deposito<select name="deposit" data-wms-deposit-select="filter"><option value="">Todos os depositos</option></select></label>
+            <label>Buscar<input name="q" placeholder="Posicao, SKU, Cod ML, EAN ou laudo" autocomplete="off" /></label>
+            <button type="submit">Filtrar</button>
+          </form>
+          <div class="wms-stock-actions">
+            <button type="button" class="ghost" data-wms-panel="inventory">Inventario</button>
+            <button type="button" class="ghost" data-wms-panel="relocate">Reenderecar</button>
+            <button type="button" class="ghost" data-wms-panel="movements">Movimentacoes</button>
+            <button type="button" class="ghost" data-wms-compare>Comparar com Bling</button>
+            <button type="button" class="ghost" data-wms-export>Exportar planilha</button>
+          </div>
+          <p id="wmsStockMessage" class="message"></p>
+          <div id="wmsStockPanel"></div>
+        </section>
+        <section class="entry-panel">
+          <div id="wmsStockTotals" class="summary-grid"></div>
+          <div id="wmsStockRows"></div>
         </section>
       </section>
 

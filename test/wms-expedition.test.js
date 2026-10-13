@@ -116,7 +116,7 @@ test("WMS expedition rejects picking the right item from the wrong position", as
 
     await assert.rejects(
       () => scanWmsExpeditionPick({ userId: "user-1", orderId: created.order.id, positionCode: "RMA-A01", productCode: "SKU1" }),
-      /reservado para esta posicao WMS/
+      /Siga a rota: colete primeiro na posicao ECOM-A01/
     );
   });
 });
@@ -176,7 +176,7 @@ test("WMS expedition order uses only the configured deposit for its store", asyn
     assert.deepEqual(expedition.orders[0].route.map((step) => step.wmsLocation), ["ECOM-A01"]);
     await assert.rejects(
       () => scanWmsExpeditionPick({ userId: "user-1", orderId: created.order.id, positionCode: "RMA-A01", productCode: "SKU1" }),
-      /reservado para esta posicao WMS/
+      /Siga a rota: colete primeiro na posicao ECOM-A01/
     );
   });
 });
