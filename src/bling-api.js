@@ -482,6 +482,13 @@ export async function getBlingShippingLabelPdf({ integration, blingPedidoId, sav
   return content;
 }
 
+// Empresa dona do token: identifica qual conta Bling foi autorizada.
+export async function getBlingCompany({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const company = await client.getCompany();
+  return company ? { id: String(company.id || "").trim(), name: String(company.nome || "").trim(), cnpj: String(company.cnpj || "").trim() } : null;
+}
+
 // Busca leve (so o cadastro) para validar SKU no inventario do WMS.
 export async function findBlingProductForWms({ integration, code, saveIntegration }) {
   const normalizedCode = normalizeCode(code);
@@ -500,6 +507,22 @@ export async function findBlingProductForWms({ integration, code, saveIntegratio
 export async function listBlingSalesChannels({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listSalesChannels();
+}
+
+// Canais que vendem pelo deposito: cada canal tem seu deposito fixo no Bling (por filial).
+export async function listBlingSalesChannelsForDeposit({ integration, depositName, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const expected = normalizeText(depositName);
+  const deposit = (await client.listDeposits()).find((candidate) => normalizeText(candidate.descricao) === expected);
+  if (!deposit) throw new Error(`Deposito "${depositName}" nao encontrado nesta conta Bling.`);
+  const channels = await client.listSalesChannels();
+  const result = [];
+  for (const channel of channels) {
+    const detail = await client.getSalesChannel(channel.id).catch(() => null);
+    const depositIds = (detail?.filiais || []).map((filial) => String(filial?.deposito?.id || "")).filter(Boolean);
+    if (depositIds.includes(String(deposit.id))) result.push({ ...channel, depositId: String(deposit.id) });
+  }
+  return result;
 }
 
 export async function deleteBlingProductBySku({ integration, sku, saveIntegration }) {
@@ -805,8 +828,18 @@ class BlingApiClient {
     return orders;
   }
 
+  async getCompany() {
+    const payload = await this.request("/empresas/me/dados-basicos");
+    return payload?.data || null;
+  }
+
   async getSalesOrder(id) {
     const payload = await this.request(`/pedidos/vendas/${encodeURIComponent(id)}`);
+    return payload?.data || null;
+  }
+
+  async getSalesChannel(id) {
+    const payload = await this.request(`/canais-venda/${encodeURIComponent(id)}`);
     return payload?.data || null;
   }
 

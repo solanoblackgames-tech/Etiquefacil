@@ -26,12 +26,17 @@ test("normalizeWmsDeposit sanitizes dimensions and prefix", () => {
   assert.deepEqual(normalizeWmsDeposit({ depositName: "Ecommerce", prefix: " Écom ", rows: 0, columns: 3, positions: 4 }), {
     depositName: "Ecommerce",
     prefix: "ECOM",
+    blingAccount: "principal",
     stores: [],
     rowsConfig: [{ label: "A", columns: 3, positions: 4 }],
     rows: 1,
     columns: 3,
     positions: 4
   });
+});
+
+test("normalizeWmsDeposit keeps the Bling account of the deposit", () => {
+  assert.equal(normalizeWmsDeposit({ depositName: "Ecommerce", blingAccount: "Ecommerce", rows: 1, columns: 1, positions: 1 }).blingAccount, "ecommerce");
 });
 
 test("normalizeWmsDeposit keeps stores configured for expedition", () => {

@@ -468,6 +468,8 @@ function bindEvents() {
   $("#expeditionOrders")?.addEventListener("click", handleExpeditionOrdersClick);
   $("#expeditionDetail")?.addEventListener("submit", handleExpeditionDetailSubmit);
   $("#stockTab")?.addEventListener("submit", handleWmsStockSubmit);
+  $("#blingEcommerceDelete")?.addEventListener("click", deleteBlingEcommerceAccount);
+  $("#blingEcommerceAppForm")?.addEventListener("submit", saveBlingEcommerceApp);
   $("#stockTab")?.addEventListener("click", handleWmsStockClick);
   $("#expeditionDetail")?.addEventListener("click", handleExpeditionDetailClick);
   $("#triageCreateForm").addEventListener("submit", createTriageItem);
@@ -2753,6 +2755,7 @@ function showScanSessionExpired({ lotId, codigoRz }) {
 async function loadBlingIntegration({ validate = false } = {}) {
   state.blingIntegrationLoaded = false;
   updateBlingGlobalAlert();
+  loadBlingAccounts();
   try {
     const response = await api(`/api/integrations/bling${validate ? "?validate=1" : ""}`);
     state.blingIntegration = response.integration;
@@ -2795,6 +2798,63 @@ function updateBlingGlobalAlert() {
   const connected = Boolean(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
   const shouldShow = isOwnerUser() && state.blingIntegrationLoaded && !connected;
   alert.classList.toggle("hidden", !shouldShow);
+}
+
+// Segunda conta Bling (Ecommerce): status, empresa conectada, autorizar/remover e app proprio.
+async function loadBlingAccounts() {
+  if (!$("#blingEcommerceTitle") || !isOwnerUser()) return;
+  try {
+    const { accounts = [] } = await api("/api/integrations/bling/accounts");
+    state.blingAccounts = accounts;
+    renderBlingEcommerceAccount(accounts.find((account) => account.account === "ecommerce"));
+  } catch (error) {
+    $("#blingEcommerceStatus").textContent = error.message;
+  }
+}
+
+function renderBlingEcommerceAccount(account) {
+  const connected = Boolean(account?.connected && account?.hasAccessToken);
+  $("#blingEcommerceTitle").textContent = connected ? `Conectado: ${account.companyName || "conta Ecommerce"}` : "Bling Ecommerce ainda nao autorizado";
+  $("#blingEcommerceDetails").textContent = connected
+    ? `${account.hasOwnApp ? "Aplicativo proprio" : "Mesmo aplicativo da conta principal"}. ${account.tokenExpiresAt ? `Token expira em ${formatDate(account.tokenExpiresAt)}.` : ""}`
+    : account?.hasOwnApp ? "Aplicativo proprio salvo. Clique em Autorizar." : "";
+  $("#blingEcommerceDelete").disabled = !connected && !account?.hasOwnApp;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("account") === "ecommerce") {
+    const ok = params.get("bling") === "connected";
+    $("#blingEcommerceStatus").style.color = ok ? "#0f766e" : "";
+    $("#blingEcommerceStatus").textContent = ok ? "Conta Bling Ecommerce autorizada." : (params.get("message") || "");
+  }
+}
+
+async function deleteBlingEcommerceAccount() {
+  if (!confirm("Remover a autorizacao do Bling Ecommerce?")) return;
+  try {
+    await api("/api/integrations/bling/accounts/ecommerce", { method: "DELETE" });
+    $("#blingEcommerceStatus").textContent = "Autorizacao removida.";
+    await loadBlingAccounts();
+  } catch (error) {
+    $("#blingEcommerceStatus").textContent = error.message;
+  }
+}
+
+async function saveBlingEcommerceApp(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api("/api/integrations/bling/accounts/ecommerce/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form).entries()))
+    });
+    form.reset();
+    $("#blingEcommerceStatus").style.color = "#0f766e";
+    $("#blingEcommerceStatus").textContent = "Aplicativo salvo. Agora clique em Autorizar Bling Ecommerce.";
+    await loadBlingAccounts();
+  } catch (error) {
+    $("#blingEcommerceStatus").style.color = "";
+    $("#blingEcommerceStatus").textContent = error.message;
+  }
 }
 
 async function deleteBlingIntegration() {
@@ -2948,35 +3008,116 @@ function renderTriageWmsDepositList(settings) {
   if (!wrapper.dataset.channelsBound) {
     wrapper.dataset.channelsBound = "1";
     wrapper.addEventListener("change", handleWmsStoreChannelChange);
+    wrapper.addEventListener("change", handleWmsAccountChange);
   }
-  if (!state.blingSalesChannels) loadBlingSalesChannels();
-}
-
-// Lojas da conta Bling para o usuario escolher quais expedem por cada deposito WMS.
-async function loadBlingSalesChannels() {
-  if (state.loadingBlingSalesChannels) return;
-  state.loadingBlingSalesChannels = true;
-  try {
-    const response = await api("/api/bling/sales-channels");
-    state.blingSalesChannels = response.channels || [];
-    state.blingSalesChannelsError = "";
-  } catch (error) {
-    state.blingSalesChannels = [];
-    state.blingSalesChannelsError = error.message;
-  } finally {
-    state.loadingBlingSalesChannels = false;
-  }
-  document.querySelectorAll("[data-wms-store]").forEach((row) => {
-    const select = row.querySelector("[data-wms-store-channel]");
-    if (select) select.innerHTML = wmsStoreChannelOptions(row.querySelector('[name="wmsStoreId"]')?.value || "");
+  const accounts = new Set(["principal", ...wmsDeposits.map((wms) => wms.blingAccount || "principal")]);
+  accounts.forEach((account) => {
+    if (!(state.blingSalesChannelsByAccount || {})[account]) loadBlingSalesChannels(account);
+    if (account !== "principal" && !(state.blingDepositsByAccount || {})[account]) loadBlingAccountDeposits(account);
   });
 }
 
-function wmsStoreChannelOptions(selectedId = "") {
-  const channels = state.blingSalesChannels;
+// Depositos de uma conta Bling extra (a principal usa state.blingDeposits).
+async function loadBlingAccountDeposits(account) {
+  state.blingDepositsByAccount = state.blingDepositsByAccount || {};
+  try {
+    const response = await api(`/api/bling/deposits?account=${encodeURIComponent(account)}`);
+    state.blingDepositsByAccount[account] = (response.deposits || []).map((deposit) => deposit.descricao).filter(Boolean);
+  } catch (error) {
+    state.blingDepositsByAccount[account] = [];
+    state.blingDepositsAccountError = error.message;
+  }
+  document.querySelectorAll("[data-wms-deposit-card]").forEach((card) => {
+    if (card.querySelector('[name="wmsBlingAccount"]')?.value === account) refreshWmsCardDepositOptions(card);
+  });
+}
+
+function wmsDepositNamesForAccount(account) {
+  if (!account || account === "principal") return triageAvailableDepositNames(state.triageTransferSettings || {});
+  return (state.blingDepositsByAccount || {})[account] || [];
+}
+
+function refreshWmsCardDepositOptions(card) {
+  const account = card.querySelector('[name="wmsBlingAccount"]')?.value || "principal";
+  const select = card.querySelector('[name="wmsDepositName"]');
+  if (!select) return;
+  const current = select.value;
+  const names = wmsDepositNamesForAccount(account);
+  const options = names.includes(current) || !current ? names : [current, ...names];
+  select.disabled = !options.length;
+  select.innerHTML = options.length
+    ? options.map((name) => `<option value="${escapeHtml(name)}" ${name === current ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
+    : `<option value="">${escapeHtml(account === "principal" ? "Depositos indisponiveis" : "Autorize o Bling desta conta em Perfil")}</option>`;
+}
+
+function handleWmsAccountChange(event) {
+  const select = event.target.closest('[name="wmsBlingAccount"]');
+  if (!select) return;
+  const card = select.closest("[data-wms-deposit-card]");
+  const account = select.value;
+  if (account !== "principal" && !(state.blingDepositsByAccount || {})[account]) loadBlingAccountDeposits(account);
+  if (!(state.blingSalesChannelsByAccount || {})[account]) loadBlingSalesChannels(account);
+  refreshWmsCardDepositOptions(card);
+}
+
+// Carrega do Bling os canais que vendem pelo deposito escolhido (cada canal tem deposito fixo no Bling).
+async function loadWmsDepositChannels(card) {
+  const account = card.querySelector('[name="wmsBlingAccount"]')?.value || "principal";
+  const depositName = card.querySelector('[name="wmsDepositName"]')?.value || "";
+  const list = card.querySelector("[data-wms-store-list]");
+  const button = card.querySelector("[data-load-wms-channels]");
+  if (!depositName || !list) return;
+  button.disabled = true;
+  button.textContent = "Buscando canais...";
+  try {
+    const response = await api(`/api/bling/sales-channels?account=${encodeURIComponent(account)}&deposit=${encodeURIComponent(depositName)}`);
+    const current = new Map(readWmsStores(card).map((store) => [store.blingStoreId, store]));
+    const channels = response.channels || [];
+    list.querySelectorAll("[data-wms-store], .transfer-empty").forEach((element) => element.remove());
+    list.insertAdjacentHTML("beforeend", channels.length
+      ? channels.map((channel) => triageWmsStoreRow({
+        name: channel.name,
+        blingStoreId: channel.id,
+        expeditionDocument: current.get(channel.id)?.expeditionDocument || "shipping_label"
+      }, account)).join("")
+      : '<p class="muted transfer-empty">Nenhum canal de venda usa este deposito no Bling.</p>');
+  } catch (error) {
+    list.insertAdjacentHTML("afterbegin", `<p class="message transfer-empty">${escapeHtml(error.message)}</p>`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Carregar canais do Bling";
+  }
+}
+
+// Lojas da conta Bling para o usuario escolher quais expedem por cada deposito WMS.
+async function loadBlingSalesChannels(account = "principal") {
+  state.loadingBlingSalesChannels = state.loadingBlingSalesChannels || {};
+  state.blingSalesChannelsByAccount = state.blingSalesChannelsByAccount || {};
+  state.blingSalesChannelsErrors = state.blingSalesChannelsErrors || {};
+  if (state.loadingBlingSalesChannels[account]) return;
+  state.loadingBlingSalesChannels[account] = true;
+  try {
+    const response = await api(`/api/bling/sales-channels?account=${encodeURIComponent(account)}`);
+    state.blingSalesChannelsByAccount[account] = response.channels || [];
+    state.blingSalesChannelsErrors[account] = "";
+  } catch (error) {
+    state.blingSalesChannelsByAccount[account] = [];
+    state.blingSalesChannelsErrors[account] = error.message;
+  } finally {
+    state.loadingBlingSalesChannels[account] = false;
+  }
+  document.querySelectorAll("[data-wms-store]").forEach((row) => {
+    const select = row.querySelector("[data-wms-store-channel]");
+    const rowAccount = row.closest("[data-wms-deposit-card]")?.querySelector('[name="wmsBlingAccount"]')?.value || "principal";
+    if (select && rowAccount === account) select.innerHTML = wmsStoreChannelOptions(row.querySelector('[name="wmsStoreId"]')?.value || "", account);
+  });
+}
+
+function wmsStoreChannelOptions(selectedId = "", account = "principal") {
+  const channels = (state.blingSalesChannelsByAccount || {})[account];
   if (!channels) return '<option value="">Carregando lojas do Bling...</option>';
   if (!channels.length) {
-    return `<option value="">${escapeHtml(state.blingSalesChannelsError ? "Lojas do Bling indisponiveis - preencha abaixo" : "Nenhuma loja no Bling")}</option>`;
+    return `<option value="">${escapeHtml((state.blingSalesChannelsErrors || {})[account] ? "Lojas do Bling indisponiveis - preencha abaixo" : "Nenhuma loja no Bling")}</option>`;
   }
   const known = channels.some((channel) => channel.id === String(selectedId));
   return [
@@ -2993,7 +3134,8 @@ function handleWmsStoreChannelChange(event) {
   const select = event.target.closest("[data-wms-store-channel]");
   if (!select) return;
   const row = select.closest("[data-wms-store]");
-  const channel = (state.blingSalesChannels || []).find((candidate) => candidate.id === select.value);
+  const account = row?.closest("[data-wms-deposit-card]")?.querySelector('[name="wmsBlingAccount"]')?.value || "principal";
+  const channel = ((state.blingSalesChannelsByAccount || {})[account] || []).find((candidate) => candidate.id === select.value);
   if (!row || !channel) return;
   row.querySelector('[name="wmsStoreName"]').value = channel.name;
   row.querySelector('[name="wmsStoreId"]').value = channel.id;
@@ -3006,13 +3148,22 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
   const stores = normalizeWmsStores(wms.stores || wms.lojas || wms.blingStores || wms.bling_stores);
   const total = wmsTotalLabels(rowsConfig);
   const preview = wmsPositionPreview(prefix, rowsConfig);
-  const depositOptions = deposits.length
-    ? deposits.map((name) => `<option value="${escapeHtml(name)}" ${name === depositName ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
+  const account = wms.blingAccount || "principal";
+  const accountDeposits = account === "principal" ? deposits : wmsDepositNamesForAccount(account);
+  const depositNames = accountDeposits.includes(depositName) || !depositName ? accountDeposits : [depositName, ...accountDeposits];
+  const depositOptions = depositNames.length
+    ? depositNames.map((name) => `<option value="${escapeHtml(name)}" ${name === depositName ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")
     : `<option value="${escapeHtml(depositName)}">${escapeHtml(depositName || "Depositos indisponiveis")}</option>`;
   return `
     <article class="triage-wms-card" data-wms-deposit-card>
+      <label>Conta Bling
+        <select name="wmsBlingAccount">
+          <option value="principal" ${account === "principal" ? "selected" : ""}>Principal</option>
+          <option value="ecommerce" ${account === "ecommerce" ? "selected" : ""}>Ecommerce (segunda conta)</option>
+        </select>
+      </label>
       <label>Deposito destino
-        <select name="wmsDepositName" ${deposits.length ? "" : "disabled"} required>${depositOptions}</select>
+        <select name="wmsDepositName" ${depositNames.length ? "" : "disabled"} required>${depositOptions}</select>
       </label>
       <label>Prefixo da posicao
         <input name="wmsPrefix" value="${escapeHtml(prefix)}" placeholder="Ex: ECOM" required />
@@ -3023,9 +3174,10 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
       <div class="triage-wms-stores" data-wms-store-list>
         <div class="triage-wms-subheading">
           <strong>Lojas que expedem por este deposito</strong>
+          <button type="button" class="ghost" data-load-wms-channels>Carregar canais do Bling</button>
           <button type="button" class="ghost" data-add-wms-store>Adicionar loja</button>
         </div>
-        ${stores.length ? stores.map((store) => triageWmsStoreRow(store)).join("") : '<p class="muted transfer-empty">Nenhuma loja configurada para este deposito.</p>'}
+        ${stores.length ? stores.map((store) => triageWmsStoreRow(store, account)).join("") : '<p class="muted transfer-empty">Nenhuma loja configurada. Use "Carregar canais do Bling".</p>'}
       </div>
       <div class="triage-wms-preview">
         <span>Ruas ${escapeHtml(preview.rowsLabel)}</span>
@@ -3041,11 +3193,11 @@ function triageWmsDepositCard(wms = {}, deposits = []) {
   `;
 }
 
-function triageWmsStoreRow(store = {}) {
+function triageWmsStoreRow(store = {}, account = "principal") {
   return `
     <div class="triage-wms-store-row" data-wms-store>
       <label>Loja do Bling
-        <select data-wms-store-channel>${wmsStoreChannelOptions(store.blingStoreId)}</select>
+        <select data-wms-store-channel>${wmsStoreChannelOptions(store.blingStoreId, account)}</select>
       </label>
       <label>Nome da loja
         <input name="wmsStoreName" value="${escapeHtml(store.name || "")}" placeholder="Ex: Mercado Livre" />
@@ -3230,6 +3382,7 @@ function profileTriageRulesPayload(form) {
   ])).values()];
   const wmsDeposits = [...form.querySelectorAll("[data-wms-deposit-card]")].map((card) => ({
     depositName: String(card.querySelector('[name="wmsDepositName"]')?.value || "").trim(),
+    blingAccount: card.querySelector('[name="wmsBlingAccount"]')?.value || "principal",
     prefix: normalizeWmsPrefix(card.querySelector('[name="wmsPrefix"]')?.value),
     stores: readWmsStores(card),
     rowsConfig: readWmsRowsConfig(card)
@@ -3278,6 +3431,10 @@ function handleTriageRulesClick(event) {
   }
   if (event.target.closest("[data-add-wms-row]")) {
     addTriageWmsRow(event.target.closest("[data-wms-deposit-card]"));
+    return;
+  }
+  if (event.target.closest("[data-load-wms-channels]")) {
+    loadWmsDepositChannels(event.target.closest("[data-wms-deposit-card]"));
     return;
   }
   if (event.target.closest("[data-add-wms-store]")) {
@@ -3389,7 +3546,7 @@ function addTriageWmsStore(card) {
   const list = card?.querySelector("[data-wms-store-list]");
   if (!list) return;
   list.querySelector(".transfer-empty")?.remove();
-  list.insertAdjacentHTML("beforeend", triageWmsStoreRow({ name: "", blingStoreId: "" }));
+  list.insertAdjacentHTML("beforeend", triageWmsStoreRow({ name: "", blingStoreId: "" }, card.querySelector('[name="wmsBlingAccount"]')?.value || "principal"));
   list.querySelector("[data-wms-store]:last-child select")?.focus();
 }
 

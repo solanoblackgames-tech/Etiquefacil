@@ -20,7 +20,9 @@ import {
   getBlingShippingLabelPdf,
   getBlingStockBalancesForSkus,
   listBlingSalesChannels,
+  listBlingSalesChannelsForDeposit,
   findBlingProductForWms,
+  getBlingCompany,
   lookupBlingProductForTriage,
   refreshBlingIntegrationToken,
   revokeBlingIntegrationTokens,
@@ -102,6 +104,12 @@ import {
   listDueBlingSyncJobs,
   listTransferLots,
   listWmsExpedition,
+  BLING_PRIMARY_ACCOUNT,
+  deleteBlingAccountIntegration,
+  getBlingAccountCredentials,
+  getBlingAccountIntegration,
+  normalizeBlingAccount,
+  saveBlingAccountIntegration,
   listWmsMovements,
   listWmsStock,
   registerWmsInventory,
@@ -1015,10 +1023,11 @@ app.post("/api/operator-invites/:token/accept", async (req, res) => {
 app.get("/api/bling/deposits", requireAuth, requireTransferOrTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
-    const integration = await getRequiredBlingCredentials(userId);
+    const account = normalizeBlingAccount(req.query.account);
+    const integration = await getRequiredBlingAccountCredentials(userId, account);
     const deposits = await listBlingDeposits({
       integration,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      saveIntegration: blingAccountSaver(userId, account)
     });
     res.json({ deposits });
   } catch (error) {
@@ -1030,10 +1039,13 @@ app.get("/api/bling/deposits", requireAuth, requireTransferOrTriageAccess, async
 app.get("/api/bling/sales-channels", requireAuth, requireTransferOrTriageAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
-    const channels = await listBlingSalesChannels({
-      integration: await getRequiredBlingCredentials(userId),
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-    });
+    const account = normalizeBlingAccount(req.query.account);
+    const integration = await getRequiredBlingAccountCredentials(userId, account);
+    const saveIntegration = blingAccountSaver(userId, account);
+    const depositName = String(req.query.deposit || "").trim();
+    const channels = depositName
+      ? await listBlingSalesChannelsForDeposit({ integration, depositName, saveIntegration })
+      : await listBlingSalesChannels({ integration, saveIntegration });
     res.json({ channels });
   } catch (error) {
     sendError(res, error);
@@ -1068,9 +1080,10 @@ app.get("/api/wms/bling-compare", requireAuth, requireTransferViewOrAcceptanceAc
       bySku.set(unit.sku, row);
     }
     const skus = [...bySku.keys()].filter(Boolean).slice(0, WMS_BLING_COMPARE_MAX_SKUS);
-    const integration = await getRequiredBlingCredentials(userId);
+    const account = await blingAccountForWmsDeposit(userId, depositName);
+    const integration = await getRequiredBlingAccountCredentials(userId, account);
     const balances = skus.length
-      ? await getBlingStockBalancesForSkus({ integration, skus, depositoName: depositName, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) })
+      ? await getBlingStockBalancesForSkus({ integration, skus, depositoName: depositName, saveIntegration: blingAccountSaver(userId, account) })
       : { results: [] };
     const bySkuBling = new Map(balances.results.map((result) => [result.sku, result]));
     const rows = skus.map((sku) => {
@@ -1116,12 +1129,13 @@ app.get("/api/public/transfer-lots/:transferLotId/wms-suggestion", async (req, r
 app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
-    const integration = await getRequiredBlingCredentials(userId).catch(() => null);
+    const account = await blingAccountForWmsDeposit(userId, req.body?.depositName);
+    const integration = await getRequiredBlingAccountCredentials(userId, account).catch(() => null);
     const lookupProduct = async (code) => {
       if (!integration) throw Object.assign(new Error("Bling nao conectado."), { wmsLookupUnavailable: true });
       try {
         return await withTimeout(
-          findBlingProductForWms({ integration, code, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) }),
+          findBlingProductForWms({ integration, code, saveIntegration: blingAccountSaver(userId, account) }),
           WMS_BLING_LOOKUP_TIMEOUT_MS
         );
       } catch (error) {
@@ -1197,12 +1211,13 @@ app.post("/api/wms/expedition/bling-orders", requireAuth, requireTransferAccess,
     if (!lojaNome && !blingStoreId) throw new Error("Escolha uma loja para puxar os pedidos do Bling.");
     if (!wmsDepositName) throw new Error("Esta loja nao esta vinculada a um deposito WMS.");
 
-    const integration = await getRequiredBlingCredentials(userId);
+    const account = await blingAccountForWmsDeposit(userId, wmsDepositName);
+    const integration = await getRequiredBlingAccountCredentials(userId, account);
     const blingOrders = await listBlingSalesOrdersForStore({
       integration,
       storeName: lojaNome,
       storeId: blingStoreId,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      saveIntegration: blingAccountSaver(userId, account)
     });
     const current = await listWmsExpedition(userId);
     const existingKeys = new Set((current.orders || []).flatMap((order) => [
@@ -1767,9 +1782,11 @@ app.post("/api/integrations/bling/config", requireAuth, requireOwner, async (req
 
 app.get("/api/integrations/bling/authorize", requireAuth, requireOwner, async (req, res) => {
   try {
-    const blingApp = await getBlingAppCredentials(workspaceUserId(req));
+    const account = normalizeBlingAccount(req.query.account);
+    const blingApp = await getBlingAccountAppCredentials(workspaceUserId(req), account);
     const state = randomBytes(24).toString("hex");
     req.session.blingOAuthState = state;
+    req.session.blingOAuthAccount = account;
     const url = new URL("https://www.bling.com.br/Api/v3/oauth/authorize");
     url.searchParams.set("client_id", blingApp.clientId);
     url.searchParams.set("response_type", "code");
@@ -1785,24 +1802,34 @@ app.get("/api/integrations/bling/callback", requireAuth, requireOwner, async (re
 });
 
 async function handleBlingOAuthCallback(req, res, redirectUri) {
+  const account = normalizeBlingAccount(req.session.blingOAuthAccount);
   try {
-    const blingApp = await getBlingAppCredentials(workspaceUserId(req));
+    const userId = workspaceUserId(req);
+    const blingApp = await getBlingAccountAppCredentials(userId, account);
     if (req.query.error) throw new Error(String(req.query.error_description || req.query.error));
     if (!req.query.code) throw new Error("Bling nao retornou o codigo de autorizacao.");
     if (!req.query.state || req.query.state !== req.session.blingOAuthState) throw new Error("Retorno OAuth invalido. Tente autorizar novamente.");
     req.session.blingOAuthState = null;
+    req.session.blingOAuthAccount = null;
 
     const token = await exchangeBlingAuthorizationCodeWithFallback(blingApp, String(req.query.code), getBlingRedirectUriCandidates(req, redirectUri));
-    await saveUserBlingIntegration(workspaceUserId(req), {
+    const credentials = {
       clientId: blingApp.clientId,
       clientSecret: blingApp.clientSecret,
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       tokenExpiresAt: token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() : null
-    });
-    res.redirect("/perfil?bling=connected");
+    };
+    if (account === BLING_PRIMARY_ACCOUNT) {
+      await saveUserBlingIntegration(userId, credentials);
+    } else {
+      const company = await assertDistinctBlingCompany(userId, credentials);
+      await saveBlingAccountIntegration(userId, account, { ...credentials, companyId: company?.id || "", companyName: company?.name || "" });
+    }
+    res.redirect(`/perfil?bling=connected${account === BLING_PRIMARY_ACCOUNT ? "" : `&account=${account}`}`);
   } catch (error) {
     req.session.blingOAuthState = null;
+    req.session.blingOAuthAccount = null;
     console.error("Falha no callback OAuth do Bling:", {
       userId: workspaceUserId(req),
       message: error.message
@@ -1810,6 +1837,56 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
     res.redirect(`/perfil?bling=error&message=${encodeURIComponent(error.message)}`);
   }
 }
+
+// Conexoes Bling da conta: principal (fluxo atual) e contas extras como a do Ecommerce.
+app.get("/api/integrations/bling/accounts", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const accounts = await Promise.all(["principal", "ecommerce"].map((account) => getBlingAccountIntegration(userId, account)));
+    const primaryApp = await getBlingAppCredentials(userId).catch(() => null);
+    res.json({
+      accounts: accounts.map((integration) => ({
+        ...integration,
+        hasOwnApp: integration.account !== BLING_PRIMARY_ACCOUNT && Boolean(integration.clientId) && integration.clientId !== primaryApp?.clientId,
+        authorizeUrl: `/api/integrations/bling/authorize?account=${encodeURIComponent(integration.account)}`
+      }))
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Aplicativo proprio (Client ID/Secret) para uma conta extra. Sem isso, usa o mesmo app da principal.
+app.post("/api/integrations/bling/accounts/:account/config", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const account = normalizeBlingAccount(req.params.account);
+    if (account === BLING_PRIMARY_ACCOUNT) throw new Error("Use a configuracao do aplicativo principal.");
+    const clientId = String(req.body.clientId || "").trim();
+    const clientSecret = String(req.body.clientSecret || "").trim();
+    if (!clientId || !clientSecret) throw new Error("Informe Client ID e Client Secret do Bling.");
+    res.json({ integration: await saveBlingAccountIntegration(workspaceUserId(req), account, { clientId, clientSecret, accessToken: "", refreshToken: "", tokenExpiresAt: null }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete("/api/integrations/bling/accounts/:account", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const account = normalizeBlingAccount(req.params.account);
+    if (account === BLING_PRIMARY_ACCOUNT) return res.json(await revokeAndDeleteUserBlingIntegration(userId));
+    const integration = await getBlingAccountCredentials(userId, account);
+    let revoked = false;
+    if (integration?.accessToken || integration?.refreshToken) {
+      const blingApp = await getBlingAccountAppCredentials(userId, account);
+      await revokeBlingIntegrationTokens({ ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret }).then(() => { revoked = true; }).catch(() => {});
+    }
+    await deleteBlingAccountIntegration(userId, account);
+    res.json({ ok: true, revoked });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
 
 app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res) => {
   try {
@@ -3364,10 +3441,11 @@ async function getExpeditionShippingLabel(userId, order) {
   if (cached && Date.now() - cached.createdAt < EXPEDITION_LABEL_CACHE_MS) return cached.promise;
 
   const promise = (async () => {
+    const account = await blingAccountForWmsDeposit(userId, order.wmsDepositName);
     const pdf = await getBlingShippingLabelPdf({
-      integration: await getRequiredBlingCredentials(userId),
+      integration: await getRequiredBlingAccountCredentials(userId, account),
       blingPedidoId: order.blingPedidoId,
-      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+      saveIntegration: blingAccountSaver(userId, account)
     });
     return buildShippingLabelWithDanfeKey(pdf);
   })();
@@ -3554,6 +3632,54 @@ async function validateUserBlingIntegration(userId, { validate = false } = {}) {
     }
     throw error;
   }
+}
+
+// Aplicativo usado por uma conta: o proprio (se configurado) ou o mesmo da principal.
+async function getBlingAccountAppCredentials(userId, account) {
+  if (normalizeBlingAccount(account) === BLING_PRIMARY_ACCOUNT) return getBlingAppCredentials(userId);
+  const integration = await getBlingAccountCredentials(userId, account);
+  if (integration?.clientId && integration?.clientSecret) return { clientId: integration.clientId, clientSecret: integration.clientSecret };
+  return getBlingAppCredentials(userId);
+}
+
+async function getRequiredBlingAccountCredentials(userId, account) {
+  const normalized = normalizeBlingAccount(account);
+  if (normalized === BLING_PRIMARY_ACCOUNT) return getRequiredBlingCredentials(userId);
+  const integration = await getBlingAccountCredentials(userId, normalized);
+  if (!integration?.accessToken || !integration?.refreshToken) {
+    throw new Error(`Autorize a conta Bling ${normalized === "ecommerce" ? "Ecommerce" : normalized} na aba Perfil antes de continuar.`);
+  }
+  const blingApp = await getBlingAccountAppCredentials(userId, normalized);
+  return { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret };
+}
+
+// Conta Bling do deposito WMS (configurada no deposito; padrao: principal).
+async function blingAccountForWmsDeposit(userId, depositName) {
+  const settings = await getUserTriageTransferSettings(userId);
+  const expected = String(depositName || "").trim().toLowerCase();
+  const deposit = (settings.wmsDeposits || []).find((candidate) => String(candidate.depositName || "").trim().toLowerCase() === expected);
+  return normalizeBlingAccount(deposit?.blingAccount);
+}
+
+function blingAccountSaver(userId, account) {
+  return (payload) => saveBlingAccountIntegration(userId, account, payload);
+}
+
+// A conta extra precisa ser outra empresa: autorizar a principal por engano misturaria os estoques.
+async function assertDistinctBlingCompany(userId, credentials) {
+  const company = await getBlingCompany({ integration: credentials }).catch(() => null);
+  const primary = await getUserBlingCredentials(userId);
+  if (company?.id && primary?.accessToken) {
+    const blingApp = await getBlingAppCredentials(userId).catch(() => null);
+    const primaryCompany = await getBlingCompany({
+      integration: { ...primary, ...(blingApp || {}) },
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
+    }).catch(() => null);
+    if (primaryCompany?.id && primaryCompany.id === company.id) {
+      throw new Error(`A empresa autorizada (${company.name}) e a mesma da conta principal. Entre no Bling com a conta do Ecommerce e autorize novamente.`);
+    }
+  }
+  return company;
 }
 
 async function getRequiredBlingCredentials(userId) {

@@ -70,6 +70,7 @@ const emptyDb = () => ({
   labels: [],
   skuReservations: [],
   blingIntegrations: [],
+  blingAccountIntegrations: [],
   blingSyncJobs: [],
   appSettings: {},
   userSettings: [],
@@ -2618,6 +2619,146 @@ export async function deleteUserBlingIntegration(userId) {
   db.blingIntegrations = (db.blingIntegrations || []).filter((integration) => integration.userId !== userId);
   await writeDb(db);
   return { ok: true };
+}
+
+// ---- Contas Bling adicionais (ex.: Ecommerce) ----
+// A conta principal continua em bling_integrations (todo o fluxo atual usa ela). Contas extras
+// ficam em bling_account_integrations, uma linha por (usuario, conta), com a empresa do token
+// para impedir que a mesma empresa seja conectada nas duas contas.
+
+export const BLING_PRIMARY_ACCOUNT = "principal";
+export const BLING_EXTRA_ACCOUNTS = ["ecommerce"];
+
+export function normalizeBlingAccount(value) {
+  const account = String(value || "").trim().toLowerCase();
+  if (!account || account === BLING_PRIMARY_ACCOUNT) return BLING_PRIMARY_ACCOUNT;
+  if (!BLING_EXTRA_ACCOUNTS.includes(account)) throw new Error(`Conta Bling desconhecida: ${account}.`);
+  return account;
+}
+
+export async function getBlingAccountCredentials(userId, account) {
+  const normalized = normalizeBlingAccount(account);
+  if (normalized === BLING_PRIMARY_ACCOUNT) return getUserBlingCredentials(userId);
+  return getPrivateBlingAccountIntegration(userId, normalized);
+}
+
+export async function getBlingAccountIntegration(userId, account) {
+  const normalized = normalizeBlingAccount(account);
+  if (normalized === BLING_PRIMARY_ACCOUNT) return { account: normalized, ...(await getUserBlingIntegration(userId)) };
+  const integration = await getPrivateBlingAccountIntegration(userId, normalized);
+  return {
+    account: normalized,
+    ...publicBlingIntegration(integration),
+    companyId: integration?.companyId || "",
+    companyName: integration?.companyName || "",
+    hasOwnApp: Boolean(integration?.clientId && integration?.clientSecret)
+  };
+}
+
+export async function saveBlingAccountIntegration(userId, account, payload = {}) {
+  const normalized = normalizeBlingAccount(account);
+  if (normalized === BLING_PRIMARY_ACCOUNT) return saveUserBlingIntegration(userId, payload);
+  await ensureStore();
+  const existing = await getPrivateBlingAccountIntegration(userId, normalized);
+  const integration = {
+    ...normalizeBlingIntegration(userId, payload, existing),
+    account: normalized,
+    companyId: String(payload.companyId ?? existing?.companyId ?? "").trim(),
+    companyName: String(payload.companyName ?? existing?.companyName ?? "").trim()
+  };
+
+  if (hasPostgres()) {
+    await ensureBlingAccountIntegrationsTablePg();
+    await query(
+      `insert into bling_account_integrations
+         (user_id, account, client_id, client_secret, access_token, refresh_token, token_expires_at, company_id, company_name, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (user_id, account) do update set
+         client_id = excluded.client_id,
+         client_secret = excluded.client_secret,
+         access_token = excluded.access_token,
+         refresh_token = excluded.refresh_token,
+         token_expires_at = excluded.token_expires_at,
+         company_id = excluded.company_id,
+         company_name = excluded.company_name,
+         updated_at = excluded.updated_at`,
+      [
+        integration.userId,
+        integration.account,
+        integration.clientId,
+        integration.clientSecret,
+        integration.accessToken,
+        integration.refreshToken,
+        integration.tokenExpiresAt,
+        integration.companyId,
+        integration.companyName,
+        integration.updatedAt
+      ]
+    );
+  } else {
+    const db = await readDb();
+    db.blingAccountIntegrations = (db.blingAccountIntegrations || []).filter((item) => !(item.userId === userId && item.account === normalized));
+    db.blingAccountIntegrations.push(integration);
+    await writeDb(db);
+  }
+  return getBlingAccountIntegration(userId, normalized);
+}
+
+export async function deleteBlingAccountIntegration(userId, account) {
+  const normalized = normalizeBlingAccount(account);
+  if (normalized === BLING_PRIMARY_ACCOUNT) return deleteUserBlingIntegration(userId);
+  await ensureStore();
+  if (hasPostgres()) {
+    await ensureBlingAccountIntegrationsTablePg();
+    await query("delete from bling_account_integrations where user_id = $1 and account = $2", [userId, normalized]);
+    return { ok: true };
+  }
+  const db = await readDb();
+  db.blingAccountIntegrations = (db.blingAccountIntegrations || []).filter((item) => !(item.userId === userId && item.account === normalized));
+  await writeDb(db);
+  return { ok: true };
+}
+
+async function getPrivateBlingAccountIntegration(userId, account) {
+  await ensureStore();
+  if (hasPostgres()) {
+    await ensureBlingAccountIntegrationsTablePg();
+    const result = await query("select * from bling_account_integrations where user_id = $1 and account = $2 limit 1", [userId, account]);
+    return result.rows[0] ? blingAccountIntegrationFromRow(result.rows[0]) : null;
+  }
+  const db = await readDb();
+  return (db.blingAccountIntegrations || []).find((item) => item.userId === userId && item.account === account) || null;
+}
+
+let blingAccountIntegrationsTableReady = false;
+
+async function ensureBlingAccountIntegrationsTablePg() {
+  if (blingAccountIntegrationsTableReady) return;
+  await query(`
+    create table if not exists bling_account_integrations (
+      user_id text not null references users(id) on delete cascade,
+      account text not null,
+      client_id text not null default '',
+      client_secret text not null default '',
+      access_token text not null default '',
+      refresh_token text not null default '',
+      token_expires_at timestamptz,
+      company_id text not null default '',
+      company_name text not null default '',
+      updated_at timestamptz not null default now(),
+      primary key (user_id, account)
+    );
+  `);
+  blingAccountIntegrationsTableReady = true;
+}
+
+function blingAccountIntegrationFromRow(row) {
+  return {
+    ...blingIntegrationFromRow(row),
+    account: row.account,
+    companyId: row.company_id || "",
+    companyName: row.company_name || ""
+  };
 }
 
 async function ensureBlingSyncJobsNullableLotId() {

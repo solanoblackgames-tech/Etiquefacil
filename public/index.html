@@ -269,6 +269,30 @@
           </div>
           <p id="blingIntegrationStatus" class="message"></p>
           </section>
+          <section class="entry-panel">
+            <div class="panel-heading">
+              <span class="muted">Segunda conta</span>
+              <h3>Bling Ecommerce</h3>
+            </div>
+            <p class="muted">Conta Bling separada para o deposito Ecommerce e os marketplaces. Antes de autorizar, entre no Bling com a conta do Ecommerce (o Bling autoriza a empresa que estiver logada).</p>
+            <div class="integration-status">
+              <strong id="blingEcommerceTitle">Verificando...</strong>
+              <span id="blingEcommerceDetails" class="muted"></span>
+            </div>
+            <div class="settings-actions">
+              <a id="blingEcommerceAuthorize" class="button-link primary-action" href="/api/integrations/bling/authorize?account=ecommerce">Autorizar Bling Ecommerce</a>
+              <button id="blingEcommerceDelete" type="button" class="danger">Remover autorizacao</button>
+            </div>
+            <details class="bling-own-app">
+              <summary>Usar outro aplicativo de API nesta conta (opcional)</summary>
+              <form id="blingEcommerceAppForm" class="settings-form">
+                <label>Client ID<input name="clientId" autocomplete="off" required /></label>
+                <label>Client Secret<input name="clientSecret" type="password" autocomplete="off" required /></label>
+                <div class="settings-actions"><button type="submit">Salvar aplicativo</button></div>
+              </form>
+            </details>
+            <p id="blingEcommerceStatus" class="message"></p>
+          </section>
         </section>
 
         <section id="profileConferenceSettings" class="settings-shell profile-section hidden">

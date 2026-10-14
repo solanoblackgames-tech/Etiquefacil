@@ -9,9 +9,11 @@ export function normalizeWmsDeposit(input = {}) {
   const prefix = normalizeWmsPrefix(input.prefix || depositName);
   const rows = normalizeWmsRows(input.rowsConfig || input.rows_config || input.ruasConfig || input.ruas, input);
   if (!depositName) throw new Error("Informe o deposito WMS.");
+  const blingAccount = String(input.blingAccount ?? input.bling_account ?? "").trim().toLowerCase() || "principal";
   return {
     depositName,
     prefix,
+    blingAccount,
     stores: normalizeWmsStores(input.stores || input.lojas || input.blingStores || input.bling_stores),
     rowsConfig: rows,
     rows: rows.length,
