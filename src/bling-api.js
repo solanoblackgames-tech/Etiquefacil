@@ -1,8 +1,8 @@
+import { getBlingRateLimiter } from "./bling-rate-limit.js";
+
 const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
 const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
 const BLING_OAUTH_REVOKE_URL = "https://www.bling.com.br/Api/v3/oauth/revoke";
-const BLING_REQUEST_DELAY_MS = 450;
-const BLING_RATE_LIMIT_FALLBACK_DELAY_MS = 2500;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
 const BLING_FETCH_TIMEOUT_MS = 12_000;
 const WMS_EXPEDITION_LOOKBACK_DAYS = 7;
@@ -643,7 +643,7 @@ class BlingApiClient {
     if (!integration?.accessToken) throw new Error("Autorize a integracao Bling antes de enviar dados.");
     this.integration = integration;
     this.saveIntegration = saveIntegration;
-    this.lastRequestAt = 0;
+    this.rateLimiter = getBlingRateLimiter(integration);
     this.supplierContactType = null;
   }
 
@@ -917,7 +917,7 @@ class BlingApiClient {
     }
   }
 
-  async request(path, { method = "GET", query = {}, body = null, retry = true } = {}) {
+  async request(path, { method = "GET", query = {}, body = null, retry = true, rateLimitRetries = 0 } = {}) {
     await this.refreshTokenIfNeeded();
 
     const url = new URL(`${BLING_API_BASE_URL}${path}`);
@@ -942,12 +942,13 @@ class BlingApiClient {
 
     if (response.status === 401 && retry && this.integration.refreshToken) {
       await this.refreshToken();
-      return this.request(path, { method, query, body, retry: false });
+      return this.request(path, { method, query, body, retry: false, rateLimitRetries });
     }
 
     if (response.status === 429) {
-      await wait(retryAfterMs(response) ?? BLING_RATE_LIMIT_FALLBACK_DELAY_MS);
-      return this.request(path, { method, query, body, retry });
+      const payload = await response.json().catch(() => ({}));
+      this.rateLimiter.onRateLimit(response, payload, rateLimitRetries);
+      return this.request(path, { method, query, body, retry, rateLimitRetries: rateLimitRetries + 1 });
     }
 
     const payload = await response.json().catch(() => ({}));
@@ -990,9 +991,7 @@ class BlingApiClient {
   }
 
   async waitForRequestSlot() {
-    const elapsed = Date.now() - this.lastRequestAt;
-    if (elapsed < BLING_REQUEST_DELAY_MS) await wait(BLING_REQUEST_DELAY_MS - elapsed);
-    this.lastRequestAt = Date.now();
+    await this.rateLimiter.acquire();
   }
 }
 
@@ -1090,11 +1089,11 @@ class BlingHomologationClient {
     this.saveIntegration = saveIntegration;
     this.fetchImpl = fetchImpl;
     this.homologationHash = null;
-    this.lastRequestAt = 0;
+    this.rateLimiter = getBlingRateLimiter(integration);
     this.tokenRefreshed = false;
   }
 
-  async request(path, { method = "GET", body = null, retry = true } = {}) {
+  async request(path, { method = "GET", body = null, retry = true, rateLimitRetries = 0 } = {}) {
     await this.refreshTokenIfNeeded();
     await this.waitForRequestSlot();
 
@@ -1113,12 +1112,13 @@ class BlingHomologationClient {
 
     if (response.status === 401 && retry && this.integration.refreshToken) {
       await this.refreshToken();
-      return this.request(path, { method, body, retry: false });
+      return this.request(path, { method, body, retry: false, rateLimitRetries });
     }
 
     if (response.status === 429) {
-      await wait(retryAfterMs(response) ?? BLING_RATE_LIMIT_FALLBACK_DELAY_MS);
-      return this.request(path, { method, body, retry });
+      const payload = await response.json().catch(() => ({}));
+      this.rateLimiter.onRateLimit(response, payload, rateLimitRetries);
+      return this.request(path, { method, body, retry, rateLimitRetries: rateLimitRetries + 1 });
     }
 
     const payload = await response.json().catch(() => ({}));
@@ -1167,7 +1167,7 @@ class BlingHomologationClient {
   }
 
   async waitForRequestSlot() {
-    this.lastRequestAt = Date.now();
+    await this.rateLimiter.acquire();
   }
 }
 
@@ -1406,17 +1406,6 @@ function chunks(items = [], size = 100) {
   return result;
 }
 
-function retryAfterMs(response) {
-  const header = response.headers?.get?.("retry-after");
-  if (!header) return null;
-
-  const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-
-  const date = new Date(header).getTime();
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
-}
-
 async function fetchWithTimeout(url, options = {}, timeoutMs = BLING_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1428,9 +1417,4 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = BLING_FETCH_TIMEO
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function wait(ms) {
-  if (ms <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
