@@ -482,6 +482,14 @@ export async function getBlingShippingLabelPdf({ integration, blingPedidoId, sav
   return content;
 }
 
+// Confere se a autorizacao continua valida com uma consulta leve. O cliente so renova o token
+// quando ele esta vencendo (ou se o Bling responder 401), e salva o token novo.
+export async function checkBlingConnection({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  await client.request("/produtos", { query: { limite: 1 } });
+  return true;
+}
+
 // Empresa dona do token: identifica qual conta Bling foi autorizada.
 export async function getBlingCompany({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);

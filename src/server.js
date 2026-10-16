@@ -22,6 +22,7 @@ import {
   listBlingSalesChannels,
   listBlingSalesChannelsForDeposit,
   findBlingProductForWms,
+  checkBlingConnection,
   getBlingCompany,
   lookupBlingProductForTriage,
   refreshBlingIntegrationToken,
@@ -3617,20 +3618,28 @@ async function validateUserBlingIntegration(userId, { validate = false } = {}) {
   const integration = await getUserBlingCredentials(userId);
   if (!integration?.accessToken || !integration?.refreshToken) return getUserBlingIntegration(userId);
 
+  // Antes renovava o token a cada abertura do Perfil: duas renovacoes ao mesmo tempo (outra aba,
+  // recarregar, fila do Bling) invalidavam o token uma da outra e a conexao era apagada.
+  // Agora so confere com uma consulta leve e so remove se a autorizacao foi mesmo revogada.
   try {
     const blingApp = await getBlingAppCredentials(userId);
-    const refreshed = await refreshBlingIntegrationToken({
-      ...integration,
-      clientId: blingApp.clientId,
-      clientSecret: integration.clientSecret || blingApp.clientSecret
+    await checkBlingConnection({
+      integration: { ...integration, clientId: blingApp.clientId, clientSecret: integration.clientSecret || blingApp.clientSecret },
+      saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
     });
-    return saveUserBlingIntegration(userId, refreshed);
+    return getUserBlingIntegration(userId);
   } catch (error) {
-    if (error.name === "BlingApiError" && [400, 401, 403].includes(Number(error.status))) {
-      await deleteUserBlingIntegration(userId);
+    if (error.name === "BlingApiError" && [400, 401].includes(Number(error.status))) {
+      const current = await getUserBlingCredentials(userId);
+      const renewedElsewhere = current?.refreshToken && current.refreshToken !== integration.refreshToken;
+      if (!renewedElsewhere) {
+        console.warn("Autorizacao Bling removida por token invalido:", { userId, status: error.status, message: error.message });
+        await deleteUserBlingIntegration(userId);
+      }
       return getUserBlingIntegration(userId);
     }
-    throw error;
+    console.warn("Falha ao validar a autorizacao Bling (mantida):", { userId, status: error.status, message: error.message });
+    return getUserBlingIntegration(userId);
   }
 }
 
