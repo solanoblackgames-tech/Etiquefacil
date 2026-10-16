@@ -2801,8 +2801,14 @@ function updateBlingGlobalAlert() {
 }
 
 // Segunda conta Bling (Ecommerce): status, empresa conectada, autorizar/remover e app proprio.
+// So aparece para contas que usam estoque/WMS (transferencia ou Entrada WMS liberadas).
+function canUseBlingEcommerceAccount() {
+  return isOwnerUser() && Boolean(state.user?.transferAccess || state.user?.stockTransferAcceptanceAccess);
+}
+
 async function loadBlingAccounts() {
-  if (!$("#blingEcommerceTitle") || !isOwnerUser()) return;
+  $("#blingEcommercePanel")?.classList.toggle("hidden", !canUseBlingEcommerceAccount());
+  if (!$("#blingEcommerceTitle") || !canUseBlingEcommerceAccount()) return;
   try {
     const { accounts = [] } = await api("/api/integrations/bling/accounts");
     state.blingAccounts = accounts;
