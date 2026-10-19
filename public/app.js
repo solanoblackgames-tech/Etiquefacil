@@ -4052,6 +4052,7 @@ function dashboardOverviewMarkup(stats, filter) {
           <span class="dash2-kicker">Etiquefácil · visão do administrador</span>
           <h3 class="dash2-title">Painel da operação</h3>
         <span class="dash2-updated">Atualizado em ${formatDateTime(stats.generatedAt)}</span>
+          <button type="button" class="tv-open-button" data-tv-link="open">Abrir painel ao vivo</button>
         </div>
         ${operationalDateFilterMarkup(filter)}
       </div>
@@ -4624,6 +4625,23 @@ function tvDashboardLinkMarkup() {
 
 async function handleTvDashboardLinkAction(action) {
   const message = () => $("#tvDashboardMessage");
+  if (action === "open") {
+    // Abre a janela antes do await para o navegador nao bloquear como pop-up.
+    const tvWindow = window.open("about:blank", "_blank");
+    try {
+      if (!state.tvDashboardToken) {
+        const response = await api("/api/dashboard/tv-link", { method: "POST" });
+        state.tvDashboardToken = response.token || null;
+        renderOperationalDashboard();
+      }
+      if (tvWindow) tvWindow.location.href = tvDashboardUrl();
+      else location.href = tvDashboardUrl();
+    } catch (error) {
+      tvWindow?.close();
+      alert(error.message || "Não foi possível abrir o painel.");
+    }
+    return;
+  }
   try {
     if (action === "rotate") {
       if (state.tvDashboardToken && !confirm("Gerar um novo link? A TV que usa o link atual vai parar de atualizar até receber o novo.")) return;

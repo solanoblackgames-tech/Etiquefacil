@@ -8555,3 +8555,5 @@ h3 {
 .tv-link-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
 .tv-link-row input { flex: 1 1 260px; min-width: 0; min-height: 40px; }
 .tv-link-row button, .tv-link-row .button-link { min-height: 40px; white-space: nowrap; }
+.tv-open-button { margin-top: 10px; min-height: 44px; padding: 0 18px; background: #0f766e; color: #fff; border: 0; border-radius: 8px; font-weight: 700; cursor: pointer; }
+.tv-open-button:hover { background: #0b5f59; }
