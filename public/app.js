@@ -2780,17 +2780,24 @@ async function loadBlingIntegration({ validate = false } = {}) {
 
 function renderBlingIntegration(integration) {
   const connected = Boolean(integration?.connected && integration?.hasAccessToken);
+  const reconnectRequired = Boolean(integration?.reconnectRequired);
+  const validationPending = Boolean(integration?.validationPending);
   const appConfigured = Boolean(integration?.appConfigured);
-  $("#blingIntegrationTitle").textContent = connected ? "Bling autorizado para este usuario" : "Bling ainda nao autorizado";
-  $("#blingIntegrationDetails").textContent = connected
-    ? `Autorizado com o aplicativo ${integration.clientId}. ${integration.tokenExpiresAt ? `Token expira em ${formatDate(integration.tokenExpiresAt)}.` : ""}`
+  $("#blingIntegrationTitle").textContent = reconnectRequired ? "Reconecte sua conta Bling" : validationPending ? "Nao foi possivel verificar a conexao agora" : connected ? "Bling conectado" : "Bling ainda nao autorizado";
+  $("#blingIntegrationDetails").textContent = reconnectRequired
+    ? integration.connectionError
+    : validationPending
+      ? "O Bling esta temporariamente indisponivel para verificacao. A conexao e os envios pendentes foram preservados. Tente novamente em alguns instantes."
+    : connected
+    ? "Sua conta Bling esta conectada. Os envios pendentes sao processados automaticamente."
     : appConfigured
       ? "Clique em Autorizar no Bling, entre na conta Bling deste usuario e aprove o acesso."
       : "A integracao Bling ainda precisa ser configurada no sistema.";
   $("#blingAuthorizeLink").classList.toggle("hidden", !appConfigured);
-  $("#blingIntegrationDelete").disabled = !connected;
-  $("#blingIntegrationStatus").style.color = connected ? "#0f766e" : "";
-  $("#blingIntegrationStatus").textContent = getBlingCallbackMessage() || "";
+  $("#blingAuthorizeLink").textContent = reconnectRequired ? "Reconectar no Bling" : "Autorizar no Bling";
+  $("#blingIntegrationDelete").disabled = !integration?.hasAccessToken;
+  $("#blingIntegrationStatus").style.color = connected && !validationPending ? "#0f766e" : "";
+  $("#blingIntegrationStatus").textContent = reconnectRequired ? "Os produtos aguardam esta reconexao para serem enviados." : getBlingCallbackMessage() || "";
   updateBlingShortcutLabel();
   updateBlingGlobalAlert();
 }
@@ -2798,7 +2805,10 @@ function renderBlingIntegration(integration) {
 function updateBlingShortcutLabel() {
   const connected = Boolean(state.blingIntegration?.connected && state.blingIntegration?.hasAccessToken);
   document.querySelectorAll('.sync-shortcut[data-profile-section="sync"]').forEach((button) => {
-    button.textContent = connected ? "BLING INTEGRADO" : "Integre ao Bling";
+    const pending = Boolean(state.blingIntegration?.validationPending);
+    const reconnect = Boolean(state.blingIntegration?.reconnectRequired);
+    button.textContent = reconnect ? "RECONECTAR BLING" : pending ? "VERIFICAR BLING" : connected ? "BLING INTEGRADO" : "Integre ao Bling";
+    button.classList.toggle("connection-warning", reconnect || pending);
   });
 }
 
@@ -3875,7 +3885,7 @@ function setProfileSection(section = "entries") {
   $("#profileTriageStats").classList.toggle("hidden", section !== "triageStats");
   $("#profileTab").scrollTop = 0;
   if (section === "dashboard") loadOperationalDashboard();
-  if (section === "sync") loadBlingIntegration();
+  if (section === "sync") loadBlingIntegration({ validate: true });
   if (section === "conferenceSettings") {
     renderConferenceSettings();
     refreshPriceDisplaySettingsForm();

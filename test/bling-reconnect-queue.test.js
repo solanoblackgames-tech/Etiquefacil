@@ -22,6 +22,7 @@ test('reconnection resumes only that account and preserves stock job IDs and rem
     const due = await listDueBlingSyncJobs();
     assert.equal(due.length, 1);
     assert.equal(due[0].id, 'entry-1');
+    assert.equal(due[0].status, 'pending');
     assert.equal(due[0].payload.item.quantidade, 3);
     assert.equal(due[0].attempts, 7);
     const db = await readDb();

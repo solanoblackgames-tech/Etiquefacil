@@ -24,6 +24,7 @@ import {
   wmsUnitMatchesCode
 } from "./wms-units.js";
 import { computeCatalogReviewSignals } from "./catalog-review.js";
+import { BLING_AUTHORIZATION_ERROR_PATTERN, isBlingAuthorizationFailure, withBlingAuthorizationFailure } from "./bling-connection-status.js";
 
 const { Pool } = pg;
 
@@ -2548,12 +2549,26 @@ export async function getStoreHealth() {
 export async function getUserBlingIntegration(userId) {
   await ensureStore();
   if (hasPostgres()) {
-    const result = await query("select * from bling_integrations where user_id = $1 limit 1", [userId]);
-    return publicBlingIntegration(result.rows[0] ? blingIntegrationFromRow(result.rows[0]) : null);
+    const result = await query(`
+      select b.*, (
+        select j.error_message from bling_sync_jobs j
+        where j.user_id = b.user_id and j.status = 'failed'
+          and j.updated_at >= b.updated_at and j.error_message ~* $2
+        order by j.updated_at desc limit 1
+      ) as authorization_error
+      from bling_integrations b where b.user_id = $1 limit 1
+    `, [userId, BLING_AUTHORIZATION_ERROR_PATTERN]);
+    const row = result.rows[0];
+    return withBlingAuthorizationFailure(publicBlingIntegration(row ? blingIntegrationFromRow(row) : null), row?.authorization_error);
   }
 
   const db = await readDb();
-  return publicBlingIntegration((db.blingIntegrations || []).find((integration) => integration.userId === userId) || null);
+  const integration = (db.blingIntegrations || []).find((item) => item.userId === userId) || null;
+  const failure = (db.blingSyncJobs || []).find((job) =>
+    job.userId === userId && job.status === "failed" &&
+    String(job.updatedAt || "") >= String(integration?.updatedAt || "") && isBlingAuthorizationFailure(job.errorMessage)
+  );
+  return withBlingAuthorizationFailure(publicBlingIntegration(integration), integration && failure?.errorMessage);
 }
 
 export async function getUserBlingCredentials(userId) {
@@ -3193,7 +3208,7 @@ export async function resumeUserBlingSyncJobs(userId) {
   const now = new Date().toISOString();
   if (hasPostgres()) {
     const result = await query(
-      "update bling_sync_jobs set next_run_at = $2, updated_at = $2 where user_id = $1 and status in ('pending', 'failed') returning id",
+      "update bling_sync_jobs set status = 'pending', next_run_at = $2, updated_at = $2 where user_id = $1 and status in ('pending', 'failed') returning id",
       [userId, now]
     );
     return { resumed: result.rows.length };
@@ -3201,6 +3216,7 @@ export async function resumeUserBlingSyncJobs(userId) {
   const db = await readDb();
   const jobs = (db.blingSyncJobs || []).filter((job) => job.userId === userId && ["pending", "failed"].includes(job.status));
   for (const job of jobs) {
+    job.status = "pending";
     job.nextRunAt = now;
     job.updatedAt = now;
   }

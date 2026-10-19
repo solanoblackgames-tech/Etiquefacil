@@ -37,6 +37,7 @@ import {
 } from "./bling-api.js";
 import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferRows, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { getBlingTokenRateLimiter } from "./bling-rate-limit.js";
+import { isBlingAuthorizationFailure, withBlingAuthorizationFailure } from "./bling-connection-status.js";
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
@@ -269,7 +270,7 @@ app.post("/api/labels/qr", requireAuth, async (req, res) => {
 
 app.get("/healthz", async (req, res) => {
   try {
-    res.set("X-Etiquefacil-Bling-Sync", "oauth-v2");
+    res.set("X-Etiquefacil-Bling-Sync", "oauth-v3");
     res.json(await getStoreHealth());
   } catch (error) {
     res.status(503).json({ ok: false, error: error.message });
@@ -3618,14 +3619,15 @@ async function revokeAndDeleteUserBlingIntegration(userId) {
 }
 
 async function validateUserBlingIntegration(userId, { validate = false } = {}) {
-  if (!validate) return getUserBlingIntegration(userId);
+  const storedStatus = await getUserBlingIntegration(userId);
+  if (!validate || storedStatus.reconnectRequired) return storedStatus;
 
   const integration = await getUserBlingCredentials(userId);
   if (!integration?.accessToken || !integration?.refreshToken) return getUserBlingIntegration(userId);
 
   // Antes renovava o token a cada abertura do Perfil: duas renovacoes ao mesmo tempo (outra aba,
   // recarregar, fila do Bling) invalidavam o token uma da outra e a conexao era apagada.
-  // Agora so confere com uma consulta leve e so remove se a autorizacao foi mesmo revogada.
+  // Confere com uma consulta leve e preserva as credenciais, inclusive quando precisam de reconexao.
   try {
     const blingApp = await getBlingAppCredentials(userId);
     await checkBlingConnection({
@@ -3634,17 +3636,16 @@ async function validateUserBlingIntegration(userId, { validate = false } = {}) {
     });
     return getUserBlingIntegration(userId);
   } catch (error) {
-    if (error.name === "BlingApiError" && [400, 401].includes(Number(error.status))) {
+    if (error.name === "BlingApiError" && [400, 401].includes(Number(error.status)) && isBlingAuthorizationFailure(error.message)) {
       const current = await getUserBlingCredentials(userId);
       const renewedElsewhere = current?.refreshToken && current.refreshToken !== integration.refreshToken;
       if (!renewedElsewhere) {
-        console.warn("Autorizacao Bling removida por token invalido:", { userId, status: error.status, message: error.message });
-        await deleteUserBlingIntegration(userId);
+        return withBlingAuthorizationFailure(await getUserBlingIntegration(userId), error.message);
       }
       return getUserBlingIntegration(userId);
     }
     console.warn("Falha ao validar a autorizacao Bling (mantida):", { userId, status: error.status, message: error.message });
-    return getUserBlingIntegration(userId);
+    return { ...await getUserBlingIntegration(userId), validationPending: true };
   }
 }
 

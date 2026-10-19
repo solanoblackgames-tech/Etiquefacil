@@ -1271,6 +1271,13 @@ h3 {
   white-space: nowrap;
 }
 
+.sync-shortcut.connection-warning,
+.sync-shortcut.connection-warning:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #c2410c;
+  color: #9a3412;
+}
+
 .sync-shortcut:hover:not(:disabled),
 .sync-shortcut.active {
   background: var(--accent);
