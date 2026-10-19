@@ -3188,6 +3188,26 @@ async function finishDeletedBlingSyncJobPg(job) {
   return { ok: true, job };
 }
 
+export async function resumeUserBlingSyncJobs(userId) {
+  await ensureStore();
+  const now = new Date().toISOString();
+  if (hasPostgres()) {
+    const result = await query(
+      "update bling_sync_jobs set next_run_at = $2, updated_at = $2 where user_id = $1 and status in ('pending', 'failed') returning id",
+      [userId, now]
+    );
+    return { resumed: result.rows.length };
+  }
+  const db = await readDb();
+  const jobs = (db.blingSyncJobs || []).filter((job) => job.userId === userId && ["pending", "failed"].includes(job.status));
+  for (const job of jobs) {
+    job.nextRunAt = now;
+    job.updatedAt = now;
+  }
+  await writeDb(db);
+  return { resumed: jobs.length };
+}
+
 export async function markBlingSyncJobFailed(jobId, errorMessage = "") {
   await ensureStore();
   const now = new Date();

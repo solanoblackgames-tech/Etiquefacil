@@ -118,6 +118,7 @@ import {
   relocateWmsUnits,
   suggestWmsLocationsForCode,
   markBlingSyncJobFailed,
+  resumeUserBlingSyncJobs,
   markBlingSyncJobSucceeded,
   markTransferLotSynced,
   countCatalogProductsForAdmin,
@@ -268,7 +269,7 @@ app.post("/api/labels/qr", requireAuth, async (req, res) => {
 
 app.get("/healthz", async (req, res) => {
   try {
-    res.set("X-Etiquefacil-Bling-Sync", "oauth-v1");
+    res.set("X-Etiquefacil-Bling-Sync", "oauth-v2");
     res.json(await getStoreHealth());
   } catch (error) {
     res.status(503).json({ ok: false, error: error.message });
@@ -1825,6 +1826,8 @@ async function handleBlingOAuthCallback(req, res, redirectUri) {
     };
     if (account === BLING_PRIMARY_ACCOUNT) {
       await saveUserBlingIntegration(userId, credentials);
+      await resumeUserBlingSyncJobs(userId);
+      scheduleBlingSyncQueue();
     } else {
       const company = await assertDistinctBlingCompany(userId, credentials);
       await saveBlingAccountIntegration(userId, account, { ...credentials, companyId: company?.id || "", companyName: company?.name || "" });
@@ -4863,8 +4866,7 @@ async function processBlingSyncQueue() {
     if (jobs.length === 10) blingSyncQueueRerun = true;
     for (const job of jobs) {
       try {
-        const integration = await getUserBlingCredentials(job.userId);
-        if (!integration?.accessToken || !integration?.refreshToken) throw new Error("Bling nao autorizado para este usuario.");
+        const integration = await getRequiredBlingCredentials(job.userId);
 
         if (job.type === "product") {
           const found = await getUserProductWithLot(job.userId, job.productId);

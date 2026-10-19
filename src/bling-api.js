@@ -300,7 +300,8 @@ export async function syncBlingStockEntries({ integration, items, depositoName, 
         operation: "update",
         product: item,
         existing: product,
-        productId: product.id
+        productId: product.id,
+        allowExistingOnDuplicateCode: true
       });
       productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
     }
@@ -414,7 +415,8 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
       operation: "update",
       product: item,
       existing: product,
-      productId: product.id
+      productId: product.id,
+      allowExistingOnDuplicateCode: true
     });
     productSync.alerts = mergeBlingAlerts(productSync.alerts, supplierSync.alerts, await ensureOptionalProductSupplier(client, item, product.id, supplierSync.supplier));
   }
@@ -1147,7 +1149,7 @@ class BlingHomologationClient {
   }
 }
 
-async function saveProductWithBlingFallback(client, { operation, product, existing = {}, productId = null }) {
+async function saveProductWithBlingFallback(client, { operation, product, existing = {}, productId = null, allowExistingOnDuplicateCode = false }) {
   const payload = buildBlingProductPayload(product, existing);
   try {
     const response = operation === "update"
@@ -1155,6 +1157,19 @@ async function saveProductWithBlingFallback(client, { operation, product, existi
       : await client.createProduct(payload);
     return { response, alerts: [] };
   } catch (error) {
+    // Stock entries already target this exact existing ID/SKU. A rejected
+    // metadata change must not prevent the independent stock movement.
+    const fields = error?.payload?.error?.fields;
+    const duplicateCode = error?.status === 400 && Array.isArray(fields) && fields.length > 0 && fields.every((field) =>
+      field.element === "codigo" && /ja foi cadastrado/.test(normalizeText(field.msg || field.message || ""))
+    );
+    if (allowExistingOnDuplicateCode && operation === "update" && productId &&
+        normalizeCode(existing.codigo) === normalizeCode(product.sku) && duplicateCode) {
+      return { response: null, alerts: [{
+        field: "codigo",
+        message: "Entrada registrada no cadastro existente do Bling. A atualizacao dos dados do produto continua pendente porque ha outro cadastro com o mesmo SKU no Bling."
+      }] };
+    }
     const invalidFields = invalidBlingProductFields(error);
     if (!invalidFields.length) throw error;
 
