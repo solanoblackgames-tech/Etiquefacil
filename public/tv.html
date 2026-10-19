@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Produção</title>
+    <style>
+      @font-face {
+        font-family: "Archivo";
+        src: url("/fonts/archivo-latin-wdth.woff2") format("woff2");
+        font-weight: 100 900;
+        font-stretch: 62% 125%;
+        font-display: swap;
+      }
+      :root {
+        --bg: #0f0f0e;
+        --card: #1a1a19;
+        --line: #2c2c2a;
+        --ink: #f0efec;
+        --ink-2: #c3c2b7;
+        --ink-3: #898781;
+        --blue: #3987e5;
+        --blue-dim: #2f5f99;
+        --gray: #6b6a65;
+        --live: #0ca30c;
+        --warn: #fab219;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; cursor: none; }
+      body { display: flex; align-items: center; justify-content: center; }
+      #stage {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        flex: none;
+        transform-origin: center center;
+        padding: 40px 60px;
+        color: var(--ink);
+        font-family: "Archivo", "Segoe UI", Arial, sans-serif;
+        font-variant-numeric: tabular-nums lining-nums;
+      }
+      .top { display: flex; justify-content: space-between; align-items: center; height: 52px; }
+      .title { font-size: 40px; font-weight: 600; }
+      .clock { font-size: 32px; color: var(--ink-2); }
+      .live { margin-left: 28px; color: var(--ink); }
+      .dot { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--live); margin-right: 10px; vertical-align: 1px; transition: opacity .3s; }
+      .live.stale { color: var(--warn); }
+      .live.stale .dot { background: var(--warn); }
+      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 22px; }
+      .kpi { background: var(--card); border-radius: 20px; padding: 22px 30px; }
+      .kpi-label { font-size: 34px; color: var(--ink-2); }
+      .kpi-today { display: flex; align-items: baseline; gap: 14px; }
+      .kpi-today b { font-size: 128px; font-weight: 500; line-height: 1.05; }
+      .kpi-today span { font-size: 30px; color: var(--ink-3); }
+      .kpi-period { display: flex; justify-content: space-between; font-size: 30px; color: var(--ink-2); margin-top: 8px; border-top: 2px solid var(--line); padding-top: 12px; }
+      .kpi-period b { font-weight: 600; color: var(--ink); }
+      .kpi-sub { font-size: 24px; color: var(--ink-3); margin-top: 4px; min-height: 30px; }
+      .main { display: grid; grid-template-columns: 1190px 1fr; gap: 48px; margin-top: 30px; }
+      .section { font-size: 34px; color: var(--ink-2); margin-bottom: 6px; }
+      .bars { display: flex; height: 300px; padding-left: 230px; gap: 14px; }
+      .bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+      .bar-val { font-size: 28px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; white-space: nowrap; }
+      .bar { width: 100%; max-width: 80px; background: var(--blue-dim); border-radius: 8px 8px 0 0; }
+      .bar-col.current .bar { background: var(--blue); }
+      .bar-col.current .bar-val { color: var(--ink); }
+      .trow { display: flex; gap: 14px; align-items: center; height: 62px; border-top: 2px solid var(--line); }
+      .trow.head { height: 48px; border-top: 0; }
+      .trow .name { width: 216px; flex: none; font-size: 30px; color: var(--ink-2); }
+      .trow.head .name { color: var(--ink); }
+      .trow .cell { flex: 1; min-width: 0; text-align: center; font-size: 28px; color: var(--ink-2); white-space: nowrap; }
+      .trow.head .cell { color: var(--ink-3); }
+      .trow .cell.current { color: var(--ink); }
+      .note { font-size: 24px; color: var(--ink-3); margin-top: 8px; }
+      .side { border-left: 2px solid var(--line); padding-left: 48px; min-width: 0; }
+      .side-sub { font-size: 26px; color: var(--ink-3); margin-bottom: 18px; }
+      .dest { margin-bottom: 24px; }
+      .dest-head { display: flex; justify-content: space-between; gap: 16px; font-size: 32px; }
+      .dest-head span:first-child { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dest-head b { font-weight: 600; }
+      .dest-head small { color: var(--ink-3); font-size: 26px; }
+      .track { height: 20px; border-radius: 10px; background: var(--line); margin-top: 10px; overflow: hidden; }
+      .fill { height: 100%; border-radius: 10px; background: var(--blue); }
+      .fill.other { background: var(--gray); }
+      .empty { font-size: 30px; color: var(--ink-3); }
+      .message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--ink-2); background: var(--bg); text-align: center; padding: 80px; }
+      .message[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div class="top">
+        <div class="title">Produção</div>
+        <div class="clock"><span id="clock"></span><span id="live" class="live"><span class="dot" id="dot"></span><span id="liveText">ao vivo</span></span></div>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div class="main">
+        <div>
+          <div class="section" id="monthsTitle">Mês a mês</div>
+          <div class="bars" id="bars"></div>
+          <div id="table"></div>
+        </div>
+        <div class="side">
+          <div class="section">Destinos no ano</div>
+          <div class="side-sub">itens transferidos por destino</div>
+          <div id="dest"></div>
+        </div>
+      </div>
+      <div class="message" id="message">Carregando painel...</div>
+    </div>
+    <script>
+      const REFRESH_MS = 15000;
+      const STALE_MS = 60000;
+      const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+      const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+      const MONTH_NAMES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+      const token = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+      const $ = (id) => document.getElementById(id);
+      const nf = (value) => Math.round(Number(value || 0)).toLocaleString("pt-BR");
+      const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+      let lastOk = 0;
+
+      function fit() {
+        const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+        $("stage").style.transform = `scale(${scale})`;
+      }
+
+      function tickClock() {
+        const now = new Date();
+        const time = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+        const parts = Object.fromEntries(new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "numeric", timeZone: "America/Sao_Paulo" }).formatToParts(now).map((part) => [part.type, part.value]));
+        const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday);
+        $("clock").textContent = `${WEEKDAYS[weekday] || ""}, ${parts.day} de ${MONTH_NAMES[Number(parts.month) - 1] || ""} · ${time}`;
+        const stale = lastOk && Date.now() - lastOk > STALE_MS;
+        $("live").classList.toggle("stale", Boolean(stale));
+        $("liveText").textContent = stale ? "sem conexão" : "ao vivo";
+        $("dot").style.opacity = now.getSeconds() % 2 ? 0.35 : 1;
+      }
+
+      function render(stats) {
+        const m = stats.metrics;
+        const cards = [
+          { label: "Itens bipados", data: m.scanned },
+          { label: "Itens cadastrados", data: m.created },
+          { label: "Itens triados", data: m.triaged },
+          { label: "Transferências", data: m.transferred, sub: `itens · ${nf(m.transferred.lotsToday)} ${m.transferred.lotsToday === 1 ? "lote" : "lotes"} hoje` }
+        ];
+        $("kpis").innerHTML = cards.map((card) => `
+          <div class="kpi">
+            <div class="kpi-label">${card.label}</div>
+            <div class="kpi-today"><b>${nf(card.data.today)}</b><span>hoje</span></div>
+            <div class="kpi-period"><span>mês <b>${nf(card.data.month)}</b></span><span>ano <b>${nf(card.data.year)}</b></span></div>
+            <div class="kpi-sub">${card.sub || ""}</div>
+          </div>`).join("");
+
+        const months = stats.months || [];
+        const lastIndex = months.length - 1;
+        const max = Math.max(1, ...months.map((row) => row.scanned));
+        $("monthsTitle").textContent = `Mês a mês · ${stats.year}`;
+        $("bars").innerHTML = months.map((row, index) => `
+          <div class="bar-col ${index === lastIndex ? "current" : ""}">
+            <div class="bar-val">${nf(row.scanned)}</div>
+            <div class="bar" style="height:${Math.max(2, (row.scanned / max) * 240)}px"></div>
+          </div>`).join("");
+        const label = (row, index) => MONTHS[Number(row.month.slice(5, 7)) - 1] + (index === lastIndex ? "*" : "");
+        const line = (name, values, head) => `
+          <div class="trow ${head ? "head" : ""}">
+            <div class="name">${name}</div>
+            ${values.map((value, index) => `<div class="cell ${index === lastIndex ? "current" : ""}">${value}</div>`).join("")}
+          </div>`;
+        $("table").innerHTML =
+          line("Bipados ▲", months.map(label), true) +
+          line("Cadastrados", months.map((row) => nf(row.created))) +
+          line("Triados", months.map((row) => nf(row.triaged))) +
+          line("Transferidos", months.map((row) => nf(row.transferred))) +
+          `<div class="note">* ${MONTH_NAMES[lastIndex] || "mês atual"} até hoje</div>`;
+
+        const destinations = stats.destinations || [];
+        const top = destinations.slice(0, 5);
+        const rest = destinations.slice(5);
+        if (rest.length) {
+          top.push({ destination: "Outros", other: true, year: rest.reduce((sum, row) => sum + row.year, 0), today: rest.reduce((sum, row) => sum + row.today, 0) });
+        }
+        const total = destinations.reduce((sum, row) => sum + row.year, 0);
+        const biggest = Math.max(1, ...top.map((row) => row.year));
+        $("dest").innerHTML = top.length
+          ? top.map((row) => `
+            <div class="dest">
+              <div class="dest-head"><span>${esc(row.destination)}</span><span><b>${nf(row.year)}</b> <small>${total ? Math.round((row.year / total) * 100) : 0}% · hoje ${nf(row.today)}</small></span></div>
+              <div class="track"><div class="fill ${row.other ? "other" : ""}" style="width:${(row.year / biggest) * 100}%"></div></div>
+            </div>`).join("")
+          : '<div class="empty">Nenhuma transferência no ano.</div>';
+      }
+
+      async function load() {
+        try {
+          const response = await fetch(`/api/public/tv/${encodeURIComponent(token)}`, { cache: "no-store" });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            if (response.status === 404) {
+              $("message").textContent = body.error || "Link do painel inválido. Gere um novo link no dashboard.";
+              $("message").hidden = false;
+            }
+            return;
+          }
+          render(body.stats);
+          lastOk = Date.now();
+          $("message").hidden = true;
+        } catch {
+          // Mantem os ultimos numeros na tela; o indicador mostra "sem conexao".
+        } finally {
+          tickClock();
+        }
+      }
+
+      fit();
+      window.addEventListener("resize", fit);
+      tickClock();
+      setInterval(tickClock, 1000);
+      load();
+      setInterval(load, REFRESH_MS);
+      // Recarrega a pagina de madrugada para pegar atualizacoes do sistema.
+      setInterval(() => {
+        const hour = Number(new Date().toLocaleString("en-US", { hour: "numeric", hour12: false, timeZone: "America/Sao_Paulo" }));
+        if (hour === 4 && performance.now() > 2 * 60 * 60 * 1000) location.reload();
+      }, 10 * 60 * 1000);
+    </script>
+  </body>
+</html>

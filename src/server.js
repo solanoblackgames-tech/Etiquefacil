@@ -182,7 +182,11 @@ import {
   saveBlingAppConfig,
   acceptOperatorInvite,
   verifyUser,
-  userCanAcceptDeposit
+  userCanAcceptDeposit,
+  getTvDashboardStats,
+  getTvDashboardToken,
+  rotateTvDashboardToken,
+  findUserIdByTvDashboardToken
 } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -816,6 +820,46 @@ app.get("/api/dashboard/operations", requireAuth, requireOwner, async (req, res)
 app.get("/api/triage/wms-labels.pdf", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
   try {
     const options = normalizeWmsDeposit(req.query || {});
+app.get("/api/dashboard/tv-link", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json({ token: await getTvDashboardToken(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/dashboard/tv-link", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json({ token: await rotateTvDashboardToken(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Painel da TV: acesso somente leitura pelo token do link, sem login.
+const tvDashboardCache = new Map();
+const TV_DASHBOARD_CACHE_MS = 10 * 1000;
+
+app.get("/api/public/tv/:token", async (req, res) => {
+  try {
+    const userId = await findUserIdByTvDashboardToken(req.params.token);
+    if (!userId) return res.status(404).json({ error: "Link do painel invalido ou substituido." });
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    const cached = tvDashboardCache.get(userId);
+    if (cached && Date.now() - cached.at < TV_DASHBOARD_CACHE_MS) return res.json({ stats: cached.stats });
+    const stats = await getTvDashboardStats(userId);
+    tvDashboardCache.set(userId, { at: Date.now(), stats });
+    res.json({ stats });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/tv/:token", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(__dirname, "..", "public", "tv.html"));
+});
+
     const buffer = await buildWmsLocationLabelsPdf(options);
     const total = buildWmsPositionCodes(options).length;
     const fileName = `posicoes-wms-${safeFileName(options.prefix)}-${total}.pdf`;

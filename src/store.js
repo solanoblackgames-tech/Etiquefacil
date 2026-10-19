@@ -1617,6 +1617,185 @@ export async function getOperationalDashboardStats(userId, period = {}) {
   return buildOperationalDashboardStats(db, userId, period);
 }
 
+// Painel de TV: bipados, cadastrados, triados e transferidos (hoje, mes, ano) + destinos do ano.
+const TV_DASHBOARD_SETTINGS_KEY = "tv_dashboard";
+const TV_DASHBOARD_METRICS = ["scanned", "created", "triaged", "transferred"];
+
+export async function getTvDashboardStats(userId, now = new Date()) {
+  await ensureStore();
+  const today = dashboardLocalDay(now);
+  const year = today.slice(0, 4);
+  // America/Sao_Paulo esta fixo em UTC-3 (sem horario de verao desde 2019).
+  const yearStart = `${year}-01-01T00:00:00-03:00`;
+  const rows = [];
+
+  if (hasPostgres()) {
+    const dayExpr = (column) => `to_char(${column} at time zone '${DASHBOARD_TIME_ZONE}', 'YYYY-MM-DD')`;
+    const [scanned, created, triaged, transferred] = await Promise.all([
+      query(
+        `select ${dayExpr("s.created_at")} as day, count(*)::int as total
+           from scans s join lots l on l.id = s.lot_id
+          where l.user_id = $1 and s.created_at >= $2::timestamptz
+          group by 1`,
+        [userId, yearStart]
+      ),
+      query(
+        `select ${dayExpr("p.created_at")} as day, count(*)::int as total
+           from products p join lots l on l.id = p.lot_id
+          where l.user_id = $1 and p.created_at >= $2::timestamptz and p.origem <> 'planilha'
+          group by 1`,
+        [userId, yearStart]
+      ),
+      query(
+        `select ${dayExpr("diagnosed_at")} as day, count(*)::int as total
+           from triage_items
+          where user_id = $1 and diagnosed_at >= $2::timestamptz
+          group by 1`,
+        [userId, yearStart]
+      ),
+      query(
+        `select ${dayExpr("i.created_at")} as day, t.deposito_destino as destination,
+                coalesce(sum(i.quantidade), 0)::int as total, count(distinct t.id)::int as lots
+           from transfer_items i join transfer_lots t on t.id = i.transfer_lot_id
+          where t.user_id = $1 and i.created_at >= $2::timestamptz
+          group by 1, 2`,
+        [userId, yearStart]
+      )
+    ]);
+    for (const row of scanned.rows) rows.push({ metric: "scanned", day: row.day, total: Number(row.total || 0) });
+    for (const row of created.rows) rows.push({ metric: "created", day: row.day, total: Number(row.total || 0) });
+    for (const row of triaged.rows) rows.push({ metric: "triaged", day: row.day, total: Number(row.total || 0) });
+    for (const row of transferred.rows) {
+      rows.push({ metric: "transferred", day: row.day, total: Number(row.total || 0), destination: row.destination, lots: Number(row.lots || 0) });
+    }
+    return buildTvDashboardStats(rows, { now, today, year });
+  }
+
+  const db = await readDb();
+  const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
+  const inYear = (value) => dashboardLocalDay(value).startsWith(year);
+  for (const scan of db.scans || []) {
+    if (lotIds.has(scan.lotId) && inYear(scan.createdAt)) rows.push({ metric: "scanned", day: dashboardLocalDay(scan.createdAt), total: 1 });
+  }
+  for (const product of db.products || []) {
+    if (lotIds.has(product.lotId) && product.origem !== "planilha" && inYear(product.createdAt)) {
+      rows.push({ metric: "created", day: dashboardLocalDay(product.createdAt), total: 1 });
+    }
+  }
+  for (const item of db.triageItems || []) {
+    if (item.userId === userId && item.diagnosedAt && inYear(item.diagnosedAt)) rows.push({ metric: "triaged", day: dashboardLocalDay(item.diagnosedAt), total: 1 });
+  }
+  const transferLots = new Map((db.transferLots || []).filter((lot) => lot.userId === userId).map((lot) => [lot.id, lot]));
+  const transferLotDays = new Set();
+  for (const item of db.transferItems || []) {
+    const lot = transferLots.get(item.transferLotId);
+    if (!lot || !inYear(item.createdAt)) continue;
+    const day = dashboardLocalDay(item.createdAt);
+    const lotKey = `${day}\u0000${lot.id}`;
+    rows.push({ metric: "transferred", day, total: Number(item.quantidade || 0), destination: lot.depositoDestino, lots: transferLotDays.has(lotKey) ? 0 : 1 });
+    transferLotDays.add(lotKey);
+  }
+  return buildTvDashboardStats(rows, { now, today, year });
+}
+
+function buildTvDashboardStats(rows, { now, today, year }) {
+  const month = today.slice(0, 7);
+  const metrics = Object.fromEntries(TV_DASHBOARD_METRICS.map((key) => [key, { today: 0, month: 0, year: 0 }]));
+  metrics.transferred.lotsToday = 0;
+  const months = Array.from({ length: Number(month.slice(5, 7)) }, (_, index) => {
+    const key = `${year}-${String(index + 1).padStart(2, "0")}`;
+    return { month: key, ...Object.fromEntries(TV_DASHBOARD_METRICS.map((metric) => [metric, 0])) };
+  });
+  const destinations = new Map();
+
+  for (const row of rows) {
+    if (!row.day?.startsWith(year) || row.day > today) continue;
+    const target = metrics[row.metric];
+    if (!target) continue;
+    const total = Number(row.total || 0);
+    target.year += total;
+    if (row.day.startsWith(month)) target.month += total;
+    if (row.day === today) {
+      target.today += total;
+      if (row.metric === "transferred") metrics.transferred.lotsToday += Number(row.lots || 0);
+    }
+    const monthRow = months[Number(row.day.slice(5, 7)) - 1];
+    if (monthRow) monthRow[row.metric] += total;
+
+    if (row.metric === "transferred") {
+      const label = String(row.destination || "").trim() || "Sem destino";
+      const key = normalizeText(label);
+      const current = destinations.get(key) || { destination: label, year: 0, today: 0 };
+      current.year += total;
+      if (row.day === today) current.today += total;
+      destinations.set(key, current);
+    }
+  }
+
+  return {
+    generatedAt: now.toISOString(),
+    today,
+    year: Number(year),
+    metrics,
+    months,
+    destinations: [...destinations.values()].sort((a, b) => b.year - a.year || a.destination.localeCompare(b.destination))
+  };
+}
+
+function createTvDashboardToken() {
+  return randomUUID().replace(/-/g, "");
+}
+
+export async function getTvDashboardToken(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select value from user_settings where user_id = $1 and key = $2 limit 1", [userId, TV_DASHBOARD_SETTINGS_KEY]);
+    return String(result.rows[0]?.value?.token || "") || null;
+  }
+  const db = await readDb();
+  const setting = (db.userSettings || []).find((item) => item.userId === userId && item.key === TV_DASHBOARD_SETTINGS_KEY);
+  return String(setting?.value?.token || "") || null;
+}
+
+export async function rotateTvDashboardToken(userId) {
+  await ensureStore();
+  const value = { token: createTvDashboardToken() };
+  const now = new Date().toISOString();
+  if (hasPostgres()) {
+    await query(
+      `insert into user_settings (user_id, key, value, updated_at)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, key)
+       do update set value = excluded.value, updated_at = excluded.updated_at`,
+      [userId, TV_DASHBOARD_SETTINGS_KEY, value, now]
+    );
+    return value.token;
+  }
+  const db = await readDb();
+  db.userSettings = db.userSettings || [];
+  const existing = db.userSettings.find((item) => item.userId === userId && item.key === TV_DASHBOARD_SETTINGS_KEY);
+  if (existing) {
+    existing.value = value;
+    existing.updatedAt = now;
+  } else {
+    db.userSettings.push({ userId, key: TV_DASHBOARD_SETTINGS_KEY, value, createdAt: now, updatedAt: now });
+  }
+  await writeDb(db);
+  return value.token;
+}
+
+export async function findUserIdByTvDashboardToken(token) {
+  const normalized = String(token || "").trim();
+  if (!/^[a-f0-9]{32}$/.test(normalized)) return null;
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("select user_id from user_settings where key = $1 and value->>'token' = $2 limit 1", [TV_DASHBOARD_SETTINGS_KEY, normalized]);
+    return result.rows[0]?.user_id || null;
+  }
+  const db = await readDb();
+  return (db.userSettings || []).find((item) => item.key === TV_DASHBOARD_SETTINGS_KEY && item.value?.token === normalized)?.userId || null;
+}
+
 export async function getTriageItem(userId, code) {
   await ensureStore();
   const normalized = normalizeCode(code);

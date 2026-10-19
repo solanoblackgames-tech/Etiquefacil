@@ -8549,3 +8549,9 @@ h3 {
   font-weight: 700;
   margin: 6px 0 0;
 }
+
+.tv-link-panel { background: #fff; border: 1px solid #C9D0CC; border-radius: 12px; padding: 14px 18px; margin-bottom: 16px; display: grid; gap: 10px; min-width: 0; }
+.tv-link-panel > div:first-child { display: grid; gap: 2px; }
+.tv-link-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.tv-link-row input { flex: 1 1 260px; min-width: 0; min-height: 40px; }
+.tv-link-row button, .tv-link-row .button-link { min-height: 40px; white-space: nowrap; }

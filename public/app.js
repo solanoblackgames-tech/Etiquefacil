@@ -3907,8 +3907,12 @@ async function loadOperationalDashboard() {
     const params = new URLSearchParams();
     if (filter.startDate) params.set("startDate", filter.startDate);
     if (filter.endDate) params.set("endDate", filter.endDate);
-    const response = await api(`/api/dashboard/operations?${params.toString()}`);
+    const [response, tvLink] = await Promise.all([
+      api(`/api/dashboard/operations?${params.toString()}`),
+      api("/api/dashboard/tv-link").catch(() => ({ token: null }))
+    ]);
     state.operationalStats = response.stats || null;
+    state.tvDashboardToken = tvLink.token || null;
     renderOperationalDashboard();
   } catch (error) {
     panel.innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
@@ -3926,6 +3930,7 @@ function renderOperationalDashboard() {
   const period = stats.period || {};
   const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
   panel.innerHTML = `
+    ${tvDashboardLinkMarkup()}
     ${dashboardOverviewMarkup(stats, filter)}
     <details class="dash2-details">
       <summary>Detalhamento completo (números por setor, lotes e operadores)</summary>
@@ -4591,7 +4596,56 @@ function operationalTriageDiagnosisConditionsMarkup(conditions = []) {
   `;
 }
 
+function tvDashboardUrl() {
+  return state.tvDashboardToken ? `${location.origin}/tv/${state.tvDashboardToken}` : "";
+}
+
+function tvDashboardLinkMarkup() {
+  const url = tvDashboardUrl();
+  return `
+    <section class="tv-link-panel">
+      <div>
+        <strong>Painel da TV</strong>
+        <span class="muted">Tela cheia para TV com bipados, cadastrados, triados, transferências e destinos. Atualiza sozinha a cada 15 segundos e abre sem login.</span>
+      </div>
+      ${url
+        ? `<div class="tv-link-row">
+            <input type="text" readonly value="${escapeHtml(url)}" id="tvDashboardUrl" />
+            <button type="button" data-tv-link="copy">Copiar link</button>
+            <a class="button-link ghost-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">Abrir</a>
+            <button type="button" class="ghost" data-tv-link="rotate">Gerar novo link</button>
+          </div>
+          <small class="muted" id="tvDashboardMessage">Quem tiver o link vê os números, sem acesso ao resto do sistema. Gerar um novo link desativa o anterior.</small>`
+        : `<div class="tv-link-row"><button type="button" data-tv-link="rotate">Criar link da TV</button></div>
+          <small class="muted" id="tvDashboardMessage"></small>`}
+    </section>
+  `;
+}
+
+async function handleTvDashboardLinkAction(action) {
+  const message = () => $("#tvDashboardMessage");
+  try {
+    if (action === "rotate") {
+      if (state.tvDashboardToken && !confirm("Gerar um novo link? A TV que usa o link atual vai parar de atualizar até receber o novo.")) return;
+      const response = await api("/api/dashboard/tv-link", { method: "POST" });
+      state.tvDashboardToken = response.token || null;
+      renderOperationalDashboard();
+      if (message()) message().textContent = "Link criado. Abra-o no navegador da TV.";
+      return;
+    }
+    await copyText(tvDashboardUrl());
+    if (message()) message().textContent = "Link copiado.";
+  } catch (error) {
+    if (message()) message().textContent = error.message || "Não foi possível concluir.";
+  }
+}
+
 function handleOperationalDashboardClick(event) {
+  const tvLinkButton = event.target.closest("[data-tv-link]");
+  if (tvLinkButton) {
+    handleTvDashboardLinkAction(tvLinkButton.dataset.tvLink);
+    return;
+  }
   const periodButton = event.target.closest("[data-operational-period]");
   if (periodButton) {
     const days = periodButton.dataset.operationalPeriod;
