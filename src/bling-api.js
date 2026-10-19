@@ -534,6 +534,31 @@ export async function findBlingProductForWms({ integration, code, saveIntegratio
   };
 }
 
+// Leitura de vendas para o painel da TV: pedidos Atendidos do periodo, detalhe (itens e vendedor),
+// nome do vendedor e foto do produto. Um cliente so por conta, para respeitar o limite do Bling.
+export function createBlingSalesReader({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  return {
+    listAttendedOrders: (period) => client.listAttendedSalesOrders(period),
+    listSalesChannels: () => client.listSalesChannels(),
+    async getOrderDetail(id) {
+      const order = await client.getSalesOrder(id);
+      return order ? blingSalesOrderToTvDetail(order) : null;
+    },
+    async getSellerName(id) {
+      const payload = await client.request(`/vendedores/${encodeURIComponent(id)}`);
+      const seller = payload?.data || {};
+      return String(seller.contato?.nome || seller.nome || "").trim();
+    },
+    async getProductImage(id) {
+      const payload = await client.request(`/produtos/${encodeURIComponent(id)}`);
+      const images = payload?.data?.midia?.imagens || {};
+      const image = [...(images.internas || []), ...(images.externas || [])].find((candidate) => candidate?.link || candidate?.linkMiniatura);
+      return String(image?.linkMiniatura || image?.link || "").trim();
+    }
+  };
+}
+
 export async function listBlingSalesChannels({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listSalesChannels();
@@ -858,6 +883,30 @@ class BlingApiClient {
     return orders;
   }
 
+  // Pedidos Atendidos com data entre startDay e endDay (YYYY-MM-DD). A listagem ja traz total e loja.
+  async listAttendedSalesOrders({ startDay, endDay, maxPages = 200 } = {}) {
+    const situations = await this.listSalesOrderSituations();
+    const attendedIds = situations.filter((situation) => normalizeText(situation.name) === "atendido").map((situation) => situation.id);
+    if (!attendedIds.length) throw new Error("Situacao Atendido nao encontrada no modulo Vendas do Bling.");
+    const query = { limite: 100, "idsSituacoes[]": attendedIds, dataInicial: startDay, dataFinal: endDay };
+    const orders = [];
+    for (let pagina = 1; pagina <= maxPages; pagina += 1) {
+      const page = (await this.request("/pedidos/vendas", { query: { pagina, ...query } }))?.data || [];
+      for (const row of page) {
+        const id = String(row?.id || "").trim();
+        if (!id) continue;
+        orders.push({
+          id,
+          day: String(row.data || "").slice(0, 10),
+          total: numberOrZero(row.total),
+          storeId: String(row.loja?.id ?? "0").trim() || "0"
+        });
+      }
+      if (page.length < query.limite) break;
+    }
+    return orders;
+  }
+
   async getCompany() {
     const payload = await this.request("/empresas/me/dados-basicos");
     return payload?.data || null;
@@ -1036,6 +1085,21 @@ function blingSalesOrderToWmsOrder(order = {}, { fallbackStoreName = "", fallbac
     situacao: order.situacao?.descricao || order.situacao?.nome || order.situacao || "",
     items: items.map(blingSalesOrderItemToWmsItem).filter(Boolean)
   };
+}
+
+// Detalhe enxuto do pedido para o painel: vendedor e itens (sku, descricao, quantidade, valor total, produto).
+function blingSalesOrderToTvDetail(order = {}) {
+  const items = (Array.isArray(order.itens) ? order.itens : []).map((item) => {
+    const quantity = numberOrZero(item.quantidade);
+    return {
+      sku: normalizeCode(item.codigo || item.produto?.codigo),
+      name: String(item.descricao || item.produto?.nome || "").trim(),
+      quantity,
+      value: Math.round(quantity * numberOrZero(item.valor) * 100) / 100,
+      productId: String(item.produto?.id || "").trim()
+    };
+  }).filter((item) => item.sku || item.name);
+  return { sellerId: String(order.vendedor?.id || "").replace(/^0$/, "").trim(), items };
 }
 
 function blingSalesOrderItemToWmsItem(item = {}) {

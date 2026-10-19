@@ -33,8 +33,10 @@ import {
   syncBlingStockMovement,
   syncBlingStockTransfers,
   updateExistingBlingProducts,
-  updateBlingProductFromTriage
+  updateBlingProductFromTriage,
+  createBlingSalesReader
 } from "./bling-api.js";
+import { createTvSalesSync } from "./tv-sales.js";
 import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferRows, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { getBlingTokenRateLimiter } from "./bling-rate-limit.js";
 import { isBlingAuthorizationFailure, withBlingAuthorizationFailure } from "./bling-connection-status.js";
@@ -184,6 +186,9 @@ import {
   verifyUser,
   userCanAcceptDeposit,
   getTvDashboardStats,
+  getTvOperatorRanking,
+  getTvSalesCache,
+  saveTvSalesCache,
   getTvDashboardToken,
   rotateTvDashboardToken,
   findUserIdByTvDashboardToken
@@ -836,17 +841,28 @@ app.post("/api/dashboard/tv-link", requireAuth, requireOwner, async (req, res) =
 // Painel da TV: acesso somente leitura pelo token do link, sem login.
 const tvDashboardCache = new Map();
 const TV_DASHBOARD_CACHE_MS = 10 * 1000;
+// Vendas do Bling (JZ + Ecommerce) para o rodizio da TV; sincroniza so com a TV aberta.
+const tvSalesSync = createTvSalesSync({
+  async getReader(userId, account) {
+    const integration = await getRequiredBlingAccountCredentials(userId, account).catch(() => null);
+    return integration ? createBlingSalesReader({ integration, saveIntegration: blingAccountSaver(userId, account) }) : null;
+  },
+  loadCache: getTvSalesCache,
+  saveCache: saveTvSalesCache
+});
 
 app.get("/api/public/tv/:token", async (req, res) => {
   try {
     const userId = await findUserIdByTvDashboardToken(req.params.token);
     if (!userId) return res.status(404).json({ error: "Link do painel invalido ou substituido." });
     res.setHeader("Cache-Control", "no-store, max-age=0");
+    const sales = tvSalesSync.touch(userId);
     const cached = tvDashboardCache.get(userId);
-    if (cached && Date.now() - cached.at < TV_DASHBOARD_CACHE_MS) return res.json({ stats: cached.stats });
-    const stats = await getTvDashboardStats(userId);
-    tvDashboardCache.set(userId, { at: Date.now(), stats });
-    res.json({ stats });
+    if (cached && Date.now() - cached.at < TV_DASHBOARD_CACHE_MS) return res.json({ ...cached.payload, sales });
+    const [stats, operators] = await Promise.all([getTvDashboardStats(userId), getTvOperatorRanking(userId)]);
+    const payload = { stats, operators };
+    tvDashboardCache.set(userId, { at: Date.now(), payload });
+    res.json({ ...payload, sales });
   } catch (error) {
     sendError(res, error);
   }

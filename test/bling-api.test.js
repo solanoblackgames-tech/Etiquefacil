@@ -10,6 +10,7 @@ import {
   blingProductToTriageLookup,
   deleteBlingProductBySku,
   listBlingSalesOrdersForStore,
+  createBlingSalesReader,
   lookupBlingProductForTriage,
   revokeBlingIntegrationTokens,
   runBlingHomologation,
@@ -960,4 +961,41 @@ test("Bling homologation chains hash header and refreshes invalid access token",
   assert.equal(calls[2].body.nome, "Copo");
   assert.equal(calls[5].body.situacao, "I");
   assert.equal(calls[4].auth, "Bearer fresh-token");
+});
+
+test("Bling sales reader lista pedidos Atendidos do periodo e resume o detalhe", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { data: [{ id: 98, nome: "Vendas", descricao: "Pedidos de Venda" }] },
+    { data: [{ id: 6, nome: "Em aberto" }, { id: 9, nome: "Atendido" }] },
+    { data: [{ id: 101, data: "2026-10-19", total: 150.5, loja: { id: 203 } }, { id: 102, data: "2026-10-18", total: 20, loja: { id: 0 } }] },
+    {
+      data: {
+        id: 101,
+        vendedor: { id: 55 },
+        itens: [{ codigo: "sku1", descricao: "Produto", quantidade: 2, valor: 70.25, produto: { id: 9001 } }]
+      }
+    }
+  ];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => responses.shift() };
+  };
+  try {
+    const reader = createBlingSalesReader({ integration: { accessToken: "token-sales-reader" } });
+    const orders = await reader.listAttendedOrders({ startDay: "2026-09-01", endDay: "2026-10-19" });
+    const listUrl = new URL(calls[2]);
+    assert.deepEqual(listUrl.searchParams.getAll("idsSituacoes[]"), ["9"]);
+    assert.equal(listUrl.searchParams.get("dataInicial"), "2026-09-01");
+    assert.equal(listUrl.searchParams.get("dataFinal"), "2026-10-19");
+    assert.deepEqual(orders, [
+      { id: "101", day: "2026-10-19", total: 150.5, storeId: "203" },
+      { id: "102", day: "2026-10-18", total: 20, storeId: "0" }
+    ]);
+    const detail = await reader.getOrderDetail("101");
+    assert.deepEqual(detail, { sellerId: "55", items: [{ sku: "SKU1", name: "Produto", quantity: 2, value: 140.5, productId: "9001" }] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

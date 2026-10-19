@@ -1814,6 +1814,110 @@ export async function rotateTvDashboardToken(userId) {
   return value.token;
 }
 
+// Cache das vendas do Bling usado pelo painel (pedidos do mes atual e anterior, por conta).
+function tvSalesCacheKey(account) {
+  return `tv_sales_cache_${String(account || "principal").replace(/[^a-z0-9_-]/gi, "")}`;
+}
+
+export async function getTvSalesCache(userId, account) {
+  await ensureStore();
+  const key = tvSalesCacheKey(account);
+  if (hasPostgres()) {
+    const result = await query("select value from user_settings where user_id = $1 and key = $2 limit 1", [userId, key]);
+    return result.rows[0]?.value || null;
+  }
+  const db = await readDb();
+  return (db.userSettings || []).find((item) => item.userId === userId && item.key === key)?.value || null;
+}
+
+export async function saveTvSalesCache(userId, account, value) {
+  await ensureStore();
+  const key = tvSalesCacheKey(account);
+  const now = new Date().toISOString();
+  if (hasPostgres()) {
+    await query(
+      `insert into user_settings (user_id, key, value, updated_at)
+       values ($1, $2, $3, $4)
+       on conflict (user_id, key)
+       do update set value = excluded.value, updated_at = excluded.updated_at`,
+      [userId, key, JSON.stringify(value), now]
+    );
+    return;
+  }
+  const db = await readDb();
+  db.userSettings = db.userSettings || [];
+  const existing = db.userSettings.find((item) => item.userId === userId && item.key === key);
+  if (existing) {
+    existing.value = value;
+    existing.updatedAt = now;
+  } else {
+    db.userSettings.push({ userId, key, value, createdAt: now, updatedAt: now });
+  }
+  await writeDb(db);
+}
+
+// Ranking de operadores do painel: mesmas etapas da equipe no dashboard, hoje e no mes.
+const TV_OPERATOR_RANKING_LIMIT = 8;
+
+export async function getTvOperatorRanking(userId, now = new Date()) {
+  await ensureStore();
+  const today = dashboardLocalDay(now);
+  const month = today.slice(0, 7);
+  const monthStart = `${month}-01T00:00:00-03:00`;
+  let rows;
+  let users;
+  if (hasPostgres()) {
+    const [activityResult, usersResult] = await Promise.all([
+      query(
+        `select operator_user_id, action,
+                to_char(created_at at time zone '${DASHBOARD_TIME_ZONE}', 'YYYY-MM-DD') as day,
+                count(*)::int as total
+           from operator_activities
+          where owner_user_id = $1 and action = any($2::text[]) and created_at >= $3::timestamptz
+          group by 1, 2, 3`,
+        [userId, DASHBOARD_TEAM_ACTIONS, monthStart]
+      ),
+      query("select id, name from users where parent_user_id = $1", [userId])
+    ]);
+    rows = activityResult.rows.map((row) => ({ operatorUserId: row.operator_user_id, action: row.action, day: row.day, total: Number(row.total || 0) }));
+    users = usersResult.rows;
+  } else {
+    const db = await readDb();
+    rows = (db.operatorActivities || [])
+      .filter((activity) => activity.ownerUserId === userId && DASHBOARD_TEAM_ACTIONS.includes(activity.action))
+      .map((activity) => ({ operatorUserId: activity.operatorUserId, action: activity.action, day: dashboardLocalDay(activity.createdAt), total: 1 }));
+    users = (db.users || []).filter((user) => user.parentUserId === userId);
+  }
+  return buildTvOperatorRanking(rows, users, { today, month });
+}
+
+function buildTvOperatorRanking(rows, users, { today, month }) {
+  const names = new Map(users.map((user) => [user.id, String(user.name || "").trim() || "Operador"]));
+  const stages = DASHBOARD_TEAM_STAGES.map((stage) => ({ key: stage.key, label: stage.label, totals: new Map() }));
+  for (const row of rows) {
+    if (!row.day?.startsWith(month) || row.day > today) continue;
+    const stage = stages.find((item) => DASHBOARD_TEAM_STAGES.find((candidate) => candidate.key === item.key).actions.includes(row.action));
+    if (!stage || !names.has(row.operatorUserId)) continue;
+    const current = stage.totals.get(row.operatorUserId) || { name: names.get(row.operatorUserId), today: 0, month: 0 };
+    current.month += row.total;
+    if (row.day === today) current.today += row.total;
+    stage.totals.set(row.operatorUserId, current);
+  }
+  return {
+    today,
+    month,
+    stages: stages.map(({ key, label, totals }) => {
+      const list = [...totals.values()];
+      return {
+        key,
+        label,
+        today: list.filter((row) => row.today > 0).sort((a, b) => b.today - a.today).slice(0, TV_OPERATOR_RANKING_LIMIT).map(({ name, today: items }) => ({ name, items })),
+        month: list.filter((row) => row.month > 0).sort((a, b) => b.month - a.month).slice(0, TV_OPERATOR_RANKING_LIMIT).map(({ name, month: items }) => ({ name, items }))
+      };
+    })
+  };
+}
+
 export async function findUserIdByTvDashboardToken(token) {
   const normalized = String(token || "").trim();
   if (!/^[a-f0-9]{32}$/.test(normalized)) return null;

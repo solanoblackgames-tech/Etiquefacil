@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Produção</title>
+    <title>Painel ao vivo</title>
     <style>
       @font-face {
         font-family: "Archivo";
@@ -22,6 +22,10 @@
         --ink-3: #898781;
         --blue: #3987e5;
         --blue-dim: #2f5f99;
+        --green: #2fb36b;
+        --green-dim: #1f5e3c;
+        --orange: #f08c3a;
+        --red: #e5534b;
         --gray: #6b6a65;
         --live: #0ca30c;
         --warn: #fab219;
@@ -42,12 +46,25 @@
       }
       .top { display: flex; justify-content: space-between; align-items: center; height: 52px; }
       .title { font-size: 40px; font-weight: 600; }
+      .title small { font-size: 28px; color: var(--ink-3); font-weight: 400; margin-left: 16px; }
       .clock { font-size: 32px; color: var(--ink-2); }
       .live { margin-left: 28px; color: var(--ink); }
       .dot { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--live); margin-right: 10px; vertical-align: 1px; transition: opacity .3s; }
       .live.stale { color: var(--warn); }
       .live.stale .dot { background: var(--warn); }
-      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 22px; }
+      .screen { position: absolute; left: 60px; right: 60px; top: 112px; bottom: 88px; opacity: 0; transition: opacity .6s; pointer-events: none; }
+      .screen.active { opacity: 1; }
+      .footer { position: absolute; left: 60px; right: 60px; bottom: 28px; height: 40px; display: flex; align-items: center; gap: 28px; font-size: 24px; color: var(--ink-3); }
+      .footer .step { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+      .footer .step i { width: 14px; height: 14px; border-radius: 50%; background: var(--line); display: inline-block; }
+      .footer .step.on { color: var(--ink); }
+      .footer .step.on i { background: var(--ink); }
+      .footer .paused { margin-left: auto; color: var(--warn); white-space: nowrap; }
+      .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: var(--line); }
+      .progress div { height: 100%; width: 0; background: var(--ink-3); }
+
+      /* Producao */
+      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
       .kpi { background: var(--card); border-radius: 20px; padding: 22px 30px; }
       .kpi-label { font-size: 34px; color: var(--ink-2); }
       .kpi-today { display: flex; align-items: baseline; gap: 14px; }
@@ -56,15 +73,15 @@
       .kpi-period { display: flex; justify-content: space-between; font-size: 30px; color: var(--ink-2); margin-top: 8px; border-top: 2px solid var(--line); padding-top: 12px; }
       .kpi-period b { font-weight: 600; color: var(--ink); }
       .kpi-sub { font-size: 24px; color: var(--ink-3); margin-top: 4px; min-height: 30px; }
-      .main { display: grid; grid-template-columns: 1190px 1fr; gap: 48px; margin-top: 30px; }
+      .main { display: grid; grid-template-columns: 1190px 1fr; gap: 48px; margin-top: 26px; }
       .section { font-size: 34px; color: var(--ink-2); margin-bottom: 6px; }
-      .bars { display: flex; height: 300px; padding-left: 230px; gap: 14px; }
+      .bars { display: flex; height: 250px; padding-left: 230px; gap: 14px; }
       .bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
       .bar-val { font-size: 28px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; white-space: nowrap; }
       .bar { width: 100%; max-width: 80px; background: var(--blue-dim); border-radius: 8px 8px 0 0; }
       .bar-col.current .bar { background: var(--blue); }
       .bar-col.current .bar-val { color: var(--ink); }
-      .trow { display: flex; gap: 14px; align-items: center; height: 62px; border-top: 2px solid var(--line); }
+      .trow { display: flex; gap: 14px; align-items: center; height: 54px; border-top: 2px solid var(--line); }
       .trow.head { height: 48px; border-top: 0; }
       .trow .name { width: 216px; flex: none; font-size: 30px; color: var(--ink-2); }
       .trow.head .name { color: var(--ink); }
@@ -83,42 +100,153 @@
       .fill { height: 100%; border-radius: 10px; background: var(--blue); }
       .fill.other { background: var(--gray); }
       .empty { font-size: 30px; color: var(--ink-3); }
-      .message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--ink-2); background: var(--bg); text-align: center; padding: 80px; }
+
+      /* Vendas */
+      .money-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+      .mkpi { background: var(--card); border-radius: 20px; padding: 34px 36px; }
+      .mkpi-label { font-size: 32px; color: var(--ink-2); }
+      .mkpi-value { font-size: 100px; font-weight: 600; line-height: 1.15; margin-top: 8px; white-space: nowrap; }
+      .mkpi-value.small { font-size: 84px; }
+      .delta { font-size: 32px; font-weight: 600; margin-top: 10px; }
+      .delta.up { color: var(--green); }
+      .delta.down { color: var(--red); }
+      .delta span { color: var(--ink-3); font-weight: 400; font-size: 26px; margin-left: 8px; }
+      .split { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 36px; }
+      .split-card { background: var(--card); border-radius: 20px; padding: 34px 36px; }
+      .split-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 34px; color: var(--ink-2); }
+      .split-head b { font-size: 72px; color: var(--ink); font-weight: 600; }
+      .split-sub { font-size: 26px; color: var(--ink-3); margin-top: 10px; }
+      .today-strip { margin-top: 36px; background: var(--card); border-radius: 20px; padding: 34px 36px; display: flex; gap: 60px; align-items: baseline; font-size: 34px; color: var(--ink-2); }
+      .today-strip b { font-size: 72px; color: var(--ink); font-weight: 600; margin-left: 12px; }
+      .sync-note { font-size: 24px; color: var(--warn); margin-top: 16px; }
+      .legend { display: flex; gap: 36px; font-size: 28px; color: var(--ink-2); margin-bottom: 10px; }
+      .legend i { display: inline-block; width: 22px; height: 22px; border-radius: 6px; margin-right: 10px; vertical-align: -3px; }
+      .chart-wrap { background: var(--card); border-radius: 20px; padding: 24px 30px; }
+      .chart-totals { display: flex; gap: 60px; font-size: 30px; color: var(--ink-2); margin-top: 18px; }
+      .chart-totals b { color: var(--ink); font-size: 44px; margin-left: 10px; }
+      .channel { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: center; padding: 10px 0; border-top: 2px solid var(--line); }
+      .channel:first-child { border-top: 0; }
+      .channel-name { font-size: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .channel-name small { display: block; font-size: 22px; color: var(--ink-3); }
+      .channel-name small.eco { color: var(--orange); }
+      .hbar { display: flex; align-items: center; gap: 14px; height: 34px; }
+      .hbar + .hbar { margin-top: 6px; }
+      .hbar div { height: 100%; border-radius: 6px; min-width: 4px; }
+      .hbar span { font-size: 26px; white-space: nowrap; color: var(--ink-2); }
+      .hbar.cur div { background: var(--green); }
+      .hbar.cur.eco div { background: var(--orange); }
+      .hbar.cur span { color: var(--ink); font-weight: 600; font-size: 30px; }
+      .hbar.prev { height: 22px; }
+      .hbar.prev div { background: var(--green-dim); }
+      .hbar.prev.eco div { background: #6b4320; }
+      .hbar.prev span { font-size: 22px; color: var(--ink-3); }
+      .sku-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(5, 1fr); grid-auto-flow: column; gap: 16px 32px; height: 100%; }
+      .sku { display: grid; grid-template-columns: 60px 130px 1fr auto; gap: 22px; align-items: center; background: var(--card); border-radius: 18px; padding: 10px 26px 10px 18px; min-height: 0; }
+      .rank { font-size: 44px; font-weight: 700; color: var(--ink-3); text-align: center; }
+      .rank.gold { color: #f2c94c; }
+      .rank.silver { color: #c9d1d9; }
+      .rank.bronze { color: #d08a52; }
+      .sku-img { width: 130px; height: 130px; border-radius: 12px; background: var(--line) center / contain no-repeat; }
+      .sku-info { min-width: 0; }
+      .sku-code { font-size: 28px; font-weight: 600; }
+      .sku-code small { font-size: 20px; color: var(--orange); margin-left: 10px; font-weight: 400; }
+      .sku-name { font-size: 26px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+      .sku-qty { text-align: right; }
+      .sku-qty b { font-size: 52px; display: block; line-height: 1.05; }
+      .sku-qty span { font-size: 24px; color: var(--ink-3); }
+      .podium { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+      .pod { background: var(--card); border-radius: 20px; padding: 26px 32px; border-top: 8px solid var(--line); }
+      .pod.p1 { border-top-color: #f2c94c; }
+      .pod.p2 { border-top-color: #c9d1d9; }
+      .pod.p3 { border-top-color: #d08a52; }
+      .pod-pos { font-size: 30px; color: var(--ink-3); }
+      .pod-name { font-size: 46px; font-weight: 600; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pod-value { font-size: 70px; font-weight: 600; margin-top: 8px; color: var(--green); white-space: nowrap; }
+      .pod-sub { font-size: 26px; color: var(--ink-3); margin-top: 6px; }
+      .rank-list { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+      .rank-row { display: grid; grid-template-columns: 60px 1fr auto; gap: 18px; align-items: center; height: 74px; border-top: 2px solid var(--line); font-size: 32px; }
+      .rank-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .rank-row .who small { font-size: 22px; color: var(--ink-3); margin-left: 10px; }
+      .rank-row b { font-weight: 600; }
+      .muted { color: var(--ink-3); }
+      .ops { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; height: 100%; }
+      .ops-col { background: var(--card); border-radius: 20px; padding: 24px 30px; min-width: 0; }
+      .ops-title { font-size: 36px; font-weight: 600; }
+      .ops-sub { font-size: 24px; color: var(--ink-3); margin-bottom: 12px; }
+      .ops-row { display: grid; grid-template-columns: 50px 1fr auto auto; gap: 16px; align-items: baseline; height: 76px; border-top: 2px solid var(--line); padding-top: 18px; font-size: 32px; }
+      .ops-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ops-row .m { font-weight: 600; font-size: 38px; }
+      .ops-row .t { font-size: 24px; color: var(--ink-3); min-width: 110px; text-align: right; }
+      .message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 44px; color: var(--ink-2); background: var(--bg); text-align: center; padding: 80px; z-index: 5; }
       .message[hidden] { display: none; }
     </style>
   </head>
   <body>
     <div id="stage">
       <div class="top">
-        <div class="title">Produção</div>
+        <div class="title" id="title">Produção</div>
         <div class="clock"><span id="clock"></span><span id="live" class="live"><span class="dot" id="dot"></span><span id="liveText">ao vivo</span></span></div>
       </div>
-      <div class="kpis" id="kpis"></div>
-      <div class="main">
-        <div>
-          <div class="section" id="monthsTitle">Mês a mês</div>
-          <div class="bars" id="bars"></div>
-          <div id="table"></div>
+
+      <section class="screen" data-screen="resumo"><div id="salesSummary"></div></section>
+      <section class="screen" data-screen="dia"><div id="salesDaily"></div></section>
+      <section class="screen" data-screen="canais"><div id="salesChannels"></div></section>
+      <section class="screen" data-screen="skus"><div id="salesSkus" style="height:100%"></div></section>
+      <section class="screen" data-screen="vendedores"><div id="salesSellers"></div></section>
+      <section class="screen" data-screen="operadores"><div id="operators" style="height:100%"></div></section>
+      <section class="screen" data-screen="producao">
+        <div class="kpis" id="kpis"></div>
+        <div class="main">
+          <div>
+            <div class="section" id="monthsTitle">Mês a mês</div>
+            <div class="bars" id="bars"></div>
+            <div id="table"></div>
+          </div>
+          <div class="side">
+            <div class="section">Destinos no ano</div>
+            <div class="side-sub">itens transferidos por destino</div>
+            <div id="dest"></div>
+          </div>
         </div>
-        <div class="side">
-          <div class="section">Destinos no ano</div>
-          <div class="side-sub">itens transferidos por destino</div>
-          <div id="dest"></div>
-        </div>
-      </div>
+      </section>
+
+      <div class="footer"><div id="steps" style="display:flex;gap:28px"></div><span class="paused" id="paused" hidden>⏸ pausado</span></div>
+      <div class="progress"><div id="progress"></div></div>
       <div class="message" id="message">Carregando painel...</div>
     </div>
     <script>
       const REFRESH_MS = 15000;
       const STALE_MS = 60000;
+      const SCREEN_MS = 20000;
       const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
       const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
       const MONTH_NAMES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+      const SCREENS = {
+        resumo: "Vendas do mês",
+        dia: "Vendas por dia",
+        canais: "Vendas por canal",
+        skus: "SKUs mais vendidos",
+        vendedores: "Ranking de vendedores",
+        operadores: "Ranking de operadores",
+        producao: "Produção"
+      };
       const token = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
       const $ = (id) => document.getElementById(id);
       const nf = (value) => Math.round(Number(value || 0)).toLocaleString("pt-BR");
+      const brl = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+      const brlShort = (value) => {
+        const number = Number(value || 0);
+        if (Math.abs(number) >= 1e6) return `R$ ${(number / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} mi`;
+        if (Math.abs(number) >= 1e3) return `R$ ${Math.round(number / 1e3).toLocaleString("pt-BR")} mil`;
+        return brl(number);
+      };
       const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+      const monthName = (month) => MONTH_NAMES[Number(String(month || "").slice(5, 7)) - 1] || "";
       let lastOk = 0;
+      let available = ["producao"];
+      let current = "producao";
+      let shownAt = Date.now();
+      let paused = false;
 
       function fit() {
         const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
@@ -137,7 +265,35 @@
         $("dot").style.opacity = now.getSeconds() % 2 ? 0.35 : 1;
       }
 
-      function render(stats) {
+      // ---- Rodizio ----
+      function show(name) {
+        current = name;
+        shownAt = Date.now();
+        document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.dataset.screen === name));
+        $("title").innerHTML = esc(SCREENS[name] || "");
+        $("steps").innerHTML = available.map((key) => `<span class="step ${key === name ? "on" : ""}"><i></i>${esc(SCREENS[key])}</span>`).join("");
+      }
+
+      function step(direction) {
+        const index = available.indexOf(current);
+        show(available[(Math.max(index, 0) + direction + available.length) % available.length]);
+      }
+
+      function tickRotation() {
+        if (paused) shownAt = Date.now() - Number($("progress").dataset.elapsed || 0);
+        const elapsed = Date.now() - shownAt;
+        $("progress").dataset.elapsed = elapsed;
+        $("progress").style.width = `${Math.min(100, (elapsed / SCREEN_MS) * 100)}%`;
+        if (!paused && elapsed >= SCREEN_MS && available.length > 1) step(1);
+      }
+
+      function togglePause() {
+        paused = !paused;
+        $("paused").hidden = !paused;
+      }
+
+      // ---- Producao ----
+      function renderProduction(stats) {
         const m = stats.metrics;
         const cards = [
           { label: "Itens bipados", data: m.scanned },
@@ -160,7 +316,7 @@
         $("bars").innerHTML = months.map((row, index) => `
           <div class="bar-col ${index === lastIndex ? "current" : ""}">
             <div class="bar-val">${nf(row.scanned)}</div>
-            <div class="bar" style="height:${Math.max(2, (row.scanned / max) * 240)}px"></div>
+            <div class="bar" style="height:${Math.max(2, (row.scanned / max) * 190)}px"></div>
           </div>`).join("");
         const label = (row, index) => MONTHS[Number(row.month.slice(5, 7)) - 1] + (index === lastIndex ? "*" : "");
         const line = (name, values, head) => `
@@ -192,6 +348,188 @@
           : '<div class="empty">Nenhuma transferência no ano.</div>';
       }
 
+      // ---- Vendas ----
+      function delta(currentValue, previousValue, sales) {
+        if (!previousValue) return `<div class="delta"><span>sem base no mês anterior</span></div>`;
+        const pct = ((currentValue - previousValue) / previousValue) * 100;
+        const up = pct >= 0;
+        return `<div class="delta ${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%<span>vs ${monthName(sales.previousMonth)} até dia ${Number(sales.comparableUntil.slice(8, 10))}</span></div>`;
+      }
+
+      function renderSummary(sales) {
+        const c = sales.current;
+        const p = sales.previous;
+        const syncing = sales.pendingDetails > 0;
+        const cards = [
+          { label: "Valor total", value: brl(c.total), now: c.total, before: p.total, small: c.total >= 1e7 },
+          { label: "Pedidos", value: nf(c.orders), now: c.orders, before: p.orders },
+          { label: "Peças vendidas", value: nf(c.pieces), now: c.pieces, before: p.pieces, syncing },
+          { label: "Ticket médio", value: brl(c.ticket), now: c.ticket, before: p.ticket }
+        ];
+        const accounts = sales.accounts.filter((row) => row.connected);
+        $("salesSummary").innerHTML = `
+          <div class="money-kpis">${cards.map((card) => `
+            <div class="mkpi">
+              <div class="mkpi-label">${card.label}</div>
+              <div class="mkpi-value ${card.small ? "small" : ""}">${card.value}</div>
+              ${card.syncing ? '<div class="delta"><span>sincronizando itens…</span></div>' : delta(card.now, card.before, sales)}
+            </div>`).join("")}
+          </div>
+          <div class="split">${accounts.map((row) => `
+            <div class="split-card">
+              <div class="split-head"><span>${esc(row.label === "JZ" ? "JZ" : "Ecommerce")}</span><b>${brl(row.current)}</b></div>
+              ${row.error ? `<div class="sync-note">Bling: ${esc(row.error)}</div>` : delta(row.current, row.previous, sales)}
+              <div class="track"><div class="fill" style="width:${c.total ? (row.current / c.total) * 100 : 0}%;background:${row.label === "JZ" ? "var(--green)" : "var(--orange)"}"></div></div>
+              <div class="split-sub">${c.total ? Math.round((row.current / c.total) * 100) : 0}% do total do mês</div>
+            </div>`).join("")}
+          </div>
+          <div class="today-strip">Hoje <span>vendido<b>${brl(sales.todayTotals.total)}</b></span><span>pedidos<b>${nf(sales.todayTotals.orders)}</b></span><span>ticket<b>${brl(sales.todayTotals.ticket)}</b></span></div>
+          ${syncing ? `<div class="sync-note">Sincronizando o histórico com o Bling: faltam ${nf(sales.pendingDetails)} pedidos. Peças, SKUs e vendedores ficam completos ao terminar.</div>` : ""}`;
+      }
+
+      function renderDaily(sales) {
+        const W = 1740, H = 640, L = 150, B = 50, T = 20;
+        const cur = sales.daily.current;
+        const prev = sales.daily.previous;
+        const days = Math.max(cur.length, prev.length);
+        const max = Math.max(1, ...cur.filter((v) => v !== null), ...prev) * 1.1;
+        const x = (i) => L + (i / Math.max(1, days - 1)) * (W - L - 20);
+        const y = (v) => T + (1 - v / max) * (H - T - B);
+        const prevLine = prev.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+        const curPoints = cur.map((v, i) => (v === null ? null : [x(i), y(v)])).filter(Boolean);
+        const curLine = curPoints.map((p) => p.join(",")).join(" ");
+        const area = curPoints.length ? `${curPoints[0][0]},${y(0)} ${curLine} ${curPoints[curPoints.length - 1][0]},${y(0)}` : "";
+        const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+          const value = (max / 1.1) * f;
+          return `<line x1="${L}" x2="${W - 20}" y1="${y(value)}" y2="${y(value)}" stroke="#2c2c2a" stroke-width="2"/>
+                  <text x="${L - 16}" y="${y(value) + 9}" fill="#898781" font-size="24" text-anchor="end">${brlShort(value)}</text>`;
+        }).join("");
+        const labels = Array.from({ length: days }, (_, i) => i).filter((i) => i % 2 === 0 || i === days - 1)
+          .map((i) => `<text x="${x(i)}" y="${H - 12}" fill="#898781" font-size="22" text-anchor="middle">${i + 1}</text>`).join("");
+        const last = curPoints[curPoints.length - 1];
+        const prevTotal = prev.reduce((sum, v) => sum + v, 0);
+        $("salesDaily").innerHTML = `
+          <div class="chart-wrap">
+            <div class="legend"><span><i style="background:var(--green)"></i>${esc(monthName(sales.month))} (atual)</span><span><i style="background:#5d7d6a"></i>${esc(monthName(sales.previousMonth))} (anterior)</span></div>
+            <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+              ${grid}
+              <polyline points="${prevLine}" fill="none" stroke="#5d7d6a" stroke-width="4" stroke-dasharray="10 8"/>
+              ${area ? `<polygon points="${area}" fill="rgba(47,179,107,.22)"/>` : ""}
+              <polyline points="${curLine}" fill="none" stroke="#2fb36b" stroke-width="6" stroke-linejoin="round"/>
+              ${last ? `<circle cx="${last[0]}" cy="${last[1]}" r="10" fill="#2fb36b"/>` : ""}
+              ${labels}
+            </svg>
+            <div class="chart-totals">
+              <span>${esc(monthName(sales.month))} até hoje<b>${brl(sales.current.total)}</b></span>
+              <span>${esc(monthName(sales.previousMonth))} inteiro<b>${brl(prevTotal)}</b></span>
+              <span>hoje<b>${brl(sales.todayTotals.total)}</b></span>
+            </div>
+          </div>`;
+      }
+
+      function renderChannels(sales) {
+        const rows = sales.channels.slice(0, 9);
+        const max = Math.max(1, ...rows.map((row) => Math.max(row.current, row.previous)));
+        $("salesChannels").innerHTML = `
+          <div class="legend"><span><i style="background:var(--green)"></i>${esc(monthName(sales.month))} até hoje</span><span><i style="background:var(--green-dim)"></i>${esc(monthName(sales.previousMonth))} até dia ${Number(sales.comparableUntil.slice(8, 10))}</span><span><i style="background:var(--orange)"></i>Ecommerce</span></div>
+          ${rows.length ? rows.map((row) => {
+            const eco = row.account === "ecommerce" ? "eco" : "";
+            return `
+            <div class="channel">
+              <div class="channel-name">${esc(row.name)}<small class="${eco}">${eco ? "Ecommerce" : "JZ"}</small></div>
+              <div>
+                <div class="hbar cur ${eco}"><div style="width:${(row.current / max) * 1080}px"></div><span>${brl(row.current)}</span></div>
+                <div class="hbar prev ${eco}"><div style="width:${(row.previous / max) * 1080}px"></div><span>${brl(row.previous)}</span></div>
+              </div>
+            </div>`;
+          }).join("") : '<div class="empty">Nenhuma venda no período.</div>'}`;
+      }
+
+      function renderSkus(sales) {
+        const medal = ["gold", "silver", "bronze"];
+        $("salesSkus").innerHTML = sales.skus.length
+          ? `<div class="sku-grid">${sales.skus.map((row, index) => `
+              <div class="sku">
+                <div class="rank ${medal[index] || ""}">${index + 1}º</div>
+                <div class="sku-img" ${row.image ? `style="background-image:url('${esc(row.image)}')"` : ""}></div>
+                <div class="sku-info">
+                  <div class="sku-code">${esc(row.sku)}${row.account === "ecommerce" ? "<small>Ecommerce</small>" : ""}</div>
+                  <div class="sku-name">${esc(row.name)}</div>
+                </div>
+                <div class="sku-qty"><b>${nf(row.quantity)}</b><span>un · ${brlShort(row.value)}</span></div>
+              </div>`).join("")}</div>`
+          : `<div class="empty">${sales.pendingDetails ? "Sincronizando os itens dos pedidos com o Bling…" : "Nenhum item vendido no mês."}</div>`;
+      }
+
+      function renderSellers(sales) {
+        const rows = sales.sellers;
+        const podium = rows.slice(0, 3);
+        const rest = rows.slice(3, 13);
+        const sub = (row) => `${nf(row.orders)} ${row.orders === 1 ? "pedido" : "pedidos"} · ticket ${brl(row.ticket)}`;
+        $("salesSellers").innerHTML = `
+          <div class="podium">${podium.map((row, index) => `
+            <div class="pod p${index + 1}">
+              <div class="pod-pos">${index + 1}º lugar</div>
+              <div class="pod-name ${row.noSeller ? "muted" : ""}">${esc(row.name)}</div>
+              <div class="pod-value">${brl(row.total)}</div>
+              <div class="pod-sub">${sub(row)}${row.today ? ` · hoje ${brl(row.today)}` : ""}</div>
+            </div>`).join("")}
+          </div>
+          <div class="rank-list">${rest.map((row, index) => `
+            <div class="rank-row">
+              <span class="muted">${index + 4}º</span>
+              <span class="who ${row.noSeller ? "muted" : ""}">${esc(row.name)}<small>${sub(row)}</small></span>
+              <b>${brl(row.total)}</b>
+            </div>`).join("")}
+          </div>
+          ${sales.pendingDetails ? `<div class="sync-note">Sincronizando com o Bling: faltam ${nf(sales.pendingDetails)} pedidos.</div>` : ""}`;
+      }
+
+      function renderOperators(operators) {
+        const labels = { conference: "Bipados e cadastrados", triage: "Triagem", transfer: "Transferência" };
+        const order = ["conference", "triage", "transfer"];
+        const stages = order.map((key) => (operators?.stages || []).find((stage) => stage.key === key)).filter(Boolean);
+        $("operators").innerHTML = `<div class="ops">${stages.map((stage) => {
+          const todayByName = new Map(stage.today.map((row) => [row.name, row.items]));
+          return `
+          <div class="ops-col">
+            <div class="ops-title">${esc(labels[stage.key] || stage.label)}</div>
+            <div class="ops-sub">itens no mês · hoje</div>
+            ${stage.month.length ? stage.month.map((row, index) => `
+              <div class="ops-row">
+                <span class="muted">${index + 1}º</span>
+                <span class="who">${esc(row.name)}</span>
+                <span class="m">${nf(row.items)}</span>
+                <span class="t">hoje ${nf(todayByName.get(row.name) || 0)}</span>
+              </div>`).join("") : '<div class="empty">Sem registros no mês.</div>'}
+          </div>`;
+        }).join("")}</div>`;
+      }
+
+      function render(body) {
+        renderProduction(body.stats);
+        renderOperators(body.operators);
+        const sales = body.sales;
+        const hasSales = sales && sales.accounts.some((row) => row.connected);
+        const next = [];
+        if (hasSales) {
+          renderSummary(sales);
+          renderDaily(sales);
+          renderChannels(sales);
+          renderSkus(sales);
+          next.push("resumo", "dia", "canais", "skus");
+          if (sales.sellers.length) {
+            renderSellers(sales);
+            next.push("vendedores");
+          }
+        }
+        next.push("operadores", "producao");
+        const changed = next.join() !== available.join();
+        available = next;
+        if (!available.includes(current)) show(available[0]);
+        else if (changed) show(current);
+      }
+
       async function load() {
         try {
           const response = await fetch(`/api/public/tv/${encodeURIComponent(token)}`, { cache: "no-store" });
@@ -203,7 +541,7 @@
             }
             return;
           }
-          render(body.stats);
+          render(body);
           lastOk = Date.now();
           $("message").hidden = true;
         } catch {
@@ -215,8 +553,17 @@
 
       fit();
       window.addEventListener("resize", fit);
+      // Setas trocam de tela; espaco ou clique pausam o rodizio.
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowRight") step(1);
+        else if (event.key === "ArrowLeft") step(-1);
+        else if (event.key === " " || event.key === "Enter") togglePause();
+      });
+      window.addEventListener("click", togglePause);
+      show("producao");
       tickClock();
       setInterval(tickClock, 1000);
+      setInterval(tickRotation, 250);
       load();
       setInterval(load, REFRESH_MS);
       // Recarrega a pagina de madrugada para pegar atualizacoes do sistema.
