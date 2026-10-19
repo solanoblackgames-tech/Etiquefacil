@@ -817,9 +817,6 @@ app.get("/api/dashboard/operations", requireAuth, requireOwner, async (req, res)
   }
 });
 
-app.get("/api/triage/wms-labels.pdf", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
-  try {
-    const options = normalizeWmsDeposit(req.query || {});
 app.get("/api/dashboard/tv-link", requireAuth, requireOwner, async (req, res) => {
   try {
     res.json({ token: await getTvDashboardToken(workspaceUserId(req)) });
@@ -860,6 +857,9 @@ app.get("/tv/:token", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "tv.html"));
 });
 
+app.get("/api/triage/wms-labels.pdf", requireAuth, requireOwner, requireTriageAccess, async (req, res) => {
+  try {
+    const options = normalizeWmsDeposit(req.query || {});
     const buffer = await buildWmsLocationLabelsPdf(options);
     const total = buildWmsPositionCodes(options).length;
     const fileName = `posicoes-wms-${safeFileName(options.prefix)}-${total}.pdf`;
