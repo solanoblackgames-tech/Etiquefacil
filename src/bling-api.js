@@ -884,7 +884,8 @@ class BlingApiClient {
 
   // Pedidos Atendidos com data entre startDay e endDay (YYYY-MM-DD). A listagem ja traz total e loja.
   async listAttendedSalesOrders({ startDay, endDay, maxPages = 200 } = {}) {
-    const situations = await this.listSalesOrderSituations();
+    // Situacoes so acrescentam as personalizadas; sem acesso a elas, vale o Atendido padrao (ID 9).
+    const situations = await this.listSalesOrderSituations().catch(() => []);
     const attendedIds = attendedSituationIds(situations);
     const query = { limite: 100, "idsSituacoes[]": attendedIds, dataInicial: startDay, dataFinal: endDay };
     const orders = [];
