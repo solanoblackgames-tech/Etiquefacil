@@ -1617,6 +1617,33 @@ export async function getOperationalDashboardStats(userId, period = {}) {
   return buildOperationalDashboardStats(db, userId, period);
 }
 
+// Depositos antigos que os relatorios mostram com outro nome, por conta.
+// Solano Black Games: as transferencias para Panobianco Ibiti contam como SOLDIM MATRIZ.
+const REPORT_DEPOSIT_ALIASES_BY_OWNER_EMAIL = {
+  "solanoblackgames@gmail.com": { "panobianco ibiti": "SOLDIM MATRIZ" }
+};
+
+function reportDepositAliases(ownerEmail) {
+  return REPORT_DEPOSIT_ALIASES_BY_OWNER_EMAIL[String(ownerEmail || "").trim().toLowerCase()] || null;
+}
+
+function reportDepositName(aliases, name) {
+  return (aliases && aliases[normalizeText(name)]) || name;
+}
+
+function applyReportDepositAliases(db, ownerEmail) {
+  const aliases = reportDepositAliases(ownerEmail);
+  if (!aliases) return db;
+  return {
+    ...db,
+    transferLots: (db.transferLots || []).map((lot) => ({
+      ...lot,
+      depositoOrigem: reportDepositName(aliases, lot.depositoOrigem),
+      depositoDestino: reportDepositName(aliases, lot.depositoDestino)
+    }))
+  };
+}
+
 // Painel de TV: bipados, cadastrados, triados e transferidos (hoje, mes, ano) + destinos do ano.
 const TV_DASHBOARD_SETTINGS_KEY = "tv_dashboard";
 const TV_DASHBOARD_METRICS = ["scanned", "created", "triaged", "transferred"];
@@ -1630,6 +1657,8 @@ export async function getTvDashboardStats(userId, now = new Date()) {
   const rows = [];
 
   if (hasPostgres()) {
+    const ownerResult = await query("select email from users where id = $1", [userId]);
+    const aliases = reportDepositAliases(ownerResult.rows[0]?.email);
     const dayExpr = (column) => `to_char(${column} at time zone '${DASHBOARD_TIME_ZONE}', 'YYYY-MM-DD')`;
     const [scanned, created, triaged, transferred] = await Promise.all([
       query(
@@ -1666,12 +1695,13 @@ export async function getTvDashboardStats(userId, now = new Date()) {
     for (const row of created.rows) rows.push({ metric: "created", day: row.day, total: Number(row.total || 0) });
     for (const row of triaged.rows) rows.push({ metric: "triaged", day: row.day, total: Number(row.total || 0) });
     for (const row of transferred.rows) {
-      rows.push({ metric: "transferred", day: row.day, total: Number(row.total || 0), destination: row.destination, lots: Number(row.lots || 0) });
+      rows.push({ metric: "transferred", day: row.day, total: Number(row.total || 0), destination: reportDepositName(aliases, row.destination), lots: Number(row.lots || 0) });
     }
     return buildTvDashboardStats(rows, { now, today, year });
   }
 
   const db = await readDb();
+  const aliases = reportDepositAliases((db.users || []).find((user) => user.id === userId)?.email);
   const lotIds = new Set((db.lots || []).filter((lot) => lot.userId === userId).map((lot) => lot.id));
   const inYear = (value) => dashboardLocalDay(value).startsWith(year);
   for (const scan of db.scans || []) {
@@ -1692,7 +1722,7 @@ export async function getTvDashboardStats(userId, now = new Date()) {
     if (!lot || !inYear(item.createdAt)) continue;
     const day = dashboardLocalDay(item.createdAt);
     const lotKey = `${day}\u0000${lot.id}`;
-    rows.push({ metric: "transferred", day, total: Number(item.quantidade || 0), destination: lot.depositoDestino, lots: transferLotDays.has(lotKey) ? 0 : 1 });
+    rows.push({ metric: "transferred", day, total: Number(item.quantidade || 0), destination: reportDepositName(aliases, lot.depositoDestino), lots: transferLotDays.has(lotKey) ? 0 : 1 });
     transferLotDays.add(lotKey);
   }
   return buildTvDashboardStats(rows, { now, today, year });
@@ -11010,6 +11040,7 @@ function buildOperationalDashboardStats(db, userId, period = {}) {
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
   const owner = userMap.get(userId) || { id: userId, name: "Conta principal", email: "", role: "owner" };
   userMap.set(userId, owner);
+  db = applyReportDepositAliases(db, owner.email);
 
   const allLots = (db.lots || []).filter((lot) => lot.userId === userId);
   const allLotIds = new Set(allLots.map((lot) => lot.id));
