@@ -850,8 +850,7 @@ class BlingApiClient {
   // que viraram Atendido nos ultimos dias (o ID da situacao muda de conta para conta).
   async listSalesOrdersForStore({ storeName = "", storeId = "", sinceDays = WMS_EXPEDITION_LOOKBACK_DAYS } = {}) {
     const situations = await this.listSalesOrderSituations();
-    const attendedIds = situations.filter((situation) => normalizeText(situation.name) === "atendido").map((situation) => situation.id);
-    if (!attendedIds.length) throw new Error("Situacao Atendido nao encontrada no modulo Vendas do Bling.");
+    const attendedIds = attendedSituationIds(situations);
     const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const query = { limite: 100, "idsSituacoes[]": attendedIds, dataAlteracaoInicial: since };
     if (storeId) query.idLoja = storeId;
@@ -886,8 +885,7 @@ class BlingApiClient {
   // Pedidos Atendidos com data entre startDay e endDay (YYYY-MM-DD). A listagem ja traz total e loja.
   async listAttendedSalesOrders({ startDay, endDay, maxPages = 200 } = {}) {
     const situations = await this.listSalesOrderSituations();
-    const attendedIds = situations.filter((situation) => normalizeText(situation.name) === "atendido").map((situation) => situation.id);
-    if (!attendedIds.length) throw new Error("Situacao Atendido nao encontrada no modulo Vendas do Bling.");
+    const attendedIds = attendedSituationIds(situations);
     const query = { limite: 100, "idsSituacoes[]": attendedIds, dataInicial: startDay, dataFinal: endDay };
     const orders = [];
     for (let pagina = 1; pagina <= maxPages; pagina += 1) {
@@ -1059,6 +1057,16 @@ function summarizeSync(results) {
     alerted: results.filter((item) => (item.alerts || []).length).length,
     results
   };
+}
+
+// "Atendido" padrao do Bling tem o ID fixo 9 em todas as contas; situacoes personalizadas herdam dele.
+const BLING_ATTENDED_SITUATION_ID = 9;
+
+function attendedSituationIds(situations = []) {
+  const ids = situations
+    .filter((situation) => normalizeText(situation.name) === "atendido" || situation.inheritedId === BLING_ATTENDED_SITUATION_ID)
+    .map((situation) => situation.id);
+  return [...new Set([BLING_ATTENDED_SITUATION_ID, ...ids])];
 }
 
 function blingOrderStoreMatches(order = {}, { storeName = "" } = {}) {

@@ -999,3 +999,25 @@ test("Bling sales reader lista pedidos Atendidos do periodo e resume o detalhe",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Bling sales reader usa o Atendido padrao (ID 9) quando o nome nao aparece no modulo", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const responses = [
+    { data: [] },
+    { data: [] }
+  ];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => responses.shift() || { data: [] } };
+  };
+  try {
+    const reader = createBlingSalesReader({ integration: { accessToken: "token-sales-reader-default" } });
+    const orders = await reader.listAttendedOrders({ startDay: "2026-09-01", endDay: "2026-10-19" });
+    const listUrl = new URL(calls.find((url) => url.includes("/pedidos/vendas")));
+    assert.deepEqual(listUrl.searchParams.getAll("idsSituacoes[]"), ["9"]);
+    assert.deepEqual(orders, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

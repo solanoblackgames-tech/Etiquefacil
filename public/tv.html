@@ -512,12 +512,17 @@
         const sales = body.sales;
         const hasSales = sales && sales.accounts.some((row) => row.connected);
         const next = [];
+        const anyOrders = sales && (sales.current.orders > 0 || sales.daily.previous.some((value) => value > 0));
         if (hasSales) {
           renderSummary(sales);
+          next.push("resumo");
+        }
+        // Sem nenhum pedido lido, fica so o resumo (com o aviso do Bling) em vez de graficos zerados.
+        if (hasSales && anyOrders) {
           renderDaily(sales);
           renderChannels(sales);
           renderSkus(sales);
-          next.push("resumo", "dia", "canais", "skus");
+          next.push("dia", "canais", "skus");
           if (sales.sellers.length) {
             renderSellers(sales);
             next.push("vendedores");
