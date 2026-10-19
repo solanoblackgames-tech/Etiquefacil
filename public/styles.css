@@ -6550,6 +6550,13 @@ h3 {
     min-width: 0;
   }
 
+  /* Let the document scroll when transfer content exceeds a collector screen. */
+  .app.transfer-view {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .transfer-shell {
     height: auto;
     overflow: visible;

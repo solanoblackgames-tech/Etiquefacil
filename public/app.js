@@ -5821,6 +5821,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   toggleClass("#lotsTab", "hidden", target !== "lots");
   toggleClass("#searchTab", "hidden", target !== "search");
   toggleClass("#transfersTab", "hidden", target !== "transfers");
+  toggleClass("#app", "transfer-view", target === "transfers");
   toggleClass("#expeditionTab", "hidden", target !== "expedition");
   toggleClass("#stockTab", "hidden", target !== "stock");
   toggleClass("#triageTab", "hidden", target !== "triage");
@@ -7101,6 +7102,7 @@ async function showTransferReceiveOnly({ transferLotId, publicAccess = true }) {
   document.body.classList.add("scan-only");
   $("#auth").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  $("#app").classList.add("transfer-view");
   $("#adminApp").classList.add("hidden");
   $("#app .app-nav")?.classList.add("hidden");
   $(".upload-band").classList.add("hidden");
