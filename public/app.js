@@ -823,7 +823,7 @@ async function addDiverseItem(event) {
     const preview = await previewDiverseItem(codigoMl, codigoRz);
     const suggestedLotItem = await findNoSheetSuggestionForProduct(preview.product || {}).catch(() => null);
     quantidade = manualSuggestionQuantityValue(suggestedLotItem);
-    if (preview.status === "preview_existing") {
+    if (preview.status === "preview_existing" && diverseProductBelongsToRz(preview.lot, preview.product, codigoRz)) {
       input.value = "";
       await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, codigoMl);
       await refreshLotsList(state.selectedDiverseLotId);
@@ -865,11 +865,15 @@ async function addDiverseItem(event) {
             return;
           }
           if (action === "use_existing") {
-            input.value = "";
-            await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, existingByDescription.codigoMl);
-            await refreshLotsList(state.selectedDiverseLotId);
-            schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
-            return;
+            if (diverseProductBelongsToRz(state.selectedDiverseLot, existingByDescription, codigoRz)) {
+              input.value = "";
+              await addDiverseQuantity(state.selectedDiverseLotId, codigoRz, existingByDescription.codigoMl);
+              await refreshLotsList(state.selectedDiverseLotId);
+              schedulePrimaryInputFocus(["#diverseScanForm input[name='codigoMl']"]);
+              return;
+            }
+            targetCodigoMl = existingByDescription.codigoMl;
+            targetManualProduct = null;
           }
         }
         const response = await createDiverseItem({ codigoMl: targetCodigoMl, codigoRz, manualProduct: targetManualProduct, quantidade: manualProduct.quantidade, allowDuplicate: !targetManualProduct });
@@ -969,6 +973,12 @@ function manualSuggestionQuantityValue(suggestion) {
   if (raw === undefined || raw === null || raw === "") return 1;
   const quantity = Number.parseInt(String(raw).replace(/\D/g, ""), 10);
   return Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+}
+
+function diverseProductBelongsToRz(lot, product, codigoRz) {
+  return Boolean(product?.id && (lot?.items || []).some((item) =>
+    (item.productId || item.product?.id) === product.id && normalizeCode(item.codigoRz) === normalizeCode(codigoRz)
+  ));
 }
 
 function findExistingDiverseProductByDescription(description) {
