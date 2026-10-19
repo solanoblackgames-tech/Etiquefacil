@@ -3930,7 +3930,6 @@ function renderOperationalDashboard() {
   const period = stats.period || {};
   const filter = normalizeOperationalDateFilter(state.operationalDateFilter || defaultOperationalDateFilter());
   panel.innerHTML = `
-    ${tvDashboardLinkMarkup()}
     ${dashboardOverviewMarkup(stats, filter)}
     <details class="dash2-details">
       <summary>Detalhamento completo (números por setor, lotes e operadores)</summary>
@@ -4601,67 +4600,26 @@ function tvDashboardUrl() {
   return state.tvDashboardToken ? `${location.origin}/tv/${state.tvDashboardToken}` : "";
 }
 
-function tvDashboardLinkMarkup() {
-  const url = tvDashboardUrl();
-  return `
-    <section class="tv-link-panel">
-      <div>
-        <strong>Painel da TV</strong>
-        <span class="muted">Tela cheia para TV com bipados, cadastrados, triados, transferências e destinos. Atualiza sozinha a cada 15 segundos e abre sem login.</span>
-      </div>
-      ${url
-        ? `<div class="tv-link-row">
-            <input type="text" readonly value="${escapeHtml(url)}" id="tvDashboardUrl" />
-            <button type="button" data-tv-link="copy">Copiar link</button>
-            <a class="button-link ghost-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">Abrir</a>
-            <button type="button" class="ghost" data-tv-link="rotate">Gerar novo link</button>
-          </div>
-          <small class="muted" id="tvDashboardMessage">Quem tiver o link vê os números, sem acesso ao resto do sistema. Gerar um novo link desativa o anterior.</small>`
-        : `<div class="tv-link-row"><button type="button" data-tv-link="rotate">Criar link da TV</button></div>
-          <small class="muted" id="tvDashboardMessage"></small>`}
-    </section>
-  `;
-}
-
-async function handleTvDashboardLinkAction(action) {
-  const message = () => $("#tvDashboardMessage");
-  if (action === "open") {
-    // Abre a janela antes do await para o navegador nao bloquear como pop-up.
-    const tvWindow = window.open("about:blank", "_blank");
-    try {
-      if (!state.tvDashboardToken) {
-        const response = await api("/api/dashboard/tv-link", { method: "POST" });
-        state.tvDashboardToken = response.token || null;
-        renderOperationalDashboard();
-      }
-      if (tvWindow) tvWindow.location.href = tvDashboardUrl();
-      else location.href = tvDashboardUrl();
-    } catch (error) {
-      tvWindow?.close();
-      alert(error.message || "Não foi possível abrir o painel.");
-    }
-    return;
-  }
+// Abre o painel da TV; cria o link na primeira vez.
+async function openTvDashboard() {
+  // Abre a janela antes do await para o navegador nao bloquear como pop-up.
+  const tvWindow = window.open("about:blank", "_blank");
   try {
-    if (action === "rotate") {
-      if (state.tvDashboardToken && !confirm("Gerar um novo link? A TV que usa o link atual vai parar de atualizar até receber o novo.")) return;
+    if (!state.tvDashboardToken) {
       const response = await api("/api/dashboard/tv-link", { method: "POST" });
       state.tvDashboardToken = response.token || null;
-      renderOperationalDashboard();
-      if (message()) message().textContent = "Link criado. Abra-o no navegador da TV.";
-      return;
     }
-    await copyText(tvDashboardUrl());
-    if (message()) message().textContent = "Link copiado.";
+    if (tvWindow) tvWindow.location.href = tvDashboardUrl();
+    else location.href = tvDashboardUrl();
   } catch (error) {
-    if (message()) message().textContent = error.message || "Não foi possível concluir.";
+    tvWindow?.close();
+    alert(error.message || "Não foi possível abrir o painel.");
   }
 }
 
 function handleOperationalDashboardClick(event) {
-  const tvLinkButton = event.target.closest("[data-tv-link]");
-  if (tvLinkButton) {
-    handleTvDashboardLinkAction(tvLinkButton.dataset.tvLink);
+  if (event.target.closest("[data-tv-link]")) {
+    openTvDashboard();
     return;
   }
   const periodButton = event.target.closest("[data-operational-period]");
