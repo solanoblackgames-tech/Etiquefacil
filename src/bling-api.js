@@ -1,4 +1,4 @@
-import { getBlingRateLimiter } from "./bling-rate-limit.js";
+import { getBlingRateLimiter, getBlingTokenRateLimiter } from "./bling-rate-limit.js";
 
 const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
 const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
@@ -8,6 +8,7 @@ const BLING_FETCH_TIMEOUT_MS = 12_000;
 const WMS_EXPEDITION_LOOKBACK_DAYS = 7;
 const WMS_EXPEDITION_MAX_PAGES = 5;
 const blingSupplierCache = new Map();
+const tokenRefreshes = new Map();
 
 export async function runBlingHomologation({ integration, saveIntegration, fetchImpl = globalThis.fetch } = {}) {
   if (!integration?.accessToken) throw new Error("Informe o access token do Bling para executar a homologacao.");
@@ -76,28 +77,47 @@ export async function revokeBlingIntegrationTokens(integration, { fetchImpl = gl
   return { ok: true, revoked };
 }
 
-export async function refreshBlingIntegrationToken(integration, { fetchImpl = globalThis.fetch } = {}) {
+export async function refreshBlingIntegrationToken(integration, { fetchImpl = fetchWithTimeout } = {}) {
   if (!integration?.clientId || !integration?.clientSecret) throw new Error("Credenciais do aplicativo Bling indisponiveis para validar a autorizacao.");
   if (!integration?.refreshToken) throw new Error("Refresh token Bling indisponivel. Autorize a integracao novamente.");
   if (typeof fetchImpl !== "function") throw new Error("Runtime sem fetch disponivel para validar a autorizacao Bling.");
 
+  // Concurrent clients may hold an old token after another operation rotates it.
+  const key = JSON.stringify([integration.clientId, integration.refreshToken]);
+  const now = Date.now();
+  for (const [entryKey, entry] of tokenRefreshes) {
+    if (entry.expiresAt <= now) tokenRefreshes.delete(entryKey);
+  }
+  let entry = tokenRefreshes.get(key);
+  if (!entry) {
+    entry = { expiresAt: Infinity };
+    entry.promise = requestBlingTokenRefresh(integration, fetchImpl).finally(() => {
+      entry.expiresAt = Date.now() + 60_000;
+    });
+    tokenRefreshes.set(key, entry);
+  }
+  return { ...integration, ...await entry.promise };
+}
+
+async function requestBlingTokenRefresh(integration, fetchImpl) {
+  const limiter = getBlingTokenRateLimiter();
+  await limiter.acquire();
   const response = await fetchImpl(BLING_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: {
-      Authorization: `Basic ${Buffer.from(`${integration.clientId}:${integration.clientSecret}`).toString("base64")}`,
+      Authorization: "Basic " + Buffer.from(integration.clientId + ":" + integration.clientSecret).toString("base64"),
       "Content-Type": "application/json",
       "enable-jwt": "1"
     },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      refresh_token: integration.refreshToken
-    })
+    body: JSON.stringify({ grant_type: "refresh_token", refresh_token: integration.refreshToken })
   });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 429) {
+    limiter.onRateLimit({ headers: { get: () => response.headers?.get?.("retry-after") || "60" } }, payload, 3);
+  }
   if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
-
+  if (!payload.access_token) throw new Error("Bling nao retornou o access token na renovacao.");
   return {
-    ...integration,
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token || integration.refreshToken,
     tokenExpiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
@@ -964,29 +984,7 @@ class BlingApiClient {
   }
 
   async refreshToken() {
-    if (!this.integration.refreshToken) throw new Error("Token Bling expirado. Autorize a integracao novamente.");
-
-    const response = await fetchWithTimeout(BLING_OAUTH_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${this.integration.clientId}:${this.integration.clientSecret}`).toString("base64")}`,
-        "Content-Type": "application/json",
-        "enable-jwt": "1"
-      },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: this.integration.refreshToken
-      })
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
-
-    this.integration = {
-      ...this.integration,
-      accessToken: payload.access_token,
-      refreshToken: payload.refresh_token || this.integration.refreshToken,
-      tokenExpiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
-    };
+    this.integration = await refreshBlingIntegrationToken(this.integration);
     if (this.saveIntegration) await this.saveIntegration(this.integration);
   }
 
@@ -1139,29 +1137,7 @@ class BlingHomologationClient {
   }
 
   async refreshToken() {
-    if (!this.integration.refreshToken) throw new Error("Token Bling expirado. Autorize a integracao novamente.");
-
-    const response = await this.fetchImpl(BLING_OAUTH_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${this.integration.clientId}:${this.integration.clientSecret}`).toString("base64")}`,
-        "Content-Type": "application/json",
-        "enable-jwt": "1"
-      },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: this.integration.refreshToken
-      })
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new BlingApiError(blingErrorMessage(payload, response.status), { status: response.status, payload });
-
-    this.integration = {
-      ...this.integration,
-      accessToken: payload.access_token,
-      refreshToken: payload.refresh_token || this.integration.refreshToken,
-      tokenExpiresAt: payload.expires_in ? new Date(Date.now() + Number(payload.expires_in) * 1000).toISOString() : null
-    };
+    this.integration = await refreshBlingIntegrationToken(this.integration, { fetchImpl: this.fetchImpl });
     this.tokenRefreshed = true;
     if (this.saveIntegration) await this.saveIntegration(this.integration);
   }

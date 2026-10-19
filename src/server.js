@@ -36,6 +36,7 @@ import {
   updateBlingProductFromTriage
 } from "./bling-api.js";
 import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferRows, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
+import { getBlingTokenRateLimiter } from "./bling-rate-limit.js";
 import { buildRuntimeConfig } from "./config.js";
 import { DEFAULT_NCM_BY_CATEGORY } from "./ncm-categories.js";
 import { buildSecuritySealsPdf, fullPageSealQuantity, normalizeSecuritySealOptions } from "./security-seals.js";
@@ -267,6 +268,7 @@ app.post("/api/labels/qr", requireAuth, async (req, res) => {
 
 app.get("/healthz", async (req, res) => {
   try {
+    res.set("X-Etiquefacil-Bling-Sync", "oauth-v1");
     res.json(await getStoreHealth());
   } catch (error) {
     res.status(503).json({ ok: false, error: error.message });
@@ -3778,12 +3780,17 @@ async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
   let payload = {};
   let response = null;
   for (const attempt of attempts) {
+    const tokenLimiter = getBlingTokenRateLimiter();
+    await tokenLimiter.acquire();
     response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
       method: "POST",
       headers: attempt.headers,
       body: attempt.body
     });
     payload = await response.json().catch(() => ({}));
+    if (response.status === 429) {
+      tokenLimiter.onRateLimit({ headers: { get: () => response.headers.get("retry-after") || "60" } }, payload, 3);
+    }
     if (response.ok) return payload;
     if ((payload?.error?.message || payload?.error_description || payload?.error) !== "invalid_client") break;
   }
