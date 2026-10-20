@@ -2685,12 +2685,31 @@ h3 {
   align-content: start;
 }
 
-.triage-stats-static-card,
-.triage-stats-static-card:hover {
-  border-color: #dce5ea;
-  box-shadow: none;
-  cursor: default;
-  transform: none;
+.triage-stats-drill {
+  border-color: #14847a;
+  box-shadow: 0 8px 18px rgb(20 132 122 / 0.14);
+  scroll-margin-top: 16px;
+}
+
+.triage-stats-drill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.triage-stats-drill-table {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.triage-stats-drill-table .operational-dashboard-row {
+  grid-template-columns: minmax(100px, 0.7fr) minmax(220px, 2fr) minmax(140px, 1fr) minmax(60px, 0.4fr) minmax(140px, 1fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) minmax(100px, 0.7fr) repeat(2, minmax(80px, 0.5fr));
+  min-width: 1180px;
+}
+
+.triage-stats-drill-table a {
+  color: #0f766e;
 }
 
 .operational-dashboard-row strong,

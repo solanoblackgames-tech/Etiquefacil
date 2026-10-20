@@ -416,3 +416,56 @@ test("triage stats group several lots and compare with the previous period", asy
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("triage stats items list what is behind each card", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-triage-drill-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-drill`;
+    const { listTriageStatsItems, writeDb } = await import(storeUrl.href);
+    const now = new Date().toISOString();
+    const triageItem = (code, fields) => ({
+      id: code, userId: "owner-1", createdByUserId: "owner-1", code, sku: "SKU-1", descricao: "TV",
+      status: "aguardando_teste", destination: "", diagnosisCondition: "", gradeAvaliada: "", diagnosedAt: null,
+      createdAt: now, updatedAt: now, valorUnit: 100, ...fields
+    });
+
+    await writeDb({
+      users: [{ id: "owner-1", name: "Usuario", email: "user@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      transferLots: [],
+      triageItems: [
+        triageItem("T-1", { status: "diagnosticado", diagnosisCondition: "NAO_LIGA", destination: "RMA", gradeAvaliada: "B", diagnosedAt: now }),
+        triageItem("T-2", { status: "diagnosticado", diagnosisCondition: "OK_VENDA_DIRETA", destination: "VENDA_DIRETA", gradeAvaliada: "a", diagnosedAt: now }),
+        triageItem("T-3", {})
+      ],
+      triageEvents: []
+    });
+
+    const byCondition = await listTriageStatsItems("owner-1", {}, { diagnosisCondition: "nao_liga" });
+    const pending = await listTriageStatsItems("owner-1", {}, { status: "aguardando_teste" });
+    const gradeA = await listTriageStatsItems("owner-1", {}, { grade: "A" });
+    const noGrade = await listTriageStatsItems("owner-1", {}, { grade: "" });
+    const all = await listTriageStatsItems("owner-1", {}, {});
+
+    assert.deepEqual(byCondition.items.map((item) => item.code), ["T-1"]);
+    assert.equal(byCondition.totalValue, 100);
+    assert.deepEqual(pending.items.map((item) => item.code), ["T-3"]);
+    assert.deepEqual(gradeA.items.map((item) => item.code), ["T-2"]);
+    assert.deepEqual(noGrade.items.map((item) => item.code), ["T-3"]);
+    assert.equal(all.total, 3);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});

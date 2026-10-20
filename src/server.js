@@ -91,6 +91,7 @@ import {
   getStoreHealth,
   getTriageItem,
   getTriageStats,
+  listTriageStatsItems,
   listTriageStatsRows,
   getOperationalDashboardStats,
   getTransferLotDetail,
@@ -788,6 +789,23 @@ app.get("/api/triage/stats", requireAuth, requireTriageAccess, requireOperatorSt
         lotIds: req.query.lotIds
       })
     });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/api/triage/stats/items", requireAuth, requireTriageAccess, requireOperatorStatsAccess, async (req, res) => {
+  try {
+    res.json(await listTriageStatsItems(
+      workspaceUserId(req),
+      { startDate: req.query.startDate, endDate: req.query.endDate, lotId: req.query.lotId, lotIds: req.query.lotIds },
+      {
+        status: req.query.status || "",
+        diagnosisCondition: req.query.diagnosisCondition || "",
+        destination: req.query.destination || "",
+        grade: req.query.grade
+      }
+    ));
   } catch (error) {
     sendError(res, error);
   }

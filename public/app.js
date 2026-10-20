@@ -45,6 +45,7 @@ const state = {
   selectedTriageCode: null,
   triageStats: null,
   triageStatsFilter: null,
+  triageStatsDrill: null,
   operationalDateFilter: null,
   operationalStats: null,
   operationalOperatorSort: { key: "lotCheckedQty", direction: "desc" },
@@ -12006,6 +12007,8 @@ async function loadTriageStats() {
     const response = await api(`/api/triage/stats?${params.toString()}`);
     state.triageStats = response.stats || null;
     renderTriageStats();
+    // Se havia uma lista aberta, recarrega com o filtro novo.
+    loadTriageStatsDrill();
   } catch (error) {
     panel.innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
   }
@@ -12060,7 +12063,7 @@ function renderTriageStats() {
     </div>
     ${triageStatsFilterMarkup(filter)}
     <div class="triage-stats-summary">
-      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver fila completa${triageStatsDelta(stats.total, previous?.total)}</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver itens${triageStatsDelta(stats.total, previous?.total)}</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos${triageStatsDelta(stats.diagnosedTotal, previous?.diagnosedTotal)}</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
@@ -12071,6 +12074,7 @@ function renderTriageStats() {
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
+      <section class="triage-stats-block triage-stats-wide triage-stats-drill hidden" id="triageStatsDrill"></section>
       <section class="triage-stats-block triage-stats-wide">
         <div class="triage-stats-block-heading">
           <div>
@@ -12351,21 +12355,44 @@ function handleTriageStatsFilterClick(event) {
     return;
   }
 
+  if (event.target.closest("[data-triage-stats-drill-close]")) {
+    state.triageStatsDrill = null;
+    $("#triageStatsDrill")?.classList.add("hidden");
+    return;
+  }
+
+  const queueButton = event.target.closest("[data-triage-stats-drill-queue]");
+  if (queueButton && state.triageStatsDrill) {
+    openTriageWithFilters(state.triageStatsDrill.filter);
+    return;
+  }
+
   const diagnosisConditionCard = event.target.closest("[data-open-triage-diagnosis-condition]");
   if (diagnosisConditionCard) {
-    openTriageWithFilters({ diagnosisCondition: diagnosisConditionCard.dataset.openTriageDiagnosisCondition || "" });
+    const condition = diagnosisConditionCard.dataset.openTriageDiagnosisCondition || "";
+    openTriageStatsDrill(`Diagnostico: ${triageDiagnosisConditionLabel(condition)}`, { diagnosisCondition: condition });
     return;
   }
 
   const destinationCard = event.target.closest("[data-open-triage-destination]");
   if (destinationCard) {
-    openTriageWithFilters({ destination: destinationCard.dataset.openTriageDestination || "" });
+    const destination = destinationCard.dataset.openTriageDestination || "";
+    openTriageStatsDrill(`Destino: ${destinationLabel(destination)}`, { destination });
+    return;
+  }
+
+  const gradeCard = event.target.closest("[data-open-triage-grade]");
+  if (gradeCard) {
+    const grade = gradeCard.dataset.openTriageGrade || "";
+    openTriageStatsDrill(grade ? `Grade ${grade}` : "Sem grade", { grade });
     return;
   }
 
   const statusCard = event.target.closest("[data-open-triage-status]");
   if (statusCard) {
-    openTriageWithFilters({ status: statusCard.dataset.openTriageStatus || "" });
+    const status = statusCard.dataset.openTriageStatus || "";
+    const titles = { diagnosticado: "Diagnosticados", aguardando_teste: "Pendentes" };
+    openTriageStatsDrill(titles[status] || "Itens triados", { status });
     return;
   }
 
@@ -12388,6 +12415,76 @@ function handleTriageStatsFilterClick(event) {
       lotIds
     };
   loadTriageStats();
+}
+
+// Abre, na propria tela, a lista dos itens por tras do card clicado (mesmo periodo e lotes).
+function openTriageStatsDrill(title, filter) {
+  state.triageStatsDrill = { title, filter };
+  loadTriageStatsDrill({ scroll: true });
+}
+
+async function loadTriageStatsDrill({ scroll = false } = {}) {
+  const box = $("#triageStatsDrill");
+  const drill = state.triageStatsDrill;
+  if (!box || !drill) return;
+  box.classList.remove("hidden");
+  box.innerHTML = `<p class="muted">Carregando ${escapeHtml(drill.title)}...</p>`;
+  if (scroll) box.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const params = triageStatsQueryParams(normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter()));
+    for (const [key, value] of Object.entries(drill.filter)) params.set(key, value);
+    const data = await api(`/api/triage/stats/items?${params.toString()}`);
+    if (state.triageStatsDrill !== drill) return;
+    box.innerHTML = triageStatsDrillMarkup(drill, data);
+  } catch (error) {
+    box.innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function triageStatsDrillMarkup(drill, data = {}) {
+  const items = data.items || [];
+  const showCost = canViewCost();
+  const costCopy = showCost ? ` - Custo ${money(data.totalCost || 0)}` : "";
+  // A fila da triagem nao filtra por grade.
+  const queueButton = drill.filter.grade === undefined
+    ? '<button type="button" class="ghost" data-triage-stats-drill-queue>Abrir na fila da triagem</button>'
+    : "";
+  const truncated = Number(data.total || 0) > items.length
+    ? `<p class="muted">Mostrando os ${items.length} mais recentes. Baixe o XLSX para a lista completa.</p>`
+    : "";
+  const formatDate = (value) => (value ? new Date(value).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) : "-");
+  return `
+    <div class="triage-stats-block-heading">
+      <div>
+        <strong>${escapeHtml(drill.title)}</strong>
+        <span class="muted">${data.total || 0} itens - Venda ${money(data.totalValue || 0)}${costCopy}</span>
+      </div>
+      <div class="triage-stats-drill-actions">
+        ${queueButton}
+        <button type="button" class="secondary" data-triage-stats-drill-close>Fechar</button>
+      </div>
+    </div>
+    ${items.length ? `
+      <div class="operational-dashboard-table triage-stats-drill-table">
+        <div class="operational-dashboard-row operational-dashboard-head"><span>Codigo</span><span>Produto</span><span>Lote</span><span>Grade</span><span>Diagnostico</span><span>Destino</span><span>Operador</span><span>Venda</span><span>Entrada</span><span>Laudo</span></div>
+        ${items.map((item) => `
+          <div class="operational-dashboard-row">
+            <a href="/triagem/${encodeURIComponent(item.code)}" target="_blank" rel="noopener" title="Abrir laudo"><strong>${escapeHtml(item.code || "-")}</strong></a>
+            <span>${escapeHtml([item.sku, item.descricao].filter(Boolean).join(" - ") || "-")}</span>
+            <span>${escapeHtml(item.lotName || "-")}</span>
+            <span>${escapeHtml(item.grade || "-")}</span>
+            <span>${item.diagnosisCondition ? escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition)) : item.status === "diagnosticado" ? "Diagnosticado" : "Aguardando teste"}</span>
+            <span>${item.destination ? escapeHtml(destinationLabel(item.destination)) : "-"}</span>
+            <span>${escapeHtml(item.operatorName || "-")}</span>
+            <span>${money(item.salePrice || 0)}</span>
+            <span>${formatDate(item.createdAt)}</span>
+            <span>${formatDate(item.diagnosedAt)}</span>
+          </div>
+        `).join("")}
+      </div>
+      ${truncated}
+    ` : '<p class="muted">Nenhum item.</p>'}
+  `;
 }
 
 function openTriageWithFilters({ status = "", destination = "", diagnosisCondition = "" } = {}) {
@@ -12566,7 +12663,7 @@ function triageStatsGradesMarkup(grades = []) {
         const totalValue = Number(item.totalValue || 0);
         const width = max ? Math.max(6, Math.round((total / max) * 100)) : 0;
         return `
-          <div class="triage-destination-card triage-stats-static-card">
+          <button type="button" class="triage-destination-card" data-open-triage-grade="${escapeHtml(item.grade)}">
             <span class="triage-destination-top">
               <strong>${item.grade ? `Grade ${escapeHtml(item.grade)}` : "Sem grade"}</strong>
               <span>${total} ${total === 1 ? "item" : "itens"} (${all ? Math.round((total / all) * 100) : 0}%)</span>
@@ -12576,7 +12673,7 @@ function triageStatsGradesMarkup(grades = []) {
               <span>${money(totalValue)} venda</span>
               <span>${money(total ? totalValue / total : 0)} media</span>
             </span>
-          </div>
+          </button>
         `;
       }).join("")}
     </div>

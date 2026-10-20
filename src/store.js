@@ -1354,6 +1354,44 @@ export async function getTriageStats(userId, period = {}) {
   return stats;
 }
 
+// Itens por tras de um card das estatisticas, com o mesmo periodo e lotes do filtro.
+export async function listTriageStatsItems(userId, period = {}, filter = {}, limit = 300) {
+  const rows = (await listTriageStatsRows(userId, period)).filter((row) => matchesTriageStatsDrill(row, filter));
+  rows.sort((a, b) => String(b.item?.diagnosedAt || b.item?.createdAt || "").localeCompare(String(a.item?.diagnosedAt || a.item?.createdAt || "")));
+  return {
+    total: rows.length,
+    totalValue: roundMoney(rows.reduce((sum, row) => sum + Number(row.salePrice || 0), 0)),
+    totalCost: roundMoney(rows.reduce((sum, row) => sum + Number(row.costPrice || 0), 0)),
+    items: rows.slice(0, limit).map((row) => ({
+      code: row.item?.code || "",
+      sku: row.product?.sku || row.item?.sku || "",
+      descricao: row.item?.descricao || row.product?.descricao || "",
+      lotName: row.lot?.nomeArquivo || "",
+      grade: row.item?.gradeAvaliada || "",
+      status: isTriageItemCompleted(row.item || {}) ? "diagnosticado" : "aguardando_teste",
+      diagnosisCondition: row.item?.diagnosisCondition || "",
+      destination: row.item?.destination || "",
+      operatorName: row.user?.name || row.user?.email || "",
+      salePrice: roundMoney(row.salePrice || 0),
+      costPrice: roundMoney(row.costPrice || 0),
+      createdAt: row.item?.createdAt || null,
+      diagnosedAt: row.item?.diagnosedAt || null
+    }))
+  };
+}
+
+function matchesTriageStatsDrill(row, filter = {}) {
+  const item = row.item || {};
+  const upper = (value) => String(value || "").trim().toUpperCase();
+  if (filter.status === "diagnosticado" && !isTriageItemCompleted(item)) return false;
+  if (filter.status === "aguardando_teste" && isTriageItemCompleted(item)) return false;
+  if (filter.diagnosisCondition && upper(item.diagnosisCondition) !== upper(filter.diagnosisCondition)) return false;
+  if (filter.destination && upper(item.destination) !== upper(filter.destination)) return false;
+  // Grade vazia e um valor valido ("Sem grade"), por isso testa se o campo veio.
+  if (filter.grade !== undefined && filter.grade !== null && upper(item.gradeAvaliada) !== upper(filter.grade)) return false;
+  return true;
+}
+
 export async function listTriageStatsRows(userId, period = {}) {
   await ensureStore();
   const range = normalizeOperatorActivityRange(period);
