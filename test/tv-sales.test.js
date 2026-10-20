@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { buildTvSalesStats, canonicalSeller, createTvSalesSync } from "../src/tv-sales.js";
+import { buildManualTvSales, buildTvSalesStats, canonicalSeller, createTvSalesSync } from "../src/tv-sales.js";
 
 // 19/10/2026 14:00 em Sao Paulo
 const now = new Date("2026-10-19T17:00:00.000Z");
@@ -191,4 +191,41 @@ test("getTvOperatorRanking separa bipados/cadastrados, triagem e transferencia",
     else process.env.DATABASE_URL = originalDatabaseUrl;
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("vendas lancadas a mao viram o mesmo formato do painel", () => {
+  const sales = buildManualTvSales({
+    atualizadoEm: "19/10 14:00",
+    comparadoAteDia: 19,
+    hoje: { total: 300, pedidos: 3 },
+    contas: [
+      { conta: "JZ", atual: { total: 1000, pedidos: 10, pecas: 40 }, anterior: { total: 800, pedidos: 8 } },
+      { conta: "Ecommerce", atual: { total: 500, pedidos: 5 }, anterior: { total: 700, pedidos: 7 } }
+    ],
+    porDia: { atual: [100, 200], anterior: [50] },
+    canais: [
+      { nome: "Panobianco Ibiti", conta: "JZ", atual: 999 },
+      { nome: "Mercado Livre", conta: "Ecommerce", atual: 500, anterior: 700 },
+      { nome: "Atacado", conta: "JZ", atual: 1000, anterior: 800 }
+    ],
+    skus: [{ sku: "LOTE159", quantidade: 999 }, { sku: "CX1", nome: "Caixa", quantidade: 3, valor: 90 }],
+    vendedores: [{ nome: "Treinamento", total: 50 }, { nome: "fernando cavasane", total: 600, pedidos: 4 }]
+  }, now);
+
+  assert.equal(sales.manual, true);
+  assert.equal(sales.month, "2026-10");
+  assert.equal(sales.comparableUntil, "2026-09-19");
+  // Ecommerce sem pecas: o total de pecas fica em branco em vez de contar so a JZ.
+  assert.deepEqual(sales.current, { total: 1500, orders: 15, pieces: 0, ticket: 100 });
+  assert.equal(sales.previous.total, 1500);
+  assert.deepEqual(sales.todayTotals, { total: 300, orders: 3, pieces: 0, ticket: 100 });
+  assert.deepEqual(sales.accounts.map((row) => [row.account, row.connected, row.current]), [["principal", true, 1000], ["ecommerce", true, 500]]);
+  assert.equal(sales.daily.current.length, 31);
+  assert.deepEqual(sales.daily.current.slice(0, 3), [100, 200, 0]);
+  assert.equal(sales.daily.current[19], null);
+  assert.equal(sales.daily.previous.length, 30);
+  assert.deepEqual([sales.daily.previous[0], sales.daily.previous[18], sales.daily.previous[19]], [50, 0, null]);
+  assert.deepEqual(sales.channels.map((row) => [row.name, row.account]), [["Atacado", "principal"], ["Mercado Livre", "ecommerce"]]);
+  assert.deepEqual(sales.skus.map((row) => row.sku), ["CX1"]);
+  assert.deepEqual(sales.sellers.map((row) => [row.name, row.ticket]), [["Fernando Cavacane", 150]]);
 });

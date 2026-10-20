@@ -117,6 +117,10 @@
       .split-head b { font-size: 72px; color: var(--ink); font-weight: 600; }
       .split-sub { font-size: 26px; color: var(--ink-3); margin-top: 10px; }
       .today-strip { margin-top: 36px; background: var(--card); border-radius: 20px; padding: 34px 36px; display: flex; gap: 60px; align-items: baseline; font-size: 34px; color: var(--ink-2); }
+      .cust-groups { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+      .cust-group { background: var(--card); border-radius: 20px; padding: 28px 36px; display: flex; flex-direction: column; gap: 6px; font-size: 30px; color: var(--ink-2); }
+      .cust-group b { font-size: 64px; color: var(--ink); font-weight: 600; }
+      .cust-group small { font-size: 26px; color: var(--ink-3); }
       .today-strip b { font-size: 72px; color: var(--ink); font-weight: 600; margin-left: 12px; }
       .sync-note { font-size: 24px; color: var(--warn); margin-top: 16px; }
       .legend { display: flex; gap: 36px; font-size: 28px; color: var(--ink-2); margin-bottom: 10px; }
@@ -193,6 +197,7 @@
       <section class="screen" data-screen="canais"><div id="salesChannels"></div></section>
       <section class="screen" data-screen="skus"><div id="salesSkus" style="height:100%"></div></section>
       <section class="screen" data-screen="vendedores"><div id="salesSellers"></div></section>
+      <section class="screen" data-screen="clientes"><div id="salesCustomers"></div></section>
       <section class="screen" data-screen="operadores"><div id="operators" style="height:100%"></div></section>
       <section class="screen" data-screen="producao">
         <div class="kpis" id="kpis"></div>
@@ -227,6 +232,7 @@
         canais: "Vendas por canal",
         skus: "SKUs mais vendidos",
         vendedores: "Ranking de vendedores",
+        clientes: "Maiores clientes do atacado",
         operadores: "Ranking de operadores",
         producao: "Produção"
       };
@@ -362,9 +368,9 @@
         const syncing = sales.pendingDetails > 0;
         const cards = [
           { label: "Valor total", value: brl(c.total), now: c.total, before: p.total, small: c.total >= 1e7 },
-          { label: "Pedidos", value: nf(c.orders), now: c.orders, before: p.orders },
-          { label: "Peças vendidas", value: nf(c.pieces), now: c.pieces, before: p.pieces, syncing },
-          { label: "Ticket médio", value: brl(c.ticket), now: c.ticket, before: p.ticket }
+          { label: "Pedidos", value: sales.manual && !c.orders ? "—" : nf(c.orders), now: c.orders, before: p.orders },
+          { label: "Peças vendidas", value: sales.manual && !c.pieces ? "—" : nf(c.pieces), now: c.pieces, before: p.pieces, syncing },
+          { label: "Ticket médio", value: sales.manual && !c.ticket ? "—" : brl(c.ticket), now: c.ticket, before: p.ticket }
         ];
         const accounts = sales.accounts.filter((row) => row.connected);
         $("salesSummary").innerHTML = `
@@ -383,7 +389,8 @@
               <div class="split-sub">${c.total ? Math.round((row.current / c.total) * 100) : 0}% do total do mês</div>
             </div>`).join("")}
           </div>
-          <div class="today-strip">Hoje <span>vendido<b>${brl(sales.todayTotals.total)}</b></span><span>pedidos<b>${nf(sales.todayTotals.orders)}</b></span><span>ticket<b>${brl(sales.todayTotals.ticket)}</b></span></div>
+          ${sales.manual && !sales.todayTotals.total ? "" : `<div class="today-strip">Hoje <span>vendido<b>${brl(sales.todayTotals.total)}</b></span>${sales.manual && !sales.todayTotals.orders ? "" : `<span>pedidos<b>${nf(sales.todayTotals.orders)}</b></span><span>ticket<b>${brl(sales.todayTotals.ticket)}</b></span>`}</div>`}
+          ${sales.manual ? `<div class="sync-note">Números copiados do Bling${sales.updatedAt ? ` · atualizado em ${esc(sales.updatedAt)}` : ""}</div>` : ""}
           ${syncing ? `<div class="sync-note">Sincronizando o histórico com o Bling: faltam ${nf(sales.pendingDetails)} pedidos. Peças, SKUs e vendedores ficam completos ao terminar.</div>` : ""}`;
       }
 
@@ -392,10 +399,10 @@
         const cur = sales.daily.current;
         const prev = sales.daily.previous;
         const days = Math.max(cur.length, prev.length);
-        const max = Math.max(1, ...cur.filter((v) => v !== null), ...prev) * 1.1;
+        const max = Math.max(1, ...cur.filter((v) => v !== null), ...prev.filter((v) => v !== null)) * 1.1;
         const x = (i) => L + (i / Math.max(1, days - 1)) * (W - L - 20);
         const y = (v) => T + (1 - v / max) * (H - T - B);
-        const prevLine = prev.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+        const prevLine = prev.map((v, i) => (v === null ? null : `${x(i)},${y(v)}`)).filter(Boolean).join(" ");
         const curPoints = cur.map((v, i) => (v === null ? null : [x(i), y(v)])).filter(Boolean);
         const curLine = curPoints.map((p) => p.join(",")).join(" ");
         const area = curPoints.length ? `${curPoints[0][0]},${y(0)} ${curLine} ${curPoints[curPoints.length - 1][0]},${y(0)}` : "";
@@ -407,7 +414,7 @@
         const labels = Array.from({ length: days }, (_, i) => i).filter((i) => i % 2 === 0 || i === days - 1)
           .map((i) => `<text x="${x(i)}" y="${H - 12}" fill="#898781" font-size="22" text-anchor="middle">${i + 1}</text>`).join("");
         const last = curPoints[curPoints.length - 1];
-        const prevTotal = prev.reduce((sum, v) => sum + v, 0);
+        const prevTotal = prev.reduce((sum, v) => sum + (v || 0), 0);
         $("salesDaily").innerHTML = `
           <div class="chart-wrap">
             <div class="legend"><span><i style="background:var(--green)"></i>${esc(monthName(sales.month))} (atual)</span><span><i style="background:#5d7d6a"></i>${esc(monthName(sales.previousMonth))} (anterior)</span></div>
@@ -421,8 +428,8 @@
             </svg>
             <div class="chart-totals">
               <span>${esc(monthName(sales.month))} até hoje<b>${brl(sales.current.total)}</b></span>
-              <span>${esc(monthName(sales.previousMonth))} inteiro<b>${brl(prevTotal)}</b></span>
-              <span>hoje<b>${brl(sales.todayTotals.total)}</b></span>
+              <span>${esc(monthName(sales.previousMonth))} ${sales.manual ? `até dia ${Number(sales.comparableUntil.slice(8, 10))}` : "inteiro"}<b>${brl(prevTotal)}</b></span>
+              ${sales.manual && !sales.todayTotals.total ? "" : `<span>hoje<b>${brl(sales.todayTotals.total)}</b></span>`}
             </div>
           </div>`;
       }
@@ -485,6 +492,32 @@
           ${sales.pendingDetails ? `<div class="sync-note">Sincronizando com o Bling: faltam ${nf(sales.pendingDetails)} pedidos.</div>` : ""}`;
       }
 
+      function renderCustomers(customers) {
+        const rows = customers.rows;
+        const sub = (row) => `${nf(row.orders)} ${row.orders === 1 ? "pedido" : "pedidos"}${row.lastPurchase ? ` · última compra ${esc(row.lastPurchase)}` : ""}`;
+        $("salesCustomers").innerHTML = `
+          <div class="podium">${rows.slice(0, 3).map((row, index) => `
+            <div class="pod p${index + 1}">
+              <div class="pod-pos">${index + 1}º lugar</div>
+              <div class="pod-name">${esc(row.name)}</div>
+              <div class="pod-value">${brl(row.total)}</div>
+              <div class="pod-sub">${sub(row)}</div>
+            </div>`).join("")}
+          </div>
+          <div class="rank-list">${rows.slice(3).map((row, index) => `
+            <div class="rank-row">
+              <span class="muted">${index + 4}º</span>
+              <span class="who">${esc(row.name)}<small>${sub(row)}</small></span>
+              <b>${brl(row.total)}</b>
+            </div>`).join("")}
+          </div>
+          ${customers.groups.length ? `<div class="cust-groups">${customers.groups.map((group) => {
+            const share = Math.round((group.total / customers.groups.reduce((sum, item) => sum + item.total, 0)) * 100);
+            return `<div class="cust-group"><span>${group.key === "novos" ? "Clientes novos" : "Recorrentes"} · ${share}%</span><b>${brl(group.total)}</b><small>${nf(group.customers)} clientes · ticket ${brl(group.ticket)}</small></div>`;
+          }).join("")}</div>` : ""}
+          ${customers.period ? `<div class="sync-note">Período: ${esc(customers.period)}</div>` : ""}`;
+      }
+
       function renderOperators(operators) {
         const labels = { conference: "Bipados e cadastrados", triage: "Triagem", transfer: "Transferência" };
         const order = ["conference", "triage", "transfer"];
@@ -512,13 +545,35 @@
         const sales = body.sales;
         const hasSales = sales && sales.accounts.some((row) => row.connected);
         const next = [];
-        const anyOrders = sales && (sales.current.orders > 0 || sales.daily.previous.some((value) => value > 0));
+        const anyOrders = sales && (sales.current.orders > 0 || sales.current.total > 0 || sales.daily.previous.some((value) => value > 0));
         if (hasSales) {
           renderSummary(sales);
           next.push("resumo");
         }
         // Sem nenhum pedido lido, fica so o resumo (com o aviso do Bling) em vez de graficos zerados.
-        if (hasSales && anyOrders) {
+        if (hasSales && anyOrders && sales.manual) {
+          // Lancamento manual: so as telas que vieram preenchidas dos prints do Bling.
+          if (sales.daily.current.some((value) => value > 0) || sales.daily.previous.some((value) => value > 0)) {
+            renderDaily(sales);
+            next.push("dia");
+          }
+          if (sales.channels.length) {
+            renderChannels(sales);
+            next.push("canais");
+          }
+          if (sales.skus.length) {
+            renderSkus(sales);
+            next.push("skus");
+          }
+          if (sales.sellers.length) {
+            renderSellers(sales);
+            next.push("vendedores");
+          }
+          if (sales.customers?.rows.length || sales.customers?.groups.length) {
+            renderCustomers(sales.customers);
+            next.push("clientes");
+          }
+        } else if (hasSales && anyOrders) {
           renderDaily(sales);
           renderChannels(sales);
           renderSkus(sales);

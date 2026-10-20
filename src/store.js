@@ -1856,6 +1856,15 @@ export async function saveTvSalesCache(userId, account, value) {
   await writeDb(db);
 }
 
+// Vendas lancadas a mao no painel (copiadas do Bling); null desliga e volta para a leitura automatica.
+export async function getTvSalesManual(userId) {
+  return getTvSalesCache(userId, "manual");
+}
+
+export async function saveTvSalesManual(userId, value) {
+  return saveTvSalesCache(userId, "manual", value || null);
+}
+
 // Ranking de operadores do painel: mesmas etapas da equipe no dashboard, hoje e no mes.
 const TV_OPERATOR_RANKING_LIMIT = 8;
 

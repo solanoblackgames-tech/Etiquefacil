@@ -364,3 +364,130 @@ export function createTvSalesSync({
     run: start
   };
 }
+
+// Vendas lancadas a mao (copiadas dos dashboards do Bling) enquanto a leitura automatica nao funciona.
+// Formato do lancamento: { atualizadoEm, mes, comparadoAteDia, hoje, contas, porDia, canais, skus, vendedores, clientes }
+const MANUAL_ACCOUNTS = { jz: "principal", principal: "principal", ecommerce: "ecommerce", pjj: "ecommerce" };
+
+function manualAccount(value) {
+  return MANUAL_ACCOUNTS[normalizeName(value)] || "principal";
+}
+
+function manualTotals(value = {}) {
+  const total = round(value.total);
+  const orders = Math.round(Number(value.pedidos || 0));
+  return { total, orders, pieces: Math.round(Number(value.pecas || 0)), ticket: orders ? round(total / orders) : 0 };
+}
+
+function manualDaily(values, length, fillUntil) {
+  return Array.from({ length }, (_, index) => {
+    const value = Array.isArray(values) ? values[index] : undefined;
+    if (value === null || value === undefined || value === "") return index + 1 <= fillUntil ? 0 : null;
+    return round(value);
+  });
+}
+
+export function buildManualTvSales(manual, now = new Date()) {
+  if (!manual || typeof manual !== "object") return null;
+  const period = tvSalesPeriod(now);
+  const month = /^\d{4}-\d{2}$/.test(String(manual.mes || "")) ? manual.mes : period.month;
+  const prev = previousMonth(month);
+  const today = month === period.month ? period.today : `${month}-${String(daysInMonth(month)).padStart(2, "0")}`;
+  const dayOfMonth = Number(today.slice(8, 10));
+  const comparableDay = Math.min(Number(manual.comparadoAteDia) || dayOfMonth, daysInMonth(prev));
+
+  const accounts = TV_SALES_ACCOUNTS.map(({ account, label }) => {
+    const rows = (manual.contas || []).filter((row) => manualAccount(row.conta) === account);
+    if (!rows.length) return null;
+    const sum = (key, field) => rows.reduce((total, row) => total + Number(row[key]?.[field] || 0), 0);
+    return {
+      account,
+      label,
+      connected: true,
+      error: "",
+      current: { total: sum("atual", "total"), pedidos: sum("atual", "pedidos"), pecas: sum("atual", "pecas") },
+      previous: { total: sum("anterior", "total"), pedidos: sum("anterior", "pedidos"), pecas: sum("anterior", "pecas") }
+    };
+  }).filter(Boolean);
+  // Conta com valor mas sem o numero de pedidos (ou pecas) deixa o total desse campo em branco.
+  const add = (key) => {
+    const sum = { total: 0, pedidos: 0, pecas: 0 };
+    for (const row of accounts) for (const field of Object.keys(sum)) sum[field] += row[key][field];
+    for (const field of ["pedidos", "pecas"]) if (accounts.some((row) => row[key].total && !row[key][field])) sum[field] = 0;
+    return sum;
+  };
+
+  return {
+    manual: true,
+    updatedAt: String(manual.atualizadoEm || ""),
+    generatedAt: now.toISOString(),
+    today,
+    month,
+    previousMonth: prev,
+    comparableUntil: `${prev}-${String(comparableDay).padStart(2, "0")}`,
+    current: manualTotals(add("current")),
+    previous: manualTotals(add("previous")),
+    todayTotals: manualTotals(manual.hoje),
+    accounts: accounts.map((row) => ({ ...row, current: round(row.current.total), previous: round(row.previous.total) })),
+    daily: {
+      current: manualDaily(manual.porDia?.atual, daysInMonth(month), dayOfMonth),
+      // O mes anterior so vai ate o dia comparado: os prints do Bling param no mesmo dia do mes atual.
+      previous: manualDaily(manual.porDia?.anterior, daysInMonth(prev), comparableDay).map((value, index) => (index < comparableDay ? value || 0 : null))
+    },
+    channels: (manual.canais || [])
+      .filter((row) => !isExcludedChannel(row.nome))
+      .map((row) => {
+        const account = manualAccount(row.conta);
+        return {
+          name: String(row.nome || ""),
+          account,
+          label: TV_SALES_ACCOUNTS.find((item) => item.account === account).label,
+          current: round(row.atual),
+          previous: round(row.anterior)
+        };
+      })
+      .filter((row) => row.current || row.previous)
+      .sort((a, b) => b.current - a.current || b.previous - a.previous),
+    skus: (manual.skus || [])
+      .filter((row) => !EXCLUDED_SKUS.has(row.sku))
+      .map((row) => ({
+        sku: String(row.sku || ""),
+        name: String(row.nome || row.sku || ""),
+        quantity: Math.round(Number(row.quantidade || 0)),
+        value: round(row.valor),
+        account: manualAccount(row.conta),
+        productId: "",
+        image: String(row.imagem || "")
+      }))
+      .sort((a, b) => b.quantity - a.quantity || b.value - a.value)
+      .slice(0, TOP_LIMIT),
+    sellers: (manual.vendedores || [])
+      .map((row) => ({ row, seller: canonicalSeller(row.nome) }))
+      .filter(({ seller }) => seller)
+      .map(({ row, seller }) => {
+        const orders = Math.round(Number(row.pedidos || 0));
+        const total = round(row.total);
+        return { name: seller.name, noSeller: !seller.key, total, orders, today: round(row.hoje), ticket: orders ? round(total / orders) : 0 };
+      })
+      .sort((a, b) => b.total - a.total),
+    // Ranking de clientes do atacado, com o periodo escrito como veio do Bling.
+    customers: {
+      period: String(manual.clientes?.periodo || ""),
+      // Recorrentes x novos: { total, clientes, ticket } de cada grupo.
+      groups: ["recorrentes", "novos"].map((key) => {
+        const group = manual.clientes?.[key] || {};
+        return { key, total: round(group.total), customers: Math.round(Number(group.clientes || 0)), ticket: round(group.ticket) };
+      }).filter((group) => group.total),
+      rows: (manual.clientes?.lista || [])
+        .map((row) => {
+          const orders = Math.round(Number(row.pedidos || 0));
+          const total = round(row.valor);
+          return { name: String(row.nome || ""), orders, total, ticket: orders ? round(total / orders) : 0, lastPurchase: String(row.ultimaCompra || "") };
+        })
+        .filter((row) => row.name && row.total)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 13)
+    },
+    pendingDetails: 0
+  };
+}

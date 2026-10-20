@@ -36,7 +36,7 @@ import {
   updateBlingProductFromTriage,
   createBlingSalesReader
 } from "./bling-api.js";
-import { createTvSalesSync } from "./tv-sales.js";
+import { buildManualTvSales, createTvSalesSync } from "./tv-sales.js";
 import { BLING_STOCK_TRANSFER_HEADERS, buildBlingCsv, buildBlingStockEntryCsv, buildBlingStockTransferRows, importSpecialistWorkbook, importUnifiedLotWorkbook, parseNumber, roundMoney } from "./domain.js";
 import { getBlingTokenRateLimiter } from "./bling-rate-limit.js";
 import { isBlingAuthorizationFailure, withBlingAuthorizationFailure } from "./bling-connection-status.js";
@@ -188,6 +188,8 @@ import {
   getTvDashboardStats,
   getTvOperatorRanking,
   getTvSalesCache,
+  getTvSalesManual,
+  saveTvSalesManual,
   saveTvSalesCache,
   getTvDashboardToken,
   rotateTvDashboardToken,
@@ -838,6 +840,35 @@ app.post("/api/dashboard/tv-link", requireAuth, requireOwner, async (req, res) =
   }
 });
 
+// Vendas do painel lancadas a mao (copiadas dos dashboards do Bling) enquanto a leitura automatica nao funciona.
+app.get("/api/dashboard/tv-sales-manual", requireAuth, requireOwner, async (req, res) => {
+  try {
+    res.json({ manual: await getTvSalesManual(workspaceUserId(req)) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.put("/api/dashboard/tv-sales-manual", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const manual = req.body?.manual ?? null;
+    if (manual !== null && (typeof manual !== "object" || Array.isArray(manual))) {
+      return res.status(400).json({ error: "Lancamento invalido: envie um objeto JSON." });
+    }
+    const userId = workspaceUserId(req);
+    await saveTvSalesManual(userId, manual);
+    tvDashboardCache.delete(userId);
+    res.json({ manual, preview: buildManualTvSales(manual) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get("/painel-manual", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(__dirname, "..", "public", "tv-manual.html"));
+});
+
 // Painel da TV: acesso somente leitura pelo token do link, sem login.
 const tvDashboardCache = new Map();
 const TV_DASHBOARD_CACHE_MS = 10 * 1000;
@@ -856,13 +887,19 @@ app.get("/api/public/tv/:token", async (req, res) => {
     const userId = await findUserIdByTvDashboardToken(req.params.token);
     if (!userId) return res.status(404).json({ error: "Link do painel invalido ou substituido." });
     res.setHeader("Cache-Control", "no-store, max-age=0");
-    const sales = tvSalesSync.touch(userId);
-    const cached = tvDashboardCache.get(userId);
-    if (cached && Date.now() - cached.at < TV_DASHBOARD_CACHE_MS) return res.json({ ...cached.payload, sales });
-    const [stats, operators] = await Promise.all([getTvDashboardStats(userId), getTvOperatorRanking(userId)]);
-    const payload = { stats, operators };
-    tvDashboardCache.set(userId, { at: Date.now(), payload });
-    res.json({ ...payload, sales });
+    let cached = tvDashboardCache.get(userId);
+    if (!cached || Date.now() - cached.at >= TV_DASHBOARD_CACHE_MS) {
+      const [stats, operators, manualSales] = await Promise.all([
+        getTvDashboardStats(userId),
+        getTvOperatorRanking(userId),
+        getTvSalesManual(userId)
+      ]);
+      cached = { at: Date.now(), payload: { stats, operators }, manualSales };
+      tvDashboardCache.set(userId, cached);
+    }
+    // Com vendas lancadas a mao, o painel nao consulta o Bling.
+    const sales = cached.manualSales ? buildManualTvSales(cached.manualSales) : tvSalesSync.touch(userId);
+    res.json({ ...cached.payload, sales });
   } catch (error) {
     sendError(res, error);
   }
