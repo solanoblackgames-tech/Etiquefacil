@@ -5,12 +5,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
+  assertValidWmsPosition,
   buildWmsUnit,
   extractTriageCode,
   isValidWmsPosition,
   reserveWmsUnitsFifo,
   resolveWmsPick,
-  suggestWmsLocations
+  suggestWmsLocations,
+  translateJzWmsLocation
 } from "../src/wms-units.js";
 
 const DEPOSIT = { depositName: "Ecommerce", prefix: "ECOM", rowsConfig: [{ label: "A", columns: 2, positions: 2 }] };
@@ -30,6 +32,22 @@ test("only positions that exist in the deposit grid are valid", () => {
   assert.equal(isValidWmsPosition(DEPOSIT, "ecom-a-1-1"), true);
   assert.equal(isValidWmsPosition(DEPOSIT, "ECOM-A-3-1"), false);
   assert.equal(isValidWmsPosition(DEPOSIT, "ECOM-Z-1-1"), false);
+});
+
+test("old JZ Separacao position labels are read as the deposit position", () => {
+  const b2b = { depositName: "VENDA B2B", prefix: "B2B", rowsConfig: [
+    { label: "A", columns: 26, positions: 4 }, { label: "B", columns: 20, positions: 4 }, { label: "C", columns: 20, positions: 4 },
+    { label: "D", columns: 11, positions: 4 }, { label: "E", columns: 15, positions: 4 }, { label: "F", columns: 15, positions: 4 },
+    { label: "PATIO", columns: 1, positions: 1 }
+  ] };
+  assert.equal(assertValidWmsPosition(b2b, "RUA B | POSICAO 105 | ANDAR 1"), "B2B-B-1-1");
+  assert.equal(assertValidWmsPosition(b2b, "Rua A POS 001"), "B2B-A-1-1");
+  assert.equal(assertValidWmsPosition(b2b, "RUA A | POSIÇÃO 104 | ANDAR 1"), "B2B-A-26-4");
+  assert.equal(assertValidWmsPosition(b2b, "RUA D POS 306"), "B2B-D-11-2");
+  assert.equal(assertValidWmsPosition(b2b, "Chao do Patio"), "B2B-PATIO-1-1");
+  assert.equal(assertValidWmsPosition(b2b, "b2b-c-2-3"), "B2B-C-2-3");
+  assert.equal(translateJzWmsLocation(b2b, "RUA B POS 104"), "");
+  assert.throws(() => assertValidWmsPosition(b2b, "RUA G POS 500"), /nao existe/);
 });
 
 test("FIFO reserves inventory units first, then the oldest laudo", () => {

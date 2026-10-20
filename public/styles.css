@@ -8482,6 +8482,11 @@ h3 {
   margin: 0;
 }
 
+.wms-form-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .wms-stock-actions {
   display: flex;
   flex-wrap: wrap;
@@ -8550,6 +8555,126 @@ h3 {
   font-size: 13px;
   margin: 4px 0;
 }
+
+/* Sem isso a tabela de saldos (min-width) alarga a tela inteira no coletor e o mapa sai da tela. */
+#stockTab {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.wms-map {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.wms-map-heading {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.wms-map-heading label {
+  min-width: 200px;
+}
+
+.wms-map-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wms-map-rows small {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.wms-map > p {
+  font-size: 13px;
+  margin: 0;
+}
+
+.wms-map-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+}
+
+.wms-map-column {
+  display: grid;
+  gap: 4px;
+}
+
+.wms-map-column-label {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.wms-map-cell {
+  background: #f1f5f9;
+  border: 1px solid #d9e1e7;
+  border-radius: 6px;
+  color: #475569;
+  display: grid;
+  font-size: 11px;
+  gap: 1px;
+  line-height: 1.2;
+  min-height: 52px;
+  padding: 4px;
+  text-align: center;
+}
+
+.wms-map-cell strong {
+  font-size: 12px;
+}
+
+.wms-map-cell small {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wms-map-cell.stored {
+  background: #d9efec;
+  border-color: #0f766e;
+  color: #0b5f59;
+}
+
+.wms-map-cell.reserved {
+  background: #fbeee3;
+  border-color: #a35c00;
+  color: #8a3d05;
+}
+
+.wms-map-legend {
+  color: #475569;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 14px;
+}
+
+.wms-map-legend span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.wms-map-legend i {
+  border: 1px solid #d9e1e7;
+  border-radius: 3px;
+  display: inline-block;
+  height: 12px;
+  width: 12px;
+}
+
+.wms-map-legend i.empty { background: #f1f5f9; }
+.wms-map-legend i.stored { background: #d9efec; border-color: #0f766e; }
+.wms-map-legend i.reserved { background: #fbeee3; border-color: #a35c00; }
 
 .wms-suggestion {
   color: #0f766e;

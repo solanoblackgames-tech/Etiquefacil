@@ -43,8 +43,27 @@ export function isValidWmsPosition(depositConfig, location) {
   return codes.has(normalizeWmsLocation(location));
 }
 
+// Etiquetas de posicao do WMS do JZ Separacao: numeracao corrida entre as ruas, 4 niveis por coluna.
+// Ex: "RUA B | POSICAO 105 | ANDAR 1" = rua B, coluna 1, nivel 1 (o ANDAR do JZ e sempre 1).
+const JZ_STREET_STARTS = { A: 1, B: 105, C: 185, D: 265, E: 307, F: 367 };
+const JZ_STREET_ENDS = { A: 104, B: 184, C: 264, D: 306, E: 366, F: 426 };
+
+export function translateJzWmsLocation(depositConfig, value) {
+  const plain = normalizeWmsCode(value).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]/g, "");
+  if (!depositConfig?.prefix || !plain) return "";
+  if (["PATIO", "CHAODOPATIO", "CHAOPATIO"].includes(plain)) return `${depositConfig.prefix}-PATIO-1-1`;
+  const match = plain.match(/^RUA([A-F])(?:POSICAO|POS|P)(\d{1,3})(?:ANDAR\d)?$/);
+  if (!match) return "";
+  const street = match[1];
+  const position = Number(match[2]);
+  if (position < JZ_STREET_STARTS[street] || position > JZ_STREET_ENDS[street]) return "";
+  const offset = position - JZ_STREET_STARTS[street];
+  return `${depositConfig.prefix}-${street}-${Math.floor(offset / 4) + 1}-${(offset % 4) + 1}`;
+}
+
 export function assertValidWmsPosition(depositConfig, location) {
-  const normalized = normalizeWmsLocation(location);
+  const raw = normalizeWmsLocation(location);
+  const normalized = isValidWmsPosition(depositConfig, raw) ? raw : translateJzWmsLocation(depositConfig, location) || raw;
   if (!normalized) throw new Error("Informe a posicao WMS.");
   if (!depositConfig) throw new Error("Deposito sem WMS configurado.");
   if (!isValidWmsPosition(depositConfig, normalized)) {

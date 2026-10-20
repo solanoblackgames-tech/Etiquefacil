@@ -1162,7 +1162,13 @@ app.get("/api/wms/stock", requireAuth, requireTransferViewOrAcceptanceAccess, as
       listWmsStock(userId, { depositName: req.query.deposit || "", search: req.query.q || "" }),
       getUserTriageTransferSettings(userId)
     ]);
-    res.json({ ...stock, deposits: (settings.wmsDeposits || []).map((deposit) => deposit.depositName).filter(Boolean) });
+    const wmsDeposits = (settings.wmsDeposits || []).filter((deposit) => deposit.depositName);
+    res.json({
+      ...stock,
+      deposits: wmsDeposits.map((deposit) => deposit.depositName),
+      // Grade de cada deposito para o mapa de posicoes.
+      layouts: wmsDeposits.map((deposit) => ({ depositName: deposit.depositName, prefix: deposit.prefix, rowsConfig: deposit.rowsConfig || [] }))
+    });
   } catch (error) {
     sendError(res, error);
   }

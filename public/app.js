@@ -471,6 +471,13 @@ function bindEvents() {
   $("#blingEcommerceDelete")?.addEventListener("click", deleteBlingEcommerceAccount);
   $("#blingEcommerceAppForm")?.addEventListener("submit", saveBlingEcommerceApp);
   $("#stockTab")?.addEventListener("click", handleWmsStockClick);
+  $("#stockTab")?.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-wms-map-deposit]");
+    if (!select) return;
+    state.wmsMap = { ...(state.wmsMap || {}), depositName: select.value, row: "" };
+    $("#wmsStockFilterForm").elements.deposit.value = select.value;
+    loadWmsMap();
+  });
   $("#expeditionDetail")?.addEventListener("click", handleExpeditionDetailClick);
   $("#triageCreateForm").addEventListener("submit", createTriageItem);
   $("#securitySealsForm").addEventListener("submit", generateSecuritySealsPdf);
@@ -8203,6 +8210,7 @@ async function loadWmsStock() {
     state.wmsCompare = null;
     renderWmsStockDepositSelect();
     renderWmsStock();
+    if (state.wmsStockPanel === "map") loadWmsMap();
   } catch (error) {
     showWmsStockMessage(error.message, false);
   }
@@ -8289,6 +8297,9 @@ function openWmsStockPanel(panel) {
         <button type="submit">Reenderecar</button>
       </form>
     `;
+  } else if (state.wmsStockPanel === "map") {
+    target.innerHTML = '<p class="muted">Carregando mapa...</p>';
+    loadWmsMap();
   } else if (state.wmsStockPanel === "movements") {
     target.innerHTML = '<p class="muted">Carregando movimentacoes...</p>';
     loadWmsMovements();
@@ -8344,6 +8355,7 @@ async function handleWmsStockSubmit(event) {
   const button = form.querySelector("button[type='submit']");
   const payload = Object.fromEntries(new FormData(form).entries());
   button.disabled = true;
+  form.querySelector("[data-wms-form-error]")?.remove();
   try {
     if (form.id === "wmsInventoryForm") {
       const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -8365,12 +8377,149 @@ async function handleWmsStockSubmit(event) {
   } catch (error) {
     playTransferErrorSound();
     showWmsStockMessage(error.message, false);
+    // No coletor a mensagem do topo fica fora da tela: repete o erro logo abaixo do botao.
+    let inline = form.querySelector("[data-wms-form-error]");
+    if (!inline) {
+      form.insertAdjacentHTML("beforeend", '<p class="message wms-form-error" data-wms-form-error></p>');
+      inline = form.querySelector("[data-wms-form-error]");
+    }
+    inline.textContent = error.message;
+    inline.scrollIntoView({ block: "nearest" });
   } finally {
     button.disabled = false;
   }
 }
 
+// Mapa por rua: cada coluna mostra os niveis de cima (maior) para baixo, coloridos pela ocupacao.
+// Busca o deposito inteiro, sem o filtro de busca, para o mapa mostrar todas as posicoes.
+async function loadWmsMap() {
+  const layouts = state.wmsStock?.layouts || [];
+  const filterDeposit = $("#wmsStockFilterForm")?.elements.deposit.value || "";
+  const current = state.wmsMap?.depositName || "";
+  const depositName = [filterDeposit, current].find((name) => name && layouts.some((layout) => layout.depositName === name))
+    || layouts[0]?.depositName || "";
+  if (!depositName) {
+    $("#wmsStockPanel").innerHTML = '<p class="muted">Nenhum deposito WMS configurado. Monte as ruas em Perfil &gt; Depositos WMS.</p>';
+    return;
+  }
+  try {
+    const stock = await api(`/api/wms/stock?deposit=${encodeURIComponent(depositName)}`);
+    const layout = (stock.layouts || layouts).find((item) => item.depositName === depositName) || layouts[0];
+    const rowLabels = (layout.rowsConfig || []).map((row) => row.label);
+    state.wmsMap = {
+      depositName,
+      layout,
+      units: stock.units || [],
+      row: rowLabels.includes(state.wmsMap?.row) && current === depositName ? state.wmsMap.row : rowLabels[0] || ""
+    };
+    renderWmsMap();
+  } catch (error) {
+    $("#wmsStockPanel").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function wmsMapOccupancy(units) {
+  const byLocation = new Map();
+  for (const unit of units) {
+    if (unit.status === "shipped") continue;
+    const entry = byLocation.get(unit.location) || { stored: 0, reserved: 0, skus: new Set() };
+    if (unit.status === "stored") entry.stored += 1;
+    else entry.reserved += 1;
+    if (unit.sku) entry.skus.add(unit.sku);
+    byLocation.set(unit.location, entry);
+  }
+  return byLocation;
+}
+
+function renderWmsMap() {
+  const map = state.wmsMap;
+  const target = $("#wmsStockPanel");
+  if (!map || !target || state.wmsStockPanel !== "map") return;
+  const layouts = state.wmsStock?.layouts || [];
+  const rows = map.layout.rowsConfig || [];
+  const row = rows.find((item) => item.label === map.row) || rows[0];
+  const occupancy = wmsMapOccupancy(map.units);
+  const prefix = map.layout.prefix;
+  const rowCodes = (label) => {
+    const config = rows.find((item) => item.label === label);
+    const codes = [];
+    for (let column = 1; column <= (config?.columns || 0); column += 1) {
+      for (let level = 1; level <= (config?.positions || 0); level += 1) codes.push(`${prefix}-${label}-${column}-${level}`);
+    }
+    return codes;
+  };
+  const used = (codes) => codes.filter((code) => occupancy.has(code)).length;
+  const columns = [];
+  for (let column = 1; column <= (row?.columns || 0); column += 1) {
+    const levels = [];
+    for (let level = row.positions; level >= 1; level -= 1) {
+      const code = `${prefix}-${row.label}-${column}-${level}`;
+      const entry = occupancy.get(code);
+      const kind = !entry ? "empty" : entry.stored ? "stored" : "reserved";
+      const skus = entry ? [...entry.skus] : [];
+      const title = entry
+        ? `${code}: ${entry.stored} livre(s), ${entry.reserved} reservada(s) - ${skus.join(", ")}`
+        : `${code}: vazia`;
+      levels.push(`
+        <button type="button" class="wms-map-cell ${kind}" data-wms-map-location="${escapeHtml(code)}" title="${escapeHtml(title)}">
+          <strong>N${level}</strong>
+          <span>${entry ? `${entry.stored + entry.reserved} un` : "vazia"}</span>
+          ${skus.length ? `<small>${escapeHtml(skus[0])}${skus.length > 1 ? ` +${skus.length - 1}` : ""}</small>` : ""}
+        </button>
+      `);
+    }
+    columns.push(`
+      <div class="wms-map-column">
+        <span class="wms-map-column-label">C${String(column).padStart(2, "0")}</span>
+        ${levels.join("")}
+      </div>
+    `);
+  }
+  const allCodes = rows.flatMap((item) => rowCodes(item.label));
+  const currentCodes = row ? rowCodes(row.label) : [];
+  target.innerHTML = `
+    <div class="wms-map">
+      <div class="wms-map-heading">
+        <label>Deposito
+          <select data-wms-map-deposit>
+            ${layouts.map((layout) => `<option value="${escapeHtml(layout.depositName)}" ${layout.depositName === map.depositName ? "selected" : ""}>${escapeHtml(layout.depositName)}</option>`).join("")}
+          </select>
+        </label>
+        <span class="muted">${used(allCodes)} de ${allCodes.length} posicoes ocupadas no deposito</span>
+      </div>
+      <div class="wms-map-rows">
+        ${rows.map((item) => {
+          const codes = rowCodes(item.label);
+          return `<button type="button" class="${item.label === row?.label ? "" : "ghost"}" data-wms-map-row="${escapeHtml(item.label)}">Rua ${escapeHtml(item.label)} <small>${used(codes)}/${codes.length}</small></button>`;
+        }).join("")}
+      </div>
+      ${row ? `<p class="muted">Rua ${escapeHtml(row.label)}: ${row.columns} coluna(s), ${row.positions} nivel(is), ${used(currentCodes)} de ${currentCodes.length} ocupadas. Toque numa posicao para ver o saldo dela.</p>` : ""}
+      <div class="wms-map-grid">${columns.join("")}</div>
+      <div class="wms-map-legend">
+        <span><i class="empty"></i>Vazia</span>
+        <span><i class="stored"></i>Com saldo livre</span>
+        <span><i class="reserved"></i>So reservada para pedido</span>
+      </div>
+    </div>
+  `;
+}
+
 async function handleWmsStockClick(event) {
+  const mapRow = event.target.closest("[data-wms-map-row]");
+  if (mapRow && state.wmsMap) {
+    state.wmsMap.row = mapRow.dataset.wmsMapRow;
+    renderWmsMap();
+    return;
+  }
+  const mapCell = event.target.closest("[data-wms-map-location]");
+  if (mapCell) {
+    const form = $("#wmsStockFilterForm");
+    form.elements.deposit.value = state.wmsMap?.depositName || "";
+    form.elements.q.value = mapCell.dataset.wmsMapLocation;
+    await loadWmsStock();
+    $("#wmsStockRows")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   const panel = event.target.closest("[data-wms-panel]");
   if (panel) {
     openWmsStockPanel(panel.dataset.wmsPanel);

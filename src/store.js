@@ -11,6 +11,8 @@ import { normalizeWmsDeposits } from "./wms-labels.js";
 import {
   WMS_UNIT_STATUS,
   assertValidWmsPosition,
+  isValidWmsPosition,
+  translateJzWmsLocation,
   buildWmsMovement,
   buildWmsUnit,
   compareWmsLocation,
@@ -4677,11 +4679,15 @@ export async function registerWmsInventory({ userId, depositName, location, code
 // Reenderecar: move unidades de uma posicao para outra (laudo especifico ou N unidades do SKU).
 export async function relocateWmsUnits({ userId, fromLocation, toLocation, code, quantity = 1, reason = "", operatorName = "" }) {
   await ensureStore();
-  const from = normalizeWmsLocation(fromLocation);
   const normalizedCode = normalizeCode(code);
-  if (!from) throw new Error("Bipe a posicao de origem.");
+  if (!normalizeWmsLocation(fromLocation)) throw new Error("Bipe a posicao de origem.");
   if (!normalizedCode) throw new Error("Bipe o laudo ou o SKU do produto.");
   const settings = await getUserTriageTransferSettings(userId);
+  // A origem pode vir da etiqueta antiga do JZ: traduz para a posicao do deposito que a reconhece.
+  const rawFrom = normalizeWmsLocation(fromLocation);
+  const from = (settings.wmsDeposits || []).some((deposit) => isValidWmsPosition(deposit, rawFrom))
+    ? rawFrom
+    : (settings.wmsDeposits || []).map((deposit) => translateJzWmsLocation(deposit, fromLocation)).find(Boolean) || rawFrom;
   await ensureWmsUnitsBackfilled(userId);
   return runWmsOperation(userId, async (state) => {
     const triageCode = extractTriageCode(normalizedCode);
