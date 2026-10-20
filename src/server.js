@@ -784,7 +784,8 @@ app.get("/api/triage/stats", requireAuth, requireTriageAccess, requireOperatorSt
       stats: await getTriageStats(workspaceUserId(req), {
         startDate: req.query.startDate,
         endDate: req.query.endDate,
-        lotId: req.query.lotId
+        lotId: req.query.lotId,
+        lotIds: req.query.lotIds
       })
     });
   } catch (error) {
@@ -797,11 +798,14 @@ app.get("/api/triage/stats/export.xlsx", requireAuth, requireTriageAccess, requi
     const rows = await listTriageStatsRows(workspaceUserId(req), {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
-      lotId: req.query.lotId
+      lotId: req.query.lotId,
+      lotIds: req.query.lotIds
     });
     const workbook = buildTriageStatsExportWorkbook(rows);
     const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
-    const lotName = rows.find((row) => row.lot)?.lot?.nomeArquivo || (req.query.lotId ? "lote" : "todos-lotes");
+    const lotNames = new Set(rows.map((row) => row.lot?.nomeArquivo).filter(Boolean));
+    const filteredByLot = Boolean(req.query.lotId || req.query.lotIds);
+    const lotName = lotNames.size === 1 ? [...lotNames][0] : filteredByLot ? "lotes-agrupados" : "todos-lotes";
     const fileName = `${safeFileName(lotName)}-triagem-laudos.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
@@ -3975,7 +3979,42 @@ function buildTriageStatsExportWorkbook(rows = []) {
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Triagem");
+  const lotSheet = XLSX.utils.json_to_sheet(buildTriageStatsLotSummary(rows));
+  lotSheet["!cols"] = [{ wch: 32 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(workbook, lotSheet, "Por lote");
   return workbook;
+}
+
+// Uma linha por lote e uma linha final com a media geral do grupo.
+function buildTriageStatsLotSummary(rows = []) {
+  const byLot = new Map();
+  for (const row of rows) {
+    const name = row.lot?.nomeArquivo || "Sem lote";
+    const current = byLot.get(name) || { name, total: 0, diagnosed: 0, rma: 0, totalValue: 0 };
+    current.total += 1;
+    if (row.item?.status === "diagnosticado" || row.item?.triageTransferred) current.diagnosed += 1;
+    if (String(row.item?.destination || "").trim().toUpperCase() === "RMA") current.rma += 1;
+    current.totalValue += Number(row.salePrice || 0);
+    byLot.set(name, current);
+  }
+  const summaryRow = (name, stats, lotCount = null) => ({
+    LOTE: name,
+    ITENS: stats.total,
+    DIAGNOSTICADOS: stats.diagnosed,
+    RMA: stats.rma,
+    "% RMA": stats.diagnosed ? Math.round((stats.rma / stats.diagnosed) * 1000) / 10 : 0,
+    "VENDA TOTAL": roundMoney(stats.totalValue),
+    "TICKET MEDIO": stats.total ? roundMoney(stats.totalValue / stats.total) : 0,
+    ...(lotCount === null ? {} : { "LOTES NO GRUPO": lotCount, "MEDIA ITENS/LOTE": lotCount ? Math.round((stats.total / lotCount) * 10) / 10 : 0 })
+  });
+  const lots = [...byLot.values()].sort((a, b) => b.total - a.total);
+  const overall = lots.reduce((sum, lot) => ({
+    total: sum.total + lot.total,
+    diagnosed: sum.diagnosed + lot.diagnosed,
+    rma: sum.rma + lot.rma,
+    totalValue: sum.totalValue + lot.totalValue
+  }), { total: 0, diagnosed: 0, rma: 0, totalValue: 0 });
+  return [...lots.map((lot) => summaryRow(lot.name, lot)), summaryRow("MEDIA GERAL", overall, lots.length)];
 }
 
 function formatTriageDiagnosisCondition(value) {

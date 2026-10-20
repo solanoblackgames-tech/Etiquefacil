@@ -2446,6 +2446,253 @@ h3 {
   text-transform: uppercase;
 }
 
+.triage-stats-wide {
+  grid-column: 1 / -1;
+}
+
+.triage-stats-delta {
+  font-weight: 800;
+}
+
+.triage-stats-delta.up {
+  color: #0f766e;
+}
+
+.triage-stats-delta.down {
+  color: #b42318;
+}
+
+.triage-stats-filter-fields .triage-stats-lot-field {
+  grid-column: span 2;
+}
+
+.triage-stats-lot-label {
+  color: #34515c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.triage-stats-lot-picker {
+  position: relative;
+}
+
+.triage-stats-lot-picker summary {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #c9d6dc;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  list-style: none;
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.triage-stats-lot-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.triage-stats-lot-picker summary::after {
+  color: #34515c;
+  content: "\25BE";
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.triage-stats-lot-picker summary span {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triage-stats-lot-panel {
+  background: #fff;
+  border: 1px solid #c9d6dc;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 8px;
+  left: 0;
+  margin-top: 4px;
+  padding: 10px;
+  position: absolute;
+  top: 100%;
+  width: min(360px, calc(100vw - 32px));
+  z-index: 20;
+}
+
+.triage-stats-lot-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.triage-stats-lot-actions input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.triage-stats-lot-actions button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.triage-stats-lot-options {
+  display: grid;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.triage-stats-filter-fields .triage-stats-lot-option {
+  align-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  font-weight: 600;
+  gap: 8px;
+  padding: 5px 6px;
+}
+
+.triage-stats-filter-fields .triage-stats-lot-option:hover {
+  background: #f1f6f8;
+}
+
+.triage-stats-filter-fields .triage-stats-lot-option input {
+  flex: 0 0 auto;
+  min-height: 0;
+  width: auto;
+}
+
+.triage-stats-filter-fields .triage-stats-lot-option.hidden {
+  display: none;
+}
+
+.triage-stats-groups {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.triage-stats-group-chip {
+  border: 1px solid #c9d6dc;
+  border-radius: 999px;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.triage-stats-group-chip button {
+  border: 0;
+  border-radius: 0;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.triage-stats-legend {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.triage-stats-legend i {
+  border-radius: 3px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.triage-stats-legend i.triaged,
+.triage-stats-day-bars .triaged {
+  background: #14847a;
+}
+
+.triage-stats-legend i.diagnosed,
+.triage-stats-day-bars .diagnosed {
+  background: #f2a541;
+}
+
+.triage-stats-daily {
+  align-items: end;
+  display: flex;
+  gap: 4px;
+  min-height: 170px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.triage-stats-day {
+  display: grid;
+  flex: 1 0 18px;
+  gap: 4px;
+  grid-template-rows: 140px auto;
+  min-width: 18px;
+}
+
+.triage-stats-day-bars {
+  align-items: end;
+  border-bottom: 1px solid #dce5ea;
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.triage-stats-day-bars span {
+  border-radius: 3px 3px 0 0;
+  display: block;
+  flex: 1 1 0;
+  max-width: 14px;
+}
+
+.triage-stats-day small {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.triage-stats-lot-table .operational-dashboard-row {
+  grid-template-columns: minmax(200px, 1.6fr) repeat(var(--triage-lot-columns), minmax(86px, 0.7fr));
+  min-width: 860px;
+}
+
+.triage-stats-lot-row[data-triage-stats-only-lot] {
+  cursor: pointer;
+}
+
+.triage-stats-lot-row[data-triage-stats-only-lot]:hover {
+  background: #f1f6f8;
+}
+
+.triage-stats-lot-row.overall {
+  background: #eef7f5;
+  border-top: 2px solid #14847a;
+}
+
+.triage-stats-lot-table small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.triage-stats-pending-table .operational-dashboard-row {
+  grid-template-columns: minmax(110px, 0.7fr) minmax(240px, 2fr) minmax(150px, 1fr) minmax(130px, 0.9fr) minmax(90px, 0.6fr);
+  min-width: 760px;
+}
+
+.triage-stats-block {
+  align-content: start;
+}
+
+.triage-stats-static-card,
+.triage-stats-static-card:hover {
+  border-color: #dce5ea;
+  box-shadow: none;
+  cursor: default;
+  transform: none;
+}
+
 .operational-dashboard-row strong,
 .operational-dashboard-row span {
   overflow-wrap: anywhere;

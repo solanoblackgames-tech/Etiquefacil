@@ -1344,13 +1344,20 @@ function compareTriageChronologyDesc(a = {}, b = {}) {
 
 export async function getTriageStats(userId, period = {}) {
   const rows = await listTriageStatsRows(userId, period);
-  return buildTriageStatsFromRows(rows);
+  const stats = buildTriageStatsFromRows(rows, { range: normalizeOperatorActivityRange(period) });
+  // Mesmo numero de dias imediatamente antes, para comparar com o periodo filtrado.
+  const previousPeriod = previousTriageStatsPeriod(period);
+  if (previousPeriod) {
+    const previousRows = await listTriageStatsRows(userId, { ...period, ...previousPeriod });
+    stats.previous = { ...previousPeriod, ...triageStatsTotals(previousRows) };
+  }
+  return stats;
 }
 
 export async function listTriageStatsRows(userId, period = {}) {
   await ensureStore();
   const range = normalizeOperatorActivityRange(period);
-  const lotId = String(period.lotId || "").trim();
+  const lotIds = normalizeTriageStatsLotIds(period);
   if (hasPostgres()) {
     await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
@@ -1437,7 +1444,7 @@ export async function listTriageStatsRows(userId, period = {}) {
           join lots l on l.id = pr.lot_id
           left join rz_items ri on ri.product_id = pr.id and ri.lot_id = pr.lot_id
           where l.user_id = t.user_id
-            and ($4::text = '' or l.id = $4::text)
+            and (cardinality($4::text[]) = 0 or l.id = any($4::text[]))
             and (
               (t.sku <> '' and upper(trim(pr.sku)) = upper(trim(t.sku)))
               or (t.product_code <> '' and upper(trim(pr.codigo_ml)) = upper(trim(t.product_code)))
@@ -1480,10 +1487,10 @@ export async function listTriageStatsRows(userId, period = {}) {
         )
         select *
         from matched_triage
-        where ($4::text = '' or (product__id is not null and product_match_rank <= product__checked_qty))
+        where (cardinality($4::text[]) = 0 or (product__id is not null and product_match_rank <= product__checked_qty))
         order by updated_at desc
       `,
-      [userId, range.startAt, range.endAt, lotId]
+      [userId, range.startAt, range.endAt, lotIds]
     );
     return result.rows.map((row) => ({
       item: {
@@ -1517,7 +1524,7 @@ export async function listTriageStatsRows(userId, period = {}) {
 
   const db = await readDb();
   const userLots = (db.lots || []).filter((lot) => lot.userId === userId);
-  const lotIds = new Set(userLots.map((lot) => lot.id));
+  const scopedLotIds = new Set(userLots.map((lot) => lot.id).filter((id) => !lotIds.length || lotIds.includes(id)));
   const lotsById = new Map(userLots.map((lot) => [lot.id, lot]));
   const userMap = new Map((db.users || []).map((user) => [user.id, sanitizeUser(user)]));
   const userTransferLots = (db.transferLots || []).filter((lot) => lot.userId === userId);
@@ -1527,7 +1534,6 @@ export async function listTriageStatsRows(userId, period = {}) {
     .filter((item) => item.userId === userId)
     .filter((item) => isWithinDateRange(item.createdAt, range))
     .map((item) => {
-      const scopedLotIds = lotId ? new Set([lotId]) : lotIds;
       const product = findTriageStatsProduct(db.products || [], scopedLotIds, item);
       const responsibleUserId = item.operatorUserId || item.createdByUserId || item.userId;
       return {
@@ -1544,11 +1550,11 @@ export async function listTriageStatsRows(userId, period = {}) {
         user: userMap.get(responsibleUserId) || null
       };
     })
-    .filter((row) => !lotId || row.product?.lotId === lotId);
-  if (!lotId) return rows;
+    .filter((row) => !lotIds.length || scopedLotIds.has(row.product?.lotId));
+  if (!lotIds.length) return rows;
   const checkedByProduct = new Map();
   for (const item of db.rzItems || []) {
-    if (item.lotId !== lotId || !item.productId) continue;
+    if (!scopedLotIds.has(item.lotId) || !item.productId) continue;
     checkedByProduct.set(item.productId, Number(checkedByProduct.get(item.productId) || 0) + Number(item.qtdConferida || 0));
   }
   const usedByProduct = new Map();
@@ -12166,11 +12172,16 @@ function publicDashboardUser(user) {
   };
 }
 
-function buildTriageStatsFromRows(rows = []) {
+function buildTriageStatsFromRows(rows = [], { range = {}, now = new Date() } = {}) {
   const byOperator = new Map();
   const destinations = new Map();
   const diagnosisConditions = new Map();
   const transferDestinations = new Map();
+  const grades = new Map();
+  const lots = new Map();
+  const daily = new Map();
+  const pendingItems = [];
+  const diagnosisHours = [];
   let totalValue = 0;
   let totalCost = 0;
   let diagnosedTotal = 0;
@@ -12184,7 +12195,59 @@ function buildTriageStatsFromRows(rows = []) {
     const costPrice = Number(row.costPrice || 0);
     totalValue += salePrice;
     totalCost += costPrice;
-    if (isTriageItemCompleted(item)) diagnosedTotal += 1;
+    const completed = isTriageItemCompleted(item);
+    const hours = completed ? triageDiagnosisHours(item) : null;
+    if (completed) diagnosedTotal += 1;
+    if (hours !== null) diagnosisHours.push(hours);
+    if (!completed) pendingItems.push(row);
+    const isRma = String(item.destination || "").trim().toUpperCase() === "RMA";
+
+    const createdDay = operatorActivityLocalDay(item.createdAt);
+    if (createdDay) {
+      const dayStats = daily.get(createdDay) || emptyTriageDay(createdDay);
+      dayStats.triaged += 1;
+      dayStats.totalValue = roundMoney(dayStats.totalValue + salePrice);
+      daily.set(createdDay, dayStats);
+    }
+    const diagnosedDay = completed ? operatorActivityLocalDay(item.diagnosedAt) : "";
+    if (diagnosedDay) {
+      const dayStats = daily.get(diagnosedDay) || emptyTriageDay(diagnosedDay);
+      dayStats.diagnosed += 1;
+      daily.set(diagnosedDay, dayStats);
+    }
+
+    const grade = String(item.gradeAvaliada || "").trim().toUpperCase();
+    const gradeStats = grades.get(grade) || { grade, total: 0, totalValue: 0, totalCost: 0 };
+    gradeStats.total += 1;
+    gradeStats.totalValue = roundMoney(gradeStats.totalValue + salePrice);
+    gradeStats.totalCost = roundMoney(gradeStats.totalCost + costPrice);
+    grades.set(grade, gradeStats);
+
+    const lotKey = row.lot?.id || "";
+    const lotStats = lots.get(lotKey) || {
+      lotId: lotKey,
+      name: row.lot?.nomeArquivo || row.lot?.prefixoSku || "",
+      total: 0,
+      diagnosed: 0,
+      pending: 0,
+      rma: 0,
+      totalValue: 0,
+      totalCost: 0,
+      diagnosisHoursTotal: 0,
+      diagnosisHoursCount: 0
+    };
+    lotStats.total += 1;
+    lotStats.totalValue = roundMoney(lotStats.totalValue + salePrice);
+    lotStats.totalCost = roundMoney(lotStats.totalCost + costPrice);
+    if (completed) lotStats.diagnosed += 1;
+    else lotStats.pending += 1;
+    if (isRma) lotStats.rma += 1;
+    if (hours !== null) {
+      lotStats.diagnosisHoursTotal += hours;
+      lotStats.diagnosisHoursCount += 1;
+    }
+    lots.set(lotKey, lotStats);
+
     if (item.destination) {
       const destination = String(item.destination).trim().toUpperCase();
       const destinationStats = destinations.get(destination) || { destination, total: 0, totalValue: 0, totalCost: 0 };
@@ -12227,13 +12290,19 @@ function buildTriageStatsFromRows(rows = []) {
       diagnosed: 0,
       pending: 0,
       totalValue: 0,
-      totalCost: 0
+      totalCost: 0,
+      diagnosisHoursTotal: 0,
+      diagnosisHoursCount: 0
     };
     current.total += 1;
     current.totalValue = roundMoney(current.totalValue + salePrice);
     current.totalCost = roundMoney(current.totalCost + costPrice);
-    if (isTriageItemCompleted(item)) current.diagnosed += 1;
+    if (completed) current.diagnosed += 1;
     else current.pending += 1;
+    if (hours !== null) {
+      current.diagnosisHoursTotal += hours;
+      current.diagnosisHoursCount += 1;
+    }
     byOperator.set(operatorId, current);
   }
 
@@ -12259,8 +12328,129 @@ function buildTriageStatsFromRows(rows = []) {
       totalValue: roundMoney(storeTransferValue),
       totalCost: roundMoney(storeTransferCost)
     },
-    operators: [...byOperator.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    diagnosisTime: {
+      averageHours: averageHours(diagnosisHours),
+      medianHours: medianHours(diagnosisHours),
+      measured: diagnosisHours.length
+    },
+    oldestPending: pendingItems
+      .sort((a, b) => String(a.item?.createdAt || "").localeCompare(String(b.item?.createdAt || "")))
+      .slice(0, 8)
+      .map((row) => ({
+        code: row.item?.code || "",
+        sku: row.product?.sku || row.item?.sku || "",
+        descricao: row.item?.descricao || row.product?.descricao || "",
+        lotName: row.lot?.nomeArquivo || "",
+        operatorName: row.user?.name || row.user?.email || "",
+        createdAt: row.item?.createdAt || null,
+        ageHours: triageHoursBetween(row.item?.createdAt, now)
+      })),
+    daily: fillTriageDays(daily, range),
+    grades: [...grades.values()].sort((a, b) => (a.grade ? 0 : 1) - (b.grade ? 0 : 1) || a.grade.localeCompare(b.grade)),
+    lots: [...lots.values()]
+      .map(finishTriageHoursStats)
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)),
+    operators: [...byOperator.values()]
+      .map(finishTriageHoursStats)
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
   };
+}
+
+function triageStatsTotals(rows = []) {
+  let diagnosedTotal = 0;
+  let totalValue = 0;
+  let totalCost = 0;
+  const hours = [];
+  for (const row of rows) {
+    totalValue += Number(row.salePrice || 0);
+    totalCost += Number(row.costPrice || 0);
+    if (!isTriageItemCompleted(row.item || {})) continue;
+    diagnosedTotal += 1;
+    const value = triageDiagnosisHours(row.item || {});
+    if (value !== null) hours.push(value);
+  }
+  return {
+    total: rows.length,
+    diagnosedTotal,
+    totalValue: roundMoney(totalValue),
+    totalCost: roundMoney(totalCost),
+    averageDiagnosisHours: averageHours(hours)
+  };
+}
+
+function normalizeTriageStatsLotIds(period = {}) {
+  const raw = [period.lotIds, period.lotId].flat().flatMap((value) => String(value || "").split(","));
+  return [...new Set(raw.map((value) => value.trim()).filter(Boolean))];
+}
+
+// Periodo anterior com o mesmo numero de dias; so existe quando inicio e fim foram informados.
+function previousTriageStatsPeriod(period = {}) {
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
+  let startDate = String(period.startDate || "").trim();
+  let endDate = String(period.endDate || "").trim();
+  if (!pattern.test(startDate) || !pattern.test(endDate)) return null;
+  if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
+  const dayMs = 24 * 60 * 60 * 1000;
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  const days = Math.round((end - start) / dayMs) + 1;
+  return {
+    startDate: new Date(start - days * dayMs).toISOString().slice(0, 10),
+    endDate: new Date(start - dayMs).toISOString().slice(0, 10)
+  };
+}
+
+function triageHoursBetween(from, to) {
+  const start = Date.parse(from || "");
+  const end = to instanceof Date ? to.getTime() : Date.parse(to || "");
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+  return Math.round(((end - start) / 3600000) * 10) / 10;
+}
+
+function triageDiagnosisHours(item = {}) {
+  return item.diagnosedAt ? triageHoursBetween(item.createdAt, item.diagnosedAt) : null;
+}
+
+function averageHours(values = []) {
+  if (!values.length) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+function medianHours(values = []) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const value = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return Math.round(value * 10) / 10;
+}
+
+function finishTriageHoursStats({ diagnosisHoursTotal, diagnosisHoursCount, ...stats }) {
+  return {
+    ...stats,
+    averageDiagnosisHours: diagnosisHoursCount ? Math.round((diagnosisHoursTotal / diagnosisHoursCount) * 10) / 10 : null
+  };
+}
+
+function emptyTriageDay(date) {
+  return { date, triaged: 0, diagnosed: 0, totalValue: 0 };
+}
+
+// Dias sem movimento entram zerados para o grafico nao pular datas.
+function fillTriageDays(daily, range = {}) {
+  const startDay = range.startAt ? operatorActivityLocalDay(range.startAt) : [...daily.keys()].sort()[0];
+  const endDay = range.endAt ? operatorActivityLocalDay(range.endAt) : [...daily.keys()].sort().at(-1);
+  if (!startDay || !endDay) return [];
+  const result = [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  let cursor = Date.parse(`${startDay}T00:00:00Z`);
+  const last = Date.parse(`${endDay}T00:00:00Z`);
+  while (cursor <= last && result.length < 366) {
+    const day = new Date(cursor).toISOString().slice(0, 10);
+    result.push(daily.get(day) || emptyTriageDay(day));
+    cursor += dayMs;
+  }
+  return result;
 }
 
 function latestTriageTransferByItemId(transferLots = []) {

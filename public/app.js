@@ -519,6 +519,7 @@ function bindEvents() {
   $("#profileTriageStatsPanel").addEventListener("submit", handleTriageStatsFilterSubmit);
   $("#profileTriageStatsPanel").addEventListener("change", handleTriageStatsFilterChange);
   $("#profileTriageStatsPanel").addEventListener("click", handleTriageStatsFilterClick);
+  $("#profileTriageStatsPanel").addEventListener("input", handleTriageStatsLotSearch);
   $("#profileTriageRules").addEventListener("click", handleTriageRulesClick);
   $("#profileTriageRules").addEventListener("input", handleTriageRulesInput);
   $("#profileOperationalDashboardPanel").addEventListener("submit", handleOperationalDashboardSubmit);
@@ -12001,11 +12002,7 @@ async function loadTriageStats() {
       const lotsResponse = await api("/api/lots");
       state.lots = lotsResponse.lots || [];
     }
-    const filter = normalizeTriageStatsFilter(state.triageStatsFilter);
-    const params = new URLSearchParams();
-    if (filter.startDate) params.set("startDate", filter.startDate);
-    if (filter.endDate) params.set("endDate", filter.endDate);
-    if (filter.lotId) params.set("lotId", filter.lotId);
+    const params = triageStatsQueryParams(normalizeTriageStatsFilter(state.triageStatsFilter));
     const response = await api(`/api/triage/stats?${params.toString()}`);
     state.triageStats = response.stats || null;
     renderTriageStats();
@@ -12034,31 +12031,66 @@ function renderTriageStats() {
   const storeTransfer = stats.storeTransfer || {};
   const storeTransferCost = canViewCost() && Number(storeTransfer.totalCost || 0) ? ` - Custo ${money(storeTransfer.totalCost || 0)}` : "";
   const destinationCostCopy = canViewCost() ? "Quantidade, venda, custo e media por destino." : "Quantidade, venda e media por destino.";
-  const operatorCostCopy = canViewCost() ? "Produtividade, venda e custo por pessoa." : "Produtividade e venda por pessoa.";
+  const operatorCostCopy = canViewCost() ? "Produtividade, venda, custo e tempo por pessoa." : "Produtividade, venda e tempo por pessoa.";
+  const previous = stats.previous || null;
+  const margin = Number(stats.totalValue || 0) - Number(stats.totalCost || 0);
+  const marginPercent = Number(stats.totalValue || 0) ? Math.round((margin / Number(stats.totalValue)) * 100) : 0;
+  const previousMargin = previous ? Number(previous.totalValue || 0) - Number(previous.totalCost || 0) : null;
+  const marginMetric = canViewCost()
+    ? `<div class="metric"><span>Margem</span><strong>${money(margin)}</strong><small>${marginPercent}% sobre a venda${triageStatsDelta(margin, previousMargin)}</small></div>`
+    : "";
+  const diagnosisTime = stats.diagnosisTime || {};
+  const diagnosisTimeCopy = diagnosisTime.measured
+    ? `Mediana ${formatTriageHours(diagnosisTime.medianHours)} - ${diagnosisTime.measured} laudos${triageStatsDelta(diagnosisTime.averageHours, previous?.averageDiagnosisHours, { lowerIsBetter: true })}`
+    : "Sem laudos com data no periodo";
+  const previousCopy = previous ? `Comparado com ${triageStatsPeriodLabel(previous)}.` : "Escolha inicio e fim para comparar com o periodo anterior.";
   panel.innerHTML = `
     <div class="triage-stats-hero">
       <div>
         <span class="muted">Perfil</span>
         <h3>Estatisticas de triagem</h3>
-        <p>Resumo financeiro e produtividade do laboratorio.</p>
+        <p>Resumo financeiro e produtividade do laboratorio. <span class="muted">${escapeHtml(previousCopy)}</span></p>
       </div>
       <div class="triage-stats-hero-value">
         <span>Valor agregado</span>
         <strong>${money(stats.totalValue || 0)}</strong>
         ${costSummary}
+        <small>${triageStatsDelta(stats.totalValue, previous?.totalValue, { prefix: false })}</small>
       </div>
     </div>
     ${triageStatsFilterMarkup(filter)}
     <div class="triage-stats-summary">
-      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver fila completa</small></button>
-      <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver fila completa${triageStatsDelta(stats.total, previous?.total)}</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos${triageStatsDelta(stats.diagnosedTotal, previous?.diagnosedTotal)}</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
       <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
       ${averageCostMetric}
+      ${marginMetric}
+      <div class="metric"><span>Tempo ate o laudo</span><strong>${formatTriageHours(diagnosisTime.averageHours)}</strong><small>${diagnosisTimeCopy}</small></div>
       <div class="metric"><span>Enviado a Loja</span><strong>${money(storeTransfer.totalValue || 0)}</strong><small>${storeTransfer.total || 0} itens transferidos${storeTransferCost}</small></div>
       <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
     </div>
     <div class="triage-stats-dashboard">
+      <section class="triage-stats-block triage-stats-wide">
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Evolucao por dia</strong>
+            <span class="muted">Itens que entraram na triagem e laudos feitos em cada dia.</span>
+          </div>
+          <span class="triage-stats-legend"><i class="triaged"></i>Triados <i class="diagnosed"></i>Laudos</span>
+        </div>
+        ${triageStatsDailyMarkup(stats.daily || [])}
+      </section>
+      <section class="triage-stats-block triage-stats-wide">
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Comparativo de lotes</strong>
+            <span class="muted">Cada lote lado a lado e a media geral do grupo filtrado.</span>
+          </div>
+          <span class="muted">Use "Lotes" no filtro para agrupar, ex.: todos os de televisores.</span>
+        </div>
+        ${triageStatsLotsMarkup(stats.lots || [])}
+      </section>
       <section class="triage-stats-block">
         <div class="triage-stats-block-heading">
           <div>
@@ -12085,9 +12117,26 @@ function renderTriageStats() {
             <strong>Itens por operador</strong>
             <span class="muted">${operatorCostCopy}</span>
           </div>
-          <span class="muted">${operatorCostCopy}</span>
         </div>
         ${triageStatsOperatorsMarkup(stats.operators || [])}
+      </section>
+      <section class="triage-stats-block">
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Itens por grade</strong>
+            <span class="muted">Grade avaliada na bancada.</span>
+          </div>
+        </div>
+        ${triageStatsGradesMarkup(stats.grades || [])}
+      </section>
+      <section class="triage-stats-block triage-stats-wide">
+        <div class="triage-stats-block-heading">
+          <div>
+            <strong>Pendentes ha mais tempo</strong>
+            <span class="muted">Itens do filtro que ainda aguardam teste, do mais antigo para o mais novo.</span>
+          </div>
+        </div>
+        ${triageStatsOldestPendingMarkup(stats.oldestPending || [])}
       </section>
     </div>
   `;
@@ -12097,24 +12146,73 @@ function defaultTriageStatsFilter() {
   const today = new Date();
   return {
     startDate: formatInputDate(addDays(today, -6)),
-    endDate: formatInputDate(today)
+    endDate: formatInputDate(today),
+    lotIds: []
   };
 }
 
 function normalizeTriageStatsFilter(filter = {}) {
   let startDate = filter.startDate || "";
   let endDate = filter.endDate || "";
-  const lotId = String(filter.lotId || "").trim();
+  const lotIds = [...new Set([filter.lotIds, filter.lotId].flat().map((id) => String(id || "").trim()).filter(Boolean))];
   if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
-  state.triageStatsFilter = { startDate, endDate, lotId };
+  state.triageStatsFilter = { startDate, endDate, lotIds };
   return state.triageStatsFilter;
 }
 
+function triageStatsQueryParams(filter) {
+  const params = new URLSearchParams();
+  if (filter.startDate) params.set("startDate", filter.startDate);
+  if (filter.endDate) params.set("endDate", filter.endDate);
+  if (filter.lotIds.length) params.set("lotIds", filter.lotIds.join(","));
+  return params;
+}
+
+const TRIAGE_STATS_LOT_GROUPS_KEY = "etiquefacil.triageStatsLotGroups";
+
+// Grupos de lotes ficam salvos neste navegador (ex.: "Televisores").
+function readTriageStatsLotGroups() {
+  try {
+    const groups = JSON.parse(localStorage.getItem(TRIAGE_STATS_LOT_GROUPS_KEY) || "[]");
+    return Array.isArray(groups) ? groups.filter((group) => group?.name && Array.isArray(group.lotIds)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeTriageStatsLotGroups(groups) {
+  try {
+    localStorage.setItem(TRIAGE_STATS_LOT_GROUPS_KEY, JSON.stringify(groups));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function triageStatsLotName(lot = {}) {
+  return lot.nomeArquivo || lot.prefixoSku || "Lote";
+}
+
 function triageStatsFilterMarkup(filter) {
-  const lotOptions = [
-    '<option value="">Todos os lotes</option>',
-    ...state.lots.map((lot) => `<option value="${escapeHtml(lot.id)}" ${lot.id === filter.lotId ? "selected" : ""}>${escapeHtml(lot.nomeArquivo || lot.prefixoSku || "Lote")}</option>`)
-  ].join("");
+  const selected = new Set(filter.lotIds);
+  const lotSummary = !selected.size
+    ? "Todos os lotes"
+    : selected.size === 1
+      ? triageStatsLotName(state.lots.find((lot) => lot.id === filter.lotIds[0]))
+      : `${selected.size} lotes agrupados`;
+  const lotOptions = state.lots.map((lot) => `
+    <label class="triage-stats-lot-option" data-lot-name="${escapeHtml(normalizeLooseText(triageStatsLotName(lot)))}">
+      <input type="checkbox" name="lotIds" value="${escapeHtml(lot.id)}" ${selected.has(lot.id) ? "checked" : ""} />
+      <span>${escapeHtml(triageStatsLotName(lot))}</span>
+    </label>
+  `).join("");
+  const groups = readTriageStatsLotGroups();
+  const groupButtons = groups.map((group, index) => `
+    <span class="triage-stats-group-chip">
+      <button type="button" class="ghost" data-triage-stats-group="${index}">${escapeHtml(group.name)} (${group.lotIds.length})</button>
+      <button type="button" class="ghost" data-triage-stats-group-remove="${index}" aria-label="Remover grupo ${escapeHtml(group.name)}">x</button>
+    </span>
+  `).join("");
   return `
     <form class="triage-stats-filter" id="triageStatsFilter">
       <div class="triage-stats-filter-title">
@@ -12125,12 +12223,31 @@ function triageStatsFilterMarkup(filter) {
         <button type="button" class="ghost" data-triage-stats-period="today">Hoje</button>
         <button type="button" class="ghost" data-triage-stats-period="7">7 dias</button>
         <button type="button" class="ghost" data-triage-stats-period="30">30 dias</button>
-        <label class="triage-stats-lot-field">Lote<select name="lotId">${lotOptions}</select></label>
+        <button type="button" class="ghost" data-triage-stats-period="all">Tudo</button>
+        <div class="triage-stats-lot-field">
+        <span class="triage-stats-lot-label">Lotes</span>
+        <details class="triage-stats-lot-picker">
+          <summary><span>${escapeHtml(lotSummary)}</span></summary>
+          <div class="triage-stats-lot-panel">
+            <input type="search" name="lotSearch" placeholder="Buscar lote, ex.: televisor" autocomplete="off" />
+            <div class="triage-stats-lot-actions">
+              <button type="button" class="ghost" data-triage-stats-lots="visible">Marcar os da busca</button>
+              <button type="button" class="ghost" data-triage-stats-lots="none">Limpar</button>
+            </div>
+            <div class="triage-stats-lot-options">${lotOptions || '<p class="muted">Nenhum lote cadastrado.</p>'}</div>
+            <div class="triage-stats-lot-actions">
+              <input type="text" name="lotGroupName" placeholder="Nome do grupo, ex.: Televisores" maxlength="40" />
+              <button type="button" class="secondary" data-triage-stats-group-save>Salvar grupo</button>
+            </div>
+          </div>
+        </details>
+        </div>
         <label>Inicio<input type="date" name="startDate" value="${escapeHtml(filter.startDate)}" /></label>
         <label>Fim<input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" /></label>
         <button type="submit">Aplicar</button>
-        <button type="button" class="secondary" data-download-triage-stats>Baixar lista XLSX</button>
+        <button type="button" class="secondary" data-download-triage-stats title="Baixar lista de laudos e resumo por lote">Baixar XLSX</button>
       </div>
+      ${groups.length ? `<div class="triage-stats-groups"><span class="muted">Grupos salvos:</span>${groupButtons}</div>` : ""}
       <p class="message" id="triageStatsDownloadMessage"></p>
     </form>
   `;
@@ -12138,8 +12255,10 @@ function triageStatsFilterMarkup(filter) {
 
 function triageStatsFilterLabel(filter) {
   const period = triageStatsPeriodLabel(filter);
-  const lot = state.lots.find((item) => item.id === filter.lotId);
-  return lot ? `${period} - ${lot.nomeArquivo}` : period;
+  if (!filter.lotIds.length) return period;
+  if (filter.lotIds.length > 1) return `${period} - ${filter.lotIds.length} lotes agrupados`;
+  const lot = state.lots.find((item) => item.id === filter.lotIds[0]);
+  return lot ? `${period} - ${triageStatsLotName(lot)}` : period;
 }
 
 function triageStatsPeriodLabel(filter) {
@@ -12155,11 +12274,83 @@ function handleTriageStatsFilterSubmit(event) {
 }
 
 function handleTriageStatsFilterChange(event) {
-  if (!event.target.closest("#triageStatsFilter") || !event.target.matches('input[type="date"], select[name="lotId"]')) return;
+  // Marcar lotes nao recarrega: a pessoa escolhe varios e clica em Aplicar.
+  if (!event.target.closest("#triageStatsFilter") || !event.target.matches('input[type="date"]')) return;
   applyTriageStatsFilterFromForm(event.target.form);
 }
 
+function handleTriageStatsLotSearch(event) {
+  if (!event.target.matches('#triageStatsFilter input[name="lotSearch"]')) return;
+  const search = normalizeLooseText(event.target.value);
+  event.target.closest(".triage-stats-lot-panel").querySelectorAll(".triage-stats-lot-option").forEach((option) => {
+    option.classList.toggle("hidden", Boolean(search) && !option.dataset.lotName.includes(search));
+  });
+}
+
+function handleTriageStatsLotsClick(event) {
+  const form = event.target.closest("#triageStatsFilter");
+  if (!form) return false;
+  const message = $("#triageStatsDownloadMessage");
+  const bulkButton = event.target.closest("[data-triage-stats-lots]");
+  if (bulkButton) {
+    const onlyVisible = bulkButton.dataset.triageStatsLots === "visible";
+    form.querySelectorAll('.triage-stats-lot-option input[name="lotIds"]').forEach((input) => {
+      if (!onlyVisible) input.checked = false;
+      else if (!input.closest(".triage-stats-lot-option").classList.contains("hidden")) input.checked = true;
+    });
+    return true;
+  }
+
+  if (event.target.closest("[data-triage-stats-group-save]")) {
+    const name = String(form.elements.lotGroupName?.value || "").trim();
+    const lotIds = new FormData(form).getAll("lotIds").map(String);
+    if (!name || !lotIds.length) {
+      if (message) {
+        message.style.color = "";
+        message.textContent = "Marque os lotes e de um nome ao grupo.";
+      }
+      return true;
+    }
+    const groups = readTriageStatsLotGroups().filter((group) => normalizeLooseText(group.name) !== normalizeLooseText(name));
+    const saved = writeTriageStatsLotGroups([...groups, { name, lotIds }]);
+    state.triageStatsFilter = { ...normalizeTriageStatsFilter(state.triageStatsFilter || {}), lotIds };
+    loadTriageStats();
+    if (!saved) alert("Nao foi possivel salvar o grupo neste navegador.");
+    return true;
+  }
+
+  const removeButton = event.target.closest("[data-triage-stats-group-remove]");
+  if (removeButton) {
+    const groups = readTriageStatsLotGroups();
+    groups.splice(Number(removeButton.dataset.triageStatsGroupRemove), 1);
+    writeTriageStatsLotGroups(groups);
+    renderTriageStats();
+    return true;
+  }
+
+  const groupButton = event.target.closest("[data-triage-stats-group]");
+  if (groupButton) {
+    const group = readTriageStatsLotGroups()[Number(groupButton.dataset.triageStatsGroup)];
+    if (!group) return true;
+    // Ignora lotes do grupo que foram apagados.
+    const existing = new Set(state.lots.map((lot) => lot.id));
+    state.triageStatsFilter = { ...normalizeTriageStatsFilter(state.triageStatsFilter || {}), lotIds: group.lotIds.filter((id) => existing.has(id)) };
+    loadTriageStats();
+    return true;
+  }
+  return false;
+}
+
 function handleTriageStatsFilterClick(event) {
+  if (handleTriageStatsLotsClick(event)) return;
+
+  const lotRow = event.target.closest("[data-triage-stats-only-lot]");
+  if (lotRow) {
+    state.triageStatsFilter = { ...normalizeTriageStatsFilter(state.triageStatsFilter || {}), lotIds: [lotRow.dataset.triageStatsOnlyLot] };
+    loadTriageStats();
+    return;
+  }
+
   const diagnosisConditionCard = event.target.closest("[data-open-triage-diagnosis-condition]");
   if (diagnosisConditionCard) {
     openTriageWithFilters({ diagnosisCondition: diagnosisConditionCard.dataset.openTriageDiagnosisCondition || "" });
@@ -12188,11 +12379,14 @@ function handleTriageStatsFilterClick(event) {
   if (!button) return;
   const days = button.dataset.triageStatsPeriod;
   const today = new Date();
-  state.triageStatsFilter = {
-    startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
-    endDate: formatInputDate(today),
-    lotId: normalizeTriageStatsFilter(state.triageStatsFilter || {}).lotId
-  };
+  const lotIds = new FormData(button.form).getAll("lotIds").map(String);
+  state.triageStatsFilter = days === "all"
+    ? { startDate: "", endDate: "", lotIds }
+    : {
+      startDate: days === "today" ? formatInputDate(today) : formatInputDate(addDays(today, -(Number(days) - 1))),
+      endDate: formatInputDate(today),
+      lotIds
+    };
   loadTriageStats();
 }
 
@@ -12202,7 +12396,8 @@ function openTriageWithFilters({ status = "", destination = "", diagnosisConditi
   if (status) url.searchParams.set("status", status);
   if (destination) url.searchParams.set("destination", destination);
   if (diagnosisCondition) url.searchParams.set("diagnosisCondition", diagnosisCondition);
-  if (filter.lotId) url.searchParams.set("lotId", filter.lotId);
+  // A fila da triagem filtra um lote por vez.
+  if (filter.lotIds.length === 1) url.searchParams.set("lotId", filter.lotIds[0]);
   window.open(url.toString(), "_blank", "noopener");
 }
 
@@ -12225,18 +12420,14 @@ function applyTriageStatsFilterFromForm(form) {
   state.triageStatsFilter = normalizeTriageStatsFilter({
     startDate: data.get("startDate") || "",
     endDate: data.get("endDate") || "",
-    lotId: data.get("lotId") || ""
+    lotIds: data.getAll("lotIds").map(String)
   });
   loadTriageStats();
 }
 
 function downloadTriageStatsList() {
   const message = $("#triageStatsDownloadMessage");
-  const filter = normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter());
-  const params = new URLSearchParams();
-  if (filter.startDate) params.set("startDate", filter.startDate);
-  if (filter.endDate) params.set("endDate", filter.endDate);
-  if (filter.lotId) params.set("lotId", filter.lotId);
+  const params = triageStatsQueryParams(normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter()));
   if (message) {
     message.style.color = "#0f766e";
     message.textContent = "Download enviado para o navegador.";
@@ -12269,11 +12460,143 @@ function triageStatsOperatorsMarkup(operators = []) {
               <span><strong>${operator.pending || 0}</strong><small>Pend.</small></span>
               <span><strong>${completion}%</strong><small>Conclusao</small></span>
               <span><strong>${money(total ? totalValue / total : 0)}</strong><small>Media</small></span>
+              <span><strong>${formatTriageHours(operator.averageDiagnosisHours)}</strong><small>Tempo laudo</small></span>
               ${costMetric}
             </div>
           </article>
         `;
       }).join("")}
+    </div>
+  `;
+}
+
+function formatTriageHours(hours) {
+  if (hours === null || hours === undefined || !Number.isFinite(Number(hours))) return "--";
+  const value = Number(hours);
+  if (value < 1) return `${Math.max(1, Math.round(value * 60))} min`;
+  if (value < 48) return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} h`;
+  return `${(value / 24).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dias`;
+}
+
+// Variacao contra o periodo anterior; para tempo, cair e bom.
+function triageStatsDelta(current, previous, { lowerIsBetter = false, prefix = true } = {}) {
+  if (previous === null || previous === undefined) return "";
+  const now = Number(current || 0);
+  const before = Number(previous || 0);
+  const separator = prefix ? "<br>" : "";
+  if (!before) return now ? `${separator}<span class="triage-stats-delta up">novo no periodo</span>` : "";
+  const change = Math.round(((now - before) / before) * 100);
+  if (!change) return `${separator}<span class="triage-stats-delta">igual ao anterior</span>`;
+  const better = lowerIsBetter ? change < 0 : change > 0;
+  return `${separator}<span class="triage-stats-delta ${better ? "up" : "down"}">${change > 0 ? "+" : ""}${change}% vs anterior</span>`;
+}
+
+function triageStatsDailyMarkup(days = []) {
+  if (!days.length) return '<p class="muted">Sem movimento no periodo.</p>';
+  const max = days.reduce((value, day) => Math.max(value, day.triaged, day.diagnosed), 0);
+  const labelEvery = Math.max(1, Math.ceil(days.length / 15));
+  const height = (value) => (max ? Math.max(value ? 3 : 0, Math.round((value / max) * 100)) : 0);
+  return `
+    <div class="triage-stats-daily" role="img" aria-label="Itens triados e laudos por dia">
+      ${days.map((day, index) => `
+        <div class="triage-stats-day" title="${escapeHtml(formatShortDate(day.date))}: ${day.triaged} triados, ${day.diagnosed} laudos, ${escapeHtml(money(day.totalValue || 0))}">
+          <div class="triage-stats-day-bars">
+            <span class="triaged" style="height: ${height(day.triaged)}%"></span>
+            <span class="diagnosed" style="height: ${height(day.diagnosed)}%"></span>
+          </div>
+          <small>${index % labelEvery === 0 ? escapeHtml(formatShortDate(day.date)) : "&nbsp;"}</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function triageStatsLotsMarkup(lots = []) {
+  if (!lots.length) return '<p class="muted">Nenhum item com lote no filtro.</p>';
+  const showCost = canViewCost();
+  const columns = ["Lote", "Itens", "Laudos", "% RMA", "Venda", "Ticket medio", ...(showCost ? ["Custo", "Margem"] : []), "Tempo laudo"];
+  const percent = (part, total) => (total ? `${Math.round((part / total) * 100)}%` : "--");
+  const row = (lot, { name, overall = false } = {}) => {
+    const total = Number(lot.total || 0);
+    const totalValue = Number(lot.totalValue || 0);
+    const totalCost = Number(lot.totalCost || 0);
+    const costCells = showCost ? `<span>${money(totalCost)}</span><span>${money(totalValue - totalCost)} <small>${percent(totalValue - totalCost, totalValue)}</small></span>` : "";
+    const attrs = !overall && lot.lotId ? ` data-triage-stats-only-lot="${escapeHtml(lot.lotId)}" title="Ver so este lote"` : "";
+    return `
+      <div class="operational-dashboard-row triage-stats-lot-row${overall ? " overall" : ""}"${attrs}>
+        <strong>${escapeHtml(name)}</strong>
+        <span>${overall ? `${total} <small>${(total / lots.length).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}/lote</small>` : total}</span>
+        <span>${lot.diagnosed} <small>${percent(lot.diagnosed, total)}</small></span>
+        <span>${percent(lot.rma, lot.diagnosed)}</span>
+        <span>${money(totalValue)}</span>
+        <span>${money(total ? totalValue / total : 0)}</span>
+        ${costCells}
+        <span>${formatTriageHours(lot.averageDiagnosisHours)}</span>
+      </div>
+    `;
+  };
+  // Media geral pondera pelo numero de itens: lote grande pesa mais que lote pequeno.
+  const hoursWeight = lots.reduce((sum, lot) => sum + (lot.averageDiagnosisHours === null ? 0 : lot.diagnosed), 0);
+  const overall = lots.reduce((sum, lot) => ({
+    total: sum.total + lot.total,
+    diagnosed: sum.diagnosed + lot.diagnosed,
+    rma: sum.rma + lot.rma,
+    totalValue: sum.totalValue + Number(lot.totalValue || 0),
+    totalCost: sum.totalCost + Number(lot.totalCost || 0),
+    hours: sum.hours + (lot.averageDiagnosisHours === null ? 0 : lot.averageDiagnosisHours * lot.diagnosed)
+  }), { total: 0, diagnosed: 0, rma: 0, totalValue: 0, totalCost: 0, hours: 0 });
+  overall.averageDiagnosisHours = hoursWeight ? overall.hours / hoursWeight : null;
+  return `
+    <div class="operational-dashboard-table triage-stats-lot-table" style="--triage-lot-columns: ${columns.length - 1}">
+      <div class="operational-dashboard-row operational-dashboard-head">${columns.map((column) => `<span>${column}</span>`).join("")}</div>
+      ${lots.map((lot) => row(lot, { name: lot.name || "Sem lote" })).join("")}
+      ${lots.length > 1 ? row(overall, { name: `Media geral (${lots.length} lotes)`, overall: true }) : ""}
+    </div>
+  `;
+}
+
+function triageStatsGradesMarkup(grades = []) {
+  if (!grades.length) return '<p class="muted">Nenhum item no periodo.</p>';
+  const max = grades.reduce((value, item) => Math.max(value, Number(item.total || 0)), 0);
+  const all = grades.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  return `
+    <div class="triage-destination-list">
+      ${grades.map((item) => {
+        const total = Number(item.total || 0);
+        const totalValue = Number(item.totalValue || 0);
+        const width = max ? Math.max(6, Math.round((total / max) * 100)) : 0;
+        return `
+          <div class="triage-destination-card triage-stats-static-card">
+            <span class="triage-destination-top">
+              <strong>${item.grade ? `Grade ${escapeHtml(item.grade)}` : "Sem grade"}</strong>
+              <span>${total} ${total === 1 ? "item" : "itens"} (${all ? Math.round((total / all) * 100) : 0}%)</span>
+            </span>
+            <span class="triage-destination-bar" aria-hidden="true"><span style="width: ${width}%"></span></span>
+            <span class="triage-destination-meta">
+              <span>${money(totalValue)} venda</span>
+              <span>${money(total ? totalValue / total : 0)} media</span>
+            </span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function triageStatsOldestPendingMarkup(items = []) {
+  if (!items.length) return '<p class="muted">Nenhum item pendente no filtro.</p>';
+  return `
+    <div class="operational-dashboard-table triage-stats-pending-table">
+      <div class="operational-dashboard-row operational-dashboard-head"><span>Codigo</span><span>Produto</span><span>Lote</span><span>Operador</span><span>Esperando</span></div>
+      ${items.map((item) => `
+        <div class="operational-dashboard-row">
+          <strong>${escapeHtml(item.code || "-")}</strong>
+          <span>${escapeHtml([item.sku, item.descricao].filter(Boolean).join(" - ") || "-")}</span>
+          <span>${escapeHtml(item.lotName || "-")}</span>
+          <span>${escapeHtml(item.operatorName || "-")}</span>
+          <span>${formatTriageHours(item.ageHours)}</span>
+        </div>
+      `).join("")}
     </div>
   `;
 }
