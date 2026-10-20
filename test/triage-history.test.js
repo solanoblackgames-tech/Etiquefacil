@@ -428,7 +428,7 @@ test("triage stats items list what is behind each card", async () => {
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-drill`;
-    const { listTriageStatsItems, writeDb } = await import(storeUrl.href);
+    const { listTriageStatsItems, listTriageStatsRows, writeDb } = await import(storeUrl.href);
     const now = new Date().toISOString();
     const triageItem = (code, fields) => ({
       id: code, userId: "owner-1", createdByUserId: "owner-1", code, sku: "SKU-1", descricao: "TV",
@@ -462,6 +462,23 @@ test("triage stats items list what is behind each card", async () => {
     assert.deepEqual(gradeA.items.map((item) => item.code), ["T-2"]);
     assert.deepEqual(noGrade.items.map((item) => item.code), ["T-3"]);
     assert.equal(all.total, 3);
+    const exportRows = await listTriageStatsRows("owner-1", { itemFilter: { diagnosisCondition: "nao_liga" }, includePhotos: true });
+    assert.deepEqual(exportRows.map((row) => row.item.code), byCondition.items.map((item) => item.code));
+    const emptyGradeExport = await listTriageStatsRows("owner-1", { itemFilter: { grade: "" } });
+    assert.deepEqual(emptyGradeExport.map((row) => row.item.code), ["T-3"]);
+    await writeDb({
+      users: [{ id: "owner-1", name: "Usuario", email: "user@example.com" }],
+      lots: [], products: [], rzItems: [], transferLots: [],
+      triageItems: Array.from({ length: 301 }, (_, index) => triageItem(`LEILAO-${index}`, {
+        status: "diagnosticado", diagnosisCondition: "OK_LEILAO", diagnosisPhoto: "data:image/png;base64,YWJj"
+      })),
+      triageEvents: []
+    });
+    const auctionCard = await listTriageStatsItems("owner-1", {}, { diagnosisCondition: "OK_LEILAO" });
+    const auctionExport = await listTriageStatsRows("owner-1", { itemFilter: { diagnosisCondition: "OK_LEILAO" }, includePhotos: true });
+    assert.equal(auctionCard.items.length, 300);
+    assert.equal(auctionExport.length, 301, "exportacao inclui todo o card, sem o limite da lista na tela");
+    assert.equal(auctionExport.every((row) => row.item.diagnosisPhoto === "data:image/png;base64,YWJj"), true);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;

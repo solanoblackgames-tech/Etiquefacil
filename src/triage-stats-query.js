@@ -121,6 +121,14 @@ export function buildTriageStatsRowsSql(period = {}) {
         select *
         from matched_triage
         where (cardinality($4::text[]) = 0 or (product__id is not null and product_match_rank <= product__checked_qty))
+        ${period.itemFilter ? `
+          and ($5::boolean is null or (coalesce(status = 'diagnosticado', false) or triage_transferred) = $5)
+          and ($6::text is null or upper(trim(coalesce(diagnosis_condition, ''))) = $6)
+          and ($7::text is null or upper(trim(coalesce(destination, ''))) = $7)
+          and ($8::text is null or upper(trim(coalesce(grade_avaliada, ''))) = $8)
+          and ($9::text is null or coalesce(user__id, nullif(operator_user_id, ''), nullif(created_by_user_id, ''), 'sem-operador') = $9)
+          and ($10::text is null or upper(trim(coalesce(triage_transfer_deposito_destino, ''))) = $10)
+        ` : ""}
         order by updated_at desc
       `;
 }

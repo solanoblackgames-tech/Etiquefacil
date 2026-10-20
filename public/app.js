@@ -12032,7 +12032,7 @@ function renderTriageStats() {
   const averageCost = stats.total ? Number(stats.totalCost || 0) / stats.total : 0;
   const diagnosedPercent = stats.total ? Math.round((Number(stats.diagnosedTotal || 0) / stats.total) * 100) : 0;
   const costSummary = canViewCost() ? `<small>Preco de venda Bling. Custo: ${money(stats.totalCost || 0)}</small>` : '<small>Preco de venda Bling.</small>';
-  const averageCostMetric = canViewCost() ? `<div class="metric"><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></div>` : "";
+  const averageCostMetric = canViewCost() ? `<button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Custo medio</span><strong>${money(averageCost)}</strong><small>Custo medio por item</small></button>` : "";
   const storeTransfer = stats.storeTransfer || {};
   const storeTransferCost = canViewCost() && Number(storeTransfer.totalCost || 0) ? ` - Custo ${money(storeTransfer.totalCost || 0)}` : "";
   const destinationCostCopy = canViewCost() ? "Quantidade, venda, custo e media por destino." : "Quantidade, venda e media por destino.";
@@ -12042,7 +12042,7 @@ function renderTriageStats() {
   const marginPercent = Number(stats.totalValue || 0) ? Math.round((margin / Number(stats.totalValue)) * 100) : 0;
   const previousMargin = previous ? Number(previous.totalValue || 0) - Number(previous.totalCost || 0) : null;
   const marginMetric = canViewCost()
-    ? `<div class="metric"><span>Margem</span><strong>${money(margin)}</strong><small>${marginPercent}% sobre a venda${triageStatsDelta(margin, previousMargin)}</small></div>`
+    ? `<button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Margem</span><strong>${money(margin)}</strong><small>${marginPercent}% sobre a venda${triageStatsDelta(margin, previousMargin)}</small></button>`
     : "";
   const diagnosisTime = stats.diagnosisTime || {};
   const diagnosisTimeCopy = diagnosisTime.measured
@@ -12068,12 +12068,12 @@ function renderTriageStats() {
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Itens triados</span><strong>${stats.total || 0}</strong><small>Ver itens${triageStatsDelta(stats.total, previous?.total)}</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Diagnosticados</span><strong>${stats.diagnosedTotal || 0}</strong><small>${diagnosedPercent}% concluidos${triageStatsDelta(stats.diagnosedTotal, previous?.diagnosedTotal)}</small></button>
       <button type="button" class="metric triage-stats-link-card" data-open-triage-status="aguardando_teste"><span>Pendentes</span><strong>${stats.pendingTotal || 0}</strong><small>Aguardando teste</small></button>
-      <div class="metric"><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></div>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status=""><span>Ticket medio</span><strong>${money(averageValue)}</strong><small>Valor medio por item</small></button>
       ${averageCostMetric}
       ${marginMetric}
-      <div class="metric"><span>Tempo ate o laudo</span><strong>${formatTriageHours(diagnosisTime.averageHours)}</strong><small>${diagnosisTimeCopy}</small></div>
-      <div class="metric"><span>Enviado a Loja</span><strong>${money(storeTransfer.totalValue || 0)}</strong><small>${storeTransfer.total || 0} itens transferidos${storeTransferCost}</small></div>
-      <div class="metric"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></div>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-status="diagnosticado"><span>Tempo ate o laudo</span><strong>${formatTriageHours(diagnosisTime.averageHours)}</strong><small>${diagnosisTimeCopy}</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-transfer-destination="Loja"><span>Enviado a Loja</span><strong>${money(storeTransfer.totalValue || 0)}</strong><small>${storeTransfer.total || 0} itens transferidos${storeTransferCost}</small></button>
+      <button type="button" class="metric triage-stats-link-card" data-open-triage-destination="${escapeHtml(stats.mainDestination?.destination || "")}"><span>Principal destino</span><strong>${mainDestination}</strong><small>Destino mais frequente</small></button>
     </div>
     <div class="triage-stats-dashboard">
       <section class="triage-stats-block triage-stats-wide triage-stats-drill hidden" id="triageStatsDrill"></section>
@@ -12377,6 +12377,18 @@ function handleTriageStatsFilterClick(event) {
     return;
   }
 
+  const operatorCard = event.target.closest("[data-open-triage-operator]");
+  if (operatorCard) {
+    openTriageStatsDrill(`Operador: ${operatorCard.dataset.operatorName || "Sem operador"}`, { operatorId: operatorCard.dataset.openTriageOperator });
+    return;
+  }
+
+  const transferCard = event.target.closest("[data-open-triage-transfer-destination]");
+  if (transferCard) {
+    openTriageStatsDrill(`Enviado a ${transferCard.dataset.openTriageTransferDestination}`, { transferDestination: transferCard.dataset.openTriageTransferDestination });
+    return;
+  }
+
   const destinationCard = event.target.closest("[data-open-triage-destination]");
   if (destinationCard) {
     const destination = destinationCard.dataset.openTriageDestination || "";
@@ -12401,7 +12413,9 @@ function handleTriageStatsFilterClick(event) {
 
   const downloadButton = event.target.closest("[data-download-triage-stats]");
   if (downloadButton) {
-    downloadTriageStatsList(downloadButton.dataset.downloadTriageStats === "photos");
+    const fromCard = downloadButton.hasAttribute("data-triage-stats-drill-download");
+    if (fromCard && !state.triageStatsDrill) return;
+    downloadTriageStatsList(downloadButton.dataset.downloadTriageStats === "photos", fromCard ? state.triageStatsDrill : null);
     return;
   }
 
@@ -12449,7 +12463,7 @@ function triageStatsDrillMarkup(drill, data = {}) {
   const showCost = canViewCost();
   const costCopy = showCost ? ` - Custo ${money(data.totalCost || 0)}` : "";
   // A fila da triagem nao filtra por grade.
-  const queueButton = drill.filter.grade === undefined
+  const queueButton = drill.filter.grade === undefined && !drill.filter.operatorId && !drill.filter.transferDestination
     ? '<button type="button" class="ghost" data-triage-stats-drill-queue>Abrir na fila da triagem</button>'
     : "";
   const truncated = Number(data.total || 0) > items.length
@@ -12463,10 +12477,13 @@ function triageStatsDrillMarkup(drill, data = {}) {
         <span class="muted">${data.total || 0} itens - Venda ${money(data.totalValue || 0)}${costCopy}</span>
       </div>
       <div class="triage-stats-drill-actions">
+        <button type="button" class="secondary" data-download-triage-stats data-triage-stats-drill-download>Baixar XLSX deste card</button>
+        <button type="button" class="secondary" data-download-triage-stats="photos" data-triage-stats-drill-download>XLSX + fotos deste card (ZIP)</button>
         ${queueButton}
         <button type="button" class="secondary" data-triage-stats-drill-close>Fechar</button>
       </div>
     </div>
+    <p class="message" id="triageStatsDrillDownloadMessage"></p>
     ${items.length ? `
       <div class="operational-dashboard-table triage-stats-drill-table">
         <div class="operational-dashboard-row operational-dashboard-head"><span>Codigo</span><span>Produto</span><span>Lote</span><span>Grade</span><span>Diagnostico</span><span>Destino</span><span>Operador</span><span>Venda</span><span>Entrada</span><span>Laudo</span></div>
@@ -12525,13 +12542,16 @@ function applyTriageStatsFilterFromForm(form) {
   loadTriageStats();
 }
 
-function downloadTriageStatsList(withPhotos = false) {
-  const message = $("#triageStatsDownloadMessage");
+function downloadTriageStatsList(withPhotos = false, drill = null) {
+  const message = $(drill ? "#triageStatsDrillDownloadMessage" : "#triageStatsDownloadMessage");
   const params = triageStatsQueryParams(normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter()));
+  if (drill) {
+    for (const [key, value] of Object.entries(drill.filter)) params.set(key, value);
+  }
   if (message) {
     message.style.color = "#0f766e";
     message.textContent = withPhotos
-      ? "Preparando ZIP com planilha e fotos. O download pode demorar conforme a quantidade de imagens."
+      ? `Preparando ZIP com planilha e fotos${drill ? ` de ${drill.title}` : ""}. O download pode demorar conforme a quantidade de imagens.`
       : "Download enviado para o navegador.";
   }
   window.location.href = `/api/triage/stats/export.${withPhotos ? "zip" : "xlsx"}?${params.toString()}`;
@@ -12552,6 +12572,7 @@ function triageStatsOperatorsMarkup(operators = []) {
         const costMetric = showCost ? `<span><strong>${money(total ? totalCost / total : 0)}</strong><small>Custo med.</small></span>` : "";
         return `
           <article class="triage-operator-card">
+            <button type="button" class="secondary" data-open-triage-operator="${escapeHtml(operator.operatorId)}" data-operator-name="${escapeHtml(operatorLabel(operator))}">Ver itens e baixar</button>
             <div class="triage-operator-main">
               <strong>${escapeHtml(operatorLabel(operator))}</strong>
               <span>${total} itens - Venda ${money(totalValue)}${costSummary}</span>

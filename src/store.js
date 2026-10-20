@@ -1357,7 +1357,7 @@ export async function getTriageStats(userId, period = {}) {
 
 // Itens por tras de um card das estatisticas, com o mesmo periodo e lotes do filtro.
 export async function listTriageStatsItems(userId, period = {}, filter = {}, limit = 300) {
-  const rows = (await listTriageStatsRows(userId, period)).filter((row) => matchesTriageStatsDrill(row, filter));
+  const rows = await listTriageStatsRows(userId, { ...period, itemFilter: filter });
   rows.sort((a, b) => String(b.item?.diagnosedAt || b.item?.createdAt || "").localeCompare(String(a.item?.diagnosedAt || a.item?.createdAt || "")));
   return {
     total: rows.length,
@@ -1388,6 +1388,9 @@ function matchesTriageStatsDrill(row, filter = {}) {
   if (filter.status === "aguardando_teste" && isTriageItemCompleted(item)) return false;
   if (filter.diagnosisCondition && upper(item.diagnosisCondition) !== upper(filter.diagnosisCondition)) return false;
   if (filter.destination && upper(item.destination) !== upper(filter.destination)) return false;
+  const operatorId = row.user?.id || item.operatorUserId || item.createdByUserId || "sem-operador";
+  if (filter.operatorId && operatorId !== filter.operatorId) return false;
+  if (filter.transferDestination && upper(item.triageTransferDepositDestination) !== upper(filter.transferDestination)) return false;
   // Grade vazia e um valor valido ("Sem grade"), por isso testa se o campo veio.
   if (filter.grade !== undefined && filter.grade !== null && upper(item.gradeAvaliada) !== upper(filter.grade)) return false;
   return true;
@@ -1401,7 +1404,14 @@ export async function listTriageStatsRows(userId, period = {}) {
     await ensureUserStockTransferAcceptanceColumnPg();
     const result = await query(
       buildTriageStatsRowsSql(period),
-      [userId, range.startAt, range.endAt, lotIds]
+      [userId, range.startAt, range.endAt, lotIds, ...(period.itemFilter ? [
+        period.itemFilter.status === "diagnosticado" ? true : period.itemFilter.status === "aguardando_teste" ? false : null,
+        period.itemFilter.diagnosisCondition ? String(period.itemFilter.diagnosisCondition).trim().toUpperCase() : null,
+        period.itemFilter.destination ? String(period.itemFilter.destination).trim().toUpperCase() : null,
+        period.itemFilter.grade == null ? null : String(period.itemFilter.grade).trim().toUpperCase(),
+        period.itemFilter.operatorId || null,
+        period.itemFilter.transferDestination ? String(period.itemFilter.transferDestination).trim().toUpperCase() : null
+      ] : [])]
     );
     return result.rows.map((row) => ({
       item: {
@@ -1463,7 +1473,7 @@ export async function listTriageStatsRows(userId, period = {}) {
       };
     })
     .filter((row) => !lotIds.length || scopedLotIds.has(row.product?.lotId));
-  if (!lotIds.length) return rows;
+  if (!lotIds.length) return rows.filter((row) => matchesTriageStatsDrill(row, period.itemFilter));
   const checkedByProduct = new Map();
   for (const item of db.rzItems || []) {
     if (!scopedLotIds.has(item.lotId) || !item.productId) continue;
@@ -1481,6 +1491,7 @@ export async function listTriageStatsRows(userId, period = {}) {
       usedByProduct.set(productId, used + 1);
       return true;
     })
+    .filter((row) => matchesTriageStatsDrill(row, period.itemFilter))
     .sort((a, b) => String(b.item?.updatedAt || b.item?.createdAt || "").localeCompare(String(a.item?.updatedAt || a.item?.createdAt || "")));
 }
 

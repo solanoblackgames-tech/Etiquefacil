@@ -35,6 +35,8 @@ test("PostgreSQL triage statistics preserve scope, prices, photos and latest tra
         ('old','owner','triage','t1','Antigo','waiting_store','2026-10-15'),
         ('new','owner','triage','t1','Loja','synced','2026-10-16'),
         ('foreign','other','triage','t1','Outro','waiting_store','2026-10-20');
+      update triage_items set diagnosis_condition='OK_LEILAO', grade_avaliada='B' where id='t1';
+      update triage_items set diagnosis_condition='OK_VENDA_DIRETA', grade_avaliada='A' where id='t2';
     `);
     const params = ["owner", "2026-10-14T03:00:00Z", "2026-10-21T02:59:59Z", []];
     const { rows } = await client.query(buildTriageStatsRowsSql(), params);
@@ -52,6 +54,20 @@ test("PostgreSQL triage statistics preserve scope, prices, photos and latest tra
     assert.equal(withPhotos.rows.find((row) => row.id === "t1").diagnosis_photo, "data:image/png;base64,YWJj");
     const byLot = await client.query(buildTriageStatsRowsSql(), [...params.slice(0, 3), ["l1"]]);
     assert.deepEqual(byLot.rows.map((row) => row.id), ["t1"]);
+    const cardSql = buildTriageStatsRowsSql({ includePhotos: true, itemFilter: {} });
+    const auction = await client.query(cardSql, [...params, null, "OK_LEILAO", null, null, null, null]);
+    assert.deepEqual(auction.rows.map((row) => row.id), ["t1"]);
+    assert.equal(auction.rows[0].diagnosis_photo, "data:image/png;base64,YWJj");
+    const completed = await client.query(cardSql, [...params, true, null, null, null, null, null]);
+    assert.deepEqual(completed.rows.map((row) => row.id), ["t1"], "transferidos contam como concluidos, como no card");
+    const noGrade = await client.query(cardSql, [...params, null, null, null, "", null, null]);
+    assert.deepEqual(noGrade.rows.map((row) => row.id).sort(), ["empty", "fallback"]);
+    const ranked = await client.query(cardSql, [...params.slice(0, 3), ["l1"], null, null, null, "A", null, null]);
+    assert.deepEqual(ranked.rows, [], "filtro do card deve vir depois do limite de unidades conferidas");
+    const transfers = await client.query(cardSql, [...params, null, null, null, null, null, "LOJA"]);
+    assert.deepEqual(transfers.rows.map((row) => row.id), ["t1"]);
+    const noOperator = await client.query(cardSql, [...params, null, null, null, null, "sem-operador", null]);
+    assert.equal(noOperator.rows.length, 4);
   } finally {
     await client.end();
   }

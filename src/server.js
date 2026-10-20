@@ -807,7 +807,9 @@ app.get("/api/triage/stats/items", requireAuth, requireTriageAccess, requireOper
         status: req.query.status || "",
         diagnosisCondition: req.query.diagnosisCondition || "",
         destination: req.query.destination || "",
-        grade: req.query.grade
+        grade: req.query.grade,
+        operatorId: req.query.operatorId || "",
+        transferDestination: req.query.transferDestination || ""
       }
     ));
   } catch (error) {
@@ -823,7 +825,15 @@ app.get(["/api/triage/stats/export.xlsx", "/api/triage/stats/export.zip"], requi
       endDate: req.query.endDate,
       lotId: req.query.lotId,
       lotIds: req.query.lotIds,
-      includePhotos: withPhotos
+      includePhotos: withPhotos,
+      itemFilter: {
+        status: req.query.status || "",
+        diagnosisCondition: req.query.diagnosisCondition || "",
+        destination: req.query.destination || "",
+        grade: req.query.grade,
+        operatorId: req.query.operatorId || "",
+        transferDestination: req.query.transferDestination || ""
+      }
     });
     const bundle = withPhotos ? prepareTriagePhotoExport(rows) : null;
     const workbook = buildTriageStatsExportWorkbook(rows, bundle?.photos);
@@ -831,12 +841,15 @@ app.get(["/api/triage/stats/export.xlsx", "/api/triage/stats/export.zip"], requi
     const lotNames = new Set(rows.map((row) => row.lot?.nomeArquivo).filter(Boolean));
     const filteredByLot = Boolean(req.query.lotId || req.query.lotIds);
     const lotName = lotNames.size === 1 ? [...lotNames][0] : filteredByLot ? "lotes-agrupados" : "todos-lotes";
-    const fileName = `${safeFileName(lotName)}-triagem-laudos.xlsx`;
+    const cardName = req.query.diagnosisCondition || req.query.destination || req.query.status || req.query.operatorId || req.query.transferDestination
+      || (req.query.grade !== undefined ? req.query.grade || "sem-grade" : "");
+    const exportName = `${safeFileName(lotName)}${cardName ? `-${safeFileName(cardName)}` : ""}`;
+    const fileName = `${exportName}-triagem-laudos.xlsx`;
     if (bundle) {
       bundle.zip.file(fileName, buffer);
       const archive = await bundle.zip.generateAsync({ type: "nodebuffer" });
       res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition", `attachment; filename="${safeFileName(lotName)}-triagem-com-fotos.zip"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${exportName}-triagem-com-fotos.zip"`);
       res.send(archive);
       return;
     }
