@@ -11,6 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
+import { prepareTriagePhotoExport } from "./triage-photo-export.js";
 import QRCode from "qrcode";
 import "dotenv/config";
 import {
@@ -814,20 +815,31 @@ app.get("/api/triage/stats/items", requireAuth, requireTriageAccess, requireOper
   }
 });
 
-app.get("/api/triage/stats/export.xlsx", requireAuth, requireTriageAccess, requireOperatorStatsAccess, async (req, res) => {
+app.get(["/api/triage/stats/export.xlsx", "/api/triage/stats/export.zip"], requireAuth, requireTriageAccess, requireOperatorStatsAccess, async (req, res) => {
   try {
+    const withPhotos = req.path.endsWith(".zip");
     const rows = await listTriageStatsRows(workspaceUserId(req), {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
       lotId: req.query.lotId,
-      lotIds: req.query.lotIds
+      lotIds: req.query.lotIds,
+      includePhotos: withPhotos
     });
-    const workbook = buildTriageStatsExportWorkbook(rows);
+    const bundle = withPhotos ? prepareTriagePhotoExport(rows) : null;
+    const workbook = buildTriageStatsExportWorkbook(rows, bundle?.photos);
     const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
     const lotNames = new Set(rows.map((row) => row.lot?.nomeArquivo).filter(Boolean));
     const filteredByLot = Boolean(req.query.lotId || req.query.lotIds);
     const lotName = lotNames.size === 1 ? [...lotNames][0] : filteredByLot ? "lotes-agrupados" : "todos-lotes";
     const fileName = `${safeFileName(lotName)}-triagem-laudos.xlsx`;
+    if (bundle) {
+      bundle.zip.file(fileName, buffer);
+      const archive = await bundle.zip.generateAsync({ type: "nodebuffer" });
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFileName(lotName)}-triagem-com-fotos.zip"`);
+      res.send(archive);
+      return;
+    }
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.send(buffer);
@@ -3939,8 +3951,8 @@ function safeFileName(value) {
   return String(value || "etiquefacil").replace(/[^\w.-]+/g, "_");
 }
 
-function buildTriageStatsExportWorkbook(rows = []) {
-  const data = rows.map((row) => {
+function buildTriageStatsExportWorkbook(rows = [], photos = null) {
+  const data = rows.map((row, index) => {
     const item = row.item || {};
     const product = row.product || {};
     const lot = row.lot || {};
@@ -3962,7 +3974,8 @@ function buildTriageStatsExportWorkbook(rows = []) {
       DESCRICAO: item.descricao || product.descricao || "",
       OPERADOR: row.user?.name || row.user?.email || "",
       "DATA TRIAGEM": item.createdAt ? new Date(item.createdAt) : "",
-      "DATA LAUDO": item.diagnosedAt ? new Date(item.diagnosedAt) : ""
+      "DATA LAUDO": item.diagnosedAt ? new Date(item.diagnosedAt) : "",
+      ...(photos ? { "ARQUIVO DA FOTO": photos[index].file, "SITUACAO DA FOTO": photos[index].status } : {})
     };
   });
   const worksheet = XLSX.utils.json_to_sheet(data, {
@@ -3982,7 +3995,8 @@ function buildTriageStatsExportWorkbook(rows = []) {
       "DESCRICAO",
       "OPERADOR",
       "DATA TRIAGEM",
-      "DATA LAUDO"
+      "DATA LAUDO",
+      ...(photos ? ["ARQUIVO DA FOTO", "SITUACAO DA FOTO"] : [])
     ]
   });
   worksheet["!cols"] = [
@@ -4003,6 +4017,12 @@ function buildTriageStatsExportWorkbook(rows = []) {
     { wch: 18 },
     { wch: 18 }
   ];
+  if (photos) {
+    worksheet["!cols"].push({ wch: 70 }, { wch: 34 });
+    photos.forEach((photo, index) => {
+      if (photo.file) worksheet[`Q${index + 2}`].l = { Target: photo.file, Tooltip: "Abrir arquivo da foto (extraia o ZIP primeiro)" };
+    });
+  }
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Triagem");
   const lotSheet = XLSX.utils.json_to_sheet(buildTriageStatsLotSummary(rows));

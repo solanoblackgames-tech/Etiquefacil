@@ -1415,6 +1415,7 @@ export async function listTriageStatsRows(userId, period = {}) {
           t.destination,
           t.diagnosis_condition,
           t.diagnosis,
+          ${period.includePhotos ? "t.diagnosis_photo," : ""}
           t.created_at,
           t.updated_at,
           t.diagnosed_at,
@@ -1545,6 +1546,7 @@ export async function listTriageStatsRows(userId, period = {}) {
         destination: row.destination || "",
         diagnosisCondition: row.diagnosis_condition || "",
         diagnosis: row.diagnosis || "",
+        diagnosisPhoto: row.diagnosis_photo || "",
         triageTransferred: Boolean(row.triage_transferred),
         triageTransferDepositDestination: row.triage_transfer_deposito_destino || "",
         triageTransferStatus: row.triage_transfer_status || "",

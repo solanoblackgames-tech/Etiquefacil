@@ -12252,6 +12252,7 @@ function triageStatsFilterMarkup(filter) {
         <label>Fim<input type="date" name="endDate" value="${escapeHtml(filter.endDate)}" /></label>
         <button type="submit">Aplicar</button>
         <button type="button" class="secondary" data-download-triage-stats title="Baixar lista de laudos e resumo por lote">Baixar XLSX</button>
+        <button type="button" class="secondary" data-download-triage-stats="photos" title="Baixar um ZIP com a planilha e uma pasta com as fotos dos laudos">XLSX + fotos (ZIP)</button>
       </div>
       ${groups.length ? `<div class="triage-stats-groups"><span class="muted">Grupos salvos:</span>${groupButtons}</div>` : ""}
       <p class="message" id="triageStatsDownloadMessage"></p>
@@ -12400,7 +12401,7 @@ function handleTriageStatsFilterClick(event) {
 
   const downloadButton = event.target.closest("[data-download-triage-stats]");
   if (downloadButton) {
-    downloadTriageStatsList();
+    downloadTriageStatsList(downloadButton.dataset.downloadTriageStats === "photos");
     return;
   }
 
@@ -12524,14 +12525,16 @@ function applyTriageStatsFilterFromForm(form) {
   loadTriageStats();
 }
 
-function downloadTriageStatsList() {
+function downloadTriageStatsList(withPhotos = false) {
   const message = $("#triageStatsDownloadMessage");
   const params = triageStatsQueryParams(normalizeTriageStatsFilter(state.triageStatsFilter || defaultTriageStatsFilter()));
   if (message) {
     message.style.color = "#0f766e";
-    message.textContent = "Download enviado para o navegador.";
+    message.textContent = withPhotos
+      ? "Preparando ZIP com planilha e fotos. O download pode demorar conforme a quantidade de imagens."
+      : "Download enviado para o navegador.";
   }
-  window.location.href = `/api/triage/stats/export.xlsx?${params.toString()}`;
+  window.location.href = `/api/triage/stats/export.${withPhotos ? "zip" : "xlsx"}?${params.toString()}`;
 }
 
 function triageStatsOperatorsMarkup(operators = []) {
