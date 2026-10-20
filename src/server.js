@@ -206,6 +206,9 @@ const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.ADMIN_PASSWORD_HASH || "").trim();
 const EXPEDITION_LABEL_CACHE_MS = 30 * 60 * 1000;
 const WMS_BLING_LOOKUP_TIMEOUT_MS = 6000;
+// Liberacao pontual: neste dia (horario de Brasilia) o Inventario WMS aceita SKU que nao existe no Bling;
+// a unidade entra como "nao validada" para conferir depois. Fora da data volta a exigir o cadastro.
+const WMS_ALLOW_UNREGISTERED_SKU_DATE = "2026-10-20";
 const WMS_BLING_COMPARE_MAX_SKUS = 500;
 const expeditionLabelCache = new Map();
 const LOGIN_MAX_FAILURES = 5;
@@ -1264,10 +1267,15 @@ app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAcces
     const lookupProduct = async (code) => {
       if (!integration) throw Object.assign(new Error("Bling nao conectado."), { wmsLookupUnavailable: true });
       try {
-        return await withTimeout(
+        const product = await withTimeout(
           findBlingProductForWms({ integration, code, saveIntegration: blingAccountSaver(userId, account) }),
           WMS_BLING_LOOKUP_TIMEOUT_MS
         );
+        const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+        if (!product && today === WMS_ALLOW_UNREGISTERED_SKU_DATE) {
+          throw Object.assign(new Error("SKU fora do Bling (liberado hoje)."), { wmsLookupUnavailable: true });
+        }
+        return product;
       } catch (error) {
         throw Object.assign(error, { wmsLookupUnavailable: true });
       }
