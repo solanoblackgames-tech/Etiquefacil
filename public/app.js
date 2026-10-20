@@ -1,3 +1,5 @@
+import { wmsPositionLabel } from "./wms-position-label.js";
+
 const state = {
   user: null,
   adminUsers: [],
@@ -8251,7 +8253,7 @@ function renderWmsStock() {
         <tbody>
           ${rows.map((row) => `
             <tr>
-              <td><strong>${escapeHtml(row.location)}</strong><br><span class="muted">${escapeHtml(row.depositName)}</span></td>
+              <td><strong>${escapeHtml(wmsPositionLabel(row.location, row.depositName))}</strong><br><span class="muted">${escapeHtml(row.depositName)}</span></td>
               <td>${escapeHtml(row.sku)}</td>
               <td>${escapeHtml(row.codigoMl || "")}</td>
               <td>${escapeHtml(row.descricao || "")}</td>
