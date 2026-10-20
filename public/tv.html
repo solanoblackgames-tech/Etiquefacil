@@ -390,7 +390,6 @@
             </div>`).join("")}
           </div>
           ${sales.manual && !sales.todayTotals.total ? "" : `<div class="today-strip">Hoje <span>vendido<b>${brl(sales.todayTotals.total)}</b></span>${sales.manual && !sales.todayTotals.orders ? "" : `<span>pedidos<b>${nf(sales.todayTotals.orders)}</b></span><span>ticket<b>${brl(sales.todayTotals.ticket)}</b></span>`}</div>`}
-          ${sales.manual ? `<div class="sync-note">Números copiados do Bling${sales.updatedAt ? ` · atualizado em ${esc(sales.updatedAt)}` : ""}</div>` : ""}
           ${syncing ? `<div class="sync-note">Sincronizando o histórico com o Bling: faltam ${nf(sales.pendingDetails)} pedidos. Peças, SKUs e vendedores ficam completos ao terminar.</div>` : ""}`;
       }
 
