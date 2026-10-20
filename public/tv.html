@@ -356,7 +356,7 @@
 
       // ---- Vendas ----
       function delta(currentValue, previousValue, sales) {
-        if (!previousValue) return `<div class="delta"><span>sem base no mês anterior</span></div>`;
+        if (!previousValue) return sales.manual ? "" : `<div class="delta"><span>sem base no mês anterior</span></div>`;
         const pct = ((currentValue - previousValue) / previousValue) * 100;
         const up = pct >= 0;
         return `<div class="delta ${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%<span>vs ${monthName(sales.previousMonth)} até dia ${Number(sales.comparableUntil.slice(8, 10))}</span></div>`;
@@ -368,13 +368,13 @@
         const syncing = sales.pendingDetails > 0;
         const cards = [
           { label: "Valor total", value: brl(c.total), now: c.total, before: p.total, small: c.total >= 1e7 },
-          { label: "Pedidos", value: sales.manual && !c.orders ? "—" : nf(c.orders), now: c.orders, before: p.orders },
-          { label: "Peças vendidas", value: sales.manual && !c.pieces ? "—" : nf(c.pieces), now: c.pieces, before: p.pieces, syncing },
-          { label: "Ticket médio", value: sales.manual && !c.ticket ? "—" : brl(c.ticket), now: c.ticket, before: p.ticket }
-        ];
+          { label: "Pedidos", value: nf(c.orders), now: c.orders, before: p.orders, missing: !c.orders },
+          { label: "Peças vendidas", value: nf(c.pieces), now: c.pieces, before: p.pieces, syncing, missing: !c.pieces },
+          { label: "Ticket médio", value: brl(c.ticket), now: c.ticket, before: p.ticket, missing: !c.ticket }
+        ].filter((card) => !(sales.manual && card.missing));
         const accounts = sales.accounts.filter((row) => row.connected);
         $("salesSummary").innerHTML = `
-          <div class="money-kpis">${cards.map((card) => `
+          <div class="money-kpis" style="grid-template-columns:repeat(${cards.length}, 1fr)">${cards.map((card) => `
             <div class="mkpi">
               <div class="mkpi-label">${card.label}</div>
               <div class="mkpi-value ${card.small ? "small" : ""}">${card.value}</div>
@@ -513,8 +513,7 @@
           ${customers.groups.length ? `<div class="cust-groups">${customers.groups.map((group) => {
             const share = Math.round((group.total / customers.groups.reduce((sum, item) => sum + item.total, 0)) * 100);
             return `<div class="cust-group"><span>${group.key === "novos" ? "Clientes novos" : "Recorrentes"} · ${share}%</span><b>${brl(group.total)}</b><small>${nf(group.customers)} clientes · ticket ${brl(group.ticket)}</small></div>`;
-          }).join("")}</div>` : ""}
-          ${customers.period ? `<div class="sync-note">Período: ${esc(customers.period)}</div>` : ""}`;
+          }).join("")}</div>` : ""}`;
       }
 
       function renderOperators(operators) {
