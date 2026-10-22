@@ -13394,8 +13394,8 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       </div>
       ${triageDiagnosisFormMarkup(item)}
     </section>
-    ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
-    ${triageDiagnosisHistoryMarkup(item.diagnosisHistory)}
+    ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto, item.code)}
+    ${triageDiagnosisHistoryMarkup(item.diagnosisHistory, item.code)}
     <form class="triage-edit-form ${openEdit ? "" : "hidden"}" data-triage-code="${escapeHtml(item.code)}">
       <div class="panel-heading">
         <span class="muted">Dados da etiqueta</span>
@@ -13442,7 +13442,7 @@ function renderTriageItemView(item) {
       </div>
       ${canEditDiagnosis ? triageDiagnosisFormMarkup(item, { qrMode: true }) : ""}
       ${triageTransferSummaryMarkup(item.triageTransfer)}
-      ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto)}
+      ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto, item.code)}
       <dl class="triage-fields">
         <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
         <div><dt>Destino</dt><dd>${escapeHtml(item.destination || "Nao definido")}</dd></div>
@@ -13622,17 +13622,25 @@ function boxWeightLabel(item = {}) {
   return peso ? `${peso} kg` : "-";
 }
 
-function triageDiagnosisPhotoMarkup(photo) {
+function triageDiagnosisPhotoMarkup(photo, code = "") {
   if (!photo) return "";
   return `
     <figure class="triage-diagnosis-photo">
       <img src="${escapeHtml(photo)}" alt="Foto do laudo" />
       <figcaption>Foto do laudo</figcaption>
+      ${triagePhotoDownloadLink(photo, `laudo-${code || "foto"}`)}
     </figure>
   `;
 }
 
-function triageDiagnosisHistoryMarkup(history = []) {
+// Foto em data URL baixa direto; URL externa abre em outra aba (o navegador ignora download cross-origin).
+function triagePhotoDownloadLink(photo, baseName) {
+  const extension = String(photo).match(/^data:image\/(png|jpe?g|webp)/i)?.[1]?.toLowerCase().replace("jpeg", "jpg") || "jpg";
+  const fileName = `${String(baseName).replace(/[^a-z0-9_-]+/gi, "-")}.${extension}`;
+  return `<a class="button-link triage-photo-download" href="${escapeHtml(photo)}" download="${escapeHtml(fileName)}" target="_blank" rel="noopener">Baixar foto</a>`;
+}
+
+function triageDiagnosisHistoryMarkup(history = [], code = "") {
   if (!Array.isArray(history) || !history.length) return "";
   return `
     <section class="triage-history">
@@ -13649,7 +13657,7 @@ function triageDiagnosisHistoryMarkup(history = []) {
             ${event.destination ? `<small>${escapeHtml(event.destination)}</small>` : ""}
           </div>
           <p>${escapeHtml(event.diagnosis || "-")}</p>
-          ${event.diagnosisPhoto ? `<img src="${escapeHtml(event.diagnosisPhoto)}" alt="Foto do laudo em ${escapeHtml(formatDateTime(event.createdAt))}" />` : ""}
+          ${event.diagnosisPhoto ? `<img src="${escapeHtml(event.diagnosisPhoto)}" alt="Foto do laudo em ${escapeHtml(formatDateTime(event.createdAt))}" />${triagePhotoDownloadLink(event.diagnosisPhoto, `laudo-${code || "historico"}-${String(event.createdAt || "").slice(0, 10)}`)}` : ""}
         </article>
       `).join("")}
     </section>
