@@ -655,12 +655,15 @@ async function uploadLot(event) {
   updateUnifiedCostFields(event.currentTarget);
   $("#uploadMessage").textContent = "";
   const form = event.currentTarget;
-  const button = form.querySelector("button");
+  const button = event.submitter || form.querySelector("button");
+  const classMode = event.submitter?.value === "classes";
   button.disabled = true;
   try {
+    const data = new FormData(form);
+    if (classMode) data.set("lotMode", "classes");
     const response = await api("/api/lots/unified", {
       method: "POST",
-      body: new FormData(form)
+      body: data
     });
     form.reset();
     updateUnifiedCostFields(form);
@@ -675,6 +678,7 @@ async function uploadLot(event) {
 }
 
 function unifiedLotSuccessMessage(response) {
+  if (response.mode === "classes") return `Lote por classe criado: ${response.lot.nomeArquivo}`;
   if (response.mode === "empty") return `Lote vazio criado: ${response.lot.nomeArquivo}`;
   if (response.mode === "suggestions") return `Lote criado com lista de sugestao: ${response.lot.nomeArquivo}`;
   if (response.mode === "mixed") return `Lote criado com previsao e sugestoes: ${response.lot.nomeArquivo}`;
@@ -830,7 +834,7 @@ async function addDiverseItem(event) {
   $("#diverseScanMessage").textContent = "";
   button.disabled = true;
   try {
-    if (isPrivateClassCode(codigoMl)) {
+    if (state.selectedDiverseLot?.classMode && isPrivateClassCode(codigoMl)) {
       await recordPrivateClass(state.selectedDiverseLotId, codigoRz, codigoMl);
       input.value = "";
       refreshPrivateClasses($("#diverseScanPanel"), state.selectedDiverseLot, codigoRz);
@@ -1823,6 +1827,7 @@ function renderDiverseLot(lot) {
   if (!state.selectedDiverseRz) state.selectedDiverseRz = rzs[0]?.codigoRz || null;
   mountDiversePanelForCurrentView();
   $("#diverseScanPanel").classList.remove("hidden");
+  $("#diverseScanPanel").classList.toggle("class-lot-mode", Boolean(lot.classMode && state.user?.privateClassesAccess));
   $("#diverseLotTitle").textContent = `${lot.nomeArquivo} · proximo ${lot.prefixoSku}${String(lot.proximoSequencialSku).padStart(4, "0")}`;
   renderDiverseRzControls(lot);
   $("#diverseLabelOptions").innerHTML = diverseLabelOptionsMarkup();
@@ -2701,6 +2706,8 @@ async function showApp(user) {
 
 function applyUserPermissions(user) {
   const operator = user.role === "operator";
+  document.querySelector("[data-create-class-lot]")?.classList.toggle("hidden", operator || !user.privateClassesAccess);
+  if (!user.privateClassesAccess) document.querySelectorAll("[data-class-generation], [data-class-panel]").forEach((panel) => panel.remove());
   document.querySelector('#app [data-tab="profile"]')?.classList.remove("hidden");
   document.querySelector('#app [data-tab="transfers"]')?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector('#app [data-tab="expedition"]')?.classList.toggle("hidden", !user.transferAccess);
@@ -5862,7 +5869,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   if (target === "expedition") loadExpedition(state.selectedExpeditionOrderId);
   if (target === "stock") loadWmsStock();
   if (target === "triage" && !triageViewOnly && !skipTriageLoad) loadTriageItems(state.selectedTriageCode);
-  if (target === "triage" && !triageViewOnly) mountClassGeneration($("#triageTab"));
+  if (target === "triage" && !triageViewOnly && state.user?.privateClassesAccess) mountClassGeneration($("#triageTab"));
   schedulePrimaryInputFocus();
 }
 
@@ -9561,8 +9568,8 @@ function renderLotDetail(lot) {
     `}
     ${operatorNoSheetLot ? "" : noSheetLot ? `
       <div class="summary-grid">
-        ${metric("Quantidade bipada", lot.progress.checkedQty)}
-        ${canViewLotValues() ? metric("Valor bipado", money(lot.progress.checkedValue)) : ""}
+        ${metric(lot.classMode ? "Etiquetas nos pallets" : "Quantidade bipada", lot.classMode ? lot.classCounts?.total || 0 : lot.progress.checkedQty)}
+        ${!lot.classMode && canViewLotValues() ? metric("Valor bipado", money(lot.progress.checkedValue)) : ""}
       </div>
     ` : `
       <div class="summary-grid">
@@ -9620,10 +9627,14 @@ function renderLotDetail(lot) {
   } else {
     schedulePrimaryInputFocus(["#rzSearchInput"]);
   }
-  if (noSheetLot) refreshPrivateClasses(detail, lot);
+  if (lot.classMode) refreshPrivateClasses(detail, lot);
 }
 
 function refreshPrivateClasses(container, lot, active = null) {
+  if (!state.user?.privateClassesAccess || !lot?.classMode) {
+    container?.querySelector(":scope > [data-class-panel]")?.remove();
+    return;
+  }
   return mountClassPanel(container, lot, {
     active,
     canClose: state.user?.role !== "operator",
@@ -10390,13 +10401,6 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerBu
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = true;
     if (triggerButton) triggerButton.disabled = true;
-    if (isPrivateClassCode(codigoMl)) {
-      await recordPrivateClass(lotId, codigoRz, codigoMl);
-      const { lot } = await api(`/api/lots/${encodeURIComponent(lotId)}`);
-      refreshPrivateClasses($("#lotDetail"), lot, codigoRz);
-      setScanFeedback("Etiqueta registrada na composicao por classe do pallet.", "success", { sound: true });
-      return;
-    }
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -11489,6 +11493,7 @@ function primaryInputSelectors() {
     "#productSplitModal:not(.hidden) #productSplitDescription",
     "#decisionModal:not(.hidden) .decision-fields label:not(.hidden) input",
     "#scanInput",
+    "[data-class-scan] input[name='code']:not(:disabled)",
     "#diverseScanForm input[name='codigoMl']:not(:disabled)",
     "#rzSearchInput",
     "#searchTab:not(.hidden) #searchForm input[name='codigoMl']",

@@ -62,7 +62,9 @@ Os downloads CSV continuam disponiveis como alternativa/manual.
 
 Na Triagem, abra **Etiquetas por classe A / B**, escolha a classe e gere de 1 a 1000 etiquetas por emissao. Abra a impressao em papel 60 × 40 mm. Cada etiqueta possui um QR aleatorio exclusivo, sem classe ou lote no conteudo. As emissoes anteriores permitem reimprimir os mesmos codigos.
 
-Em Conferencia, abra um lote sem lista, gere/abra um pallet e bipe os QRs privados. A secao **Composicao por classe** mostra A, B e total por pallet e por lote. Tambem permite retirar uma etiqueta antes de coloca-la em outro pallet. Uma etiqueta nao pode pertencer a dois pallets.
+O recurso esta disponivel exclusivamente para a conta Solano Black Games (`solanoblackgames@gmail.com`) e sua equipe. Em **Entradas de lotes**, preencha os dados sem anexar planilha e use **Criar lote por classe**. O botao **Criar lote** mantem o fluxo comum, com ou sem lista.
+
+Em Conferencia, abra o lote por classe, gere/abra um pallet e bipe os QRs privados. A secao **Composicao por classe** mostra A, B e total por pallet e por lote. Tambem permite retirar uma etiqueta antes de coloca-la em outro pallet. Uma etiqueta nao pode pertencer a dois pallets. Lotes da versao anterior que ja possuem historico de classe sao reconhecidos automaticamente, preservando seus registros.
 
 O responsavel pode fechar a composicao: o sistema salva contagens, data e responsavel e bloqueia novas entradas e retiradas de etiquetas nesse pallet. O historico registra cada movimentacao; a composicao pode ser exportada em CSV. Lotes com esse historico nao podem ser excluidos.
 

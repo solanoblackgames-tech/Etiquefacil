@@ -8965,3 +8965,6 @@ h3 {
 .triage-shell:not(.triage-view-only):has(> [data-class-generation]) { grid-template-rows: auto auto minmax(0, 1fr); }
 .triage-shell > [data-class-generation] { grid-column: 1 / -1; margin: 0; padding: 12px; max-height: 40vh; overflow-y: auto; }
 [data-class-generation] > summary { cursor: pointer; font-weight: 700; }
+.class-lot-mode > #diverseScanForm,
+.class-lot-mode > #diverseLabelOptions,
+.class-lot-mode > #diverseItems { display: none; }

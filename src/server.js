@@ -14,6 +14,7 @@ import XLSX from "xlsx";
 import { prepareTriagePhotoExport } from "./triage-photo-export.js";
 import QRCode from "qrcode";
 import { privateClassRoutes, attachPrivateClassPallets } from "./private-class-routes.js";
+import { hasPrivateClassAccess, registerPrivateClassLot, withClassState } from "./private-class-labels.js";
 import "dotenv/config";
 import {
   deleteBlingProductBySku,
@@ -2064,6 +2065,9 @@ app.delete("/api/integrations/bling", requireAuth, requireOwner, async (req, res
 
 app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), async (req, res) => {
   try {
+    const classMode = req.body.lotMode === "classes";
+    if (classMode && !req.session.user.privateClassesAccess) return res.status(403).json({ error: "Lote por classe nao liberado para esta conta." });
+    if (classMode && req.file) throw new Error("O lote por classe usa etiquetas A/B e deve ser criado sem planilha.");
     const name = String(req.body.name || "").trim() || `Lote de entrada ${new Date().toLocaleDateString("pt-BR")}`;
     const fornecedor = String(req.body.fornecedor || "").trim();
     const skuPrefix = String(req.body.skuPrefix || "").trim().toUpperCase();
@@ -2092,6 +2096,11 @@ app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), 
         costMode,
         costPercent
       });
+      if (classMode) {
+        await withClassState(workspaceUserId(req), (state) => registerPrivateClassLot(state, lot, { id: req.session.user.id, name: req.session.user.name }));
+        lot.classMode = true;
+        return res.json({ lot, mode: "classes" });
+      }
       return res.json({ lot, mode: "empty" });
     }
 
@@ -2177,7 +2186,7 @@ app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
     await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
-    await attachPrivateClassPallets(workspaceUserId(req), lot);
+    await attachPrivateClassPallets(workspaceUserId(req), lot, { allowed: Boolean(req.session.user.privateClassesAccess) });
     res.json({ lot });
   } catch (error) {
     sendError(res, error);
@@ -2263,7 +2272,7 @@ app.patch("/api/lots/:lotId/operator-visibility", requireAuth, requireOwner, asy
 app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   try {
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
-    await attachPrivateClassPallets(workspaceUserId(req), lot);
+    await attachPrivateClassPallets(workspaceUserId(req), lot, { allowed: Boolean(req.session.user.privateClassesAccess) });
     if (lot?.classCounts?.pallets.length) throw new Error("Este lote possui historico de composicao por classe e nao pode ser excluido.");
     res.json(await deleteUserLot(workspaceUserId(req), req.params.lotId));
   } catch (error) {
@@ -3262,7 +3271,7 @@ async function userWithLargeQrLabelAccess(user) {
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
   const isAllowedOwner = ownerEmail === LARGE_QR_LABEL_EMAIL;
   const isOwner = !user.parentUserId && (user.role || "owner") === "owner";
-  return { ...user, largeQrLabelAccess: Boolean(isAllowedOwner && (isOwner || user.largeQrLabelAccess)) };
+  return { ...user, privateClassesAccess: hasPrivateClassAccess(owner), largeQrLabelAccess: Boolean(isAllowedOwner && (isOwner || user.largeQrLabelAccess)) };
 }
 
 async function requireLargeQrLabelOwnerAccess(req, res, next) {

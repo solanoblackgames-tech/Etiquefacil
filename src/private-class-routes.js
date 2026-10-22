@@ -1,12 +1,16 @@
 import { Router } from "express";
 import QRCode from "qrcode";
-import { withClassState, generateClassBatch, changeClassPallet, classSummary } from "./private-class-labels.js";
+import { withClassState, generateClassBatch, changeClassPallet, classSummary, isPrivateClassLot } from "./private-class-labels.js";
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
 export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail, withState = withClassState }) {
   const router = Router();
-  router.use(requireAuth, (_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+  router.use(requireAuth, (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    if (!req.session.user?.privateClassesAccess) return res.status(403).json({ error: "Controle por classe nao liberado para esta conta." });
+    next();
+  });
   const route = (handler) => async (req, res) => {
     try { await handler(req, res); } catch (error) { res.status(error.status || 400).json({ error: error.message }); }
   };
@@ -14,7 +18,8 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
   const ownedLot = async (req) => {
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) throw new Error("Lote nao encontrado nesta conta.");
-    if (Number(lot.percentualArremate || 0) !== 0) throw new Error("Use um lote sem lista para o controle por classe.");
+    const classMode = await withState(workspaceUserId(req), (state) => isPrivateClassLot(state, lot.id));
+    if (!classMode) throw new Error("Este lote usa o fluxo normal. Crie um lote por classe na tela de entradas.");
     return lot;
   };
 
@@ -66,9 +71,11 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
   return router;
 }
 
-export async function attachPrivateClassPallets(userId, lot) {
-  if (!lot || Number(lot.percentualArremate || 0) !== 0) return lot;
-  const summary = await withClassState(userId, (state) => classSummary(state, lot.id));
+export async function attachPrivateClassPallets(userId, lot, { allowed = false, withState = withClassState } = {}) {
+  if (!lot || !allowed) return lot;
+  const summary = await withState(userId, (state) => isPrivateClassLot(state, lot.id) ? classSummary(state, lot.id) : null);
+  if (!summary) return lot;
+  lot.classMode = true;
   lot.classCounts = summary;
   for (const pallet of summary.pallets) {
     if (!lot.rzs.some((rz) => rz.codigoRz === pallet.codigoRz)) {

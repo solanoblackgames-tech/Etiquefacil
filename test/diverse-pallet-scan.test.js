@@ -7,9 +7,9 @@ const source = await readFile(new URL("../public/app.js", import.meta.url), "utf
 const handler = source.slice(source.indexOf("async function addDiverseItem(event)"), source.indexOf("async function loadNoSheetSuggestionMatches("));
 const membership = source.slice(source.indexOf("function diverseProductBelongsToRz("), source.indexOf("function findExistingDiverseProductByDescription("));
 
-async function scan({ activePallet, byDescription = false, privateLabel = false }) {
+async function scan({ activePallet, byDescription = false, privateLabel = false, classLot = privateLabel }) {
   const product = { id: "product-1", codigoMl: "ML1", sku: "SKU1" };
-  const lot = { id: "lot-1", products: [product], items: [{ productId: product.id, codigoRz: "PALLET-1", qtdConferida: 3 }] };
+  const lot = { id: "lot-1", classMode: classLot, products: [product], items: [{ productId: product.id, codigoRz: "PALLET-1", qtdConferida: 3 }] };
   const calls = [];
   const input = { value: "ML1", select() {} };
   const button = { disabled: false };
@@ -46,7 +46,7 @@ async function scan({ activePallet, byDescription = false, privateLabel = false 
   });
   vm.runInContext(membership + handler, context);
   await context.addDiverseItem({ preventDefault() {}, currentTarget: { querySelector: (selector) => selector === "button" ? button : input } });
-  assert.equal(message.textContent, privateLabel ? "Etiqueta registrada na composicao por classe do pallet." : "");
+  assert.equal(message.textContent, privateLabel && classLot ? "Etiqueta registrada na composicao por classe do pallet." : "");
   assert.equal(button.disabled, false);
   return calls;
 }
@@ -70,6 +70,12 @@ test("existing ML on the same pallet increments one unit", async () => {
 test("private class QR records composition without creating product or changing stock", async () => {
   const calls = await scan({ activePallet: "PALLET-1", privateLabel: true });
   assert.deepEqual(calls, [{ action: "private_class", args: ["lot-1", "PALLET-1", "ML1"] }]);
+});
+
+test("normal lots keep their product scan flow even for codes that look like private QRs", async () => {
+  const calls = await scan({ activePallet: "PALLET-1", privateLabel: true, classLot: false });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].action, "increment");
 });
 
 test("using an existing product by description on a new pallet preserves the requested quantity", async () => {

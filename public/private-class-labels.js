@@ -49,7 +49,7 @@ export async function recordPrivateClass(lotId, codigoRz, code) {
 }
 
 export async function mountClassPanel(container, lot, { active = null, canClose = false, openPallet } = {}) {
-  if (!container || Number(lot.percentualArremate || 0) !== 0) return;
+  if (!container || !lot.classMode) return;
   // Cada montagem tem sua propria identidade para descartar respostas de outra tela/pallet.
   let panel = container.querySelector(":scope > [data-class-panel]");
   panel?.remove();

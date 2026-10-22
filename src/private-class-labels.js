@@ -3,7 +3,25 @@ import path from "node:path";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { ensureStore, getPgPool } from "./store.js";
 
-const emptyState = () => ({ batches: [], labels: [], pallets: [], events: [] });
+const emptyState = () => ({ batches: [], labels: [], pallets: [], events: [], classLots: [] });
+
+export function hasPrivateClassAccess(owner) {
+  return String(owner?.email || "").trim().toLowerCase() === "solanoblackgames@gmail.com";
+}
+
+// Lotes da primeira versao sao reconhecidos pelo historico, sem alterar etiquetas ou pallets.
+export function isPrivateClassLot(state, lotId) {
+  return Boolean(state.classLots?.some((lot) => lot.id === lotId)
+    || state.pallets.some((pallet) => pallet.lotId === lotId)
+    || state.events.some((event) => event.lotId === lotId));
+}
+
+export function registerPrivateClassLot(state, lot, actor) {
+  state.classLots ||= [];
+  if (!state.classLots.some((item) => item.id === lot.id)) {
+    state.classLots.push({ id: lot.id, name: lot.nomeArquivo, createdAt: new Date().toISOString(), actor });
+  }
+}
 const queues = new Map();
 let tableReady;
 

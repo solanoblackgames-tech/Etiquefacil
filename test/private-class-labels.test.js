@@ -4,12 +4,51 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
-import { withClassState, generateClassBatch, changeClassPallet, classSummary } from "../src/private-class-labels.js";
-import { privateClassRoutes } from "../src/private-class-routes.js";
+import { withClassState, generateClassBatch, changeClassPallet, classSummary, hasPrivateClassAccess, registerPrivateClassLot, isPrivateClassLot } from "../src/private-class-labels.js";
+import { privateClassRoutes, attachPrivateClassPallets } from "../src/private-class-routes.js";
 
 const empty = () => ({ labels: [], batches: [], pallets: [], events: [] });
 const actor = { id: "owner", name: "Responsavel" };
 const move = (state, code, action = "add", codigoRz = "P1", lotId = "lot") => changeClassPallet(state, { lotId, lotName: "Lote sem lista", codigoRz, code, action, actor });
+
+test("controle por classe e exclusivo da conta Solano Black Games", () => {
+  assert.equal(hasPrivateClassAccess({ email: " SolanoBlackGames@gmail.com " }), true);
+  assert.equal(hasPrivateClassAccess({ email: "outra@example.com" }), false);
+  assert.equal(hasPrivateClassAccess(null), false);
+});
+
+test("lotes normais continuam sem classe e o lote ja iniciado preserva todos os dados", async () => {
+  const state = empty();
+  const normalLot = { id: "normal", percentualArremate: 0, rzs: [] };
+  const withState = async (_user, fn) => fn(state);
+  await attachPrivateClassPallets("u1", normalLot, { allowed: true, withState });
+  assert.deepEqual(normalLot, { id: "normal", percentualArremate: 0, rzs: [] });
+  generateClassBatch(state, { grade: "A", quantity: 2, actor });
+  move(state, state.labels[0].code);
+  move(state, null, "close");
+  const saved = structuredClone(state);
+  const existing = { id: "lot", percentualArremate: 0, rzs: [] };
+  await attachPrivateClassPallets("u1", existing, { allowed: true, withState });
+  assert.equal(existing.classMode, true);
+  assert.equal(existing.classCounts.A, 1);
+  assert.equal(existing.classCounts.pallets[0].closedBy.id, actor.id);
+  assert.deepEqual(existing.rzs[0].classCounts, { A: 1, B: 0, total: 1 });
+  assert.deepEqual(state, saved);
+  await attachPrivateClassPallets("u2", normalLot, { allowed: false, withState: () => { throw new Error("Nao deve consultar dados"); } });
+});
+
+test("novo lote por classe e identificado antes de receber a primeira etiqueta", async () => {
+  const state = empty();
+  const lot = { id: "new", nomeArquivo: "Novo por classe", rzs: [] };
+  registerPrivateClassLot(state, lot, actor);
+  registerPrivateClassLot(state, lot, actor);
+  assert.equal(state.classLots.length, 1);
+  assert.equal(isPrivateClassLot(state, "new"), true);
+  assert.equal(isPrivateClassLot(state, "normal"), false);
+  await attachPrivateClassPallets("u1", lot, { allowed: true, withState: async (_user, fn) => fn(state) });
+  assert.equal(lot.classMode, true);
+  assert.equal(lot.classCounts.total, 0);
+});
 
 test("cada etiqueta e unica e gerar etiquetas nao aumenta a contagem nos pallets", () => {
   const state = empty();
@@ -78,13 +117,13 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
     requireAuth(req, res, next) {
       const id = req.get("x-user");
       if (!id) return res.status(401).json({ error: "Login obrigatorio" });
-      req.session = { user: { id, name: id, role: req.get("x-role") || "owner" } };
+      req.session = { user: { id, name: id, role: req.get("x-role") || "owner", privateClassesAccess: id === "u1" } };
       next();
     },
     requireTriageAccess: pass,
     requireOwner(req, res, next) { if (req.session.user.role === "operator") return res.status(403).json({ error: "Restrito" }); next(); },
     workspaceUserId: (req) => req.session.user.id,
-    getUserLotDetail: async (userId, lotId) => lotId === "lot" && userId === "u1" ? { id: lotId, nomeArquivo: "Lote sem lista", percentualArremate: 0 } : null,
+    getUserLotDetail: async (userId, lotId) => ["lot", "normal"].includes(lotId) && userId === "u1" ? { id: lotId, nomeArquivo: "Lote", percentualArremate: 0 } : null,
     withState: (userId, fn) => withClassState(userId, fn, { directory, pool: null })
   }));
   const server = app.listen(0, "127.0.0.1");
@@ -93,13 +132,18 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
   const call = (url, body, user = "u1", role = "owner") => fetch(root + url, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", ...(user ? { "x-user": user, "x-role": role } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   try {
     assert.equal((await call("/batches", null, null)).status, 401);
+    assert.equal((await call("/batches", null, "u2")).status, 403);
+    assert.equal((await call("/batches", { grade: "A", quantity: 1 }, "u2")).status, 403);
+    await withClassState("u1", (state) => registerPrivateClassLot(state, { id: "lot", nomeArquivo: "Lote por classe" }, actor), { directory, pool: null });
     const { batch } = await (await call("/batches", { grade: "A", quantity: 2 })).json();
     const html = await (await call(`/batches/${batch.id}/print`)).text();
     assert.equal((html.match(/<section>/g) || []).length, 2);
     assert.ok(!html.includes("Classe A"));
     const code = html.match(/<small>([A-F0-9]{32})<\/small>/)[1];
-    assert.equal((await call(`/batches/${batch.id}/print`, null, "u2")).status, 400);
-    assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code }, "u2")).status, 400);
+    assert.equal((await call(`/batches/${batch.id}/print`, null, "u2")).status, 403);
+    assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code }, "u2")).status, 403);
+    assert.equal((await call("/lots/normal/pallets/P1", { action: "add", code })).status, 400);
+    assert.equal((await call("/lots/normal")).status, 400);
     assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code })).status, 200);
     assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code })).status, 400);
     const summary = await (await call("/lots/lot")).json();
