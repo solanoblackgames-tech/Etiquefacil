@@ -1,4 +1,5 @@
 import { wmsPositionLabel } from "./wms-position-label.js";
+import { mountClassGeneration, mountClassPanel, isPrivateClassCode, recordPrivateClass } from "./private-class-labels.js";
 
 const state = {
   user: null,
@@ -829,6 +830,14 @@ async function addDiverseItem(event) {
   $("#diverseScanMessage").textContent = "";
   button.disabled = true;
   try {
+    if (isPrivateClassCode(codigoMl)) {
+      await recordPrivateClass(state.selectedDiverseLotId, codigoRz, codigoMl);
+      input.value = "";
+      refreshPrivateClasses($("#diverseScanPanel"), state.selectedDiverseLot, codigoRz);
+      $("#diverseScanMessage").textContent = "Etiqueta registrada na composicao por classe do pallet.";
+      playScanFeedback("success");
+      return;
+    }
     let valorUnitOverride;
     let quantidade = 1;
     const preview = await previewDiverseItem(codigoMl, codigoRz);
@@ -1982,6 +1991,7 @@ function renderDiverseRzControls(lot) {
       </button>
     `)
     .join("");
+  refreshPrivateClasses($("#diverseScanPanel"), lot, active);
 }
 
 function isNoSheetScanPanelMounted() {
@@ -2006,6 +2016,9 @@ function diverseRzs(lot) {
     const current = byRz.get(item.codigoRz) || { codigoRz: item.codigoRz, items: 0 };
     current.items += Math.max(Number(item.qtdEsperada || 0), Number(item.qtdConferida || 0));
     byRz.set(item.codigoRz, current);
+  }
+  for (const pallet of lot?.classCounts?.pallets || []) {
+    if (!byRz.has(pallet.codigoRz)) byRz.set(pallet.codigoRz, { codigoRz: pallet.codigoRz, items: 0 });
   }
   return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz));
 }
@@ -5849,6 +5862,7 @@ function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly =
   if (target === "expedition") loadExpedition(state.selectedExpeditionOrderId);
   if (target === "stock") loadWmsStock();
   if (target === "triage" && !triageViewOnly && !skipTriageLoad) loadTriageItems(state.selectedTriageCode);
+  if (target === "triage" && !triageViewOnly) mountClassGeneration($("#triageTab"));
   schedulePrimaryInputFocus();
 }
 
@@ -9606,6 +9620,15 @@ function renderLotDetail(lot) {
   } else {
     schedulePrimaryInputFocus(["#rzSearchInput"]);
   }
+  if (noSheetLot) refreshPrivateClasses(detail, lot);
+}
+
+function refreshPrivateClasses(container, lot, active = null) {
+  return mountClassPanel(container, lot, {
+    active,
+    canClose: state.user?.role !== "operator",
+    openPallet: (codigoRz) => openRzScanInNewTab(lot, codigoRz)
+  });
 }
 
 function emptyLotDetailMarkup() {
@@ -10367,6 +10390,13 @@ async function scanCurrent(lotId, codigoRz, codigoMlFromButton = "", { triggerBu
     const scanButton = $("#scanButton");
     if (scanButton) scanButton.disabled = true;
     if (triggerButton) triggerButton.disabled = true;
+    if (isPrivateClassCode(codigoMl)) {
+      await recordPrivateClass(lotId, codigoRz, codigoMl);
+      const { lot } = await api(`/api/lots/${encodeURIComponent(lotId)}`);
+      refreshPrivateClasses($("#lotDetail"), lot, codigoRz);
+      setScanFeedback("Etiqueta registrada na composicao por classe do pallet.", "success", { sound: true });
+      return;
+    }
     const response = await api(`/api/lots/${lotId}/rz/${encodeURIComponent(codigoRz)}/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -11567,6 +11597,7 @@ function rzCard(rz, { canScan = true } = {}) {
     <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
       <div class="rz-card-details">
+        ${rz.classCounts ? `<span>Classe A</span><strong>${rz.classCounts.A}</strong><span>Classe B</span><strong>${rz.classCounts.B}</strong>` : ""}
         <span>Itens</span><strong>${rz.expected}</strong>
         <span>Conferido</span><strong>${rz.checked}</strong>
         ${valueCells}

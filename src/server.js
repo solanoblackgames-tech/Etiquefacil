@@ -13,6 +13,7 @@ import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import { prepareTriagePhotoExport } from "./triage-photo-export.js";
 import QRCode from "qrcode";
+import { privateClassRoutes, attachPrivateClassPallets } from "./private-class-routes.js";
 import "dotenv/config";
 import {
   deleteBlingProductBySku,
@@ -2169,11 +2170,14 @@ app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (r
   }
 });
 
+app.use("/api/private-classes", privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail }));
+
 app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
   try {
     await recordOperatorActivity(req.session.user, "view_lot", { lotId: req.params.lotId });
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) return res.status(404).json({ error: "Lote não encontrado." });
+    await attachPrivateClassPallets(workspaceUserId(req), lot);
     res.json({ lot });
   } catch (error) {
     sendError(res, error);
@@ -2258,6 +2262,9 @@ app.patch("/api/lots/:lotId/operator-visibility", requireAuth, requireOwner, asy
 
 app.delete("/api/lots/:lotId", requireAuth, requireOwner, async (req, res) => {
   try {
+    const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
+    await attachPrivateClassPallets(workspaceUserId(req), lot);
+    if (lot?.classCounts?.pallets.length) throw new Error("Este lote possui historico de composicao por classe e nao pode ser excluido.");
     res.json(await deleteUserLot(workspaceUserId(req), req.params.lotId));
   } catch (error) {
     sendError(res, error);

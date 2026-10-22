@@ -58,6 +58,18 @@ Com a conta autorizada, o lote passa a ter tambem o botao `Criar produtos no Bli
 
 Os downloads CSV continuam disponiveis como alternativa/manual.
 
+## Etiquetas privadas por classe e composicao dos pallets
+
+Na Triagem, abra **Etiquetas por classe A / B**, escolha a classe e gere de 1 a 1000 etiquetas por emissao. Abra a impressao em papel 60 × 40 mm. Cada etiqueta possui um QR aleatorio exclusivo, sem classe ou lote no conteudo. As emissoes anteriores permitem reimprimir os mesmos codigos.
+
+Em Conferencia, abra um lote sem lista, gere/abra um pallet e bipe os QRs privados. A secao **Composicao por classe** mostra A, B e total por pallet e por lote. Tambem permite retirar uma etiqueta antes de coloca-la em outro pallet. Uma etiqueta nao pode pertencer a dois pallets.
+
+O responsavel pode fechar a composicao: o sistema salva contagens, data e responsavel e bloqueia novas entradas e retiradas de etiquetas nesse pallet. O historico registra cada movimentacao; a composicao pode ser exportada em CSV. Lotes com esse historico nao podem ser excluidos.
+
+Gerar etiquetas nao movimenta estoque. A bipagem privada registra a composicao por classe; o cadastro comercial dos produtos e as movimentacoes no Bling seguem seus fluxos existentes. Os codigos sao consultados somente dentro da conta proprietaria, incluindo seus operadores autorizados.
+
+Com PostgreSQL, os registros ficam na tabela `private_class_state`, criada automaticamente no primeiro uso. No modo local, ficam em `data/private-classes/`, que deve acompanhar o backup de `data/db.json`.
+
 ## Health check
 
 Use o endpoint abaixo no provedor:

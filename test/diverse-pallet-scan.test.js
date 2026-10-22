@@ -7,7 +7,7 @@ const source = await readFile(new URL("../public/app.js", import.meta.url), "utf
 const handler = source.slice(source.indexOf("async function addDiverseItem(event)"), source.indexOf("async function loadNoSheetSuggestionMatches("));
 const membership = source.slice(source.indexOf("function diverseProductBelongsToRz("), source.indexOf("function findExistingDiverseProductByDescription("));
 
-async function scan({ activePallet, byDescription = false }) {
+async function scan({ activePallet, byDescription = false, privateLabel = false }) {
   const product = { id: "product-1", codigoMl: "ML1", sku: "SKU1" };
   const lot = { id: "lot-1", products: [product], items: [{ productId: product.id, codigoRz: "PALLET-1", qtdConferida: 3 }] };
   const calls = [];
@@ -19,6 +19,10 @@ async function scan({ activePallet, byDescription = false }) {
     $: () => message,
     normalizeCode: (value) => String(value || "").trim().toUpperCase(),
     normalizeCodigoMl: (value) => value,
+    isPrivateClassCode: () => privateLabel,
+    recordPrivateClass: async (...args) => calls.push({ action: "private_class", args }),
+    refreshPrivateClasses() {},
+    playScanFeedback() {},
     previewDiverseItem: async () => {
       if (byDescription) throw Object.assign(new Error("manual"), { code: "manual_required" });
       return { status: "preview_existing", product, lot };
@@ -42,7 +46,7 @@ async function scan({ activePallet, byDescription = false }) {
   });
   vm.runInContext(membership + handler, context);
   await context.addDiverseItem({ preventDefault() {}, currentTarget: { querySelector: (selector) => selector === "button" ? button : input } });
-  assert.equal(message.textContent, "");
+  assert.equal(message.textContent, privateLabel ? "Etiqueta registrada na composicao por classe do pallet." : "");
   assert.equal(button.disabled, false);
   return calls;
 }
@@ -61,6 +65,11 @@ test("existing ML on the same pallet increments one unit", async () => {
   const calls = await scan({ activePallet: "PALLET-1" });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].action, "increment");
+});
+
+test("private class QR records composition without creating product or changing stock", async () => {
+  const calls = await scan({ activePallet: "PALLET-1", privateLabel: true });
+  assert.deepEqual(calls, [{ action: "private_class", args: ["lot-1", "PALLET-1", "ML1"] }]);
 });
 
 test("using an existing product by description on a new pallet preserves the requested quantity", async () => {

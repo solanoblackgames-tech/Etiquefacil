@@ -8954,3 +8954,14 @@ h3 {
 
 .tv-open-button { margin-top: 10px; min-height: 44px; padding: 0 18px; background: #0f766e; color: #fff; border: 0; border-radius: 8px; font-weight: 700; cursor: pointer; }
 .tv-open-button:hover { background: #0b5f59; }
+
+[data-class-panel], [data-class-generation] { margin: 18px 0; overflow-x: auto; }
+[data-class-panel] table, [data-class-generation] table { width: 100%; border-collapse: collapse; }
+[data-class-panel] th, [data-class-panel] td, [data-class-generation] th, [data-class-generation] td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+[data-class-panel] tfoot { font-weight: 700; background: #f1f5f9; }
+[data-class-panel] details, [data-class-generation] details { margin-top: 14px; }
+[data-class-panel] li { margin: 8px 0; overflow-wrap: anywhere; }
+.triage-view-only [data-class-generation] { display: none; }
+.triage-shell:not(.triage-view-only):has(> [data-class-generation]) { grid-template-rows: auto auto minmax(0, 1fr); }
+.triage-shell > [data-class-generation] { grid-column: 1 / -1; margin: 0; padding: 12px; max-height: 40vh; overflow-y: auto; }
+[data-class-generation] > summary { cursor: pointer; font-weight: 700; }
