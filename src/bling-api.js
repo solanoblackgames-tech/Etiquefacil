@@ -223,6 +223,15 @@ export function buildBlingStockTransferPayload(item, { productId, depositoOrigem
   };
 }
 
+export async function syncBlingSupplier({ integration, name, saveIntegration }) {
+  name = String(name || "").trim();
+  if (!name) throw new Error("Informe o fornecedor do lote.");
+  const client = new BlingApiClient(integration, saveIntegration);
+  const supplier = await client.findOrCreateSupplier(name);
+  if (!supplier?.id) throw new Error("O Bling nao retornou o ID do fornecedor.");
+  return { id: supplier.id, name: supplier.nome || name };
+}
+
 export async function syncBlingProducts({ integration, products, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   const supplierSync = await prepareOptionalSupplierForItems(client, products);

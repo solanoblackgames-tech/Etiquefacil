@@ -678,7 +678,10 @@ async function uploadLot(event) {
 }
 
 function unifiedLotSuccessMessage(response) {
-  if (response.mode === "classes") return `Lote por classe criado: ${response.lot.nomeArquivo}`;
+  if (response.mode === "classes") {
+    const supplier = response.supplierSync;
+    return `Lote por classe criado: ${response.lot.nomeArquivo}. ${supplier?.ok ? "Fornecedor confirmado no Bling." : `Fornecedor pendente no Bling: ${supplier?.error || "sincronize dentro do lote"}`}`;
+  }
   if (response.mode === "empty") return `Lote vazio criado: ${response.lot.nomeArquivo}`;
   if (response.mode === "suggestions") return `Lote criado com lista de sugestao: ${response.lot.nomeArquivo}`;
   if (response.mode === "mixed") return `Lote criado com previsao e sugestoes: ${response.lot.nomeArquivo}`;
@@ -9443,6 +9446,7 @@ function renderLotPreview(lot) {
   $("#openLotButton").addEventListener("click", () => selectLot(lot.id));
   $("#toggleLotOperatorVisibilityButton")?.addEventListener("click", (event) => toggleLotOperatorVisibility(lot, event.currentTarget));
   bindBulkLotEditor(lot, detail);
+  if (lot.classMode) refreshPrivateClasses(detail, lot);
 }
 
 async function toggleLotOperatorVisibility(lot, button) {

@@ -7,7 +7,7 @@ import { registerPrivateClassLot, isPrivateClassLot } from "../src/private-class
 const server = await fs.readFile(new URL("../src/server.js", import.meta.url), "utf8");
 const source = server.slice(server.indexOf('app.post("/api/lots/unified"'), server.indexOf('app.post("/api/lots",'));
 
-async function create({ classes = false, allowed = false, file = false } = {}) {
+async function create({ classes = false, allowed = false, file = false, supplierFailure = false } = {}) {
   const saved = { labels: [], pallets: [], events: [], batches: [] };
   const created = [];
   let handler;
@@ -19,6 +19,7 @@ async function create({ classes = false, allowed = false, file = false } = {}) {
     createDiverseLot: async (payload) => { created.push(payload); return { id: "new-lot", nomeArquivo: payload.name }; },
     withClassState: async (_user, fn) => fn(saved),
     registerPrivateClassLot,
+    syncPrivateClassLotSupplier: async (_userId, lot) => ({ ok: !supplierFailure, name: lot.fornecedor, ...(supplierFailure ? { error: "Bling indisponivel" } : { supplierId: 123 }) }),
     sendError: (res, error) => res.status(400).json({ error: error.message })
   });
   vm.runInContext(source, context);
@@ -48,6 +49,17 @@ test("criar lote por classe registra o tipo explicitamente apenas na conta autor
   assert.equal(res.code, 200);
   assert.equal(res.body.mode, "classes");
   assert.equal(res.body.lot.classMode, true);
+  assert.equal(isPrivateClassLot(saved, res.body.lot.id), true);
+  assert.equal(res.body.supplierSync.ok, true);
+  assert.equal(res.body.supplierSync.supplierId, 123);
+});
+
+test("falha do fornecedor no Bling nao impede criar lote por classe", async () => {
+  const { res, saved, created } = await create({ classes: true, allowed: true, supplierFailure: true });
+  assert.equal(res.code, 200);
+  assert.equal(created.length, 1);
+  assert.equal(res.body.supplierSync.ok, false);
+  assert.equal(res.body.supplierSync.error, "Bling indisponivel");
   assert.equal(isPrivateClassLot(saved, res.body.lot.id), true);
 });
 

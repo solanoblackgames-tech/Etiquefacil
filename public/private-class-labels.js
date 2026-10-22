@@ -63,7 +63,10 @@ export async function mountClassPanel(container, lot, { active = null, canClose 
     const summary = await request(url);
     if (!panel.isConnected) return;
     const current = summary.pallets.find((p) => p.codigoRz === active);
+    const supplier = summary.supplierSync;
     panel.innerHTML = `<h3>Composicao por classe${active ? ` · ${escape(active)}` : ""}</h3>
+      <p>Fornecedor: <strong>${escape(summary.supplierName || lot.fornecedor || "Nao informado")}</strong> · ${supplier?.ok ? `Confirmado no Bling (ID ${escape(supplier.supplierId)})` : `Pendente no Bling${supplier?.error ? `: ${escape(supplier.error)}` : ""}`}</p>
+      ${canClose ? '<button type="button" class="ghost" data-sync-class-supplier>Sincronizar fornecedor no Bling</button>' : ""}
       <p class="muted">${active ? "Bipe o QR privado no campo abaixo ou no campo de bipagem do pallet." : "Contagem de etiquetas efetivamente colocadas nos pallets deste lote."}</p>
       <div class="summary-grid"><div class="metric"><span>Classe A${active ? " neste pallet" : " no lote"}</span><strong>${active ? current?.A || 0 : summary.A}</strong></div><div class="metric"><span>Classe B${active ? " neste pallet" : " no lote"}</span><strong>${active ? current?.B || 0 : summary.B}</strong></div><div class="metric"><span>Total por classe</span><strong>${active ? current?.total || 0 : summary.total}</strong></div></div>
       ${active ? `<form data-class-scan class="transfer-form"><label>QR privado<input name="code" autocomplete="off" required ${current?.closedAt ? "disabled" : ""}></label><label>Operacao<select name="action" ${current?.closedAt ? "disabled" : ""}><option value="add">Colocar no pallet</option><option value="remove">Retirar do pallet</option></select></label><button ${current?.closedAt ? "disabled" : ""}>Registrar QR</button></form>
@@ -73,6 +76,15 @@ export async function mountClassPanel(container, lot, { active = null, canClose 
       ${canClose ? `<p><a href="${base}${url}/export">Exportar composicao CSV</a></p>` : ""}
       <details><summary>Historico recente de movimentacoes</summary><ul>${summary.events.filter((e) => !active || e.codigoRz === active).map((e) => `<li>${escape(date(e.createdAt))} · ${escape(e.codigoRz)} · ${escape(({ add: "Entrada", remove: "Retirada", close: "Fechamento" })[e.action])}${e.grade ? ` classe ${escape(e.grade)}` : ""} · ${escape(e.code || "")} · ${escape(e.actor?.name)}</li>`).join("")}</ul></details>`;
     panel.querySelectorAll("[data-class-open]").forEach((button) => button.addEventListener("click", () => openPallet?.(button.dataset.classOpen)));
+    panel.querySelector("[data-sync-class-supplier]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      panel.querySelector("[data-message]").textContent = "Consultando fornecedor no Bling...";
+      try {
+        await request(`${url}/supplier`, {});
+        await mountClassPanel(container, lot, { active, canClose, openPallet });
+      } catch (error) { panel.querySelector("[data-message]").textContent = error.message; button.disabled = false; }
+    });
     const change = async (body, button) => {
       button.disabled = true;
       try {

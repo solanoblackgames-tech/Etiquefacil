@@ -4,7 +4,7 @@ import { withClassState, generateClassBatch, changeClassPallet, classSummary, is
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
-export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail, withState = withClassState }) {
+export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail, syncLotSupplier, withState = withClassState }) {
   const router = Router();
   router.use(requireAuth, (req, res, next) => {
     res.set("Cache-Control", "no-store");
@@ -45,10 +45,16 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
       <header>${labels.length} etiquetas · 60 × 40 mm <button onclick="window.print()">Imprimir</button></header>${pages.join("")}</html>`);
   }));
 
+  router.post("/lots/:lotId/supplier", requireOwner, route(async (req, res) => {
+    const lot = await ownedLot(req);
+    res.json({ supplierSync: await syncLotSupplier(workspaceUserId(req), lot) });
+  }));
   router.get("/lots/:lotId", route(async (req, res) => {
-    await ownedLot(req);
+    const lot = await ownedLot(req);
     res.json(await withState(workspaceUserId(req), (state) => ({
       ...classSummary(state, req.params.lotId),
+      supplierName: lot.fornecedor || "",
+      supplierSync: state.classLots?.find((item) => item.id === lot.id)?.supplierSync || null,
       events: state.events.filter((event) => event.lotId === req.params.lotId).slice(-100).reverse()
     })));
   }));
@@ -73,9 +79,12 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
 
 export async function attachPrivateClassPallets(userId, lot, { allowed = false, withState = withClassState } = {}) {
   if (!lot || !allowed) return lot;
-  const summary = await withState(userId, (state) => isPrivateClassLot(state, lot.id) ? classSummary(state, lot.id) : null);
+  const summary = await withState(userId, (state) => isPrivateClassLot(state, lot.id) ? {
+    ...classSummary(state, lot.id), supplierSync: state.classLots?.find((item) => item.id === lot.id)?.supplierSync || null
+  } : null);
   if (!summary) return lot;
   lot.classMode = true;
+  lot.supplierSync = summary.supplierSync;
   lot.classCounts = summary;
   for (const pallet of summary.pallets) {
     if (!lot.rzs.some((rz) => rz.codigoRz === pallet.codigoRz)) {

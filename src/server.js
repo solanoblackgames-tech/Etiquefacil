@@ -15,6 +15,7 @@ import { prepareTriagePhotoExport } from "./triage-photo-export.js";
 import QRCode from "qrcode";
 import { privateClassRoutes, attachPrivateClassPallets } from "./private-class-routes.js";
 import { hasPrivateClassAccess, registerPrivateClassLot, withClassState } from "./private-class-labels.js";
+import { syncClassLotSupplier } from "./class-lot-supplier.js";
 import "dotenv/config";
 import {
   deleteBlingProductBySku,
@@ -2099,7 +2100,9 @@ app.post("/api/lots/unified", requireAuth, requireOwner, upload.single("file"), 
       if (classMode) {
         await withClassState(workspaceUserId(req), (state) => registerPrivateClassLot(state, lot, { id: req.session.user.id, name: req.session.user.name }));
         lot.classMode = true;
-        return res.json({ lot, mode: "classes" });
+        const supplierSync = await syncPrivateClassLotSupplier(workspaceUserId(req), lot);
+        lot.supplierSync = supplierSync;
+        return res.json({ lot, mode: "classes", supplierSync });
       }
       return res.json({ lot, mode: "empty" });
     }
@@ -2179,7 +2182,7 @@ app.post("/api/lots", requireAuth, requireOwner, upload.single("file"), async (r
   }
 });
 
-app.use("/api/private-classes", privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail }));
+app.use("/api/private-classes", privateClassRoutes({ requireAuth, requireTriageAccess, requireOwner, workspaceUserId, getUserLotDetail, syncLotSupplier: syncPrivateClassLotSupplier }));
 
 app.get("/api/lots/:lotId", requireAuth, async (req, res) => {
   try {
@@ -4446,6 +4449,10 @@ function operatorAuditLabel(user = {}) {
 
 function code39BarcodeValue(value) {
   return normalizeServerCode(value).replace(/[^0-9A-Z .$/+%-]/g, "-");
+}
+
+async function syncPrivateClassLotSupplier(userId, lot) {
+  return syncClassLotSupplier({ userId, lot, getCredentials: getRequiredBlingCredentials, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) });
 }
 
 async function syncSingleLotProductToBling(userId, lot, product) {

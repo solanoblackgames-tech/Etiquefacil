@@ -113,6 +113,7 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
   const app = express();
   app.use(express.json());
   const pass = (_req, _res, next) => next();
+  let supplierCalls = 0;
   app.use("/api/private-classes", privateClassRoutes({
     requireAuth(req, res, next) {
       const id = req.get("x-user");
@@ -123,6 +124,7 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
     requireTriageAccess: pass,
     requireOwner(req, res, next) { if (req.session.user.role === "operator") return res.status(403).json({ error: "Restrito" }); next(); },
     workspaceUserId: (req) => req.session.user.id,
+    syncLotSupplier: async () => { supplierCalls++; return { ok: true, supplierId: 123 }; },
     getUserLotDetail: async (userId, lotId) => ["lot", "normal"].includes(lotId) && userId === "u1" ? { id: lotId, nomeArquivo: "Lote", percentualArremate: 0 } : null,
     withState: (userId, fn) => withClassState(userId, fn, { directory, pool: null })
   }));
@@ -144,6 +146,12 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
     assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code }, "u2")).status, 403);
     assert.equal((await call("/lots/normal/pallets/P1", { action: "add", code })).status, 400);
     assert.equal((await call("/lots/normal")).status, 400);
+    assert.equal((await call("/lots/lot/supplier", {}, "u2")).status, 403);
+    assert.equal((await call("/lots/lot/supplier", {}, "u1", "operator")).status, 403);
+    assert.equal((await call("/lots/normal/supplier", {})).status, 400);
+    assert.equal(supplierCalls, 0);
+    assert.equal((await (await call("/lots/lot/supplier", {})).json()).supplierSync.supplierId, 123);
+    assert.equal(supplierCalls, 1);
     assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code })).status, 200);
     assert.equal((await call("/lots/lot/pallets/P1", { action: "add", code })).status, 400);
     const summary = await (await call("/lots/lot")).json();
