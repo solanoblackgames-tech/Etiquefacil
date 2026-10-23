@@ -12,7 +12,10 @@ export function prepareTriagePhotoExport(rows = []) {
   const photos = rows.map((row, index) => {
     const photo = String(row.item?.diagnosisPhoto || "").trim();
     if (!photo) return { file: "", status: "Sem foto" };
-    const base = `${String(index + 1).padStart(5, "0")}_${filePart(row.product?.sku || row.item?.sku, "sem-sku")}_${filePart(row.item?.code, "sem-codigo")}`;
+    let entries;
+    try { entries = photo.startsWith("[") ? JSON.parse(photo) : [photo]; } catch { entries = [photo]; }
+    const exported = entries.map((photo, photoIndex) => {
+    const base = `${String(index + 1).padStart(5, "0")}_${filePart(row.product?.sku || row.item?.sku, "sem-sku")}_${filePart(row.item?.code, "sem-codigo")}${entries.length > 1 ? `_${photoIndex + 1}` : ""}`;
     const match = /^data:image\/(png|jpe?g|webp);base64,([a-z0-9+/]+={0,2})$/i.exec(photo);
     if (match) {
       const extension = /^jpe?g$/i.test(match[1]) ? "jpg" : match[1].toLowerCase();
@@ -26,6 +29,8 @@ export function prepareTriagePhotoExport(rows = []) {
       return { file, status: "Link externo (ver arquivo TXT)" };
     }
     return { file: "", status: "Foto invalida; nao exportada" };
+    });
+    return { file: exported.map(entry => entry.file).filter(Boolean).join("; "), status: [...new Set(exported.map(entry => entry.status))].join("; ") };
   });
   zip.file("LEIA-ME.txt", [
     "Extraia todo o ZIP antes de abrir a planilha.",

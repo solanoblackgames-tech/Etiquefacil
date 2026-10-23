@@ -208,3 +208,56 @@ test("labels saved with a repeated serial before the rule stay editable while th
     );
   });
 });
+
+test("multiple report photos survive saving, history and individual removal", async () => {
+  await withTriageStore("multiple-photos", async ({ createTriageItem, updateTriageDiagnosis, listTriageDiagnosisHistory }) => {
+    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-MULTI" } });
+    const photos = ["data:image/png;base64,YWJj", "data:image/jpeg;base64,YWJj"];
+    const save = (value) => updateTriageDiagnosis({ userId: "owner-1", code: item.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosisPhoto: value } });
+    const saved = await save(JSON.stringify(photos));
+    assert.deepEqual(JSON.parse(saved.diagnosisPhoto), photos);
+    const history = await listTriageDiagnosisHistory({ userId: "owner-1", code: item.code });
+    assert.deepEqual(JSON.parse(history[0].diagnosisPhoto), photos);
+    assert.equal((await save(photos.slice(1))).diagnosisPhoto, photos[1]);
+    await assert.rejects(save('["invalid"]'), /Foto do laudo invalida/);
+  });
+});
+
+test("Mercado Livre sale and package photo persist independently of diagnosis", async () => {
+  await withTriageStore("sale-package", async ({ createTriageItem, updateTriageSale, updateTriageDiagnosis, readDb }) => {
+    const item = await createTriageItem({ userId: "owner-1", createdByUserId: "operator-1", payload: { sku: "SKU-CEL", serial: "SN-SALE" } });
+    const photo = "data:image/jpeg;base64,YWJj";
+    const save = (payload, userId = "owner-1") => updateTriageSale({ userId, code: item.code, payload });
+    await save({ mercadoLivreSaleNumber: "2000012345678901", packagePhoto: photo });
+    let stored = (await readDb()).triageItems.find(entry => entry.code === item.code);
+    assert.equal(stored.mercadoLivreSaleNumber, "2000012345678901");
+    assert.equal(stored.packagePhoto, photo);
+    await updateTriageDiagnosis({ userId: "owner-1", code: item.code, operatorUserId: "operator-1", payload: { diagnosisCondition: "OK_FUNCIONANDO", diagnosisPhoto: "data:image/png;base64,YWJj" } });
+    const updated = await save({ mercadoLivreSaleNumber: "2000098765432100" });
+    assert.equal(updated.packagePhoto, photo);
+    assert.equal(updated.diagnosisPhoto, "data:image/png;base64,YWJj");
+    assert.equal((await save({ packagePhoto: "" })).packagePhoto, "");
+    await assert.rejects(save({ mercadoLivreSaleNumber: "1e12" }), /numero de venda/);
+    await assert.rejects(save({ packagePhoto: "invalid" }), /Foto do laudo invalida/);
+    await assert.rejects(save({ packagePhoto: photo }, "other-owner"), /nao encontrado/);
+    stored = (await readDb()).triageItems.find(entry => entry.code === item.code);
+    assert.equal(stored.mercadoLivreSaleNumber, "2000098765432100");
+  });
+});
+
+test("sale supports multiple package photos, appending and individual removal", async () => {
+  await withTriageStore("sale-multiple-photos", async ({ createTriageItem, updateTriageSale, readDb }) => {
+    const item = await createTriageItem({ userId: "owner-1", payload: { sku: "SKU-MULTI-PACKAGE" } });
+    const save = packagePhoto => updateTriageSale({ userId: "owner-1", code: item.code, payload: { packagePhoto } });
+    const photos = ["data:image/png;base64,YWJj", "data:image/jpeg;base64,YWJj"];
+    await save(JSON.stringify(photos));
+    assert.deepEqual(JSON.parse((await readDb()).triageItems[0].packagePhoto), photos);
+    photos.push("data:image/webp;base64,YWJj");
+    assert.deepEqual(JSON.parse((await save(photos)).packagePhoto), photos);
+    photos.splice(1, 1);
+    assert.deepEqual(JSON.parse((await save(photos)).packagePhoto), photos);
+    assert.equal((await save(photos.slice(0, 1))).packagePhoto, photos[0]);
+    assert.equal((await save([])).packagePhoto, "");
+    await assert.rejects(save(JSON.stringify([photos[0], "invalid"])), /Foto do laudo invalida/);
+  });
+});

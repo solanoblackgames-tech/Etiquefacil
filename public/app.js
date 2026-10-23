@@ -9027,7 +9027,7 @@ function transferDivergenceTypeLabel(type) {
 
 function transferItemRow(item, synced) {
   const falta = item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0));
-  const photo = item.diagnosisPhoto ? `<img class="transfer-row-photo" src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto da triagem" />` : "";
+  const photo = item.diagnosisPhoto ? `<img class="transfer-row-photo" src="${escapeHtml(triagePhotoList(item.diagnosisPhoto)[0])}" alt="Foto da triagem" />` : "";
   const triageGrouped = Boolean(item.triageItemId);
   return `
     <article class="diverse-row transfer-row">
@@ -13434,6 +13434,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
       </div>
       ${triageDiagnosisFormMarkup(item)}
     </section>
+    ${triageSaleMarkup(item)}
     ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto, item.code)}
     ${triageDiagnosisHistoryMarkup(item.diagnosisHistory, item.code)}
     <form class="triage-edit-form ${openEdit ? "" : "hidden"}" data-triage-code="${escapeHtml(item.code)}">
@@ -13482,6 +13483,7 @@ function renderTriageItemView(item) {
       </div>
       ${canEditDiagnosis ? triageDiagnosisFormMarkup(item, { qrMode: true }) : ""}
       ${triageTransferSummaryMarkup(item.triageTransfer)}
+      ${triageSaleMarkup(item, canEditDiagnosis)}
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto, item.code)}
       <dl class="triage-fields">
         <div><dt>Status</dt><dd>${triageStatusLabel(item)}</dd></div>
@@ -13531,12 +13533,42 @@ function transferReceivePath(lot) {
   return `/transferencias/${encodeURIComponent(lot?.id || "")}/${suffix}`;
 }
 
+function packagePhotoPreviewMarkup(value) {
+  return triagePhotoList(value).map((photo, index) => `<div><img class="transfer-row-photo" src="${escapeHtml(photo)}" alt="Foto ${index + 1} do pacote" /><button type="button" class="ghost" data-remove-package-photo="${index}">Remover foto ${index + 1}</button></div>`).join("");
+}
+
+async function readPackagePhotos(form) {
+  const input = form.elements.packagePhotoFile;
+  const files = Array.from(input.files || []);
+  if (!files.length) return form.elements.packagePhoto.value;
+  const photos = [...triagePhotoList(form.elements.packagePhoto.value), ...await Promise.all(files.map(imageFileToDataUrl))];
+  const value = triagePhotoValue(photos);
+  if (value.length > 7 * 1024 * 1024) throw new Error("As fotos do pacote devem somar ate 5 MB. Escolha imagens menores.");
+  form.elements.packagePhoto.value = value;
+  input.value = "";
+  form.querySelector('[data-package-photo-preview]').innerHTML = packagePhotoPreviewMarkup(value);
+  return value;
+}
+
+function triageSaleMarkup(item, editable = true) {
+  const photo = item.packagePhoto || "";
+  return `<section class="triage-sale-section"><h3>Venda Mercado Livre</h3>
+    ${editable ? `<form class="triage-sale-form" data-triage-code="${escapeHtml(item.code)}">
+      <label>Numero da venda<input name="mercadoLivreSaleNumber" inputmode="numeric" pattern="[0-9]*" maxlength="40" value="${escapeHtml(item.mercadoLivreSaleNumber || '')}" placeholder="Ex.: 2000012345678900" /></label>
+      <label>Fotos do pacote<input name="packagePhotoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple /></label>
+      <input type="hidden" name="packagePhoto" value="${escapeHtml(photo)}" />
+      <div data-package-photo-preview>${packagePhotoPreviewMarkup(photo)}</div>
+      <button type="submit">Salvar venda e pacote</button><p class="message" data-sale-message></p>
+    </form>` : `<p>Numero da venda: ${escapeHtml(item.mercadoLivreSaleNumber || '-')}</p>${triagePhotoList(photo).map((entry, index) => `<figure class="triage-diagnosis-photo"><img src="${escapeHtml(entry)}" alt="Foto ${index + 1} do pacote" />${triagePhotoDownloadLink(entry, `pacote-${item.code}-${index + 1}`)}</figure>`).join('')}`}
+  </section>`;
+}
+
 function triageDiagnosisPhotoFormMarkup(item) {
   return `
     <form class="triage-diagnosis-form triage-photo-only-form" data-triage-code="${escapeHtml(item.code)}" data-had-photo="${item.diagnosisPhoto ? "1" : ""}">
       <div class="panel-heading">
         <span class="muted">Laudo ${escapeHtml(item.code)}</span>
-        <h3>Adicionar foto ao laudo</h3>
+        <h3>Adicionar fotos ao laudo</h3>
       </div>
       <input type="hidden" name="diagnosisCondition" value="${escapeHtml(item.diagnosisCondition || "")}" />
       <input type="hidden" name="diagnosis" value="${escapeHtml(item.diagnosis || "")}" />
@@ -13544,12 +13576,11 @@ function triageDiagnosisPhotoFormMarkup(item) {
       <input type="hidden" name="gradeAvaliada" value="${escapeHtml(item.gradeAvaliada || "")}" />
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
       <input type="hidden" name="photoOnly" value="1" />
-      <label>Foto do laudo
-        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required />
+      <label>Fotos do laudo
+        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple />
       </label>
       <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
-        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
-        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
+        ${triagePhotoPreviewMarkup(item.diagnosisPhoto)}
       </div>
       <button type="submit">Salvar foto na ${escapeHtml(item.code)}</button>
       <p class="message" id="triageDetailMessage"></p>
@@ -13586,13 +13617,12 @@ function triageDiagnosisFormMarkup(item, { qrMode = false } = {}) {
         <strong>${escapeHtml(automaticDestinationLabel)}</strong>
       </div>
       <input type="hidden" name="diagnosisPhoto" value="${escapeHtml(item.diagnosisPhoto || "")}" />
-      <label>Foto do laudo
-        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" />
+      <label>Fotos do laudo
+        <input name="diagnosisPhotoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple />
       </label>
       <p class="message" id="triageDetailMessage"></p>
       <div class="triage-photo-preview ${item.diagnosisPhoto ? "" : "hidden"}" data-triage-photo-preview>
-        ${item.diagnosisPhoto ? `<img src="${escapeHtml(item.diagnosisPhoto)}" alt="Foto do laudo" />` : ""}
-        <button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>
+        ${triagePhotoPreviewMarkup(item.diagnosisPhoto)}
       </div>
       <button type="submit">${qrMode ? "Salvar laudo" : "Salvar diagnostico"} da ${escapeHtml(item.code)}</button>
     </form>
@@ -13662,8 +13692,17 @@ function boxWeightLabel(item = {}) {
   return peso ? `${peso} kg` : "-";
 }
 
+function triagePhotoList(value) {
+  if (!value) return [];
+  try { return String(value).trim().startsWith('[') ? JSON.parse(value) : [value]; } catch { return []; }
+}
+function triagePhotoValue(photos) { return photos.length > 1 ? JSON.stringify(photos) : photos[0] || ''; }
+function triagePhotoPreviewMarkup(value) {
+  return triagePhotoList(value).map((photo, index) => `<div><img src="${escapeHtml(photo)}" alt="Foto ${index + 1} do laudo" /><button type="button" class="ghost" data-remove-triage-photo="${index}">Remover foto ${index + 1}</button></div>`).join('');
+}
 function triageDiagnosisPhotoMarkup(photo, code = "") {
   if (!photo) return "";
+  if (triagePhotoList(photo).length > 1) return triagePhotoList(photo).map((entry, index) => triageDiagnosisPhotoMarkup(entry, `${code}-${index + 1}`)).join("");
   return `
     <figure class="triage-diagnosis-photo">
       <img src="${escapeHtml(photo)}" alt="Foto do laudo" />
@@ -13697,7 +13736,7 @@ function triageDiagnosisHistoryMarkup(history = [], code = "") {
             ${event.destination ? `<small>${escapeHtml(event.destination)}</small>` : ""}
           </div>
           <p>${escapeHtml(event.diagnosis || "-")}</p>
-          ${event.diagnosisPhoto ? `<img src="${escapeHtml(event.diagnosisPhoto)}" alt="Foto do laudo em ${escapeHtml(formatDateTime(event.createdAt))}" />${triagePhotoDownloadLink(event.diagnosisPhoto, `laudo-${code || "historico"}-${String(event.createdAt || "").slice(0, 10)}`)}` : ""}
+          ${triageDiagnosisPhotoMarkup(event.diagnosisPhoto, `historico-${code}-${event.createdAt}`)}
         </article>
       `).join("")}
     </section>
@@ -13728,6 +13767,13 @@ function triageDiagnosisConditionLabel(value) {
 }
 
 async function handleTriageDetailChange(event) {
+  const packageInput = event.target.closest('input[name="packagePhotoFile"]');
+  if (packageInput) {
+    const message = packageInput.form.querySelector('[data-sale-message]');
+    try { await readPackagePhotos(packageInput.form); message.textContent = ""; }
+    catch (error) { packageInput.value = ""; message.textContent = error.message; }
+    return;
+  }
   const diagnosisSelect = event.target.closest('select[name="diagnosisCondition"]');
   if (diagnosisSelect) {
     updateTriageAutomaticDestination(diagnosisSelect.form, diagnosisSelect.value);
@@ -13751,10 +13797,13 @@ async function handleTriageDetailChange(event) {
 async function readTriageDiagnosisPhoto(form) {
   const fileInput = form?.elements?.diagnosisPhotoFile;
   const hiddenInput = form?.elements?.diagnosisPhoto;
-  const file = fileInput?.files?.[0];
-  if (!file) return hiddenInput?.value || "";
-  const photo = await imageFileToDataUrl(file);
+  const files = Array.from(fileInput?.files || []);
+  if (!files.length) return hiddenInput?.value || "";
+  const photos = [...triagePhotoList(hiddenInput?.value), ...await Promise.all(files.map(imageFileToDataUrl))];
+  const photo = triagePhotoValue(photos);
+  if (photo.length > 7 * 1024 * 1024) throw new Error("As fotos devem somar ate 5 MB. Escolha imagens menores.");
   if (hiddenInput) hiddenInput.value = photo;
+  fileInput.value = "";
   return photo;
 }
 
@@ -13799,12 +13848,32 @@ function updateTriagePhotoPreview(form, photo) {
   if (hiddenInput) hiddenInput.value = photo || "";
   if (!preview) return;
   preview.classList.toggle("hidden", !photo);
-  preview.innerHTML = photo
-    ? `<img src="${escapeHtml(photo)}" alt="Foto do laudo" /><button type="button" class="ghost" data-remove-triage-photo>Remover foto</button>`
-    : "";
+  preview.innerHTML = triagePhotoPreviewMarkup(photo);
 }
 
 async function handleTriageDetailSubmit(event) {
+  if (event.target.matches(".triage-sale-form")) {
+    event.preventDefault();
+    const form = event.target;
+    const message = form.querySelector("[data-sale-message]");
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      const data = new FormData(form);
+      data.set("packagePhoto", await readPackagePhotos(form));
+      data.delete("packagePhotoFile");
+      const response = await api(`/api/triage/items/${encodeURIComponent(form.dataset.triageCode)}/sale`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(data))
+      });
+      form.elements.packagePhoto.value = response.item.packagePhoto || "";
+      form.elements.packagePhotoFile.value = "";
+      form.querySelector('[data-package-photo-preview]').innerHTML = packagePhotoPreviewMarkup(response.item.packagePhoto);
+      state.triageItems = state.triageItems.map(item => item.code === response.item.code ? response.item : item);
+      message.textContent = "Venda e fotos do pacote salvas.";
+    } catch (error) { message.textContent = error.message; }
+    finally { button.disabled = false; }
+    return;
+  }
   if (event.target.matches(".triage-edit-form")) {
     await handleTriageEditSubmit(event);
     return;
@@ -13821,10 +13890,6 @@ async function handleTriageDetailSubmit(event) {
       if (!condition || !destination) throw new Error("Antes de adicionar foto, salve o diagnostico e o destino do laudo na triagem.");
     }
     const code = form.dataset.triageCode || state.selectedTriageCode;
-    if (form.dataset.hadPhoto && form.elements?.diagnosisPhotoFile?.files?.length
-      && !confirm(`A etiqueta ${code} ja tem foto. Substituir pela foto nova?`)) {
-      throw new Error(`Foto nao substituida. Confira se o aparelho e mesmo o da etiqueta ${code}.`);
-    }
     const formData = new FormData(form);
     formData.delete("diagnosisPhotoFile");
     formData.set("diagnosisPhoto", await readTriageDiagnosisPhoto(form));
@@ -13972,12 +14037,23 @@ async function deleteSelectedTriageItem() {
 }
 
 function handleTriageDetailClick(event) {
+  const removePackage = event.target.closest("[data-remove-package-photo]");
+  if (removePackage) {
+    const form = removePackage.closest("form");
+    const photos = triagePhotoList(form.elements.packagePhoto.value);
+    photos.splice(Number(removePackage.dataset.removePackagePhoto), 1);
+    form.elements.packagePhoto.value = triagePhotoValue(photos);
+    form.querySelector('[data-package-photo-preview]').innerHTML = packagePhotoPreviewMarkup(form.elements.packagePhoto.value);
+    return;
+  }
   const removePhoto = event.target.closest("[data-remove-triage-photo]");
   if (removePhoto) {
     const form = removePhoto.closest("form");
     const fileInput = form?.elements?.diagnosisPhotoFile;
     if (fileInput) fileInput.value = "";
-    updateTriagePhotoPreview(form, "");
+    const photos = triagePhotoList(form?.elements?.diagnosisPhoto?.value);
+    photos.splice(Number(removePhoto.dataset.removeTriagePhoto), 1);
+    updateTriagePhotoPreview(form, triagePhotoValue(photos));
     return;
   }
 

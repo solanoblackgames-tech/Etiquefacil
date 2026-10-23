@@ -173,6 +173,7 @@ import {
   updateOperatorForOwner,
   updateTriageDiagnosis,
   updateTriageItemDetails,
+  updateTriageSale,
   updateProductRegistrationFromTriage,
   updateUserTriageAccessForAdmin,
   updateUserTransferAccessForAdmin,
@@ -1085,6 +1086,14 @@ function mergeTriageProductLookup(primary = {}, fallback = null) {
 function hasLookupValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
 }
+
+app.patch("/api/triage/items/:code/sale", requireAuth, requireTriageAccess, async (req, res) => {
+  try {
+    const item = await updateTriageSale({ userId: workspaceUserId(req), code: req.params.code, payload: req.body || {} });
+    await recordOperatorActivity(req.session.user, "triage_sale_update", { code: item.code });
+    res.json({ item: await withTriageQrData(req, item, { includeHistory: isOwnerSession(req), includeTransfer: true }) });
+  } catch (error) { sendError(res, error); }
+});
 
 app.patch("/api/triage/items/:code/details", requireAuth, requireTriageAccess, async (req, res) => {
   try {

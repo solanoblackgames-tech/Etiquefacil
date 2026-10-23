@@ -2232,6 +2232,30 @@ async function ensureTriageSerialAvailable({ userId, serial, ignoreCode = "" }) 
   if (sameSerial.length) throw new Error(`Este numero de serie ja esta vinculado ao laudo ${sameSerial[0].code}.`);
 }
 
+export async function updateTriageSale({ userId, code, payload = {} }) {
+  await ensureStore();
+  const saleNumber = payload.mercadoLivreSaleNumber === undefined ? null : String(payload.mercadoLivreSaleNumber).trim();
+  if (saleNumber !== null && saleNumber !== "" && !/^\d{1,40}$/.test(saleNumber)) throw new Error("Informe um numero de venda Mercado Livre valido, com ate 40 digitos.");
+  const packagePhoto = payload.packagePhoto === undefined ? null : normalizeTriageDiagnosisPhoto(payload.packagePhoto);
+  const now = new Date().toISOString();
+  if (hasPostgres()) {
+    const result = await query(
+      `update triage_items set mercado_livre_sale_number = coalesce($3, mercado_livre_sale_number), package_photo = coalesce($4, package_photo), updated_at = $5 where user_id = $1 and upper(code) = upper($2) returning *`,
+      [userId, normalizeCode(code), saleNumber, packagePhoto, now]
+    );
+    if (!result.rows.length) throw notFound("Item de triagem nao encontrado.");
+    return enrichTriageGradeComparison(userId, triageItemFromRow(result.rows[0]));
+  }
+  const db = await readDb();
+  const item = (db.triageItems || []).find((entry) => entry.userId === userId && normalizeCode(entry.code) === normalizeCode(code));
+  if (!item) throw notFound("Item de triagem nao encontrado.");
+  if (saleNumber !== null) item.mercadoLivreSaleNumber = saleNumber;
+  if (packagePhoto !== null) item.packagePhoto = packagePhoto;
+  item.updatedAt = now;
+  await writeDb(db);
+  return item;
+}
+
 export async function updateTriageItemDetails({ userId, code, payload = {} }) {
   await ensureStore();
   const currentCode = normalizeCode(code);
@@ -6528,6 +6552,8 @@ async function ensurePgStore() {
     alter table triage_items add column if not exists largura_caixa numeric;
     alter table triage_items add column if not exists comprimento_caixa numeric;
     alter table triage_items add column if not exists peso_caixa numeric;
+    alter table triage_items add column if not exists mercado_livre_sale_number text not null default '';
+    alter table triage_items add column if not exists package_photo text not null default '';
     alter table triage_items add column if not exists valor_unit numeric not null default 0;
     alter table triage_items add column if not exists preco_custo numeric not null default 0;
     alter table triage_items add column if not exists grade_avaliada text not null default '';
@@ -7627,6 +7653,8 @@ async function insertTriageItemRows(client, items = []) {
       "diagnosis_condition",
       "diagnosis",
       "diagnosis_photo",
+      "mercado_livre_sale_number",
+      "package_photo",
       "created_at",
       "updated_at",
       "diagnosed_at"
@@ -7657,6 +7685,8 @@ async function insertTriageItemRows(client, items = []) {
       item.diagnosisCondition || "",
       item.diagnosis || "",
       item.diagnosisPhoto || "",
+      item.mercadoLivreSaleNumber || "",
+      item.packagePhoto || "",
       item.createdAt,
       item.updatedAt || item.createdAt,
       item.diagnosedAt || null
@@ -10785,6 +10815,8 @@ function userFromRow(row) {
 
 function triageItemFromRow(row) {
   return {
+    mercadoLivreSaleNumber: row.mercado_livre_sale_number || "",
+    packagePhoto: row.package_photo || "",
     id: row.id,
     userId: row.user_id,
     createdByUserId: row.created_by_user_id || row.user_id,
@@ -13780,6 +13812,15 @@ function normalizeTriageDiagnosisCondition(value, { allowEmpty = false } = {}) {
 }
 
 function normalizeTriageDiagnosisPhoto(value) {
+  if (Array.isArray(value) || (typeof value === "string" && value.trim().startsWith("["))) {
+    let values;
+    try { values = Array.isArray(value) ? value : JSON.parse(value); } catch { throw new Error("Lista de fotos invalida."); }
+    if (!Array.isArray(values) || values.some((photo) => typeof photo !== "string" || photo.trim().startsWith("["))) throw new Error("Lista de fotos invalida.");
+    const photos = values.map(normalizeTriageDiagnosisPhoto).filter(Boolean);
+    const result = photos.length > 1 ? JSON.stringify(photos) : photos[0] || "";
+    if (result.length > 7 * 1024 * 1024) throw new Error("As fotos devem somar ate 5 MB.");
+    return result;
+  }
   const photo = String(value || "").trim();
   if (!photo) return "";
   if (photo.length > 7 * 1024 * 1024) throw new Error("A foto do laudo deve ter ate 5 MB.");

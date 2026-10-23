@@ -46,3 +46,12 @@ test("empty exports still contain the photos folder and instructions", async () 
   assert.ok(archive.files["fotos/"].dir);
   assert.ok(archive.file("LEIA-ME.txt"));
 });
+
+test("ZIP includes every photo of a report without overwriting files", async () => {
+  const photo = "data:image/png;base64," + png.toString("base64");
+  const { zip, photos } = prepareTriagePhotoExport([{ item: { code: "LAB-1", diagnosisPhoto: JSON.stringify([photo, photo]) } }]);
+  const files = photos[0].file.split("; ");
+  assert.equal(files.length, 2);
+  assert.notEqual(files[0], files[1]);
+  for (const file of files) assert.deepEqual(await zip.file(file).async("nodebuffer"), png);
+});
