@@ -8156,9 +8156,9 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
     const nextOriginalConferida = Math.max(0, Number(item.qtd_conferida || 0) - 1);
     await client.query(
       `update rz_items
-       set qtd_esperada = $6,
-           qtd_conferida = $7,
-           valor_total = round(($6 * $4::numeric)::numeric, 2),
+       set qtd_esperada = $6::integer,
+           qtd_conferida = $7::integer,
+           valor_total = round(($6::integer * $4::numeric)::numeric, 2),
            tipo_item = $5
        where id = $1 and lot_id = $2 and product_id = $3`,
       [
@@ -8182,9 +8182,9 @@ async function splitLotProductPg({ userId, operatorUserId = null, lotId, product
       const nextSplitConferida = Number(splitRow.qtd_conferida || 0) + sellableQuantity;
       await client.query(
         `update rz_items
-         set qtd_esperada = $2,
-             qtd_conferida = $3,
-             valor_total = round(($2 * $4::numeric)::numeric, 2),
+         set qtd_esperada = $2::integer,
+             qtd_conferida = $3::integer,
+             valor_total = round(($2::integer * $4::numeric)::numeric, 2),
              tipo_item = $5
          where id = $1`,
         [splitRow.id, nextSplitEsperada, nextSplitConferida, product.valorUnit || 0, splitItemType(splitRow.tipo_item, nextSplitConferida, nextSplitEsperada)]
