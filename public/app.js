@@ -13567,8 +13567,8 @@ function triageSaleMarkup(item, editable = true) {
   const photo = item.packagePhoto || "";
   return `<section class="triage-sale-section"><h3>Venda Mercado Livre</h3>
     ${editable ? `<form class="triage-sale-form" data-triage-code="${escapeHtml(item.code)}">
-      <label>Numero da venda<input name="mercadoLivreSaleNumber" inputmode="numeric" pattern="[0-9]*" maxlength="40" value="${escapeHtml(item.mercadoLivreSaleNumber || '')}" placeholder="Ex.: 2000012345678900" /></label>
-      <label>Fotos do pacote<input name="packagePhotoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple /></label>
+      <label>Numero da venda (opcional)<input name="mercadoLivreSaleNumber" inputmode="numeric" pattern="[0-9]*" maxlength="40" value="${escapeHtml(item.mercadoLivreSaleNumber || '')}" placeholder="Ex.: 2000012345678900" /></label>
+      <label>Fotos do pacote (opcional)<input name="packagePhotoFile" type="file" accept="image/png,image/jpeg,image/webp" multiple /></label>
       <input type="hidden" name="packagePhoto" value="${escapeHtml(photo)}" />
       <div data-package-photo-preview>${packagePhotoPreviewMarkup(photo)}</div>
       <button type="submit">Salvar venda e pacote</button><p class="message" data-sale-message></p>
