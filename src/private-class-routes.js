@@ -1,6 +1,6 @@
 import { Router } from "express";
 import QRCode from "qrcode";
-import { withClassState, generateClassBatch, changeClassPallet, classSummary, isPrivateClassLot } from "./private-class-labels.js";
+import { withClassState, generateClassBatch, changeClassPallet, classSummary, isPrivateClassLot, reserveSequentialClassPallet } from "./private-class-labels.js";
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
@@ -58,6 +58,13 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
       events: state.events.filter((event) => event.lotId === req.params.lotId).slice(-100).reverse()
     })));
   }));
+  router.post("/lots/:lotId/pallets", route(async (req, res) => {
+    const lot = await ownedLot(req);
+    const pallet = await withState(workspaceUserId(req), (state) => reserveSequentialClassPallet(state, {
+      lotId: lot.id, lotName: lot.nomeArquivo, actor: actor(req), existingCodes: (lot.rzs || []).map((rz) => rz.codigoRz)
+    }));
+    res.json({ pallet });
+  }));
   router.post("/lots/:lotId/pallets/:codigoRz", route(async (req, res) => {
     const lot = await ownedLot(req);
     // Fechar a composicao e uma decisao do responsavel pela conta.
@@ -80,10 +87,11 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
 export async function attachPrivateClassPallets(userId, lot, { allowed = false, withState = withClassState } = {}) {
   if (!lot || !allowed) return lot;
   const summary = await withState(userId, (state) => isPrivateClassLot(state, lot.id) ? {
-    ...classSummary(state, lot.id), supplierSync: state.classLots?.find((item) => item.id === lot.id)?.supplierSync || null
+    ...classSummary(state, lot.id), sequentialPallets: Boolean(state.classLots?.find((item) => item.id === lot.id)?.sequentialPallets), supplierSync: state.classLots?.find((item) => item.id === lot.id)?.supplierSync || null
   } : null);
   if (!summary) return lot;
   lot.classMode = true;
+  lot.sequentialPallets = summary.sequentialPallets;
   lot.supplierSync = summary.supplierSync;
   lot.classCounts = summary;
   for (const pallet of summary.pallets) {
@@ -92,5 +100,6 @@ export async function attachPrivateClassPallets(userId, lot, { allowed = false, 
     }
     lot.rzs.find((rz) => rz.codigoRz === pallet.codigoRz).classCounts = { A: pallet.A, B: pallet.B, total: pallet.total };
   }
+  lot.rzs.sort((a, b) => a.codigoRz.localeCompare(b.codigoRz, "pt-BR", { numeric: true }));
   return lot;
 }

@@ -88,8 +88,20 @@ export function classSummary(state, lotId) {
     const A = labels.filter((label) => label.grade === "A").length;
     const B = labels.length - A;
     return { ...pallet, A, B, total: A + B };
-  });
+  }).sort((a, b) => a.codigoRz.localeCompare(b.codigoRz, "pt-BR", { numeric: true }));
   return { pallets, A: pallets.reduce((sum, p) => sum + p.A, 0), B: pallets.reduce((sum, p) => sum + p.B, 0), total: pallets.reduce((sum, p) => sum + p.total, 0) };
+}
+
+export function reserveSequentialClassPallet(state, { lotId, lotName, actor, existingCodes = [] }) {
+  const config = state.classLots?.find((lot) => lot.id === lotId);
+  if (!config?.sequentialPallets) throw new Error("Sequencia automatica nao habilitada neste lote.");
+  const codes = [...existingCodes, ...state.pallets.filter((p) => p.lotId === lotId).map((p) => p.codigoRz)];
+  const used = new Set(codes.filter((code) => /^\d+$/.test(String(code).trim())).map(Number));
+  let next = 1;
+  while (used.has(next)) next += 1;
+  const pallet = { lotId, lotName, codigoRz: String(next), createdAt: new Date().toISOString(), createdBy: actor };
+  state.pallets.push(pallet);
+  return pallet;
 }
 
 export function changeClassPallet(state, { lotId, lotName, codigoRz, action, code, actor }) {

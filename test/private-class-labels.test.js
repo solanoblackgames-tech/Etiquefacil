@@ -4,12 +4,32 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
-import { withClassState, generateClassBatch, changeClassPallet, classSummary, hasPrivateClassAccess, registerPrivateClassLot, isPrivateClassLot } from "../src/private-class-labels.js";
+import { withClassState, generateClassBatch, changeClassPallet, classSummary, hasPrivateClassAccess, registerPrivateClassLot, isPrivateClassLot, reserveSequentialClassPallet } from "../src/private-class-labels.js";
 import { privateClassRoutes, attachPrivateClassPallets } from "../src/private-class-routes.js";
 
 const empty = () => ({ labels: [], batches: [], pallets: [], events: [] });
 const actor = { id: "owner", name: "Responsavel" };
 const move = (state, code, action = "add", codigoRz = "P1", lotId = "lot") => changeClassPallet(state, { lotId, lotName: "Lote sem lista", codigoRz, code, action, actor });
+
+test("sequencia preenche lacunas, reconhece zero inicial e reserva numeros simultaneos", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pallet-sequence-"));
+  const options = { directory, pool: null };
+  const args = { lotId: "lot", lotName: "Teste", actor };
+  try {
+    await withClassState("u", (state) => {
+      assert.throws(() => reserveSequentialClassPallet(state, args));
+      registerPrivateClassLot(state, { id: "lot", nomeArquivo: "Teste" }, actor);
+      state.classLots[0].sequentialPallets = true;
+      state.pallets.push(...["01", "3", "10", "LOJA-02"].map((codigoRz) => ({ lotId: "lot", codigoRz })));
+    }, options);
+    const results = await Promise.all(Array.from({ length: 9 }, () => withClassState("u", (state) => reserveSequentialClassPallet(state, args), options)));
+    assert.deepEqual(results.map((p) => p.codigoRz), ["2", "4", "5", "6", "7", "8", "9", "11", "12"]);
+    await withClassState("u", (state) => {
+      assert.deepEqual(classSummary(state, "lot").pallets.slice(0, 4).map((p) => p.codigoRz), ["01", "2", "3", "4"]);
+      assert.equal(state.labels.length, 0);
+    }, options);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
 
 test("controle por classe e exclusivo da conta Solano Black Games", () => {
   assert.equal(hasPrivateClassAccess({ email: " SolanoBlackGames@gmail.com " }), true);
@@ -165,6 +185,12 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
     assert.match(csv, /"TOTAL";"1";"0";"1"/);
     const reprint = await (await call(`/batches/${batch.id}/print`)).text();
     assert.equal(reprint, html);
+    assert.equal((await call("/lots/normal/pallets", {})).status, 400);
+    assert.equal((await call("/lots/lot/pallets", {}, "u2")).status, 403);
+    assert.equal((await call("/lots/lot/pallets", {})).status, 400);
+    await withClassState("u1", (state) => { state.classLots.find((lot) => lot.id === "lot").sequentialPallets = true; }, { directory, pool: null });
+    const reservations = await Promise.all(Array.from({ length: 3 }, () => call("/lots/lot/pallets", {}, "u1", "operator").then((r) => r.json())));
+    assert.deepEqual(reservations.map((r) => r.pallet.codigoRz).sort(), ["1", "2", "3"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(directory, { recursive: true, force: true });

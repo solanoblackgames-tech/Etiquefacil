@@ -1694,6 +1694,19 @@ async function createDiverseRz(event) {
 }
 
 async function askPalletCode(lot) {
+  if (lot?.sequentialPallets) {
+    try {
+      const { pallet } = await api(`/api/private-classes/lots/${encodeURIComponent(lot.id)}/pallets`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+      });
+      lot.rzs ||= [];
+      lot.rzs.push({ codigoRz: pallet.codigoRz, expected: 0, checked: 0 });
+      return pallet.codigoRz;
+    } catch (error) {
+      alert(error.message);
+      return null;
+    }
+  }
   return new Promise((resolve) => {
     const modal = $("#decisionModal");
     const titleEl = $("#decisionTitle");
@@ -2028,7 +2041,7 @@ function diverseRzs(lot) {
   for (const pallet of lot?.classCounts?.pallets || []) {
     if (!byRz.has(pallet.codigoRz)) byRz.set(pallet.codigoRz, { codigoRz: pallet.codigoRz, items: 0 });
   }
-  return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz));
+  return [...byRz.values()].sort((a, b) => a.codigoRz.localeCompare(b.codigoRz, "pt-BR", { numeric: true }));
 }
 
 function defaultDiverseRz(lot) {
