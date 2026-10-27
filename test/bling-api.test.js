@@ -43,7 +43,7 @@ test("Bling token revocation sends refresh and access tokens to OAuth revoke end
 
   assert.deepEqual(result.revoked, ["refresh_token", "access_token"]);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].url, "https://www.bling.com.br/Api/v3/oauth/revoke");
+  assert.equal(calls[0].url, "https://api.bling.com.br/Api/v3/oauth/revoke");
   assert.equal(calls[0].auth, `Basic ${Buffer.from("client-id:client-secret").toString("base64")}`);
   assert.deepEqual(calls.map((call) => call.body.token), ["refresh-token", "access-token"]);
 });
@@ -933,7 +933,9 @@ test("Bling homologation chains hash header and refreshes invalid access token",
       method: options.method || "GET",
       auth: options.headers.Authorization,
       hash: options.headers["x-bling-homologacao"],
-      body: options.body ? JSON.parse(options.body) : null
+      jwt: options.headers["enable-jwt"],
+      body: options.body ? (options.headers["Content-Type"] === "application/x-www-form-urlencoded"
+        ? Object.fromEntries(new URLSearchParams(options.body)) : JSON.parse(options.body)) : null
     });
     return responses.shift();
   };
@@ -961,6 +963,9 @@ test("Bling homologation chains hash header and refreshes invalid access token",
   assert.equal(calls[2].body.nome, "Copo");
   assert.equal(calls[5].body.situacao, "I");
   assert.equal(calls[4].auth, "Bearer fresh-token");
+  assert.ok(calls.every((call) => call.jwt === "1"));
+  assert.equal(calls[3].url, "https://api.bling.com.br/Api/v3/oauth/token");
+  assert.deepEqual(calls[3].body, { grant_type: "refresh_token", refresh_token: "refresh-token" });
 });
 
 test("Bling sales reader lista pedidos Atendidos do periodo e resume o detalhe", async () => {

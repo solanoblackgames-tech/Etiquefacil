@@ -3934,10 +3934,10 @@ async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
     {
       headers: {
         Authorization: `Basic ${Buffer.from(`${blingApp.clientId}:${blingApp.clientSecret}`).toString("base64")}`,
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
         "enable-jwt": "1"
       },
-      body: JSON.stringify({ grant_type: "authorization_code", code, redirect_uri: redirectUri })
+      body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }).toString()
     },
     {
       headers: {
@@ -3972,7 +3972,7 @@ async function exchangeBlingAuthorizationCode(blingApp, code, redirectUri) {
   for (const attempt of attempts) {
     const tokenLimiter = getBlingTokenRateLimiter();
     await tokenLimiter.acquire();
-    response = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
+    response = await fetch("https://api.bling.com.br/Api/v3/oauth/token", {
       method: "POST",
       headers: attempt.headers,
       body: attempt.body

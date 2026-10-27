@@ -58,6 +58,14 @@ Com a conta autorizada, o lote passa a ter tambem o botao `Criar produtos no Bli
 
 Os downloads CSV continuam disponiveis como alternativa/manual.
 
+### Autenticacao JWT
+
+A emissao e a renovacao de tokens usam `https://api.bling.com.br/Api/v3/oauth/token`, com `enable-jwt: 1`. As consultas e os envios tambem incluem esse header, junto de `Authorization: Bearer {token}`. Os tokens sao armazenados integralmente, sem limite curto de caracteres (campos `text` no PostgreSQL).
+
+Depois de publicar esta versao, as contas existentes passam a receber JWT na proxima renovacao automatica. Se a autorizacao tiver expirado ou sido revogada, abra Perfil e use **Reconectar no Bling** para autorizar novamente; confira tambem a conta Ecommerce, quando utilizada. Nao e necessario copiar tokens manualmente.
+
+Referencia: [guia oficial de migracao JWT do Bling](https://developer.bling.com.br/migracao-jwt).
+
 ## Etiquetas privadas por classe e composicao dos pallets
 
 Na Triagem, abra **Etiquetas por classe A / B**, escolha a classe e gere de 1 a 1000 etiquetas por emissao. Abra a impressao em papel 60 × 40 mm. Cada etiqueta possui um QR aleatorio exclusivo, sem classe ou lote no conteudo. As emissoes anteriores permitem reimprimir os mesmos codigos.

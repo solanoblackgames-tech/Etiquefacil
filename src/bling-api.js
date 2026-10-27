@@ -1,8 +1,8 @@
 import { getBlingRateLimiter, getBlingTokenRateLimiter } from "./bling-rate-limit.js";
 
 const BLING_API_BASE_URL = "https://api.bling.com.br/Api/v3";
-const BLING_OAUTH_TOKEN_URL = "https://www.bling.com.br/Api/v3/oauth/token";
-const BLING_OAUTH_REVOKE_URL = "https://www.bling.com.br/Api/v3/oauth/revoke";
+const BLING_OAUTH_TOKEN_URL = `${BLING_API_BASE_URL}/oauth/token`;
+const BLING_OAUTH_REVOKE_URL = `${BLING_API_BASE_URL}/oauth/revoke`;
 const BLING_HOMOLOGATION_HEADER = "x-bling-homologacao";
 const BLING_FETCH_TIMEOUT_MS = 12_000;
 const WMS_EXPEDITION_LOOKBACK_DAYS = 7;
@@ -106,10 +106,10 @@ async function requestBlingTokenRefresh(integration, fetchImpl) {
     method: "POST",
     headers: {
       Authorization: "Basic " + Buffer.from(integration.clientId + ":" + integration.clientSecret).toString("base64"),
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       "enable-jwt": "1"
     },
-    body: JSON.stringify({ grant_type: "refresh_token", refresh_token: integration.refreshToken })
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: integration.refreshToken }).toString()
   });
   const payload = await response.json().catch(() => ({}));
   if (response.status === 429) {
@@ -1013,6 +1013,7 @@ class BlingApiClient {
       method,
       headers: {
         Authorization: `Bearer ${this.integration.accessToken}`,
+        "enable-jwt": "1",
         Accept: "application/json",
         ...(body ? { "Content-Type": "application/json" } : {})
       },
@@ -1183,6 +1184,7 @@ class BlingHomologationClient {
       method,
       headers: {
         Authorization: `Bearer ${this.integration.accessToken}`,
+        "enable-jwt": "1",
         Accept: "application/json",
         ...(this.homologationHash ? { [BLING_HOMOLOGATION_HEADER]: this.homologationHash } : {}),
         ...(body ? { "Content-Type": "application/json" } : {})

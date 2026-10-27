@@ -51,6 +51,25 @@ test('failed refreshes are shared instead of repeatedly submitting an invalid to
   assert.equal(requests, 1);
 });
 
+test('JWT refresh sends the complete token using the documented OAuth request', async () => {
+  const source = { ...integration('jwt'), refreshToken: 'refresh+&=' + 'r'.repeat(3000) };
+  const accessToken = 'eyJhbGciOiJSUzI1NiJ9.' + 'a'.repeat(3000) + '.signature';
+  const refreshed = await refreshBlingIntegrationToken(source, { fetchImpl: async (url, options) => {
+    assert.equal(url, 'https://api.bling.com.br/Api/v3/oauth/token');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers['enable-jwt'], '1');
+    assert.equal(options.headers.Authorization, 'Basic ' + Buffer.from('app:secret').toString('base64'));
+    assert.equal(options.headers['Content-Type'], 'application/x-www-form-urlencoded');
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(options.body)), {
+      grant_type: 'refresh_token', refresh_token: source.refreshToken
+    });
+    return { ok: true, status: 200, json: async () => ({ access_token: accessToken, refresh_token: 'next-refresh', expires_in: 3600 }) };
+  } });
+  assert.equal(refreshed.accessToken, accessToken);
+  assert.equal(refreshed.refreshToken, 'next-refresh');
+  assert.ok(new Date(refreshed.tokenExpiresAt).getTime() > Date.now());
+});
+
 test('OAuth 429 pauses refreshes for other accounts before issuing another request', async () => {
   let requests = 0;
   await assert.rejects(refreshBlingIntegrationToken(integration('limited'), { fetchImpl: async () => {

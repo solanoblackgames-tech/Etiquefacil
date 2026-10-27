@@ -79,3 +79,51 @@ test("Bling company identifies which account a token belongs to", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Bling retries a rejected token with JWT and persists the rotated credentials", async () => {
+  const originalFetch = globalThis.fetch;
+  const jwt = 'eyJhbGciOiJSUzI1NiJ9.' + 'a'.repeat(3000) + '.signature';
+  const saved = [];
+  let requests = 0;
+  globalThis.fetch = async (url, options) => {
+    requests++;
+    assert.equal(options.headers['enable-jwt'], '1');
+    if (requests === 1) {
+      assert.equal(options.headers.Authorization, 'Bearer old-token');
+      return { ok: false, status: 401, json: async () => ({}) };
+    }
+    if (requests === 2) {
+      assert.equal(String(url), 'https://api.bling.com.br/Api/v3/oauth/token');
+      return jsonResponse({ access_token: jwt, refresh_token: 'rotated-jwt-account', expires_in: 3600 });
+    }
+    assert.equal(options.headers.Authorization, `Bearer ${jwt}`);
+    return jsonResponse({ data: { id: 'jwt-company', nome: 'Empresa JWT' } });
+  };
+  try {
+    const company = await getBlingCompany({
+      integration: { clientId: 'app', clientSecret: 'secret', accessToken: 'old-token', refreshToken: 'jwt-account' },
+      saveIntegration: async (credentials) => saved.push(credentials)
+    });
+    assert.equal(company.id, 'jwt-company');
+    assert.equal(requests, 3);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].accessToken, jwt);
+    assert.equal(saved[0].refreshToken, 'rotated-jwt-account');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Bling storage preserves full JWT credentials for both accounts", async () => {
+  await withTempStore('bling-jwt-storage', async (store) => {
+    const jwt = 'eyJhbGciOiJSUzI1NiJ9.' + 'a'.repeat(3000) + '.signature';
+    const refreshToken = 'r'.repeat(3000);
+    await store.writeDb({ users: [{ id: 'jwt-user', name: 'JWT', email: 'jwt@example.com' }] });
+    for (const account of ['principal', 'ecommerce']) {
+      await store.saveBlingAccountIntegration('jwt-user', account, { clientId: 'app', clientSecret: 'secret', accessToken: jwt, refreshToken });
+      const credentials = await store.getBlingAccountCredentials('jwt-user', account);
+      assert.equal(credentials.accessToken, jwt);
+      assert.equal(credentials.refreshToken, refreshToken);
+    }
+  });
+});
