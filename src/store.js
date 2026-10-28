@@ -9053,6 +9053,7 @@ async function findPgAuctionGroupingTriageProduct(client, userId, code, transfer
      join transfer_lots tl on tl.id = ti.transfer_lot_id
      where ti.triage_item_id = $1
        and ti.transfer_lot_id <> $2
+       and tl.grouping_type = 'leilao'
        and tl.status <> 'synced'
      limit 1`,
     [item.id, transferLotId]
@@ -10607,7 +10608,7 @@ function findAuctionGroupingTriageProduct(db, userId, code, transferLotId) {
     if (transferItem.transferLotId === transferLotId) return false;
     if (transferItem.triageItemId !== item.id) return false;
     const lot = (db.transferLots || []).find((candidate) => candidate.id === transferItem.transferLotId);
-    return lot && lot.status !== "synced";
+    return lot && isAuctionGrouping(lot) && lot.status !== "synced";
   });
   if (alreadyGrouped) throw new Error("Esta etiqueta de triagem ja esta em outro agrupamento ativo.");
   return transferProductFromTriageItem(item);

@@ -769,14 +769,21 @@ test("auction grouping scans triage labels as physical items", async () => {
     });
 
     const grouping = await createTransferLot({ userId: "user-1", descricao: "Leilao setembro", type: "leilao" });
+    const seeded = await readDb();
+    seeded.transferLots.push({ id: "automatic-transfer", userId: "user-1", type: "transferencia", status: "waiting_store" });
+    seeded.transferItems.push({ id: "automatic-item", transferLotId: "automatic-transfer", triageItemId: "triage-1" });
+    await writeDb(seeded);
     await scanTransferLot({ userId: "user-1", transferLotId: grouping.id, code: "LAB-20260917-000001" });
     const result = await scanTransferLot({ userId: "user-1", transferLotId: grouping.id, code: "LAB-20260917-000002" });
     const db = await readDb();
 
     assert.equal(result.lot.type, "leilao");
     assert.equal(result.lot.totalSkus, 2);
-    assert.deepEqual(db.transferItems.map((item) => item.triageItemId).sort(), ["triage-1", "triage-2"]);
-    assert.equal(db.transferItems[0].diagnosisPhoto, "data:image/jpeg;base64,abc");
+    const groupedItems = db.transferItems.filter((item) => item.transferLotId === grouping.id);
+    assert.deepEqual(groupedItems.map((item) => item.triageItemId).sort(), ["triage-1", "triage-2"]);
+    assert.equal(groupedItems[0].diagnosisPhoto, "data:image/jpeg;base64,abc");
+    const otherGrouping = await createTransferLot({ userId: "user-1", descricao: "Outro leilao", type: "leilao" });
+    await assert.rejects(scanTransferLot({ userId: "user-1", transferLotId: otherGrouping.id, code: "LAB-20260917-000001" }), /outro agrupamento ativo/);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
