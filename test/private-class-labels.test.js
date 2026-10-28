@@ -52,7 +52,7 @@ test("lotes normais continuam sem classe e o lote ja iniciado preserva todos os 
   assert.equal(existing.classMode, true);
   assert.equal(existing.classCounts.A, 1);
   assert.equal(existing.classCounts.pallets[0].closedBy.id, actor.id);
-  assert.deepEqual(existing.rzs[0].classCounts, { A: 1, B: 0, total: 1 });
+  assert.deepEqual(existing.rzs[0].classCounts, { A: 1, B: 0, bySource: { A: 1 }, total: 1 });
   assert.deepEqual(state, saved);
   await attachPrivateClassPallets("u2", normalLot, { allowed: false, withState: () => { throw new Error("Nao deve consultar dados"); } });
 });
@@ -76,7 +76,7 @@ test("cada etiqueta e unica e gerar etiquetas nao aumenta a contagem nos pallets
   generateClassBatch(state, { grade: "B", quantity: 50, actor });
   assert.equal(new Set(state.labels.map((label) => label.code)).size, 150);
   assert.ok(state.labels.every((label) => /^[A-F0-9]{32}$/.test(label.code)));
-  assert.deepEqual(classSummary(state, "lot"), { pallets: [], A: 0, B: 0, total: 0 });
+  assert.deepEqual(classSummary(state, "lot"), { pallets: [], bySource: {}, sources: [], A: 0, B: 0, total: 0 });
   for (const quantity of [0, -1, 1.5, 1001, "5", NaN]) assert.throws(() => generateClassBatch(state, { grade: "A", quantity, actor }));
   assert.throws(() => generateClassBatch(state, { grade: "C", quantity: 1, actor }));
 });
@@ -107,7 +107,7 @@ test("fechamento preserva composicao, data, responsavel e bloqueia alteracoes", 
   move(state, state.labels[0].code);
   move(state, null, "close");
   const closed = classSummary(state, "lot").pallets[0];
-  assert.deepEqual(closed.snapshot, { A: 0, B: 1, total: 1 });
+  assert.deepEqual(closed.snapshot, { A: 0, B: 1, bySource: { B: 1 }, total: 1 });
   assert.equal(closed.closedBy.id, actor.id);
   assert.ok(closed.closedAt);
   assert.throws(() => move(state, state.labels[0].code, "remove"), /fechada/);
@@ -181,8 +181,9 @@ test("API completa: emissao, impressao privada, bipagem, exportacao e autorizaca
     assert.equal((await call("/lots/lot/pallets/P1", { action: "close" })).status, 200);
     assert.equal((await call("/lots/lot/pallets/P1", { action: "remove", code })).status, 400);
     const csv = await (await call("/lots/lot/export")).text();
-    assert.match(csv, /"P1";"1";"0";"1"/);
-    assert.match(csv, /"TOTAL";"1";"0";"1"/);
+    assert.match(csv, /"Origem A"/);
+    assert.match(csv, /"P1";"1";"1"/);
+    assert.match(csv, /"TOTAL";"1";"1"/);
     const reprint = await (await call(`/batches/${batch.id}/print`)).text();
     assert.equal(reprint, html);
     assert.equal((await call("/lots/normal/pallets", {})).status, 400);

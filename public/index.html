@@ -220,7 +220,7 @@
             <label>Sequencial inicial<input name="startSequence" type="number" min="1" step="1" value="1" required /></label>
             <label class="wide-field">Planilha base do Lote<input name="file" type="file" accept=".xlsx,.xls" /></label>
             <button type="submit">Criar lote</button>
-            <button type="submit" name="lotMode" value="classes" class="hidden" data-create-class-lot>Criar lote por classe</button>
+            <button type="submit" name="lotMode" value="classes" class="hidden" data-create-class-lot>Criar agrupamento por origem</button>
           </form>
 
           <section class="diverse-shell entry-panel hidden" aria-hidden="true">
@@ -903,6 +903,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20261022-class-supplier" type="module"></script>
+    <script src="/app.js?v=20261028-source-lots" type="module"></script>
   </body>
 </html>

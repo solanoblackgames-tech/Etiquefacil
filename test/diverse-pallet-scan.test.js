@@ -46,7 +46,7 @@ async function scan({ activePallet, byDescription = false, privateLabel = false,
   });
   vm.runInContext(membership + handler, context);
   await context.addDiverseItem({ preventDefault() {}, currentTarget: { querySelector: (selector) => selector === "button" ? button : input } });
-  assert.equal(message.textContent, privateLabel && classLot ? "Etiqueta registrada na composicao por classe do pallet." : "");
+  assert.equal(message.textContent, privateLabel && classLot ? "Etiqueta registrada na composicao por origem do pallet." : "");
   assert.equal(button.disabled, false);
   return calls;
 }

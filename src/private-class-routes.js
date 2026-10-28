@@ -1,6 +1,6 @@
 import { Router } from "express";
 import QRCode from "qrcode";
-import { withClassState, generateClassBatch, changeClassPallet, classSummary, isPrivateClassLot, reserveSequentialClassPallet } from "./private-class-labels.js";
+import { withClassState, generateClassBatch, changeClassPallet, classSummary, isPrivateClassLot, reserveSequentialClassPallet, createSourceLot, listSourceLots, suggestSourceLotCode, sourceLotCode } from "./private-class-labels.js";
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
@@ -19,18 +19,25 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
     const lot = await getUserLotDetail(workspaceUserId(req), req.params.lotId);
     if (!lot) throw new Error("Lote nao encontrado nesta conta.");
     const classMode = await withState(workspaceUserId(req), (state) => isPrivateClassLot(state, lot.id));
-    if (!classMode) throw new Error("Este lote usa o fluxo normal. Crie um lote por classe na tela de entradas.");
+    if (!classMode) throw new Error("Este lote usa o fluxo normal. Crie um agrupamento por origem na tela de entradas.");
     return lot;
   };
 
+  router.get("/source-lots", requireTriageAccess, route(async (req, res) => {
+    res.json(await withState(workspaceUserId(req), (state) => ({ sourceLots: listSourceLots(state), suggestedCode: suggestSourceLotCode(state) })));
+  }));
+  router.post("/source-lots", requireTriageAccess, route(async (req, res) => {
+    const sourceLot = await withState(workspaceUserId(req), (state) => createSourceLot(state, { code: req.body.code, actor: actor(req) }));
+    res.json({ sourceLot });
+  }));
   router.get("/batches", requireTriageAccess, route(async (req, res) => {
     res.json(await withState(workspaceUserId(req), (state) => ({ batches: [...state.batches].reverse().map((batch) => ({
-      ...batch, assigned: state.labels.filter((label) => label.batchId === batch.id && label.lotId).length
+      ...batch, sourceLot: sourceLotCode(batch), assigned: state.labels.filter((label) => label.batchId === batch.id && label.lotId).length
     })) })));
   }));
   router.post("/batches", requireTriageAccess, route(async (req, res) => {
     const batch = await withState(workspaceUserId(req), (state) => generateClassBatch(state, {
-      grade: req.body.grade, quantity: req.body.quantity, actor: actor(req)
+      sourceLot: req.body.sourceLot, grade: req.body.grade, quantity: req.body.quantity, actor: actor(req)
     }));
     res.json({ batch });
   }));
@@ -78,7 +85,7 @@ export function privateClassRoutes({ requireAuth, requireTriageAccess, requireOw
     const lot = await ownedLot(req);
     const summary = await withState(workspaceUserId(req), (state) => classSummary(state, lot.id));
     const cell = (value) => `"${String(value ?? "").replace(/^[=+@-]/, "'$&").replaceAll('"', '""')}"`;
-    const rows = [["Pallet", "Classe A", "Classe B", "Total", "Fechado em", "Responsavel"], ...summary.pallets.map((p) => [p.codigoRz, p.A, p.B, p.total, p.closedAt || "", p.closedBy?.name || ""]), ["TOTAL", summary.A, summary.B, summary.total, "", ""]];
+    const rows = [["Pallet", ...summary.sources.map((code) => `Origem ${code}`), "Total", "Fechado em", "Responsavel"], ...summary.pallets.map((p) => [p.codigoRz, ...summary.sources.map((code) => p.bySource[code] || 0), p.total, p.closedAt || "", p.closedBy?.name || ""]), ["TOTAL", ...summary.sources.map((code) => summary.bySource[code]), summary.total, "", ""]];
     res.set("Content-Disposition", 'attachment; filename="composicao-pallets.csv"').type("text/csv").send("\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n"));
   }));
   return router;
@@ -98,7 +105,7 @@ export async function attachPrivateClassPallets(userId, lot, { allowed = false, 
     if (!lot.rzs.some((rz) => rz.codigoRz === pallet.codigoRz)) {
       lot.rzs.push({ codigoRz: pallet.codigoRz, expected: 0, checked: 0, qtyPercent: 0, expectedValue: 0, checkedValue: 0, excessValue: 0, missing: 0, excess: 0, missingValue: 0, valuePercent: 0 });
     }
-    lot.rzs.find((rz) => rz.codigoRz === pallet.codigoRz).classCounts = { A: pallet.A, B: pallet.B, total: pallet.total };
+    lot.rzs.find((rz) => rz.codigoRz === pallet.codigoRz).classCounts = { A: pallet.A, B: pallet.B, bySource: pallet.bySource, total: pallet.total };
   }
   lot.rzs.sort((a, b) => a.codigoRz.localeCompare(b.codigoRz, "pt-BR", { numeric: true }));
   return lot;

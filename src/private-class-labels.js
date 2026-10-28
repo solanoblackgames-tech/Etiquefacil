@@ -3,7 +3,39 @@ import path from "node:path";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { ensureStore, getPgPool } from "./store.js";
 
-const emptyState = () => ({ batches: [], labels: [], pallets: [], events: [], classLots: [] });
+const emptyState = () => ({ batches: [], labels: [], pallets: [], events: [], classLots: [], sourceLots: [] });
+
+export const sourceLotCode = (item) => String(item.sourceLot || item.grade || "");
+
+export function listSourceLots(state) {
+  const lots = new Map((state.sourceLots || []).map((lot) => [lot.code, lot]));
+  for (const item of [...state.batches, ...state.labels]) {
+    const code = sourceLotCode(item);
+    if (code && !lots.has(code)) lots.set(code, { code, pilot: ["A", "B"].includes(code) });
+  }
+  return [...lots.values()].sort((a, b) => a.code.localeCompare(b.code, "pt-BR", { numeric: true }));
+}
+
+export function suggestSourceLotCode(state) {
+  const latest = state.sourceLots?.at(-1)?.code || "EXP9";
+  const match = latest.match(/^(.*?)(\d+)$/);
+  if (!match) return "";
+  const used = new Set(listSourceLots(state).map((lot) => lot.code));
+  let next = BigInt(match[2]);
+  let code;
+  do { code = `${match[1]}${String(++next).padStart(match[2].length, "0")}`; } while (used.has(code));
+  return code.length <= 40 ? code : "";
+}
+
+export function createSourceLot(state, { code, actor }) {
+  code = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(code)) throw new Error("Informe um lote de origem com ate 40 letras, numeros, ponto, hifen ou sublinhado.");
+  if (listSourceLots(state).some((lot) => lot.code === code)) throw new Error("Este lote de origem ja esta cadastrado. Selecione-o para gerar mais etiquetas.");
+  const lot = { code, createdAt: new Date().toISOString(), actor };
+  state.sourceLots ||= [];
+  state.sourceLots.push(lot);
+  return lot;
+}
 
 export function hasPrivateClassAccess(owner) {
   return String(owner?.email || "").trim().toLowerCase() === "solanoblackgames@gmail.com";
@@ -67,16 +99,19 @@ export async function withClassState(userId, mutate, { directory = path.resolve(
   try { return await pending; } finally { if (queues.get(filename) === pending) queues.delete(filename); }
 }
 
-export function generateClassBatch(state, { grade, quantity, actor }) {
-  if (!["A", "B"].includes(grade)) throw new Error("Selecione classe A ou B.");
+export function generateClassBatch(state, { sourceLot, grade, quantity, actor }) {
+  const code = String(sourceLot || grade || "").trim().toUpperCase();
+  const legacy = !sourceLot && ["A", "B"].includes(code);
+  if (!legacy && !listSourceLots(state).some((lot) => lot.code === code)) throw new Error("Cadastre e selecione o lote de origem antes de gerar etiquetas.");
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new Error("Informe de 1 a 1000 etiquetas por impressao.");
-  const batch = { id: randomUUID(), grade, quantity, createdAt: new Date().toISOString(), actor };
+  const origin = legacy ? { grade: code } : { sourceLot: code };
+  const batch = { id: randomUUID(), ...origin, quantity, createdAt: new Date().toISOString(), actor };
   const used = new Set(state.labels.map((label) => label.code));
   for (let index = 0; index < quantity; index++) {
     let code;
     do { code = randomBytes(16).toString("hex").toUpperCase(); } while (used.has(code));
     used.add(code);
-    state.labels.push({ code, grade, batchId: batch.id, lotId: null, codigoRz: null });
+    state.labels.push({ code, ...origin, batchId: batch.id, lotId: null, codigoRz: null });
   }
   state.batches.push(batch);
   return batch;
@@ -85,11 +120,17 @@ export function generateClassBatch(state, { grade, quantity, actor }) {
 export function classSummary(state, lotId) {
   const pallets = state.pallets.filter((pallet) => pallet.lotId === lotId).map((pallet) => {
     const labels = state.labels.filter((label) => label.lotId === lotId && label.codigoRz === pallet.codigoRz);
-    const A = labels.filter((label) => label.grade === "A").length;
-    const B = labels.length - A;
-    return { ...pallet, A, B, total: A + B };
+    const bySource = {};
+    for (const label of labels) {
+      const source = sourceLotCode(label);
+      bySource[source] = (bySource[source] || 0) + 1;
+    }
+    return { ...pallet, bySource, A: bySource.A || 0, B: bySource.B || 0, total: labels.length };
   }).sort((a, b) => a.codigoRz.localeCompare(b.codigoRz, "pt-BR", { numeric: true }));
-  return { pallets, A: pallets.reduce((sum, p) => sum + p.A, 0), B: pallets.reduce((sum, p) => sum + p.B, 0), total: pallets.reduce((sum, p) => sum + p.total, 0) };
+  const bySource = {};
+  for (const pallet of pallets) for (const [code, count] of Object.entries(pallet.bySource)) bySource[code] = (bySource[code] || 0) + count;
+  const sources = Object.keys(bySource).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  return { pallets, bySource, sources, A: bySource.A || 0, B: bySource.B || 0, total: pallets.reduce((sum, p) => sum + p.total, 0) };
 }
 
 export function reserveSequentialClassPallet(state, { lotId, lotName, actor, existingCodes = [] }) {
@@ -128,8 +169,8 @@ export function changeClassPallet(state, { lotId, lotName, codigoRz, action, cod
   if (action === "remove") Object.assign(label, { lotId: null, codigoRz: null });
   if (action === "close") {
     const counts = classSummary(state, lotId).pallets.find((p) => p.codigoRz === codigoRz);
-    Object.assign(pallet, { closedAt: now, closedBy: actor, snapshot: { A: counts.A, B: counts.B, total: counts.total } });
+    Object.assign(pallet, { closedAt: now, closedBy: actor, snapshot: { A: counts.A, B: counts.B, bySource: { ...counts.bySource }, total: counts.total } });
   }
-  state.events.push({ id: randomUUID(), lotId, codigoRz, action, code: label?.code || null, grade: label?.grade || null, actor, createdAt: now });
+  state.events.push({ id: randomUUID(), lotId, codigoRz, action, code: label?.code || null, grade: label?.grade || null, ...(label?.sourceLot ? { sourceLot: label.sourceLot } : {}), actor, createdAt: now });
   return classSummary(state, lotId);
 }

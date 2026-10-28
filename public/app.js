@@ -680,7 +680,7 @@ async function uploadLot(event) {
 function unifiedLotSuccessMessage(response) {
   if (response.mode === "classes") {
     const supplier = response.supplierSync;
-    return `Lote por classe criado: ${response.lot.nomeArquivo}. ${supplier?.ok ? "Fornecedor confirmado no Bling." : `Fornecedor pendente no Bling: ${supplier?.error || "sincronize dentro do lote"}`}`;
+    return `Agrupamento por origem criado: ${response.lot.nomeArquivo}. ${supplier?.ok ? "Fornecedor confirmado no Bling." : `Fornecedor pendente no Bling: ${supplier?.error || "sincronize dentro do lote"}`}`;
   }
   if (response.mode === "empty") return `Lote vazio criado: ${response.lot.nomeArquivo}`;
   if (response.mode === "suggestions") return `Lote criado com lista de sugestao: ${response.lot.nomeArquivo}`;
@@ -841,7 +841,7 @@ async function addDiverseItem(event) {
       await recordPrivateClass(state.selectedDiverseLotId, codigoRz, codigoMl);
       input.value = "";
       refreshPrivateClasses($("#diverseScanPanel"), state.selectedDiverseLot, codigoRz);
-      $("#diverseScanMessage").textContent = "Etiqueta registrada na composicao por classe do pallet.";
+      $("#diverseScanMessage").textContent = "Etiqueta registrada na composicao por origem do pallet.";
       playScanFeedback("success");
       return;
     }
@@ -11619,7 +11619,7 @@ function rzCard(rz, { canScan = true } = {}) {
     <article class="rz-card" data-rz="${escapeHtml(rz.codigoRz)}" title="${escapeHtml(title)}">
       <strong>${escapeHtml(rz.codigoRz)}</strong>
       <div class="rz-card-details">
-        ${rz.classCounts ? `<span>Classe A</span><strong>${rz.classCounts.A}</strong><span>Classe B</span><strong>${rz.classCounts.B}</strong>` : ""}
+        ${rz.classCounts ? Object.entries(rz.classCounts.bySource || { A: rz.classCounts.A, B: rz.classCounts.B }).map(([source, count]) => `<span>Origem ${escapeHtml(source)}</span><strong>${count}</strong>`).join("") : ""}
         <span>Itens</span><strong>${rz.expected}</strong>
         <span>Conferido</span><strong>${rz.checked}</strong>
         ${valueCells}

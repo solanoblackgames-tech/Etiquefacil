@@ -66,15 +66,17 @@ Depois de publicar esta versao, as contas existentes passam a receber JWT na pro
 
 Referencia: [guia oficial de migracao JWT do Bling](https://developer.bling.com.br/migracao-jwt).
 
-## Etiquetas privadas por classe e composicao dos pallets
+## Etiquetas privadas por lote de origem e composicao dos pallets
 
-Na Triagem, abra **Etiquetas por classe A / B**, escolha a classe e gere de 1 a 1000 etiquetas por emissao. Abra a impressao em papel 60 × 40 mm. Cada etiqueta possui um QR aleatorio exclusivo, sem classe ou lote no conteudo. As emissoes anteriores permitem reimprimir os mesmos codigos.
+Na Triagem, abra **Etiquetas por lote de origem**, cadastre uma chegada (por exemplo, **EXP10**) e gere de 1 a 1000 etiquetas por emissao. Na proxima chegada, cadastre **EXP11**; o sistema sugere o proximo codigo numerico, que pode ser ajustado antes do cadastro. Uma origem ja cadastrada pode receber novas emissoes. Os pilotos **A e B** permanecem disponiveis com suas etiquetas e historico originais.
 
-O recurso esta disponivel exclusivamente para a conta Solano Black Games (`solanoblackgames@gmail.com`) e sua equipe. Em **Entradas de lotes**, preencha os dados sem anexar planilha e use **Criar lote por classe**. O botao **Criar lote** mantem o fluxo comum, com ou sem lista.
+Abra a impressao em papel 60 × 40 mm. Cada etiqueta possui um QR aleatorio exclusivo, sem origem no conteudo impresso. As emissoes anteriores permitem reimprimir os mesmos codigos.
+
+O recurso esta disponivel exclusivamente para a conta Solano Black Games (`solanoblackgames@gmail.com`) e sua equipe. Em **Entradas de lotes**, preencha os dados sem anexar planilha e use **Criar agrupamento por origem**. Esse agrupamento recebe os pallets; EXP10, EXP11 etc. identificam a origem de cada peca. O botao **Criar lote** mantem o fluxo comum, com ou sem lista.
 
 Ao criar um lote por classe, o fornecedor e localizado ou cadastrado no Bling mesmo sem produtos no lote. Se o Bling estiver indisponivel, o lote permanece salvo com o fornecedor pendente. Use **Sincronizar fornecedor no Bling** dentro do lote para tentar novamente ou cadastrar o fornecedor de um lote ja existente.
 
-Em Conferencia, abra o lote por classe, gere/abra um pallet e bipe os QRs privados. A secao **Composicao por classe** mostra A, B e total por pallet e por lote. Tambem permite retirar uma etiqueta antes de coloca-la em outro pallet. Uma etiqueta nao pode pertencer a dois pallets. Lotes da versao anterior que ja possuem historico de classe sao reconhecidos automaticamente, preservando seus registros.
+Em Conferencia, abra o agrupamento, gere/abra um pallet e bipe os QRs privados. A secao **Composicao por lote de origem** mostra quantas pecas de cada origem foram colocadas em cada pallet e no agrupamento inteiro. Tambem permite retirar uma etiqueta antes de coloca-la em outro pallet. Uma etiqueta nao pode pertencer a dois pallets. Lotes da versao anterior que ja possuem historico de classe sao reconhecidos automaticamente, preservando seus registros.
 
 O responsavel pode fechar a composicao: o sistema salva contagens, data e responsavel e bloqueia novas entradas e retiradas de etiquetas nesse pallet. O historico registra cada movimentacao; a composicao pode ser exportada em CSV. Lotes com esse historico nao podem ser excluidos.
 
