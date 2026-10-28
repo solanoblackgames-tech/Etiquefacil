@@ -8777,7 +8777,12 @@ async function createTransferLot(event) {
     $("#transferMessage").textContent = payload.type === "leilao"
       ? "Agrupamento de leilao criado. Bipe etiquetas de triagem."
       : "Agrupamento de transferencia criado. Pode comecar a bipar.";
-    await loadTransferLots(response.lot.id);
+    // A criacao ja retorna o detalhe completo: abra a bipagem sem depender
+    // de outras duas consultas, que podem falhar depois de o lote ser salvo.
+    state.selectedTransferLotId = response.lot.id;
+    state.transferLots = [response.lot, ...state.transferLots.filter((lot) => lot.id !== response.lot.id)];
+    renderTransferLots();
+    renderTransferDetail(response.lot);
     $("#transferScanInput")?.focus();
   } catch (error) {
     $("#transferMessage").style.color = "";
