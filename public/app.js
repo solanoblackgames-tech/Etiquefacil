@@ -82,6 +82,7 @@ const state = {
   lastCameraScanAt: 0,
   pendingTransferReceive: false,
   pendingTransferConfirmation: null,
+  transferWmsLaudo: null,
   pendingExpeditionPick: false,
   operatorInviteToken: null,
   pendingScan: false,
@@ -5775,7 +5776,7 @@ async function applyRouteFromLocation({ replace = false } = {}) {
       return;
     }
     await showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
-    if (replace) updateRoute(`/transferencias/${encodeURIComponent(route.transferLotId)}/${route.transferMode || "aceite"}`, { replace: true });
+    if (replace) updateRoute(`/transferencias/${encodeURIComponent(route.transferLotId)}/${route.transferMode || "aceite"}${window.location.search}`, { replace: true });
     return;
   }
 
@@ -7164,6 +7165,11 @@ async function showTransferReceiveOnly({ transferLotId, publicAccess = true }) {
   $("#transferDetail").innerHTML = '<p class="muted">Carregando agrupamento...</p>';
   try {
     const response = await api(`${transferReceiveApiBase(transferLotId)}`);
+    const laudo = new URLSearchParams(window.location.search).get("laudo") || "";
+    state.pendingTransferConfirmation = null;
+    state.transferWmsLaudo = response.lot.wmsEnabled && /^LAB-\d{8}-\d{6}$/.test(laudo)
+      ? { transferLotId, code: laudo }
+      : null;
     renderTransferReceivePage(response.lot);
   } catch (error) {
     $("#transferDetail").innerHTML = `<p class="message">${escapeHtml(error.message)}</p>`;
@@ -7244,6 +7250,9 @@ function renderTransferReceivePage(lot, { suppressInputFocus = false } = {}) {
 function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
   const detail = $("#transferDetail");
   const secondaryColumnLabel = lot.source === "triage" ? "Laudo" : "Codigo";
+  const acceptedCode = state.transferWmsLaudo?.transferLotId === lot.id ? state.transferWmsLaudo.code : "";
+  const acceptedItem = acceptedCode ? findTransferReceiveItem(lot, acceptedCode) : null;
+  const positionOnly = Boolean(acceptedItem && Number(acceptedItem.falta ?? Number(acceptedItem.quantidade || 0) - Number(acceptedItem.quantidadeConferida || 0)) > 0);
   detail.classList.remove("empty");
   detail.innerHTML = `
     <section class="scan-page transfer-receive-page">
@@ -7264,13 +7273,22 @@ function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
         ${metric("Falta", lot.totalPending ?? 0)}
       </div>
       <form id="transferReceiveForm" class="transfer-total-form wms-entry-form">
+        ${positionOnly ? `
+        <div class="transfer-confirm-panel">
+          <strong>${escapeHtml(acceptedItem.descricao)}</strong>
+          <span>${escapeHtml(acceptedItem.sku)} · ${escapeHtml(acceptedCode)}</span>
+          <span>Leia a posicao e toque em OK para concluir a transferencia.</span>
+        </div>
+        <input id="transferReceiveInput" name="code" type="hidden" value="${escapeHtml(acceptedCode)}" />
+        ` : `
         <label>Etiqueta da triagem
-          <input id="transferReceiveInput" name="code" placeholder="Bipe LAB, SKU, Codigo ML ou EAN" autocomplete="off" ${suppressInputFocus ? "" : "autofocus"} required />
+          <input id="transferReceiveInput" name="code" inputmode="none" placeholder="Bipe LAB, SKU, Codigo ML ou EAN" autocomplete="off" ${suppressInputFocus ? "" : "autofocus"} required />
         </label>
+        `}
         <label>Posicao WMS
-          <input id="transferWmsLocationInput" name="wmsLocation" placeholder="${escapeHtml(wmsLocationPlaceholder(lot))}" autocomplete="off" required />
+          <input id="transferWmsLocationInput" name="wmsLocation" inputmode="none" placeholder="${escapeHtml(wmsLocationPlaceholder(lot))}" autocomplete="off" required />
         </label>
-        <button type="submit">Alocar produto</button>
+        <button type="submit">${positionOnly ? "OK" : "Alocar produto"}</button>
       </form>
       <p id="transferWmsSuggestion" class="wms-suggestion"></p>
       ${state.pendingTransferConfirmation ? transferPendingConfirmation(state.pendingTransferConfirmation) : ""}
@@ -7295,12 +7313,15 @@ function renderTransferWmsEntryPage(lot, { suppressInputFocus = false } = {}) {
   `;
   $("#transferReceiveForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    prepareTransferReceiveConfirmation(lot);
+    prepareTransferReceiveConfirmation(lot, { confirmImmediately: positionOnly });
   });
   detail.querySelector("#transferDivergenceForm")?.addEventListener("submit", (event) => submitTransferDivergenceReport(event, lot.id));
   detail.querySelector("[data-confirm-transfer-entry]")?.addEventListener("click", () => confirmTransferReceiveCurrent(lot.id));
   detail.querySelector("[data-cancel-transfer-entry]")?.addEventListener("click", () => cancelTransferReceiveConfirmation(lot));
-  if (!suppressInputFocus) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+  if (acceptedCode && !positionOnly) {
+    $("#transferReceiveMessage").textContent = "Este laudo nao esta pendente nesta remessa. Confira a transferencia antes de continuar.";
+  }
+  if (!suppressInputFocus) schedulePrimaryInputFocus([positionOnly ? "#transferWmsLocationInput" : "#transferReceiveInput"]);
 }
 
 function wmsLocationPlaceholder(lot) {
@@ -7616,7 +7637,7 @@ function findTransferReceiveItem(lot, code) {
   return matches.find((item) => Number(item.falta ?? Math.max(0, Number(item.quantidade || 0) - Number(item.quantidadeConferida || 0))) > 0) || matches[0] || null;
 }
 
-function prepareTransferReceiveConfirmation(lot) {
+function prepareTransferReceiveConfirmation(lot, { confirmImmediately = false } = {}) {
   if (state.pendingTransferReceive || state.pendingTransferConfirmation) return;
   const input = $("#transferReceiveInput");
   const wmsInput = $("#transferWmsLocationInput");
@@ -7658,7 +7679,11 @@ function prepareTransferReceiveConfirmation(lot) {
     input.select();
     return;
   }
-  state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, wmsLocation };
+  state.pendingTransferConfirmation = { transferLotId: lot.id, code, item, wmsLocation, positionOnly: confirmImmediately };
+  if (confirmImmediately) {
+    confirmTransferReceiveCurrent(lot.id);
+    return;
+  }
   input.value = "";
   if (wmsInput) wmsInput.value = "";
   if (state.transferCameraStream) {
@@ -7736,6 +7761,12 @@ async function confirmTransferReceiveCurrent(transferLotId) {
       body: JSON.stringify(pending.force ? { code, reason, wmsLocation: pending.wmsLocation || "" } : { code, wmsLocation: pending.wmsLocation || "" })
     });
     state.pendingTransferConfirmation = null;
+    if (pending.positionOnly) {
+      state.transferWmsLaudo = null;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("laudo");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
     if (shouldResumeCamera) stopTransferCamera();
     renderTransferReceivePage(response.lot, { suppressInputFocus: shouldResumeCamera });
     playTransferSuccessSound();
@@ -7751,6 +7782,7 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     if (shouldResumeCamera && !isTransferReceiveComplete(response.lot)) await startTransferCamera(transferLotId, response.lot);
   } catch (error) {
     playTransferErrorSound();
+    if (pending.positionOnly) state.pendingTransferConfirmation = null;
     $("#transferReceiveMessage").style.color = "";
     $("#transferReceiveMessage").textContent = error.message;
   } finally {
@@ -7763,7 +7795,9 @@ async function confirmTransferReceiveCurrent(transferLotId) {
     if (currentWmsInput) currentWmsInput.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentButton) currentButton.disabled = Boolean(state.pendingTransferConfirmation);
     if (currentConfirmButton) currentConfirmButton.disabled = false;
-    if (!state.pendingTransferConfirmation && !state.transferCameraStream) schedulePrimaryInputFocus(["#transferReceiveInput"]);
+    if (!state.pendingTransferConfirmation && !state.transferCameraStream) {
+      schedulePrimaryInputFocus([state.transferWmsLaudo ? "#transferWmsLocationInput" : "#transferReceiveInput"]);
+    }
   }
 }
 
@@ -13444,7 +13478,7 @@ function renderTriageDetail(item, { openEdit = false, focusSelector = null } = {
           ${item.diagnosisCondition ? `<div><dt>Diagnostico</dt><dd>${escapeHtml(triageDiagnosisConditionLabel(item.diagnosisCondition))}</dd></div>` : ""}
           ${item.diagnosedAt ? `<div><dt>Operador ultimo laudo</dt><dd>${escapeHtml(triageDiagnosedByLabel(item))}</dd></div>` : ""}
         </dl>
-        ${triageTransferSummaryMarkup(item.triageTransfer)}
+        ${triageTransferSummaryMarkup(item.triageTransfer, item.code)}
         <div class="settings-actions">
           <a class="button-link" href="${escapeHtml(item.statusUrl)}" target="_blank" rel="noreferrer">Abrir status</a>
           ${printButton}
@@ -13501,7 +13535,7 @@ function renderTriageItemView(item) {
         <h2>${escapeHtml(item.code)}</h2>
       </div>
       ${canEditDiagnosis ? triageDiagnosisFormMarkup(item, { qrMode: true }) : ""}
-      ${triageTransferSummaryMarkup(item.triageTransfer)}
+      ${triageTransferSummaryMarkup(item.triageTransfer, item.code)}
       ${triageSaleMarkup(item, canEditDiagnosis)}
       ${triageDiagnosisPhotoMarkup(item.diagnosisPhoto, item.code)}
       <dl class="triage-fields">
@@ -13528,12 +13562,14 @@ function renderTriageItemView(item) {
   `;
 }
 
-function triageTransferSummaryMarkup(transfer) {
+function triageTransferSummaryMarkup(transfer, triageCode = "") {
   if (!transfer?.id) return "";
   const complete = ["ready_sync", "divergent", "synced"].includes(transfer.status);
-  const actionLabel = transfer.wmsEnabled ? complete ? "Ver entrada WMS" : "Alocar produto" : complete ? "Ver estrutura de estoque" : "Aceitar entrada fisica";
+  const directPlacement = transfer.wmsEnabled && !complete && /^LAB-\d{8}-\d{6}$/.test(triageCode);
+  const receivePath = transferReceivePath(transfer) + (directPlacement ? `?laudo=${encodeURIComponent(triageCode)}` : "");
+  const actionLabel = transfer.wmsEnabled ? complete ? "Ver entrada WMS" : directPlacement ? "Aceitar transferencia" : "Alocar produto" : complete ? "Ver estrutura de estoque" : "Aceitar entrada fisica";
   const action = userCanAcceptTransfer(transfer)
-    ? `<a class="button-link primary-action" href="${escapeHtml(transferReceivePath(transfer))}">${actionLabel}</a>`
+    ? `<a class="button-link primary-action" href="${escapeHtml(receivePath)}">${actionLabel}</a>`
     : "";
   return `
     <section class="triage-transfer-summary">
