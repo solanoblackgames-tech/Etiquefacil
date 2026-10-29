@@ -10211,10 +10211,11 @@ async function addWmsUnitForReceivedItemPg(client, { lot, item, location, code, 
 
 // Valida a posicao da entrada: prefixo do deposito e existencia na grade configurada.
 async function resolveTransferWmsLocation(lot, value) {
-  const location = normalizeTransferWmsLocation(lot, value);
-  if (!location) return "";
+  if (!lot?.wmsEnabled) return "";
   const settings = await getUserTriageTransferSettings(lot.userId);
   const deposit = triageDestinationWmsConfig(settings, lot.depositoDestino);
+  const translated = deposit ? translateJzWmsLocation(deposit, value) : "";
+  const location = normalizeTransferWmsLocation(lot, translated || value);
   return deposit ? assertValidWmsPosition(deposit, location) : location;
 }
 

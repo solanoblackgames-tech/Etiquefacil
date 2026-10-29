@@ -617,6 +617,85 @@ test("receiveTransferLotScan only allocates triage items to WMS positions from t
   }
 });
 
+test("receiveTransferLotScan reads the old JZ position label as the destination deposit position", async () => {
+  const originalCwd = process.cwd();
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "etiquefacil-transfer-wms-jz-"));
+
+  process.chdir(tempDir);
+  delete process.env.DATABASE_URL;
+
+  try {
+    const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
+    storeUrl.search = `?test=${Date.now()}-wms-jz`;
+    const { receiveTransferLotScan, readDb, writeDb } = await import(storeUrl.href);
+
+    await writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      lots: [],
+      products: [],
+      rzItems: [],
+      scans: [],
+      labels: [],
+      blingIntegrations: [],
+      appSettings: {},
+      userSettings: [{ userId: "user-1", key: "triage_transfer", value: { wmsDeposits: [{ depositName: "VENDA B2B", prefix: "B2B", rowsConfig: [{ label: "A", columns: 26, positions: 4 }, { label: "B", columns: 20, positions: 4 }] }] } }],
+      transferLots: [
+        {
+          id: "transfer-1",
+          userId: "user-1",
+          name: "TRF-1",
+          descricao: "",
+          depositoOrigem: "Geral",
+          depositoDestino: "VENDA B2B",
+          status: "waiting_store",
+          source: "triage",
+          wmsEnabled: true,
+          wmsPrefix: "B2B",
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      transferItems: [
+        {
+          id: "transfer-item-1",
+          transferLotId: "transfer-1",
+          sourceLotId: null,
+          productId: "product-1",
+          codigoMl: "ML1",
+          sku: "SKU1",
+          descricao: "Produto internet",
+          ean: "",
+          quantidade: 1,
+          quantidadeConferida: 0,
+          createdAt: "2026-07-03T00:00:00.000Z"
+        }
+      ],
+      transferForcedOccurrences: [],
+      transferDivergenceReports: [],
+      operatorActivities: [],
+      operatorInvites: [],
+      catalogProducts: [],
+      catalogRequests: [],
+      catalogRejectedRequests: [],
+      noSheetSuggestions: [],
+      triageItems: [],
+      triageEvents: []
+    });
+
+    const result = await receiveTransferLotScan({ userId: "user-1", transferLotId: "transfer-1", code: "SKU1", wmsLocation: "RUA B | POSICAO 174 | ANDAR 2" });
+    const db = await readDb();
+
+    assert.equal(result.status, "received");
+    assert.equal(result.item.wmsLocation, "B2B-B-18-2");
+    assert.equal(db.transferItems[0].wmsLocation, "B2B-B-18-2");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
+    else delete process.env.DATABASE_URL;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("confirmPublicTransferLotTotal records total divergence without item scans", async () => {
   const originalCwd = process.cwd();
   const originalDatabaseUrl = process.env.DATABASE_URL;
