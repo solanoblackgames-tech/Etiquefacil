@@ -7859,6 +7859,7 @@ function stopTransferCamera() {
 async function loadExpedition(selectId = state.selectedExpeditionOrderId) {
   try {
     const response = await api("/api/wms/expedition");
+    state.triageTransferSettings.wmsDeposits = response.wmsDeposits || [];
     state.expedition = {
       orders: response.orders || [],
       stock: response.stock || [],

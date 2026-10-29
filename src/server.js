@@ -1353,7 +1353,9 @@ app.post("/api/wms/relocate", requireAuth, requireTransferViewOrAcceptanceAccess
 
 app.get("/api/wms/expedition", requireAuth, requireTransferAccess, async (req, res) => {
   try {
-    res.json(await listWmsExpedition(workspaceUserId(req)));
+    const expedition = await listWmsExpedition(workspaceUserId(req));
+    const settings = await getUserTriageTransferSettings(workspaceUserId(req));
+    res.json({ ...expedition, wmsDeposits: settings.wmsDeposits || settings.wms_deposits || [] });
   } catch (error) {
     sendError(res, error);
   }
