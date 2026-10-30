@@ -1029,6 +1029,7 @@ test("manual no-sheet product uses suggestion quantity as expected quantity", as
     assert.equal(rzItem.qtdEsperada, 4);
     assert.equal(rzItem.qtdConferida, 1);
     assert.equal(rzItem.valorTotal, 200);
+    assert.equal(result.quantityApplied, 1);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
@@ -1091,7 +1092,8 @@ test("no-sheet duplicate quantity requires explicit confirmation", async () => {
     const rzItem = db.rzItems.find((item) => item.productId === created.product.id);
 
     assert.equal(duplicated.status, "conferido_rz");
-    assert.equal(duplicated.stockEntryRequired, false);
+    assert.equal(duplicated.stockEntryRequired, true);
+    assert.equal(duplicated.quantityApplied, 1);
     assert.equal(product.qtdTotal, 2);
     assert.equal(rzItem.qtdEsperada, 2);
     assert.equal(rzItem.qtdConferida, 2);

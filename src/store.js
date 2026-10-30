@@ -5594,13 +5594,13 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
       }
       item.qtdConferida += 1;
       await writeDb(db);
-      return { status: "conferido_rz", product: existing, quantityApplied: 0, stockEntryRequired: false, lot: summarizeLot(db, lot, true) };
+      return { status: "conferido_rz", product: existing, quantityApplied: 1, stockEntryRequired: true, lot: summarizeLot(db, lot, true) };
     } else {
       db.rzItems.push(buildDiverseRzItem(lot, existing, normalizedRz, { quantidade: expectedQuantity, qtdConferida: 1 }));
     }
     existing.qtdTotal += expectedQuantity;
     await writeDb(db);
-    return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
+    return { status: item ? "duplicado_rz" : "mesmo_sku_novo_rz", product: existing, quantityApplied: 1, lot: summarizeLot(db, lot, true) };
   }
 
   const history = findApprovedProductHistory(db, userId, lot.id, normalizedMl)[0];
@@ -5617,7 +5617,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     db.rzItems.push(item);
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "criado", product, parent: previousHistory, source: "historico", quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
+    return { status: "criado", product, parent: previousHistory, source: "historico", quantityApplied: 1, lot: summarizeLot(db, lot, true) };
   }
   if (!history && source) {
     const reservation = ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
@@ -5627,7 +5627,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     db.rzItems.push(item);
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "criado", product, parent: null, source: "catalogo_oculto", quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
+    return { status: "criado", product, parent: null, source: "catalogo_oculto", quantityApplied: 1, lot: summarizeLot(db, lot, true) };
   }
   if (!history && manualProduct) {
     const sourceManual = normalizeManualProduct(manualProduct, normalizedMl);
@@ -5639,7 +5639,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
     mergePendingCatalogRequest(db.catalogRequests, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product, type: "create", payload: sourceManual }));
     ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
     await writeDb(db);
-    return { status: "cadastro_manual", product, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
+    return { status: "cadastro_manual", product, quantityApplied: 1, lot: summarizeLot(db, lot, true) };
   }
 
   if (!history) {
@@ -5656,7 +5656,7 @@ export async function addDiverseLotItem({ userId, createdByUserId = userId, oper
   db.rzItems.push(item);
   ensureActiveSkuReservationInDb(db, { userId, lot, operatorUserId: reservationOperatorId });
   await writeDb(db);
-  return { status: "criado", product, parent: history, quantityApplied: expectedQuantity, lot: summarizeLot(db, lot, true) };
+  return { status: "criado", product, parent: history, quantityApplied: 1, lot: summarizeLot(db, lot, true) };
 }
 
 export async function suggestCatalogUpdate({ userId, createdByUserId = userId, operatorUserId = null, lotId, productId, payload }) {
@@ -8551,11 +8551,11 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
           `,
           [existingItem.id]
         );
-        result = { status: "conferido_rz", product: existing, quantityApplied: 0, stockEntryRequired: false };
+        result = { status: "conferido_rz", product: existing, quantityApplied: 1, stockEntryRequired: true };
       } else {
         await insertLotRows(client, { rzItems: [buildDiverseRzItem(lot, existing, codigoRz, { quantidade: expectedQuantity, qtdConferida: 1 })] });
         await client.query("update products set qtd_total = qtd_total + $2 where id = $1", [existing.id, expectedQuantity]);
-        result = { status: "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: expectedQuantity };
+        result = { status: "mesmo_sku_novo_rz", product: { ...existing, qtdTotal: existing.qtdTotal + expectedQuantity }, quantityApplied: 1 };
       }
     } else {
       const approvedHistory = (await findPgProductHistory(client, userId, lot.id, codigoMl, 1))[0];
@@ -8574,7 +8574,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
         await mergePendingCatalogRequestPg(client, buildCatalogRequest({ userId, createdByUserId, operatorUserId, lot, product: records.product, type: "create", payload: source }));
         await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
         await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-        result = { status: "cadastro_manual", product: records.product, parent: null, quantityApplied: expectedQuantity };
+        result = { status: "cadastro_manual", product: records.product, parent: null, quantityApplied: 1 };
         await client.query("commit");
         return { ...result, lot: await getUserLotDetail(userId, lotId) };
       }
@@ -8591,7 +8591,7 @@ async function addDiverseLotItemPg({ userId, createdByUserId = userId, operatorU
       await insertLotRows(client, { products: [records.product], rzItems: [records.item] });
       await consumeSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId, productId: records.product.id });
       await ensureActiveSkuReservationInPg(client, { userId, lot, operatorUserId: reservationOperatorId });
-      result = { status: "criado", product: records.product, parent: history, quantityApplied: expectedQuantity };
+      result = { status: "criado", product: records.product, parent: history, quantityApplied: 1 };
     }
 
     await client.query("commit");
