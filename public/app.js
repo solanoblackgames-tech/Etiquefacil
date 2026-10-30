@@ -10610,7 +10610,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
         autoPrint: true,
         meta: labelMeta(),
         skipReview: true,
-        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
+        afterPrint: () => handleScanStockEntrySync(lotId, codigoRz, codigoMl, response, { printed: true })
       });
     }
   } catch (error) {
@@ -10727,7 +10727,7 @@ async function createExternalExcess(lotId, codigoRz, codigoMl) {
         lotId,
         autoPrint: true,
         meta: labelMeta(),
-        afterPrint: () => syncPrintedLabelStockEntry(lotId, codigoRz, codigoMl, { printed: true })
+        afterPrint: () => handleScanStockEntrySync(lotId, codigoRz, codigoMl, response, { printed: true })
       });
     }
   } catch (error) {
