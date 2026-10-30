@@ -694,6 +694,55 @@ export function blingProductToTriageLookup(product = {}, fallbackCode = "") {
   };
 }
 
+const auctionKitRequests = new Map();
+
+export async function createBlingAuctionKit(options) {
+  const key = JSON.stringify([options.integration?.accessToken, options.lot?.id]);
+  if (auctionKitRequests.has(key)) return auctionKitRequests.get(key);
+  const pending = createBlingAuctionKitOnce(options);
+  auctionKitRequests.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    auctionKitRequests.delete(key);
+  }
+}
+
+async function createBlingAuctionKitOnce({ integration, lot, saveIntegration }) {
+  if (!lot?.id) throw new Error("Agrupamento nao encontrado.");
+  const auction = lot.type === "leilao";
+  if (auction && !["ready_sync", "synced"].includes(lot.status)) throw new Error("Feche o agrupamento de leilao antes de criar o lote.");
+  if (!lot.items?.length) throw new Error("O agrupamento esta vazio.");
+  const client = new BlingApiClient(integration, saveIntegration);
+  const codigo = `${auction ? "LEILAO" : "LOTE"}-${lot.id}`;
+  const quantities = new Map();
+  for (const item of lot.items) {
+    const sku = String(item.sku || "").trim();
+    const quantity = Number(item.quantidade);
+    if (!sku || !Number.isFinite(quantity) || quantity <= 0) throw new Error("Componente sem SKU ou quantidade valida.");
+    quantities.set(sku, (quantities.get(sku) || 0) + quantity);
+  }
+  const componentes = [];
+  for (const [sku, quantidade] of quantities) {
+    const product = await client.findProductBySku(sku, { supplierCost: false });
+    if (!product?.id) throw new Error(`Cadastre o componente ${sku} no Bling antes de criar o lote.`);
+    componentes.push({ produto: { id: product.id }, quantidade });
+  }
+  const existing = await client.findProductBySku(codigo, { detail: true, supplierCost: false });
+  if (existing) {
+    const signature = (rows) => JSON.stringify((rows || []).map((row) => [String(row.produto?.id), Number(row.quantidade)]).sort((a, b) => a[0].localeCompare(b[0])));
+    if (existing.formato !== "E" || signature(existing.estrutura?.componentes) !== signature(componentes)) throw new Error("O SKU do lote ja existe no Bling com outra composicao. Confira o cadastro.");
+    return { ok: true, id: existing.id, codigo, existing: true };
+  }
+  const created = await client.createProduct({
+    nome: `${auction ? "Lote de leilao" : "Lote"} - ${lot.name}`, codigo, tipo: "P", situacao: "A", formato: "E", unidade: "UN", preco: 0,
+    estrutura: { tipoEstoque: "V", lancamentoEstoque: "M", componentes }
+  });
+  const id = created?.data?.id;
+  if (!id) throw new Error("Bling nao confirmou o ID do lote. Tente novamente para conferir o cadastro.");
+  return { ok: true, id, codigo, existing: false };
+}
+
 class BlingApiClient {
   constructor(integration, saveIntegration) {
     if (!integration?.accessToken) throw new Error("Autorize a integracao Bling antes de enviar dados.");

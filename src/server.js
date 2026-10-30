@@ -12,6 +12,7 @@ import bcrypt from "bcryptjs";
 import PDFDocument from "pdfkit";
 import XLSX from "xlsx";
 import { prepareTriagePhotoExport } from "./triage-photo-export.js";
+import { buildTransferFilesArchive } from "./transfer-files-export.js";
 import QRCode from "qrcode";
 import { privateClassRoutes, attachPrivateClassPallets } from "./private-class-routes.js";
 import { hasPrivateClassAccess, registerPrivateClassLot, withClassState } from "./private-class-labels.js";
@@ -19,6 +20,7 @@ import { syncClassLotSupplier } from "./class-lot-supplier.js";
 import "dotenv/config";
 import {
   deleteBlingProductBySku,
+  createBlingAuctionKit,
   listBlingDeposits,
   listBlingSalesOrdersForStore,
   getBlingShippingLabelPdf,
@@ -1852,6 +1854,20 @@ app.get("/api/transfer-lots/:transferLotId/qr.svg", requireAuth, requireTransfer
   }
 });
 
+app.get("/api/transfer-lots/:transferLotId/files", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Agrupamento nao encontrado." });
+    if (!lot.items.length) return res.status(400).json({ error: "Nenhum item neste agrupamento." });
+    const archive = await buildTransferFilesArchive(lot);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeFileName(lot.name)}-arquivos-do-lote.zip"`);
+    res.send(archive);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, requireTransferAccess, async (req, res) => {
   try {
     const lot = await getTransferLotDetail(workspaceUserId(req), req.params.transferLotId);
@@ -1869,6 +1885,19 @@ app.get("/api/transfer-lots/:transferLotId/bling", requireAuth, requireTransferA
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${transferFileName(lot)}"`);
     res.send(buffer);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/api/transfer-lots/:transferLotId/bling/kit", requireAuth, requireTransferAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const lot = await getTransferLotDetail(userId, req.params.transferLotId);
+    if (!lot) return res.status(404).json({ error: "Agrupamento nao encontrado." });
+    const result = await createBlingAuctionKit({ integration: await getRequiredBlingCredentials(userId), lot, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) });
+    await markTransferLotSynced(userId, lot.id);
+    res.json(result);
   } catch (error) {
     sendError(res, error);
   }
