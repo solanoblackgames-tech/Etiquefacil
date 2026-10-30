@@ -567,13 +567,44 @@ export function sanitizeUser(user) {
 function userCanViewSalePrice(user = {}, role = user.role || (user.parentUserId ? "operator" : "owner")) {
   if (typeof user.viewSalePriceAccess === "boolean") return user.viewSalePriceAccess;
   if (typeof user.view_sale_price_access === "boolean") return user.view_sale_price_access;
-  return role !== "operator";
+  return !["operator", "account_admin"].includes(role);
 }
 
 function userCanViewCostPrice(user = {}, role = user.role || (user.parentUserId ? "operator" : "owner")) {
   if (typeof user.viewCostPriceAccess === "boolean") return user.viewCostPriceAccess;
   if (typeof user.view_cost_price_access === "boolean") return user.view_cost_price_access;
-  return role !== "operator";
+  return !["operator", "account_admin"].includes(role);
+}
+
+export async function updateOperatorAccountAdmin({ ownerUserId, operatorUserId, accountAdminAccess }) {
+  await ensureStore();
+  const role = accountAdminAccess ? "account_admin" : "operator";
+  if (hasPostgres()) {
+    const result = await query("update users set role = $3 where id = $2 and parent_user_id = $1 and role in ('operator', 'account_admin') returning *", [ownerUserId, operatorUserId, role]);
+    if (!result.rows.length) throw notFound("Operador nao encontrado nesta conta.");
+    return { operator: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+  const db = await readDb();
+  const user = db.users.find(item => item.id === operatorUserId && item.parentUserId === ownerUserId && ["operator", "account_admin"].includes(item.role));
+  if (!user) throw notFound("Operador nao encontrado nesta conta.");
+  user.role = role;
+  await writeDb(db);
+  return { operator: sanitizeUser(user) };
+}
+
+export async function promoteUserToAdmin(userId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    const result = await query("update users set role = 'admin' where id = $1 returning *", [userId]);
+    if (!result.rows.length) throw notFound("Usuario nao encontrado.");
+    return { user: sanitizeUser(userFromRow(result.rows[0])) };
+  }
+  const db = await readDb();
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) throw notFound("Usuario nao encontrado.");
+  user.role = "admin";
+  await writeDb(db);
+  return { user: sanitizeUser(user) };
 }
 
 export async function updateUserTriageAccessForAdmin(userId, triageAccess) {
@@ -975,7 +1006,7 @@ export async function listOperatorsForUser(ownerUserId, period = {}) {
 export async function recordOperatorActivity(user, action, metadata = {}) {
   if (!action) return null;
   const role = user?.role || (user?.parentUserId ? "operator" : "owner");
-  const operatorUserId = role === "operator" ? user.id : null;
+  const operatorUserId = ["operator", "account_admin"].includes(role) ? user.id : null;
   const ownerUserId = user?.workspaceUserId || user?.parentUserId || null;
   if (!operatorUserId || !ownerUserId) return null;
   await ensureStore();

@@ -68,6 +68,8 @@ import {
   createOperator,
   createOperatorInvite,
   createUser,
+  promoteUserToAdmin,
+  updateOperatorAccountAdmin,
   deleteOperatorForOwner,
   deleteExternalExcess,
   deleteTriageItem,
@@ -428,6 +430,14 @@ app.post("/api/admin/users", requireAdmin, async (req, res) => {
   }
 });
 
+app.patch("/api/admin/users/:userId/admin-access", requireAdmin, async (req, res) => {
+  try {
+    res.json(await promoteUserToAdmin(req.params.userId));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.patch("/api/admin/users/:userId/password", requireAdmin, async (req, res) => {
   try {
     res.json(await updateUserPassword(req.params.userId, req.body.password));
@@ -560,6 +570,14 @@ app.post("/api/operators", requireAuth, requireOwner, async (req, res) => {
   } catch (error) {
     sendError(res, error);
   }
+});
+
+app.patch("/api/operators/:operatorUserId/account-admin-access", requireAuth, requireOwner, async (req, res) => {
+  try {
+    if (req.params.operatorUserId === req.session.user.id) return res.status(403).json({ error: "Voce nao pode alterar seu proprio acesso." });
+    if (typeof req.body.accountAdminAccess !== "boolean") return res.status(400).json({ error: "Informe o acesso administrativo." });
+    res.json(await updateOperatorAccountAdmin({ ownerUserId: workspaceUserId(req), operatorUserId: req.params.operatorUserId, accountAdminAccess: req.body.accountAdminAccess }));
+  } catch (error) { sendError(res, error); }
 });
 
 app.patch("/api/operators/:operatorUserId", requireAuth, requireOwner, async (req, res) => {
@@ -3266,7 +3284,7 @@ async function requireAuth(req, res, next) {
 async function refreshSessionUser(req) {
   const sessionUser = req.session.user;
   if (!sessionUser) return null;
-  if (sessionUser.role === "admin") return sessionUser;
+  if (sessionUser.id === ADMIN_USER.id && sessionUser.role === "admin") return sessionUser;
 
   const freshUser = await getPublicUserById(sessionUser.id);
   if (!freshUser) {
@@ -3299,14 +3317,19 @@ async function requireLargeQrLabelOwnerAccess(req, res, next) {
   }
 }
 
-function requireAdmin(req, res, next) {
-  if (req.session.user?.role !== "admin") return res.status(403).json({ error: "Acesso restrito ao back office." });
-  next();
+async function requireAdmin(req, res, next) {
+  try {
+    const user = await refreshSessionUser(req);
+    if (user?.role !== "admin") return res.status(403).json({ error: "Acesso restrito ao back office." });
+    next();
+  } catch (error) {
+    sendError(res, error);
+  }
 }
 
 function requireOwner(req, res, next) {
   const role = req.session.user?.role || (req.session.user?.parentUserId ? "operator" : "owner");
-  if (role !== "owner") return res.status(403).json({ error: "Acesso restrito ao usuario principal." });
+  if (role !== "owner" && !(role === "account_admin" && req.path.startsWith("/api/operators"))) return res.status(403).json({ error: "Acesso restrito ao usuario principal." });
   next();
 }
 
@@ -3315,7 +3338,7 @@ function requireOwnerFeature(featureKey, message) {
     try {
       const freshUser = await refreshSessionUser(req);
       const role = freshUser?.role || (freshUser?.parentUserId ? "operator" : "owner");
-      if (role === "owner" && freshUser?.[featureKey]) return next();
+      if ((role === "owner" || (role === "account_admin" && req.path.startsWith("/api/operators"))) && freshUser?.[featureKey]) return next();
       return res.status(403).json({ error: message });
     } catch (error) {
       sendError(res, error);
@@ -3340,7 +3363,7 @@ async function requireOperatorStatsAccess(req, res, next) {
     if (req.session.user?.role === "admin") return next();
     const freshUser = await refreshSessionUser(req);
     const role = freshUser?.role || (freshUser?.parentUserId ? "operator" : "owner");
-    if (role === "owner" || await userHasWorkspaceFeature(freshUser, "operatorStatsAccess")) return next();
+    if (["owner", "account_admin"].includes(role) || await userHasWorkspaceFeature(freshUser, "operatorStatsAccess")) return next();
     return res.status(403).json({ error: "Estatisticas de operadores nao liberadas para este usuario." });
   } catch (error) {
     sendError(res, error);
@@ -3444,7 +3467,7 @@ function workspaceUserId(req) {
 function operatorUserId(req) {
   const user = req.session?.user;
   const role = user?.role || (user?.parentUserId ? "operator" : "owner");
-  return role === "operator" ? user.id : null;
+  return ["operator", "account_admin"].includes(role) ? user.id : null;
 }
 
 function isOwnerSession(req) {
@@ -3456,7 +3479,7 @@ function isOwnerSession(req) {
 function isOperatorSession(req) {
   const user = req.session?.user;
   const role = user?.role || (user?.parentUserId ? "operator" : "owner");
-  return role === "operator";
+  return ["operator", "account_admin"].includes(role);
 }
 
 function sanitizeOperatorCostPayload(req, payload) {

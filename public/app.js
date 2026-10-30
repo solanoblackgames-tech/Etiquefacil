@@ -170,10 +170,11 @@ const normalizeSearchText = (value) =>
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+const isAccountManager = () => isOwnerUser() || state.user?.role === "account_admin";
 const isOwnerUser = () => state.user?.role === "owner";
-const canViewSalePrice = () => state.user?.viewSalePriceAccess ?? state.user?.role !== "operator";
-const canViewCost = () => state.user?.viewCostPriceAccess ?? state.user?.role !== "operator";
-const canViewLotValues = () => state.user?.role !== "operator";
+const canViewSalePrice = () => state.user?.viewSalePriceAccess ?? !["operator", "account_admin"].includes(state.user?.role);
+const canViewCost = () => state.user?.viewCostPriceAccess ?? !["operator", "account_admin"].includes(state.user?.role);
+const canViewLotValues = () => !["operator", "account_admin"].includes(state.user?.role);
 const canUseLargeQrLabel = () => Boolean(state.user?.largeQrLabelAccess);
 const labelUsesLargeQr = () => Boolean(canUseLargeQrLabel() && state.labelOptions.largeQrLabel);
 
@@ -2075,7 +2076,7 @@ function noSheetLotRzPrefix(lot) {
 
 function noSheetOperatorRzCode() {
   if (state.user?.operatorCode) return String(state.user.operatorCode).replace(/[^0-9A-Z]+/gi, "").toUpperCase();
-  if (state.user?.role === "operator") {
+  if (["operator", "account_admin"].includes(state.user?.role)) {
     const fallback = normalizeCode(state.user.email || state.user.name || state.user.id || "OP").replace(/[^A-Z0-9]+/g, "");
     return (fallback || "OP").slice(0, 8);
   }
@@ -2685,7 +2686,7 @@ async function showApp(user) {
   const route = parseRoute(window.location.pathname);
   if (route.view === "transferAccept") {
     if (!state.user?.stockTransferAcceptanceAccess) {
-      setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
+      setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
       schedulePrimaryInputFocus();
       return;
     }
@@ -2722,7 +2723,7 @@ async function showApp(user) {
 }
 
 function applyUserPermissions(user) {
-  const operator = user.role === "operator";
+  const operator = ["operator", "account_admin"].includes(user.role);
   document.querySelector("[data-create-class-lot]")?.classList.toggle("hidden", operator || !user.privateClassesAccess);
   if (!user.privateClassesAccess) document.querySelectorAll("[data-class-generation], [data-class-panel]").forEach((panel) => panel.remove());
   document.querySelector('#app [data-tab="profile"]')?.classList.remove("hidden");
@@ -2746,8 +2747,8 @@ function applyUserPermissions(user) {
     document.querySelector("#profileOperators")?.classList.add("hidden");
   }
   if (operator || !user.triageAccess) document.querySelector("#profileTriageRules")?.classList.add("hidden");
-  document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isOwnerUser());
-  if (!isOwnerUser()) document.querySelector("#operatorForm")?.classList.add("hidden");
+  document.querySelector(".operator-header-actions")?.classList.toggle("hidden", !isAccountManager());
+  if (!isAccountManager()) document.querySelector("#operatorForm")?.classList.add("hidden");
   document.querySelector(".transfer-create-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.querySelector(".transfer-search-panel")?.classList.toggle("hidden", !user.transferAccess);
   document.body.classList.toggle("operator-view", operator);
@@ -2756,7 +2757,7 @@ function applyUserPermissions(user) {
 }
 
 function canViewOperatorStats() {
-  return Boolean(isOwnerUser() || state.user?.operatorStatsAccess);
+  return Boolean(isAccountManager() || state.user?.operatorStatsAccess);
 }
 
 function canViewTriageStats() {
@@ -3911,11 +3912,11 @@ function getBlingCallbackMessage() {
 }
 
 function setProfileSection(section = "entries") {
-  if (state.user?.role === "operator" && !canViewOperatorStats()) section = "help";
+  if (["operator", "account_admin"].includes(state.user?.role) && !canViewOperatorStats()) section = "help";
   if (section === "operators" && !canViewOperatorStats()) section = isOwnerUser() ? "entries" : "";
   if (section === "triageStats" && !canViewTriageStats()) section = canViewOperatorStats() ? "operators" : "";
   if (section === "triageRules" && (!isOwnerUser() || !state.user?.triageAccess)) section = "entries";
-  if (state.user?.role === "operator" && !["help", "operators", "triageStats"].includes(section)) {
+  if (["operator", "account_admin"].includes(state.user?.role) && !["help", "operators", "triageStats"].includes(section)) {
     section = canViewOperatorStats() ? "operators" : "help";
   }
   if (!section) return;
@@ -5246,6 +5247,7 @@ function operatorViewModel(operator) {
   const activity = logins + searches + scans + creates + lotViews + palletViews + productionErrors;
   return {
     id: operator.id || "",
+    role: operator.role,
     name: operator.name || "Operador",
     email: operator.email || "",
     operatorCode: operator.operatorCode || "",
@@ -5315,11 +5317,11 @@ function operatorTableRow(operator, index) {
       <strong>${formatDecimal(operator.averagePerDay)}</strong>
       <span>${operator.lastActivityAt ? formatDateTime(operator.lastActivityAt) : "Sem atividade"}</span>
       <div class="operator-actions">
-        ${isOwnerUser() ? `<button type="button" class="ghost" data-edit-operator="${escapeHtml(operator.id)}">Editar</button>` : ""}
+        ${isAccountManager() ? `<button type="button" class="ghost" data-edit-operator="${escapeHtml(operator.id)}">Editar</button>` : ""}
         <button type="button" class="ghost" data-open-operator-permissions="${escapeHtml(operator.id)}">Permissoes</button>
-        ${isOwnerUser() ? `<button type="button" class="ghost danger" data-delete-operator="${escapeHtml(operator.id)}">Excluir</button>` : ""}
+        ${isAccountManager() ? `<button type="button" class="ghost danger" data-delete-operator="${escapeHtml(operator.id)}">Excluir</button>` : ""}
       </div>
-      ${isOwnerUser() ? `<form class="operator-password-form">
+      ${isAccountManager() ? `<form class="operator-password-form">
         <input name="password" type="password" minlength="4" placeholder="Nova senha" aria-label="Nova senha para ${escapeHtml(operator.email)}" required />
         <button type="submit" class="ghost">Salvar</button>
       </form>` : "<span>Somente leitura</span>"}
@@ -5332,7 +5334,7 @@ function operatorPermissionConfig(kind, operator) {
     triage: {
       enabled: operator.triageAccess,
       available: Boolean(state.user?.triageAccess),
-      canToggle: isOwnerUser() && state.user?.triageAccess,
+      canToggle: isAccountManager() && state.user?.triageAccess,
       label: "Triagem",
       route: "triage-access",
       bodyKey: "triageAccess"
@@ -5340,7 +5342,7 @@ function operatorPermissionConfig(kind, operator) {
     transfer: {
       enabled: operator.transferAccess,
       available: Boolean(state.user?.transferAccess),
-      canToggle: isOwnerUser() && state.user?.transferAccess,
+      canToggle: isAccountManager() && state.user?.transferAccess,
       label: "Estrutura de transferencia",
       route: "transfer-access",
       bodyKey: "transferAccess"
@@ -5348,7 +5350,7 @@ function operatorPermissionConfig(kind, operator) {
     stockTransferAcceptance: {
       enabled: operator.stockTransferAcceptanceAccess,
       available: Boolean(state.user?.stockTransferAcceptanceAccess),
-      canToggle: isOwnerUser() && state.user?.stockTransferAcceptanceAccess,
+      canToggle: isAccountManager() && state.user?.stockTransferAcceptanceAccess,
       label: "Aceitar estrutura de estoque",
       route: "stock-transfer-acceptance-access",
       bodyKey: "stockTransferAcceptanceAccess"
@@ -5356,7 +5358,7 @@ function operatorPermissionConfig(kind, operator) {
     operatorStats: {
       enabled: operator.operatorStatsAccess,
       available: Boolean(state.user?.operatorStatsAccess),
-      canToggle: isOwnerUser() && state.user?.operatorStatsAccess,
+      canToggle: isAccountManager() && state.user?.operatorStatsAccess,
       label: "Operadores e estatisticas",
       route: "operator-stats-access",
       bodyKey: "operatorStatsAccess"
@@ -5364,7 +5366,7 @@ function operatorPermissionConfig(kind, operator) {
     largeQrLabel: {
       enabled: operator.largeQrLabelAccess,
       available: Boolean(state.user?.largeQrLabelAccess),
-      canToggle: isOwnerUser() && state.user?.largeQrLabelAccess,
+      canToggle: isAccountManager() && state.user?.largeQrLabelAccess,
       label: "Etiqueta 100x150 QR",
       route: "large-qr-label-access",
       bodyKey: "largeQrLabelAccess"
@@ -5372,7 +5374,7 @@ function operatorPermissionConfig(kind, operator) {
     viewSalePrice: {
       enabled: operator.viewSalePriceAccess,
       available: state.user?.viewSalePriceAccess !== false,
-      canToggle: isOwnerUser() && state.user?.viewSalePriceAccess !== false,
+      canToggle: isAccountManager() && state.user?.viewSalePriceAccess !== false,
       label: "Visualizar preço de venda",
       route: "view-sale-price-access",
       bodyKey: "viewSalePriceAccess"
@@ -5380,12 +5382,13 @@ function operatorPermissionConfig(kind, operator) {
     viewCostPrice: {
       enabled: operator.viewCostPriceAccess,
       available: state.user?.viewCostPriceAccess !== false,
-      canToggle: isOwnerUser() && state.user?.viewCostPriceAccess !== false,
+      canToggle: isAccountManager() && state.user?.viewCostPriceAccess !== false,
       label: "Visualizar preço de custo",
       route: "view-cost-price-access",
       bodyKey: "viewCostPriceAccess"
     }
   };
+  configs.accountAdmin = { enabled: operator.role === "account_admin", available: isAccountManager(), canToggle: isAccountManager() && operator.id !== state.user?.id, label: "Administrador da conta (gerenciar operadores)", route: "account-admin-access", bodyKey: "accountAdminAccess" };
   return configs[kind];
 }
 
@@ -5395,7 +5398,7 @@ function openOperatorPermissionsModal(operator) {
   const bodyEl = $("#decisionBody");
   const fieldsEl = $("#decisionFields");
   const actionsEl = $("#decisionActions");
-  const permissions = ["triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel", "viewSalePrice", "viewCostPrice"]
+  const permissions = ["accountAdmin", "triage", "transfer", "stockTransferAcceptance", "operatorStats", "largeQrLabel", "viewSalePrice", "viewCostPrice"]
     .map((kind) => ({ kind, ...operatorPermissionConfig(kind, operator) }))
     .filter((permission) => permission.available);
   const knownDeposits = [...new Set([
@@ -5708,7 +5711,7 @@ async function copyText(value) {
 }
 
 async function recordOperatorActivity(action, metadata = {}) {
-  if (state.user?.role !== "operator") return;
+  if (!["operator", "account_admin"].includes(state.user?.role)) return;
   try {
     await api("/api/operator-activity", {
       method: "POST",
@@ -5739,20 +5742,20 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   }
 
   if (route.view === "transfers" && !state.user?.transferAccess) {
-    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
-    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(["operator", "account_admin"].includes(state.user?.role) ? "/lotes" : "/perfil", { replace: true });
     return;
   }
 
   if (route.view === "triage" && !state.user?.triageAccess) {
-    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
-    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(["operator", "account_admin"].includes(state.user?.role) ? "/lotes" : "/perfil", { replace: true });
     return;
   }
 
   if (route.view === "triageView" && !state.user?.triageAccess && !state.user?.stockTransferAcceptanceAccess) {
-    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
-    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(["operator", "account_admin"].includes(state.user?.role) ? "/lotes" : "/perfil", { replace: true });
     return;
   }
 
@@ -5764,15 +5767,15 @@ async function applyRouteFromLocation({ replace = false } = {}) {
   }
 
   if (route.view === "expedition" && !state.user?.transferAccess) {
-    setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
-    if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+    setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
+    if (replace) updateRoute(["operator", "account_admin"].includes(state.user?.role) ? "/lotes" : "/perfil", { replace: true });
     return;
   }
 
   if (route.view === "transferAccept") {
     if (!state.user?.stockTransferAcceptanceAccess) {
-      setMainTab(state.user?.role === "operator" ? "lots" : "profile", { push: false, resetSelection: true });
-      if (replace) updateRoute(state.user?.role === "operator" ? "/lotes" : "/perfil", { replace: true });
+      setMainTab(["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile", { push: false, resetSelection: true });
+      if (replace) updateRoute(["operator", "account_admin"].includes(state.user?.role) ? "/lotes" : "/perfil", { replace: true });
       return;
     }
     await showTransferReceiveOnly({ transferLotId: route.transferLotId, publicAccess: false });
@@ -5843,10 +5846,10 @@ function updateRoute(path, { replace = false } = {}) {
 
 function setMainTab(tab, { push = true, resetSelection = false, triageViewOnly = false, skipTriageLoad = false } = {}) {
   let target = tab || "profile";
-  if (target === "transfers" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
-  if (target === "expedition" && !state.user?.transferAccess) target = state.user?.role === "operator" ? "lots" : "profile";
-  if (target === "stock" && !canUseWmsStock()) target = state.user?.role === "operator" ? "lots" : "profile";
-  if (target === "triage" && !state.user?.triageAccess && !(triageViewOnly && state.user?.stockTransferAcceptanceAccess)) target = state.user?.role === "operator" ? "lots" : "profile";
+  if (target === "transfers" && !state.user?.transferAccess) target = ["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile";
+  if (target === "expedition" && !state.user?.transferAccess) target = ["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile";
+  if (target === "stock" && !canUseWmsStock()) target = ["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile";
+  if (target === "triage" && !state.user?.triageAccess && !(triageViewOnly && state.user?.stockTransferAcceptanceAccess)) target = ["operator", "account_admin"].includes(state.user?.role) ? "lots" : "profile";
   if (resetSelection) {
     state.selectedLotId = null;
     state.previewLotId = null;
@@ -6068,7 +6071,7 @@ function setAdminTab(tab) {
 
 function adminOverviewStats() {
   const fetched = state.adminFetched;
-  const owners = (state.adminUsers || []).filter((user) => user.role !== "operator");
+  const owners = (state.adminUsers || []).filter((user) => !["operator", "account_admin"].includes(user.role));
   const operatorCount = owners.reduce((total, user) => total + (user.operators || []).length, 0);
   const blingConnected = (state.adminBlingIntegrations || []).filter((entry) => entry.integration?.connected && entry.integration?.hasAccessToken).length;
   const blingTotal = (state.adminBlingIntegrations || []).length;
@@ -6219,6 +6222,7 @@ function adminInitials(name) {
 }
 
 function adminPermissionChips(user) {
+  if (user.role === "admin") return '<span class="admin-perm is-on">Administrador — acesso ao back office</span>';
   return adminPermissions().map(({ key, label }) => {
     const enabled = Boolean(user[key]);
     return `
@@ -6228,7 +6232,9 @@ function adminPermissionChips(user) {
         <span class="admin-perm-dot" aria-hidden="true"></span>${escapeHtml(label)}
       </button>
     `;
-  }).join("");
+  }).join("") + `
+    <button type="button" class="admin-perm" data-promote-admin="${escapeHtml(user.id)}">Permitir novo ADM</button>
+  `;
 }
 
 function adminUserMenu(user, isOperator) {
@@ -6915,6 +6921,22 @@ async function toggleAdminPermission(button) {
 }
 
 async function handleAdminUsersClick(event) {
+  const promoteButton = event.target.closest("[data-promote-admin]");
+  if (promoteButton) {
+    const user = findAdminUser(promoteButton.dataset.promoteAdmin);
+    if (!user || !confirm(`Transformar ${user.name} (${user.email}) em administrador? Ele terá acesso completo ao back office e poderá gerenciar usuários e permissões.`)) return;
+    promoteButton.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(user.id)}/admin-access`, { method: "PATCH" });
+      setAdminMessage(`${user.name} agora é administrador. Ao entrar novamente, terá acesso ao painel administrativo.`);
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminMessage(error.message, false);
+    } finally {
+      promoteButton.disabled = false;
+    }
+    return;
+  }
   const permissionButton = event.target.closest("[data-admin-permission]");
   if (permissionButton) {
     await toggleAdminPermission(permissionButton);
@@ -6925,7 +6947,7 @@ async function handleAdminUsersClick(event) {
   if (!button) return;
   const user = findAdminUser(button.dataset.deleteUser);
   if (!user) return;
-  const deleteMessage = user.role === "operator"
+  const deleteMessage = ["operator", "account_admin"].includes(user.role)
     ? `Excluir operador ${user.name}?`
     : `Excluir ${user.name}? Esta acao apaga tambem os lotes deste usuario.`;
   if (!confirm(deleteMessage)) return;
@@ -8966,7 +8988,7 @@ async function selectTransferLot(transferLotId) {
 }
 
 function renderTransferDetail(lot, { lastCode = "" } = {}) {
-  const canSync = state.user?.role !== "operator";
+  const canSync = !["operator", "account_admin"].includes(state.user?.role);
   const synced = lot.status === "synced";
   const cdLocked = lot.status !== "open";
   const auction = transferLotType(lot) === "leilao";
@@ -9358,7 +9380,7 @@ function clearLotDetail() {
   clearBlingAlertRefreshTimer();
   const detail = addClass("#lotDetail", "empty");
   if (!detail) return;
-  detail.innerHTML = state.user?.role === "operator" ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
+  detail.innerHTML = ["operator", "account_admin"].includes(state.user?.role) ? operatorLotDetailMarkup() : emptyLotDetailMarkup();
   $("#openProfileEntriesButton")?.addEventListener("click", () => {
     setMainTab("profile");
     setProfileSection("entries");
@@ -9389,7 +9411,7 @@ function renderLots() {
       ${lot.ocultoOperadores ? '<span class="badge hidden-lot">Oculto para operadores</span>' : ""}
     `;
     card.addEventListener("click", () => {
-      if (state.user?.role === "operator") selectLot(lot.id);
+      if (["operator", "account_admin"].includes(state.user?.role)) selectLot(lot.id);
       else previewLot(lot.id);
     });
     wrapper.appendChild(card);
@@ -9450,7 +9472,7 @@ async function selectLot(lotId, { push = true } = {}) {
 
 function renderLotPreview(lot) {
   const noSheetLot = isNoSheetLot(lot);
-  const canManage = state.user?.role !== "operator";
+  const canManage = !["operator", "account_admin"].includes(state.user?.role);
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
   const balance = balanceMetric(missingQty, excessQty);
@@ -9596,7 +9618,7 @@ function bindBulkLotEditor(lot, root = document) {
 function renderLotDetail(lot) {
   const detail = $("#lotDetail");
   const noSheetLot = isNoSheetLot(lot);
-  const isOperator = state.user?.role === "operator";
+  const isOperator = ["operator", "account_admin"].includes(state.user?.role);
   const canManage = !isOperator;
   const operatorNoSheetLot = isOperator && noSheetLot;
   const canScan = true;
@@ -9694,7 +9716,7 @@ function refreshPrivateClasses(container, lot, active = null) {
   }
   return mountClassPanel(container, lot, {
     active,
-    canClose: state.user?.role !== "operator",
+    canClose: !["operator", "account_admin"].includes(state.user?.role),
     openPallet: (codigoRz) => openRzScanInNewTab(lot, codigoRz)
   });
 }
@@ -10020,8 +10042,8 @@ function renderRz(lot, codigoRz, { push = true } = {}) {
 }
 
 function renderPallet(lot, codigoRz) {
-  const canManage = state.user?.role !== "operator";
-  if (state.user?.role === "operator") recordOperatorActivity("view_pallet", { lotId: lot.id, codigoRz });
+  const canManage = !["operator", "account_admin"].includes(state.user?.role);
+  if (["operator", "account_admin"].includes(state.user?.role)) recordOperatorActivity("view_pallet", { lotId: lot.id, codigoRz });
   state.selectedRz = codigoRz;
   document.querySelectorAll(".rz-card").forEach((card) => card.classList.toggle("selected", card.dataset.rz === codigoRz));
   const rz = lot.rzs.find((item) => item.codigoRz === codigoRz);
@@ -12059,7 +12081,7 @@ function palletRow(item) {
   const rowStatus = stats.status === "ok" ? "OK" : stats.status === "partial" ? "Parcial" : "Pendente";
   const blingAlert = productBlingAlertMarkup(product);
   const costDetail = canViewCost() ? `<small>Custo ${money(product.precoCusto)} · Estoque ${product.qtdTotal || 0}</small>` : `<small>Estoque ${product.qtdTotal || 0}</small>`;
-  const valueCell = canViewSalePrice() ? `<span>${money(stats.unitValue)}${state.user?.role === "operator" ? "" : `<small>Total ${money(stats.totalValue)}</small>`}${costDetail}</span>` : "";
+  const valueCell = canViewSalePrice() ? `<span>${money(stats.unitValue)}${["operator", "account_admin"].includes(state.user?.role) ? "" : `<small>Total ${money(stats.totalValue)}</small>`}${costDetail}</span>` : "";
   return `
     <article class="pallet-row">
       <span><strong>${escapeHtml(product.sku || "")}</strong><small>Codigo ML: ${escapeHtml(product.codigoMl || "")}</small></span>
