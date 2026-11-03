@@ -13,5 +13,13 @@ export function wmsPositionLabel(location, depositName) {
   const [start, end] = STREET_RANGES[street];
   const number = start + (Number(column) - 1) * 4 + Number(level) - 1;
   if (Number(column) < 1 || number > end) return original;
+  // O endereco interno legado tem quatro slots por coluna. As placas D/E/F
+  // numeram tres andares: derive a localizacao fisica pelo numero da placa.
+  if (["D", "E", "F"].includes(street)) {
+    const offset = number - start;
+    const physicalColumn = Math.floor(offset / 3) + 1;
+    const physicalLevel = (offset % 3) + 1;
+    return `${street}${number} · Rua ${street} · C${String(physicalColumn).padStart(2, "0")} A${physicalLevel}`;
+  }
   return `Posição ${number} · Rua ${street} · C${column.padStart(2, "0")} A${level}`;
 }

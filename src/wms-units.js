@@ -52,10 +52,12 @@ export function translateJzWmsLocation(depositConfig, value) {
   const plain = normalizeWmsCode(value).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]/g, "");
   if (!depositConfig?.prefix || !plain) return "";
   if (["PATIO", "CHAODOPATIO", "CHAOPATIO"].includes(plain)) return `${depositConfig.prefix}-PATIO-1-1`;
-  const match = plain.match(/^RUA([A-F])(?:POSICAO|POS|P)(\d{1,3})(?:ANDAR\d)?$/);
+  // Aceita os QRs antigos com andar/lado e as etiquetas curtas (D301, E307, F421).
+  // A numeracao identifica a posicao; andar e lado sao informacoes da etiqueta.
+  const match = plain.match(/^(?:RUA([A-F])(?:POSICAO|POS|P)|([A-F]))(\d{1,3})(?:ANDAR[1-4])?(?:(?:LADO)?(?:DIREITO|ESQUERDO))?$/);
   if (!match) return "";
-  const street = match[1];
-  const position = Number(match[2]);
+  const street = match[1] || match[2];
+  const position = Number(match[3]);
   if (position < JZ_STREET_STARTS[street] || position > JZ_STREET_ENDS[street]) return "";
   const offset = position - JZ_STREET_STARTS[street];
   return `${depositConfig.prefix}-${street}-${Math.floor(offset / 4) + 1}-${(offset % 4) + 1}`;

@@ -44,6 +44,13 @@ test("old JZ Separacao position labels are read as the deposit position", () => 
   assert.equal(assertValidWmsPosition(b2b, "Rua A POS 001"), "B2B-A-1-1");
   assert.equal(assertValidWmsPosition(b2b, "RUA A | POSIÇÃO 104 | ANDAR 1"), "B2B-A-26-4");
   assert.equal(assertValidWmsPosition(b2b, "RUA D POS 306"), "B2B-D-11-2");
+  assert.equal(assertValidWmsPosition(b2b, "RUA C | POSICAO 189 | ANDAR 1 | LADO DIREITO"), "B2B-C-2-1");
+  assert.equal(assertValidWmsPosition(b2b, "RUA C POSIÇÃO 196 ANDAR 4 ESQUERDO"), "B2B-C-3-4");
+  assert.equal(assertValidWmsPosition(b2b, "D301"), "B2B-D-10-1");
+  assert.equal(assertValidWmsPosition(b2b, "E307"), "B2B-E-1-1");
+  assert.equal(assertValidWmsPosition(b2b, "F421"), "B2B-F-14-3");
+  assert.throws(() => assertValidWmsPosition(b2b, "D307"), /nao existe/);
+  assert.throws(() => assertValidWmsPosition(b2b, "RUA C POS 189 ANDAR 1 LADO INVALIDO"), /nao existe/);
   assert.equal(assertValidWmsPosition(b2b, "Chao do Patio"), "B2B-PATIO-1-1");
   assert.equal(assertValidWmsPosition(b2b, "b2b-c-2-3"), "B2B-C-2-3");
   assert.equal(translateJzWmsLocation(b2b, "RUA B POS 104"), "");
