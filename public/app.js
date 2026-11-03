@@ -8458,7 +8458,7 @@ async function handleWmsStockSubmit(event) {
     if (form.id === "wmsInventoryForm") {
       const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const first = result.units?.[0] || {};
-      const note = result.blingValidated === false ? " (Bling nao respondeu: ficou como nao validada)" : "";
+      const note = result.warning ? ` (${result.warning})` : result.blingValidated === false ? " (SKU sem validacao no Bling: pode nao estar cadastrado ou o Bling nao respondeu)" : "";
       $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
       playTransferReadSound();
       form.elements.code.value = "";

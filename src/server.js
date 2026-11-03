@@ -217,7 +217,7 @@ const EXPEDITION_LABEL_CACHE_MS = 30 * 60 * 1000;
 const WMS_BLING_LOOKUP_TIMEOUT_MS = 6000;
 // Liberacao pontual: neste dia (horario de Brasilia) o Inventario WMS aceita SKU que nao existe no Bling;
 // a unidade entra como "nao validada" para conferir depois. Fora da data volta a exigir o cadastro.
-const WMS_ALLOW_UNREGISTERED_SKU_DATE = "2026-10-20";
+const WMS_ALLOW_UNREGISTERED_SKU_DATES = ["2026-11-03", "2026-11-04"];
 const WMS_BLING_COMPARE_MAX_SKUS = 500;
 const expeditionLabelCache = new Map();
 const LOGIN_MAX_FAILURES = 5;
@@ -1307,8 +1307,9 @@ app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAcces
           WMS_BLING_LOOKUP_TIMEOUT_MS
         );
         const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-        if (!product && today === WMS_ALLOW_UNREGISTERED_SKU_DATE) {
-          throw Object.assign(new Error("SKU fora do Bling (liberado hoje)."), { wmsLookupUnavailable: true });
+        if (!product && WMS_ALLOW_UNREGISTERED_SKU_DATES.includes(today)) {
+          req.wmsSkuWarning = "Este SKU nao esta no Bling. Liberado excepcionalmente em 03 e 04/11/2026.";
+          throw Object.assign(new Error(req.wmsSkuWarning), { wmsLookupUnavailable: true });
         }
         return product;
       } catch (error) {
@@ -1325,7 +1326,7 @@ app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAcces
       lookupProduct
     });
     await recordOperatorActivity(req.session.user, "wms_inventory", { location: req.body?.location, code: req.body?.code, quantity: result.units.length });
-    res.json(result);
+    res.json({ ...result, warning: req.wmsSkuWarning || "" });
   } catch (error) {
     sendError(res, error);
   }
