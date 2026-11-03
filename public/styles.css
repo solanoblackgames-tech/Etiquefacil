@@ -2826,6 +2826,7 @@ h3 {
   white-space: nowrap;
 }
 
+.triage-label-simple-code,
 .triage-label-simple-destination,
 .triage-label-simple-footer {
   color: #111;
@@ -2836,6 +2837,11 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.triage-label-simple-code {
+  font-size: 8px;
+  font-weight: 800;
 }
 
 .triage-label-simple-destination {

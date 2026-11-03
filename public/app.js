@@ -13340,6 +13340,7 @@ function triageLabelSimpleMarkup(item = {}) {
       <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl)}" alt="QR Code ${escapeHtml(item.code)}" />
       ${sku ? code39Svg(sku) : '<div class="triage-label-empty-barcode"></div>'}
       <strong>${escapeHtml(sku || "-")}</strong>
+      <span class="triage-label-simple-code">${escapeHtml(item.code || "-")}</span>
       <span class="triage-label-simple-destination">Destino: ${escapeHtml(destination)}</span>
       <span class="triage-label-simple-footer">${escapeHtml(footer)}</span>
     </div>
@@ -13444,6 +13445,7 @@ function safeTriageLabelMarkup(item = {}) {
           <img class="triage-label-qr" src="${escapeHtml(item.qrDataUrl || "")}" alt="QR Code ${escapeHtml(item.code || "")}" />
           ${item.sku ? code39Svg(item.sku) : '<div class="triage-label-empty-barcode"></div>'}
           <strong>${escapeHtml(item.sku || "-")}</strong>
+          <span class="triage-label-simple-code">${escapeHtml(item.code || "-")}</span>
           <span class="triage-label-simple-destination">Destino: ${escapeHtml(destination)}</span>
           <span class="triage-label-simple-footer">${escapeHtml(footer)}</span>
         </div>
