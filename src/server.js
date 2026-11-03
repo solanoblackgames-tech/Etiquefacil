@@ -1018,22 +1018,7 @@ app.get("/api/triage/lookup", requireAuth, requireTriageAccess, async (req, res)
     }
 
     const localProduct = await lookupTriageProduct(userId, code);
-    const integration = await getUserBlingCredentials(userId);
-    if (integration?.accessToken && integration?.refreshToken) {
-      const blingApp = await getBlingAppCredentials(userId);
-      try {
-        const product = await lookupBlingProductForTriage({
-          integration: { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret },
-          code,
-          saveIntegration: (payload) => saveUserBlingIntegration(userId, payload)
-        });
-        if (product) return res.json({ product: mergeTriageProductLookup(product, localProduct) });
-      } catch (lookupError) {
-        if (localProduct) return res.json({ product: localProduct });
-        if (!isNotFoundLookupError(lookupError)) throw lookupError;
-      }
-    }
-
+    // Bipagem usa cadastro local; Bling recebe depois de salvar.
     res.json({ product: localProduct || null });
   } catch (error) {
     sendError(res, error);
@@ -1063,18 +1048,11 @@ app.post("/api/triage/items", requireAuth, requireTriageAccess, async (req, res)
     }
     await updateProductRegistrationFromTriage({ userId, item });
     await recordOperatorActivity(req.session.user, "triage_create", { code: item.code });
-    // Bling lento nao segura a etiqueta: espera um pouco pelo resultado e, se demorar, termina em segundo plano.
-    const blingSync = syncTriageItemToBling(userId, item).catch((error) => ({ ok: false, error: error.message }));
-    const bling = await Promise.race([
-      blingSync,
-      new Promise((resolve) => setTimeout(() => resolve(null), TRIAGE_CREATE_BLING_WAIT_MS))
-    ]);
-    if (!bling) {
-      blingSync.then((result) => {
-        if (result?.ok === false && !result.skipped) console.warn(`Bling nao atualizado para a etiqueta ${item.code}: ${result.error}`);
-      });
-    }
-    res.json({ item: await withTriageQrData(req, item), bling: bling || { ok: true, skipped: true, pending: true } });
+    // Cadastro confirmado: sincroniza sem atrasar a etiqueta.
+    syncTriageItemToBling(userId, item).then((result) => {
+      if (result?.ok === false && !result.skipped) console.warn("Bling pendente para etiqueta", item.code, result.error);
+    }).catch((error) => console.error("Falha ao sincronizar etiqueta", item.code, error));
+    res.json({ item: await withTriageQrData(req, item), bling: { ok: true, skipped: true, pending: true } });
   } catch (error) {
     sendError(res, error);
   }
@@ -3571,7 +3549,6 @@ async function publicUserForId(userId) {
 
 // Versao leve para a fila: sem foto e sem QR (o detalhe busca a etiqueta completa), usuarios e
 // permissao de exclusao resolvidos uma vez por carregamento em vez de consultas por etiqueta.
-const TRIAGE_CREATE_BLING_WAIT_MS = 2500;
 
 async function withTriageListData(req, items = []) {
   const users = new Map();

@@ -12946,11 +12946,7 @@ async function createTriageItem(event) {
   $("#triageMessage").style.color = "";
   $("#triageMessage").textContent = "Gerando etiqueta...";
   try {
-    // A busca no Bling so completa dados; se demorar, a etiqueta sai com os dados do lote.
-    await Promise.race([
-      hydrateTriageProductFromSku(form).catch(() => null),
-      new Promise((resolve) => setTimeout(resolve, TRIAGE_CREATE_LOOKUP_WAIT_MS))
-    ]);
+    // Salva os dados confirmados sem esperar consultas externas.
     const response = await api("/api/triage/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -12992,7 +12988,6 @@ async function createTriageItem(event) {
 }
 
 const TRIAGE_CREATE_LOCK_MS = 45000;
-const TRIAGE_CREATE_LOOKUP_WAIT_MS = 3000;
 
 async function lookupTriageSku() {
   const form = $("#triageCreateForm");
