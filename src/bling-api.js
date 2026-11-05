@@ -708,11 +708,14 @@ export async function createBlingAuctionKit(options) {
   }
 }
 
-async function createBlingAuctionKitOnce({ integration, lot, saveIntegration }) {
+async function createBlingAuctionKitOnce({ integration, lot, saveIntegration, productName, salePrice }) {
   if (!lot?.id) throw new Error("Agrupamento nao encontrado.");
   const auction = lot.type === "leilao";
   if (auction && !["ready_sync", "synced"].includes(lot.status)) throw new Error("Feche o agrupamento de leilao antes de criar o lote.");
   if (!lot.items?.length) throw new Error("O agrupamento esta vazio.");
+  const price = Number(salePrice);
+  if (!Number.isFinite(price) || Math.round(price * 100) < 1) throw new Error("Informe um preco de venda maior que zero.");
+  if (!/^LOTE \d{3,}$/.test(productName || "")) throw new Error("Nome sequencial do lote nao reservado.");
   const client = new BlingApiClient(integration, saveIntegration);
   const codigo = `${auction ? "LEILAO" : "LOTE"}-${lot.id}`;
   const quantities = new Map();
@@ -732,15 +735,16 @@ async function createBlingAuctionKitOnce({ integration, lot, saveIntegration }) 
   if (existing) {
     const signature = (rows) => JSON.stringify((rows || []).map((row) => [String(row.produto?.id), Number(row.quantidade)]).sort((a, b) => a[0].localeCompare(b[0])));
     if (existing.formato !== "E" || signature(existing.estrutura?.componentes) !== signature(componentes)) throw new Error("O SKU do lote ja existe no Bling com outra composicao. Confira o cadastro.");
-    return { ok: true, id: existing.id, codigo, existing: true };
+    if (!Number.isFinite(Number(existing.preco)) || Math.abs(Number(existing.preco) - price) > 0.005) throw new Error("O lote ja existe no Bling com outro preco. Confira o cadastro antes de tentar novamente.");
+    return { ok: true, id: existing.id, codigo, nome: existing.nome, preco: existing.preco, existing: true };
   }
   const created = await client.createProduct({
-    nome: `${auction ? "Lote de leilao" : "Lote"} - ${lot.name}`, codigo, tipo: "P", situacao: "A", formato: "E", unidade: "UN", preco: 0,
+    nome: productName, codigo, tipo: "P", situacao: "A", formato: "E", unidade: "UN", preco: Math.round(price * 100) / 100,
     estrutura: { tipoEstoque: "V", lancamentoEstoque: "M", componentes }
   });
   const id = created?.data?.id;
   if (!id) throw new Error("Bling nao confirmou o ID do lote. Tente novamente para conferir o cadastro.");
-  return { ok: true, id, codigo, existing: false };
+  return { ok: true, id, codigo, nome: productName, preco: price, existing: false };
 }
 
 class BlingApiClient {

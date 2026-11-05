@@ -133,6 +133,7 @@ import {
   resumeUserBlingSyncJobs,
   markBlingSyncJobSucceeded,
   markTransferLotSynced,
+  reserveBlingKitName,
   countCatalogProductsForAdmin,
   listCatalogProductsForAdmin,
   listCatalogRequestsForAdmin,
@@ -1874,7 +1875,11 @@ app.post("/api/transfer-lots/:transferLotId/bling/kit", requireAuth, requireTran
     const userId = workspaceUserId(req);
     const lot = await getTransferLotDetail(userId, req.params.transferLotId);
     if (!lot) return res.status(404).json({ error: "Agrupamento nao encontrado." });
-    const result = await createBlingAuctionKit({ integration: await getRequiredBlingCredentials(userId), lot, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) });
+    const salePrice = Number(req.body.salePrice);
+    if (!Number.isFinite(salePrice) || salePrice <= 0) return res.status(400).json({ error: "Informe um preco de venda maior que zero." });
+    const integration = await getRequiredBlingCredentials(userId);
+    const productName = await reserveBlingKitName(userId, lot.id);
+    const result = await createBlingAuctionKit({ integration, lot, productName, salePrice, saveIntegration: (payload) => saveUserBlingIntegration(userId, payload) });
     await markTransferLotSynced(userId, lot.id);
     res.json(result);
   } catch (error) {

@@ -4976,13 +4976,13 @@ export async function scanTransferLot({ userId, transferLotId, code, externalPro
   if (lot.status === "synced") throw new Error("Este lote ja foi enviado ao Bling.");
 
   const product = isAuctionGrouping(lot)
-    ? findAuctionGroupingTriageProduct(db, userId, normalized, lot.id)
+    ? findAuctionGroupingTriageProduct(db, userId, normalized, lot.id) || findTransferProduct(db, userId, normalized) || normalizedExternalProduct
     : findTransferProduct(db, userId, normalized) || normalizedExternalProduct;
-  if (!product) throw notFound(isAuctionGrouping(lot) ? "Etiqueta de triagem nao encontrada ou nao elegivel para agrupamento." : "Produto nao encontrado nos lotes deste usuario.");
+  if (!product) throw notFound(isAuctionGrouping(lot) ? "Produto nao encontrado. Bipe uma etiqueta de triagem ou SKU valido." : "Produto nao encontrado nos lotes deste usuario.");
   const existing = findExistingTransferItem(db.transferItems || [], lot.id, product);
   const now = new Date().toISOString();
   if (existing) {
-    if (isAuctionGrouping(lot)) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
+    if (isAuctionGrouping(lot) && product.triageItemId) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
     existing.quantidade += 1;
     existing.createdAt = now;
   } else {
@@ -5278,6 +5278,45 @@ export async function deleteLotProductRegistration({ userId, lotId, productId })
   });
   await writeDb(db);
   return { product, deletedItems, lot: summarizeLot(db, lot, true) };
+}
+
+let kitNameReservation = Promise.resolve();
+
+export async function reserveBlingKitName(userId, transferLotId) {
+  await ensureStore();
+  if (hasPostgres()) {
+    await query(`create table if not exists bling_kit_names (
+      user_id text not null, transfer_lot_id text not null, sequence integer not null,
+      primary key (user_id, transfer_lot_id), unique (user_id, sequence)
+    )`);
+    const client = await getPgPool().connect();
+    try {
+      await client.query("begin");
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`bling-kit-name:${userId}`]);
+      let result = await client.query("select sequence from bling_kit_names where user_id = $1 and transfer_lot_id = $2", [userId, transferLotId]);
+      if (!result.rows.length) result = await client.query(`insert into bling_kit_names (user_id, transfer_lot_id, sequence)
+        select $1, $2, coalesce(max(sequence), 0) + 1 from bling_kit_names where user_id = $1 returning sequence`, [userId, transferLotId]);
+      await client.query("commit");
+      return `LOTE ${String(result.rows[0].sequence).padStart(3, "0")}`;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally { client.release(); }
+  }
+  const pending = kitNameReservation.then(async () => {
+    const db = await readDb();
+    db.blingKitNames ||= [];
+    let reserved = db.blingKitNames.find((row) => row.userId === userId && row.transferLotId === transferLotId);
+    if (!reserved) {
+      const sequence = Math.max(0, ...db.blingKitNames.filter((row) => row.userId === userId).map((row) => row.sequence)) + 1;
+      reserved = { userId, transferLotId, sequence };
+      db.blingKitNames.push(reserved);
+      await writeDb(db);
+    }
+    return `LOTE ${String(reserved.sequence).padStart(3, "0")}`;
+  });
+  kitNameReservation = pending.catch(() => {});
+  return pending;
 }
 
 export async function markTransferLotSynced(userId, transferLotId) {
@@ -8617,9 +8656,9 @@ async function scanTransferLotPg({ userId, transferLotId, code, externalProduct 
 
     await ensureTransferItemWmsColumnsPg(client);
     const product = isAuctionGrouping(lot)
-      ? await findPgAuctionGroupingTriageProduct(client, userId, code, lot.id)
+      ? await findPgAuctionGroupingTriageProduct(client, userId, code, lot.id) || await findPgTransferProduct(client, userId, code) || externalProduct
       : await findPgTransferProduct(client, userId, code) || externalProduct;
-    if (!product) throw notFound(isAuctionGrouping(lot) ? "Etiqueta de triagem nao encontrada ou nao elegivel para agrupamento." : "Produto nao encontrado nos lotes deste usuario.");
+    if (!product) throw notFound(isAuctionGrouping(lot) ? "Produto nao encontrado. Bipe uma etiqueta de triagem ou SKU valido." : "Produto nao encontrado nos lotes deste usuario.");
     const itemResult = product.triageItemId
       ? await client.query("select * from transfer_items where transfer_lot_id = $1 and triage_item_id = $2 limit 1 for update", [lot.id, product.triageItemId])
       : product.id
@@ -8640,7 +8679,7 @@ async function scanTransferLotPg({ userId, transferLotId, code, externalProduct 
     const existing = itemResult.rows[0] && transferItemFromRow(itemResult.rows[0]);
     const now = new Date().toISOString();
     if (existing) {
-      if (isAuctionGrouping(lot)) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
+      if (isAuctionGrouping(lot) && product.triageItemId) throw new Error("Esta etiqueta de triagem ja esta neste agrupamento.");
       await client.query("update transfer_items set quantidade = quantidade + 1, created_at = $2 where id = $1", [existing.id, now]);
       result = { status: "updated", product };
     } else {

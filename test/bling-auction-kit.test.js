@@ -19,11 +19,14 @@ test(`${type} kit aggregates components and reuses the same SKU on retry`, async
     return { ok: true, status: 200, json: async () => ({ data }) };
   };
   try {
-    const options = { integration: { accessToken: `kit-test-${type}` }, lot: { id: "test", name: "Teste", type, status: type === "leilao" ? "ready_sync" : "open", items: [{ sku: "SKU-A", quantidade: 1 }, { sku: "SKU-A", quantidade: 2 }] } };
+    const options = { productName: "LOTE 001", salePrice: 199.90, integration: { accessToken: `kit-test-${type}` }, lot: { id: "test", name: "Teste", type, status: type === "leilao" ? "ready_sync" : "open", items: [{ sku: "SKU-A", quantidade: 1 }, { sku: "SKU-A", quantidade: 2 }] } };
     assert.equal((await createBlingAuctionKit(options)).id, 123);
     assert.deepEqual(saved.estrutura, { tipoEstoque: "V", lancamentoEstoque: "M", componentes: [{ produto: { id: 10 }, quantidade: 3 }] });
     assert.equal(saved.codigo, `${type === "leilao" ? "LEILAO" : "LOTE"}-test`);
-    assert.equal(saved.nome, `${type === "leilao" ? "Lote de leilao" : "Lote"} - Teste`);
+    assert.equal(saved.nome, "LOTE 001");
+    assert.equal(saved.preco, 199.90);
+    await assert.rejects(createBlingAuctionKit({ ...options, salePrice: 0 }), /preco de venda/);
+    await assert.rejects(createBlingAuctionKit({ ...options, salePrice: 200 }), /outro preco/);
     assert.equal((await createBlingAuctionKit(options)).existing, true);
     assert.equal(posts, 1);
     options.lot.items[0].quantidade = 5;

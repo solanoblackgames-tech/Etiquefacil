@@ -8832,7 +8832,7 @@ async function createTransferLot(event) {
     updateTransferTypeFields();
     $("#transferMessage").style.color = "#0f766e";
     $("#transferMessage").textContent = payload.type === "leilao"
-      ? "Agrupamento de leilao criado. Bipe etiquetas de triagem."
+      ? "Agrupamento de leilao criado. Bipe etiquetas de triagem ou SKUs."
       : "Agrupamento de transferencia criado. Pode comecar a bipar.";
     // A criacao ja retorna o detalhe completo: abra a bipagem sem depender
     // de outras duas consultas, que podem falhar depois de o lote ser salvo.
@@ -9010,7 +9010,7 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
         </div>
       </div>
       <form id="transferScanForm" class="search-bar">
-        <input id="transferScanInput" name="code" placeholder="${auction ? "Bipe a etiqueta de triagem" : "CD: bipe Codigo ML ou SKU para montar a estrutura"}" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
+        <input id="transferScanInput" name="code" placeholder="${auction ? "Bipe a etiqueta de triagem ou SKU" : "CD: bipe Codigo ML ou SKU para montar a estrutura"}" autocomplete="off" ${synced || cdLocked ? "disabled" : ""} required />
         <button type="submit" ${synced || cdLocked ? "disabled" : ""}>Adicionar</button>
       </form>
       <p id="transferScanMessage" class="message"></p>
@@ -9031,14 +9031,14 @@ function renderTransferDetail(lot, { lastCode = "" } = {}) {
         <button type="button" data-release-transfer="${escapeHtml(lot.id)}" ${synced || cdLocked || !lot.items.length ? "disabled" : ""}>${auction ? "Fechar agrupamento" : lot.wmsEnabled ? "Liberar para WMS" : lot.source === "triage" ? "Liberar para aceite" : "Liberar para loja"}</button>
         ${auction ? "" : `<a class="button-link" href="${escapeHtml(transferReceivePath(lot))}">${lot.wmsEnabled ? "Alocar produto" : lot.source === "triage" ? "Aceitar entrada fisica" : "Abrir conferencia da loja"}</a>`}
       </div>
-      ${canSync ? `<div class="actions"><button type="button" data-create-auction-kit="${escapeHtml(lot.id)}" ${!lot.items.length || (auction && lot.status !== "ready_sync") ? "disabled" : ""}>${auction ? synced ? "Lote criado no Bling" : "Criar lote no Bling" : "Transformar em produto no Bling"}</button><small>Kit com estoque virtual e baixa nos componentes. ${auction ? "Feche o agrupamento antes de criar." : "Usa todos os SKUs e quantidades bipadas. Ao criar, a montagem do agrupamento sera encerrada."}</small></div>` : ""}
+      ${canSync ? `<div class="actions"><label>Preco de venda do lote (R$) <input id="transferKitSalePrice" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00" /></label><button type="button" data-create-auction-kit="${escapeHtml(lot.id)}" ${!lot.items.length || (auction && lot.status !== "ready_sync") ? "disabled" : ""}>${auction ? synced ? "Lote criado no Bling" : "Criar lote no Bling" : "Transformar em produto no Bling"}</button><small>Kit com estoque virtual e baixa nos componentes. ${auction ? "Feche o agrupamento antes de criar." : "Usa todos os SKUs e quantidades bipadas. Ao criar, a montagem do agrupamento sera encerrada."}</small></div>` : ""}
       <div class="actions ${canSync && !auction ? "" : "hidden"}">
         <button type="button" data-sync-transfer="${escapeHtml(lot.id)}" ${synced || !lot.items.length || !(lot.totalReceived || 0) ? "disabled" : ""}>Enviar transferencia ao Bling</button>
       </div>
       <div class="diverse-table transfer-table">
           <div class="diverse-row transfer-row diverse-row-head">
             <span>SKU</span>
-            <span>${auction ? "Etiqueta" : "Codigo"}</span>
+            <span>${auction ? "Etiqueta / SKU" : "Codigo"}</span>
             <span>Produto</span>
             <span>${auction ? "Qtd" : "CD"}</span>
             <span>${auction ? "Foto" : "Loja"}</span>
@@ -9252,11 +9252,17 @@ async function handleTransferDetailClick(event) {
   const sync = event.target.closest("[data-sync-transfer]");
   const kit = event.target.closest("[data-create-auction-kit]");
   if (kit) {
+    const salePrice = Number($("#transferKitSalePrice")?.value);
+    if (!Number.isFinite(salePrice) || salePrice <= 0) {
+      $("#transferScanMessage").textContent = "Informe o preco de venda do lote, maior que zero.";
+      $("#transferKitSalePrice")?.focus();
+      return;
+    }
     kit.disabled = true;
     try {
-      const result = await api(`/api/transfer-lots/${encodeURIComponent(kit.dataset.createAuctionKit)}/bling/kit`, { method: "POST" });
+      const result = await api(`/api/transfer-lots/${encodeURIComponent(kit.dataset.createAuctionKit)}/bling/kit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ salePrice }) });
       await loadTransferLots(kit.dataset.createAuctionKit);
-      $("#transferScanMessage").textContent = `Lote criado no Bling. SKU: ${result.codigo}`;
+      $("#transferScanMessage").textContent = `${result.nome || "Lote"} criado no Bling. SKU: ${result.codigo}`;
     } catch (error) {
       $("#transferScanMessage").textContent = error.message;
       kit.disabled = false;

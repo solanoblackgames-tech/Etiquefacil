@@ -787,7 +787,7 @@ test("auction grouping scans triage labels as physical items", async () => {
   try {
     const storeUrl = pathToFileURL(path.join(originalCwd, "src", "store.js"));
     storeUrl.search = `?test=${Date.now()}-auction-grouping`;
-    const { createTransferLot, scanTransferLot, readDb, writeDb } = await import(storeUrl.href);
+    const { createTransferLot, scanTransferLot, reserveBlingKitName, readDb, writeDb } = await import(storeUrl.href);
 
     await writeDb({
       users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
@@ -863,6 +863,17 @@ test("auction grouping scans triage labels as physical items", async () => {
     assert.equal(groupedItems[0].diagnosisPhoto, "data:image/jpeg;base64,abc");
     const otherGrouping = await createTransferLot({ userId: "user-1", descricao: "Outro leilao", type: "leilao" });
     await assert.rejects(scanTransferLot({ userId: "user-1", transferLotId: otherGrouping.id, code: "LAB-20260917-000001" }), /outro agrupamento ativo/);
+    const externalProduct = { sku: "SKU-EXT", descricao: "Produto externo" };
+    await scanTransferLot({ userId: "user-1", transferLotId: otherGrouping.id, code: "SKU-EXT", externalProduct });
+    const skuScan = await scanTransferLot({ userId: "user-1", transferLotId: otherGrouping.id, code: "SKU-EXT", externalProduct });
+    assert.equal(skuScan.lot.items[0].quantidade, 2);
+    assert.equal(skuScan.lot.items[0].sku, "SKU-EXT");
+    const names = await Promise.all([
+      reserveBlingKitName("user-1", grouping.id),
+      reserveBlingKitName("user-1", otherGrouping.id),
+      reserveBlingKitName("user-1", grouping.id)
+    ]);
+    assert.deepEqual(names, ["LOTE 001", "LOTE 002", "LOTE 001"]);
   } finally {
     process.chdir(originalCwd);
     if (originalDatabaseUrl) process.env.DATABASE_URL = originalDatabaseUrl;
