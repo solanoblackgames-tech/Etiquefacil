@@ -10245,7 +10245,7 @@ async function resolveTransferWmsLocation(lot, value) {
   if (!lot?.wmsEnabled) return "";
   const settings = await getUserTriageTransferSettings(lot.userId);
   const deposit = triageDestinationWmsConfig(settings, lot.depositoDestino);
-  const translated = deposit ? translateJzWmsLocation(deposit, value) : "";
+  const translated = translateJzWmsLocation(deposit || { prefix: lot.wmsPrefix || normalizeWmsLocationPrefix(lot.depositoDestino) }, value);
   const location = normalizeTransferWmsLocation(lot, translated || value);
   return deposit ? assertValidWmsPosition(deposit, location) : location;
 }

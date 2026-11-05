@@ -169,6 +169,23 @@ async function seedWmsStore({ writeDb, saveUserTriageTransferSettings }) {
   });
 }
 
+test("public transfer reads physical Rua A labels when the lot has WMS but settings have no grid", async () => {
+  await withTempStore("wms-rua-a-no-grid", async (store) => {
+    const { lot, item } = triageTransfer("LAB-20261001-000001", 1);
+    lot.depositoDestino = "VENDA B2B";
+    lot.wmsPrefix = "B2B";
+    await store.writeDb({
+      users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }],
+      triageItems: [triageItem("LAB-20261001-000001", "2026-10-01T10:00:00.000Z")],
+      transferLots: [lot], transferItems: [item]
+    });
+    await store.receivePublicTransferLotScan({ transferLotId: lot.id, code: item.triageCode,
+      wmsLocation: "RUA A - COLUNA 01 - ANDAR 1 - POSICAO 001" });
+    const stock = await store.listWmsStock("user-1");
+    assert.equal(stock.units[0].location, "B2B-A-1-1");
+  });
+});
+
 test("WMS put-away validates the position grid, reads the QR laudo and keeps one unit per laudo", async () => {
   await withTempStore("wms-units-putaway", async (store) => {
     await seedWmsStore(store);
