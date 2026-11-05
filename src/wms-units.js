@@ -52,6 +52,15 @@ export function translateJzWmsLocation(depositConfig, value) {
   const plain = normalizeWmsCode(value).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]/g, "");
   if (!depositConfig?.prefix || !plain) return "";
   if (["PATIO", "CHAODOPATIO", "CHAOPATIO"].includes(plain)) return `${depositConfig.prefix}-PATIO-1-1`;
+  // Placa da Rua A: RUA A - COLUNA 05 - ANDAR 1 - POSICAO 017.
+  const columnLabel = plain.match(/^RUAACOLUNA(\d{1,2})ANDAR([1-4])(?:POSICAO|POS|P)(\d{1,3})$/);
+  if (columnLabel) {
+    const column = Number(columnLabel[1]);
+    const level = Number(columnLabel[2]);
+    const position = Number(columnLabel[3]);
+    if (column < 1 || position > JZ_STREET_ENDS.A || position !== (column - 1) * 4 + level) return "";
+    return `${depositConfig.prefix}-A-${column}-${level}`;
+  }
   // Aceita os QRs antigos com andar/lado e as etiquetas curtas (D301, E307, F421).
   // A numeracao identifica a posicao; andar e lado sao informacoes da etiqueta.
   const match = plain.match(/^(?:RUA([A-F])(?:POSICAO|POS|P)|([A-F]))(\d{1,3})(?:ANDAR[1-4])?(?:(?:LADO)?(?:DIREITO|ESQUERDO))?$/);

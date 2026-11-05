@@ -42,6 +42,15 @@ test("old JZ Separacao position labels are read as the deposit position", () => 
   ] };
   assert.equal(assertValidWmsPosition(b2b, "RUA B | POSICAO 105 | ANDAR 1"), "B2B-B-1-1");
   assert.equal(assertValidWmsPosition(b2b, "Rua A POS 001"), "B2B-A-1-1");
+  for (let position = 17; position <= 24; position++) {
+    const column = Math.floor((position - 1) / 4) + 1;
+    const level = (position - 1) % 4 + 1;
+    const label = `RUA A - COLUNA ${String(column).padStart(2, "0")} - ANDAR ${level} - POSIÇÃO ${String(position).padStart(3, "0")}`;
+    assert.equal(assertValidWmsPosition(b2b, label), `B2B-A-${column}-${level}`);
+  }
+  assert.equal(assertValidWmsPosition(b2b, "RUA A | COLUNA 05 | ANDAR 1 | POS. 017"), "B2B-A-5-1");
+  assert.throws(() => assertValidWmsPosition(b2b, "RUA A COLUNA 05 ANDAR 1 POSICAO 020"), /nao existe/);
+  assert.throws(() => assertValidWmsPosition(b2b, "RUA A COLUNA 27 ANDAR 1 POSICAO 105"), /nao existe/);
   assert.equal(assertValidWmsPosition(b2b, "RUA A | POSIÇÃO 104 | ANDAR 1"), "B2B-A-26-4");
   assert.equal(assertValidWmsPosition(b2b, "RUA D POS 306"), "B2B-D-11-2");
   assert.equal(assertValidWmsPosition(b2b, "RUA C | POSICAO 189 | ANDAR 1 | LADO DIREITO"), "B2B-C-2-1");
