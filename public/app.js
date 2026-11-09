@@ -9639,7 +9639,8 @@ function renderLotDetail(lot) {
   const noSheetLot = isNoSheetLot(lot);
   const isOperator = ["operator", "account_admin"].includes(state.user?.role);
   const canManage = !isOperator;
-  const operatorNoSheetLot = isOperator && noSheetLot;
+  // A abertura do lote deve permitir escolher o pallet antes da bipagem.
+  const operatorNoSheetLot = false;
   const canScan = true;
   const missingQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.missing || 0), 0);
   const excessQty = lot.rzs.reduce((sum, rz) => sum + Number(rz.excess || 0), 0);
