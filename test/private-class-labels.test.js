@@ -101,6 +101,23 @@ test("conta por pallet e lote, impede duplicidade e permite retirar e mover", ()
   assert.equal(state.events.length, 5);
 });
 
+test("novas emissoes A e B podem ser bipadas apos usar todas as etiquetas anteriores", () => {
+  const state = empty();
+  for (let emission = 0; emission < 3; emission++) {
+    for (const grade of ["A", "B"]) {
+      const batch = generateClassBatch(state, { grade, quantity: 3, actor });
+      for (const label of state.labels.filter((item) => item.batchId === batch.id)) {
+        assert.equal(label.lotId, null);
+        move(state, label.code);
+      }
+    }
+  }
+  assert.equal(classSummary(state, "lot").A, 9);
+  assert.equal(classSummary(state, "lot").B, 9);
+  assert.throws(() => move(state, state.labels[0].code), /pallet P1 do lote Lote sem lista/);
+  assert.equal(state.events.length, 18);
+});
+
 test("fechamento preserva composicao, data, responsavel e bloqueia alteracoes", () => {
   const state = empty();
   generateClassBatch(state, { grade: "B", quantity: 2, actor });

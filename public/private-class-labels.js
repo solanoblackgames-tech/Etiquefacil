@@ -115,6 +115,7 @@ export async function mountClassPanel(container, lot, { active = null, canClose 
       } catch (error) { panel.querySelector("[data-message]").textContent = error.message; button.disabled = false; }
     });
     const change = async (body, button) => {
+      if (button.disabled) return;
       button.disabled = true;
       try {
         await request(`${url}/pallets/${encodeURIComponent(active)}`, body);

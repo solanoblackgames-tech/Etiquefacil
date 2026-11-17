@@ -831,6 +831,7 @@ async function addDiverseItem(event) {
   const form = event.currentTarget;
   const input = form.querySelector("input[name='codigoMl']");
   const button = form.querySelector("button");
+  if (button.disabled) return;
   const codigoMl = normalizeCodigoMl(input.value);
   input.value = codigoMl;
   const codigoRz = state.selectedDiverseRz;

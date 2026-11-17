@@ -7,7 +7,7 @@ const source = await readFile(new URL("../public/app.js", import.meta.url), "utf
 const handler = source.slice(source.indexOf("async function addDiverseItem(event)"), source.indexOf("async function loadNoSheetSuggestionMatches("));
 const membership = source.slice(source.indexOf("function diverseProductBelongsToRz("), source.indexOf("function findExistingDiverseProductByDescription("));
 
-async function scan({ activePallet, byDescription = false, privateLabel = false, classLot = privateLabel }) {
+async function scan({ activePallet, byDescription = false, privateLabel = false, classLot = privateLabel, simultaneous = false }) {
   const product = { id: "product-1", codigoMl: "ML1", sku: "SKU1" };
   const lot = { id: "lot-1", classMode: classLot, products: [product], items: [{ productId: product.id, codigoRz: "PALLET-1", qtdConferida: 3 }] };
   const calls = [];
@@ -45,7 +45,10 @@ async function scan({ activePallet, byDescription = false, privateLabel = false,
     askProductAlreadyRegistered: async () => "use_existing"
   });
   vm.runInContext(membership + handler, context);
-  await context.addDiverseItem({ preventDefault() {}, currentTarget: { querySelector: (selector) => selector === "button" ? button : input } });
+  const event = { preventDefault() {}, currentTarget: { querySelector: (selector) => selector === "button" ? button : input } };
+  const pending = context.addDiverseItem(event);
+  if (simultaneous) await context.addDiverseItem(event);
+  await pending;
   assert.equal(message.textContent, privateLabel && classLot ? "Etiqueta registrada na composicao por origem do pallet." : "");
   assert.equal(button.disabled, false);
   return calls;
@@ -69,6 +72,11 @@ test("existing ML on the same pallet increments one unit", async () => {
 
 test("private class QR records composition without creating product or changing stock", async () => {
   const calls = await scan({ activePallet: "PALLET-1", privateLabel: true });
+  assert.deepEqual(calls, [{ action: "private_class", args: ["lot-1", "PALLET-1", "ML1"] }]);
+});
+
+test("simultaneous submissions of a fresh class QR send only one registration", async () => {
+  const calls = await scan({ activePallet: "PALLET-1", privateLabel: true, simultaneous: true });
   assert.deepEqual(calls, [{ action: "private_class", args: ["lot-1", "PALLET-1", "ML1"] }]);
 });
 

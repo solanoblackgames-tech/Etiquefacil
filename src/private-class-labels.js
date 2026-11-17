@@ -156,7 +156,10 @@ export function changeClassPallet(state, { lotId, lotName, codigoRz, action, cod
   if (action !== "close") {
     label = state.labels.find((item) => item.code === String(code || "").trim().toUpperCase());
     if (!label) throw new Error("Etiqueta privada nao encontrada nesta conta.");
-    if (action === "add" && label.lotId) throw new Error("Esta etiqueta ja foi colocada em um pallet. Retire-a do pallet de origem antes de mover.");
+    if (action === "add" && label.lotId) {
+      const origin = state.pallets.find((item) => item.lotId === label.lotId && item.codigoRz === label.codigoRz);
+      throw new Error(`Esta etiqueta ja foi colocada no pallet ${label.codigoRz}${origin?.lotName ? ` do lote ${origin.lotName}` : ""}. Retire-a do pallet de origem antes de mover.`);
+    }
     if (action === "remove" && (label.lotId !== lotId || label.codigoRz !== codigoRz)) throw new Error("Esta etiqueta nao pertence a este pallet.");
   } else if (!pallet || !classSummary(state, lotId).pallets.find((p) => p.codigoRz === codigoRz)?.total) {
     throw new Error("Inclua etiquetas antes de fechar a composicao.");
