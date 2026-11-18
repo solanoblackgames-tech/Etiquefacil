@@ -8330,6 +8330,7 @@ function renderWmsStockDepositSelect() {
 function renderWmsStock() {
   const data = state.wmsStock || { rows: [], units: [], totals: {} };
   const totals = data.totals || {};
+  const blingEntryByLaudo = new Map(data.units.filter((unit) => unit.blingEntry).map((unit) => [unit.triageCode, unit.blingEntry]));
   $("#wmsStockTotals").innerHTML = [
     metric("Unidades", totals.units || 0),
     metric("Livres", totals.stored || 0),
@@ -8354,7 +8355,10 @@ function renderWmsStock() {
               <td>${escapeHtml(row.descricao || "")}</td>
               <td class="num">${Number(row.stored || 0)}</td>
               <td class="num">${Number(row.reserved || 0) + Number(row.picked || 0)}</td>
-              <td class="wms-stock-laudos">${row.laudos.length ? row.laudos.map((code) => `<span>${escapeHtml(code)}</span>`).join("") : '<span class="muted">-</span>'}</td>
+              <td class="wms-stock-laudos">${row.laudos.length ? row.laudos.map((code) => {
+                const entry = blingEntryByLaudo.get(code);
+                return `<span>${escapeHtml(code)}${entry ? ` <small title="${escapeHtml(entry.error || "")}">${escapeHtml(wmsBlingEntryLabel(entry.status))}</small>` : ""}</span>`;
+              }).join("") : '<span class="muted">-</span>'}</td>
               <td>${[
                 row.withoutLaudo ? `<span class="badge excess">${row.withoutLaudo} sem laudo</span>` : "",
                 row.notValidated ? `<span class="badge danger">${row.notValidated} nao validada(s)</span>` : ""
@@ -8368,6 +8372,16 @@ function renderWmsStock() {
   if (state.wmsCompare) renderWmsCompare();
 }
 
+function wmsBlingEntryLabel(status) {
+  return {
+    pending: "Bling na fila",
+    sending: "Bling enviando",
+    sent: "Entrada no Bling confirmada",
+    failed: "Falha no Bling · nova tentativa na fila",
+    needs_review: "Conferir entrada no Bling"
+  }[status] || "";
+}
+
 function openWmsStockPanel(panel) {
   state.wmsStockPanel = state.wmsStockPanel === panel ? "" : panel;
   document.querySelectorAll("[data-wms-panel]").forEach((button) => button.classList.toggle("ghost", button.dataset.wmsPanel !== state.wmsStockPanel));
@@ -8375,7 +8389,7 @@ function openWmsStockPanel(panel) {
   if (state.wmsStockPanel === "inventory") {
     target.innerHTML = `
       <form id="wmsInventoryForm" class="wms-stock-form">
-        <p class="muted">Guarda no WMS o estoque que ja existe. Nao muda o saldo do Bling. Bipe o laudo; sem laudo, bipe o SKU (precisa estar cadastrado no Bling) e informe a quantidade.</p>
+        <p class="muted">No Venda B2B, cada laudo guardado agenda a entrada de uma unidade no Bling. Para guardar sem laudo, bipe o SKU e informe a quantidade.</p>
         <label>Deposito<select name="depositName" data-wms-deposit-select="form" required></select></label>
         <label>Posicao<input name="location" placeholder="Bipe a posicao" autocomplete="off" required /></label>
         <label>Laudo ou SKU<input name="code" placeholder="Bipe o laudo ou o SKU" autocomplete="off" required /></label>
@@ -8459,7 +8473,8 @@ async function handleWmsStockSubmit(event) {
     if (form.id === "wmsInventoryForm") {
       const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const first = result.units?.[0] || {};
-      const note = result.warning ? ` (${result.warning})` : result.blingValidated === false ? " (SKU sem validacao no Bling: pode nao estar cadastrado ou o Bling nao respondeu)" : "";
+      const notice = result.blingEntryQueued ? wmsBlingEntryLabel("pending") : result.warning || (result.blingValidated === false ? "SKU sem validação no Bling" : "");
+      const note = notice ? ` (${notice})` : "";
       $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
       playTransferReadSound();
       form.elements.code.value = "";

@@ -455,6 +455,28 @@ export async function syncBlingStockMovement({ integration, item, depositoName, 
   };
 }
 
+export async function prepareBlingWmsInventoryEntry({ integration, sku, depositName, observation, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const response = await client.request("/depositos", { query: { descricao: depositName, situacao: 1, limite: 100 } });
+  const deposits = (response.data || []).filter((deposit) => deposit.id && normalizeText(deposit.descricao) === normalizeText(depositName));
+  if (deposits.length !== 1) throw new Error(`Confira o cadastro do depósito ${depositName} no Bling.`);
+  const products = (await client.findProductsBySkus([sku])).filter((product) => product.id && !["I", "E"].includes(product.situacao));
+  if (!products.length) throw new Error(`SKU ${sku} sem cadastro ativo no Bling.`);
+  if (products.length > 1) throw new Error(`SKU ${sku} tem mais de um cadastro ativo no Bling.`);
+
+  return () => client.createStockEntry({
+    produto: { id: Number(products[0].id) },
+    deposito: { id: Number(deposits[0].id) },
+    operacao: "E",
+    quantidade: 1,
+    observacoes: observation
+  });
+}
+
+export function isRejectedBlingStockEntry(error) {
+  return error instanceof BlingApiError && [400, 401, 403, 404, 422, 429].includes(error.status);
+}
+
 export async function listBlingDeposits({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listDeposits();

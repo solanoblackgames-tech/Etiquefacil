@@ -86,6 +86,50 @@ function baseDb() {
   };
 }
 
+test("guardar um laudo no Venda B2B agenda uma única entrada mesmo com duas bipagens simultâneas", async () => {
+  await withTempStore("wms-inventory-bling", async (store) => {
+    const db = baseDb();
+    db.triageItems = [
+      { id: "triage-b2b", userId: "user-1", code: "LAB-20261118-000001", sku: "SKU-B2B" },
+      { id: "triage-rma", userId: "user-1", code: "LAB-20261118-000002", sku: "SKU-RMA" }
+    ];
+    await store.writeDb(db);
+    await store.saveUserTriageTransferSettings("user-1", {
+      wmsDeposits: [
+        { depositName: "Venda B2B", prefix: "B2B", blingAccount: "principal", rowsConfig: [{ label: "A", columns: 1, positions: 1 }] },
+        { depositName: "RMA", prefix: "RMA", rowsConfig: [{ label: "A", columns: 1, positions: 1 }] }
+      ]
+    });
+    // A consulta inicial também traz os saldos de transferências anteriores.
+    await store.listWmsStock("user-1");
+    const scan = { userId: "user-1", depositName: "Venda B2B", location: "B2B-A-1-1", code: "LAB-20261118-000001", quantity: 3 };
+    const outcomes = await Promise.allSettled([store.registerWmsInventory(scan), store.registerWmsInventory(scan)]);
+    const successful = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    assert.equal(successful.length, 1);
+    assert.match(outcomes.find((outcome) => outcome.status === "rejected").reason.message, /ja esta no WMS/);
+    const result = successful[0].value;
+    assert.equal(result.units.length, 1);
+    assert.equal(result.blingEntryQueued, true);
+    assert.equal((await store.registerWmsInventory({ ...scan, code: "SKU-SEM-LAUDO" })).blingEntryQueued, false);
+    assert.equal((await store.registerWmsInventory({
+      ...scan, depositName: "RMA", location: "RMA-A-1-1", code: "LAB-20261118-000002"
+    })).blingEntryQueued, false);
+    const [job, ...others] = await store.listDueBlingSyncJobs();
+    assert.equal(others.length, 0);
+    assert.equal(job.type, store.WMS_BLING_ENTRY_JOB);
+    assert.equal(job.productId, result.units[0].id);
+    assert.equal(job.sku, "SKU-B2B");
+    assert.equal(job.payload.account, "principal");
+    assert.equal(job.payload.depositName, "Venda B2B");
+    const sending = await store.transitionWmsBlingEntry(job, "sending");
+    assert.equal(await store.transitionWmsBlingEntry(job, "sending"), null);
+    assert.equal((await store.listDueBlingSyncJobs()).length, 0);
+    await store.transitionWmsBlingEntry(sending, "sent");
+    const stock = await store.listWmsStock("user-1", { depositName: "Venda B2B" });
+    assert.equal(stock.units.find((unit) => unit.triageCode === scan.code).blingEntry.status, "sent");
+  });
+});
+
 test("WMS expedition creates route from allocated transfer stock", async () => {
   await withTempStore("wms-expedition-route", async ({ writeDb, createWmsExpeditionOrder, listWmsExpedition }) => {
     await writeDb(baseDb());

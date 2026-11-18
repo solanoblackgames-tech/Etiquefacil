@@ -42,6 +42,8 @@ let pool;
 let storeReady;
 let blingSyncJobsNullableLotIdReady = false;
 let wmsUnitTablesReady = false;
+let localWmsWrites = Promise.resolve();
+export const WMS_BLING_ENTRY_JOB = "wms_inventory_entry";
 
 const NO_SHEET_ORIGINS = ["lote_sem_planilha", "entrada_diversos"];
 const EXCESS_EXPORT_ORIGINS = ["excedente_externo", "lote_sem_planilha_manual"];
@@ -1028,10 +1030,12 @@ export async function recordOperatorActivity(user, action, metadata = {}) {
     return activity;
   }
 
-  const db = await readDb();
-  db.operatorActivities.push(activity);
-  await writeDb(db);
-  return activity;
+  return serializeLocalWmsWrite(async () => {
+    const db = await readDb();
+    db.operatorActivities.push(activity);
+    await writeDb(db);
+    return activity;
+  });
 }
 
 export async function listUsersForAdmin() {
@@ -3382,11 +3386,12 @@ export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
       `
         select *
         from bling_sync_jobs
-        where status in ('pending', 'failed')
+        where status in ('pending', 'failed', 'wms_pending', 'wms_failed')
           and next_run_at <= $1
         order by
-          case status when 'pending' then 0 else 1 end asc,
+          case when status in ('pending', 'wms_pending') then 0 else 1 end asc,
           case type
+            when 'wms_inventory_entry' then -1
             when 'product' then 0
             when 'product_delete' then 1
             else 2
@@ -3402,7 +3407,7 @@ export async function listDueBlingSyncJobs({ limit = 25 } = {}) {
 
   const db = await readDb();
   return (db.blingSyncJobs || [])
-    .filter((job) => ["pending", "failed"].includes(job.status) && String(job.nextRunAt || "") <= now)
+    .filter((job) => ["pending", "failed", "wms_pending", "wms_failed"].includes(job.status) && String(job.nextRunAt || "") <= now)
     .sort(
       (a, b) =>
         blingSyncJobQueuePriority(a) - blingSyncJobQueuePriority(b) ||
@@ -3574,6 +3579,31 @@ export async function markBlingSyncJobFailed(jobId, errorMessage = "") {
   }
   await writeDb(db);
   return { ok: true, job };
+}
+
+export async function transitionWmsBlingEntry(job, status, errorMessage = "") {
+  await ensureStore();
+  const now = new Date();
+  const attempts = job.attempts + Number(status === "failed");
+  const nextRunAt = status === "failed" ? new Date(now.getTime() + blingRetryDelayMs(attempts)).toISOString() : job.nextRunAt;
+  const updated = { status: status === "failed" ? "wms_failed" : status, attempts, nextRunAt, updatedAt: now.toISOString(), errorMessage: errorMessage.slice(0, 500) };
+  if (hasPostgres()) {
+    const result = await query(
+      `update bling_sync_jobs set status = $4, attempts = $5, next_run_at = $6, updated_at = $7, error_message = $8
+       where id = $1 and type = 'wms_inventory_entry' and status = $2 and updated_at = $3
+       returning *`,
+      [job.id, job.status, job.updatedAt, updated.status, attempts, nextRunAt, updated.updatedAt, updated.errorMessage]
+    );
+    return result.rows[0] ? blingSyncJobFromRow(result.rows[0]) : null;
+  }
+  return serializeLocalWmsWrite(async () => {
+    const db = await readDb();
+    const current = db.blingSyncJobs.find((row) => row.id === job.id && row.type === WMS_BLING_ENTRY_JOB);
+    if (!current || current.status !== job.status || current.updatedAt !== job.updatedAt) return null;
+    Object.assign(current, updated);
+    await writeDb(db);
+    return current;
+  });
 }
 
 export async function getBlingAppConfig() {
@@ -4522,6 +4552,20 @@ export async function listWmsStock(userId, { depositName = "", search = "" } = {
       (!term || [unit.location, unit.sku, unit.codigoMl, unit.ean, unit.triageCode].some((value) => String(value || "").includes(term)) || normalizeCode(unit.descricao).includes(term))
     ));
     const rows = summarizeWmsUnits(units);
+    const inventoryUnitIds = units.filter((unit) => unit.triageCode && unit.source === "inventory" && normalizeText(unit.depositName) === "venda b2b").map((unit) => unit.id);
+    if (inventoryUnitIds.length) {
+      const jobs = hasPostgres()
+        ? (await query("select * from bling_sync_jobs where user_id = $1 and type = $2 and product_id = any($3::text[])", [userId, WMS_BLING_ENTRY_JOB, inventoryUnitIds])).rows.map(blingSyncJobFromRow)
+        : (await readDb()).blingSyncJobs.filter((job) => job.userId === userId && job.type === WMS_BLING_ENTRY_JOB);
+      const jobByUnit = new Map(jobs.map((job) => [job.productId, job]));
+      for (const unit of units) {
+        const job = jobByUnit.get(unit.id);
+        if (job) {
+          const interrupted = job.status === "sending" && Date.now() - Date.parse(job.updatedAt) > 5 * 60_000;
+          unit.blingEntry = { status: interrupted ? "needs_review" : job.status.replace(/^wms_/, ""), error: job.errorMessage };
+        }
+      }
+    }
     return {
       result: {
         rows,
@@ -4583,8 +4627,7 @@ export async function suggestWmsLocationsForCode(userId, { code = "", depositNam
   }, { readOnly: true });
 }
 
-// Inventario inicial: guarda no WMS o estoque que ja existia antes (com ou sem laudo).
-// Nao mexe no saldo do Bling, so registra onde cada unidade esta.
+// Inventário com laudo no Venda B2B também agenda uma entrada de uma unidade no Bling.
 export async function registerWmsInventory({ userId, depositName, location, code, quantity = 1, operatorName = "", lookupProduct = null }) {
   await ensureStore();
   const settings = await getUserTriageTransferSettings(userId);
@@ -4596,6 +4639,7 @@ export async function registerWmsInventory({ userId, depositName, location, code
   const triageCode = extractTriageCode(normalizedCode);
   const now = new Date().toISOString();
   let units = [];
+  let blingEntryJob = null;
 
   if (triageCode) {
     const triageItem = await findTriageItemByCode(userId, triageCode);
@@ -4612,10 +4656,28 @@ export async function registerWmsInventory({ userId, depositName, location, code
       triageItemId: triageItem.id,
       triageCode,
       fifoAt: triageItem.diagnosedAt || triageItem.createdAt,
-      blingValidated: true,
+      blingValidated: normalizeText(deposit.depositName) === "venda b2b" ? null : true,
       createdBy: operatorName,
       now
     })];
+    if (normalizeText(deposit.depositName) === "venda b2b") {
+      const [unit] = units;
+      if (!unit.sku) throw new Error(`O laudo ${triageCode} precisa de SKU para dar entrada no Bling.`);
+      await ensureWmsUnitsBackfilled(userId);
+      blingEntryJob = normalizeBlingSyncJob({
+        userId,
+        productId: unit.id,
+        sku: unit.sku,
+        type: WMS_BLING_ENTRY_JOB,
+        // Workers anteriores ao recurso só consomem pending/failed.
+        status: "wms_pending",
+        payload: {
+          account: normalizeBlingAccount(deposit.blingAccount),
+          depositName: unit.depositName,
+          observation: `Inventário WMS ${triageCode} (${unit.id})`
+        }
+      });
+    }
   } else {
     const qty = Math.floor(Number(quantity) || 0);
     if (qty < 1 || qty > 500) throw new Error("Informe uma quantidade entre 1 e 500.");
@@ -4654,8 +4716,8 @@ export async function registerWmsInventory({ userId, depositName, location, code
     }
     const movements = units.map((unit) => buildWmsMovement({ userId, unit, type: "inventario", toLocation: unit.location, code: normalizedCode, operatorName, now }));
     return {
-      changes: { units: { insert: units }, movements: { insert: movements } },
-      result: { units, blingValidated: units[0]?.blingValidated ?? null }
+      changes: { units: { insert: units }, movements: { insert: movements }, blingJobs: blingEntryJob ? { insert: [blingEntryJob] } : null },
+      result: { units, blingValidated: units[0]?.blingValidated ?? null, blingEntryQueued: Boolean(blingEntryJob) }
     };
   });
 }
@@ -9628,8 +9690,8 @@ function mergeStockMovementPayload(current = {}, incoming = {}) {
 }
 
 function blingSyncJobQueuePriority(job = {}) {
-  const statusPriority = job.status === "pending" ? 0 : 10;
-  const typePriority = job.type === "product" ? 0 : job.type === "product_delete" ? 1 : 2;
+  const statusPriority = ["pending", "wms_pending"].includes(job.status) ? 0 : 10;
+  const typePriority = job.type === WMS_BLING_ENTRY_JOB ? -1 : job.type === "product" ? 0 : job.type === "product_delete" ? 1 : 2;
   return statusPriority + typePriority;
 }
 
@@ -10109,13 +10171,22 @@ async function runWmsOperation(userId, compute, { readOnly = false } = {}) {
     }
   }
 
-  const db = await readDb();
-  const { changes, result } = await compute(loadWmsStateJson(db, userId));
-  if (!readOnly && changes) {
-    applyWmsChangesJson(db, changes);
-    await writeDb(db);
-  }
-  return result;
+  const runLocal = async () => {
+    const db = await readDb();
+    const { changes, result } = await compute(loadWmsStateJson(db, userId));
+    if (!readOnly && changes) {
+      applyWmsChangesJson(db, changes);
+      await writeDb(db);
+    }
+    return result;
+  };
+  return serializeLocalWmsWrite(runLocal);
+}
+
+function serializeLocalWmsWrite(operation) {
+  const next = localWmsWrites.then(operation);
+  localWmsWrites = next.catch(() => {});
+  return next;
 }
 
 async function loadWmsStatePg(target, userId) {
@@ -10178,7 +10249,8 @@ const WMS_JSON_COLLECTIONS = {
   reservations: "wmsExpeditionReservations",
   picks: "wmsExpeditionPicks",
   units: "wmsUnits",
-  movements: "wmsMovements"
+  movements: "wmsMovements",
+  blingJobs: "blingSyncJobs"
 };
 
 function applyWmsChangesJson(db, changes) {
@@ -10202,6 +10274,13 @@ async function applyWmsChangesPg(client, changes) {
   if (changes.reservations?.insert?.length) await insertWmsExpeditionReservationRows(client, changes.reservations.insert);
   if (changes.picks?.insert?.length) await insertWmsExpeditionPickRows(client, changes.picks.insert);
   if (changes.movements?.insert?.length) await insertWmsMovementRows(client, changes.movements.insert);
+  for (const job of changes.blingJobs?.insert || []) {
+    await client.query(
+      `insert into bling_sync_jobs (id, user_id, product_id, sku, type, status, payload, next_run_at, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+      [job.id, job.userId, job.productId, job.sku, job.type, job.status, job.payload, job.nextRunAt, job.createdAt]
+    );
+  }
   for (const order of changes.orders?.update || []) {
     await client.query("update wms_expedition_orders set status = $2, completed_at = $3 where id = $1", [order.id, order.status, order.completedAt || null]);
   }

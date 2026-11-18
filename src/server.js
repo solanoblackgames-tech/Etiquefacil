@@ -37,6 +37,8 @@ import {
   syncBlingStockBalances,
   syncBlingStockEntries,
   syncBlingStockMovement,
+  prepareBlingWmsInventoryEntry,
+  isRejectedBlingStockEntry,
   syncBlingStockTransfers,
   updateExistingBlingProducts,
   updateBlingProductFromTriage,
@@ -127,6 +129,8 @@ import {
   listWmsMovements,
   listWmsStock,
   registerWmsInventory,
+  transitionWmsBlingEntry,
+  WMS_BLING_ENTRY_JOB,
   relocateWmsUnits,
   suggestWmsLocationsForCode,
   markBlingSyncJobFailed,
@@ -294,6 +298,7 @@ app.post("/api/labels/qr", requireAuth, async (req, res) => {
 });
 
 app.get("/healthz", async (req, res) => {
+  res.set("X-Etiquefacil-WMS-Bling", "inventory-entry");
   try {
     res.set("X-Etiquefacil-Bling-Sync", "oauth-v3");
     res.json(await getStoreHealth());
@@ -1293,8 +1298,7 @@ app.get("/api/public/transfer-lots/:transferLotId/wms-suggestion", async (req, r
   }
 });
 
-// Inventario: guarda no WMS o estoque que ja existia. Nao mexe no saldo do Bling; so valida
-// que o SKU existe la. Se o Bling nao responder, entra como "nao validado" sem travar.
+// No Venda B2B, a guarda por laudo também agenda a entrada no Bling.
 app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
@@ -1327,6 +1331,7 @@ app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAcces
       lookupProduct
     });
     await recordOperatorActivity(req.session.user, "wms_inventory", { location: req.body?.location, code: req.body?.code, quantity: result.units.length });
+    if (result.blingEntryQueued) scheduleBlingSyncQueue();
     res.json({ ...result, warning: req.wmsSkuWarning || "" });
   } catch (error) {
     sendError(res, error);
@@ -5136,6 +5141,10 @@ async function processBlingSyncQueue() {
     const jobs = await listDueBlingSyncJobs({ limit: 10 });
     if (jobs.length === 10) blingSyncQueueRerun = true;
     for (const job of jobs) {
+      if (job.type === WMS_BLING_ENTRY_JOB) {
+        await processWmsInventoryBlingEntry(job);
+        continue;
+      }
       try {
         const integration = await getRequiredBlingCredentials(job.userId);
 
@@ -5236,6 +5245,30 @@ async function processBlingSyncQueue() {
       scheduleBlingSyncQueue();
     }
   }
+}
+
+async function processWmsInventoryBlingEntry(job) {
+  let claimed;
+  try {
+    const account = normalizeBlingAccount(job.payload.account);
+    const integration = await getRequiredBlingAccountCredentials(job.userId, account);
+    const send = await prepareBlingWmsInventoryEntry({
+      integration,
+      sku: job.sku,
+      depositName: job.payload.depositName,
+      observation: job.payload.observation,
+      saveIntegration: blingAccountSaver(job.userId, account)
+    });
+    claimed = await transitionWmsBlingEntry(job, "sending");
+    if (!claimed) return;
+    await send();
+  } catch (error) {
+    // Uma resposta perdida pode esconder uma entrada já registrada no Bling.
+    const status = claimed && !isRejectedBlingStockEntry(error) ? "needs_review" : "failed";
+    await transitionWmsBlingEntry(claimed || job, status, error.message);
+    return;
+  }
+  await transitionWmsBlingEntry(claimed, "sent");
 }
 
 ensureStore()

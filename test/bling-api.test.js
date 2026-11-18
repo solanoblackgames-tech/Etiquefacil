@@ -12,6 +12,7 @@ import {
   listBlingSalesOrdersForStore,
   createBlingSalesReader,
   lookupBlingProductForTriage,
+  prepareBlingWmsInventoryEntry,
   revokeBlingIntegrationTokens,
   runBlingHomologation,
   syncBlingProducts,
@@ -19,6 +20,36 @@ import {
   syncBlingStockMovement,
   updateExistingBlingProducts
 } from "../src/bling-api.js";
+
+test("WMS inventory posts exactly one unit to the matching deposit without editing the product", async (t) => {
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const pathname = new URL(url).pathname;
+    requests.push({ method: options.method, pathname, body: options.body && JSON.parse(options.body) });
+    if (pathname.endsWith("/depositos")) return Response.json({ data: [{ id: 1, descricao: "Geral" }, { id: 2, descricao: "VENDA B2B" }] });
+    if (pathname.endsWith("/produtos")) return Response.json({ data: [{ id: 123, codigo: "SKU-1", situacao: "A" }] });
+    return Response.json({ data: { id: 10 } }, { status: 201 });
+  });
+  const send = await prepareBlingWmsInventoryEntry({
+    integration: { accessToken: "wms-inventory-test" },
+    sku: "SKU-1",
+    depositName: "Venda B2B",
+    observation: "Inventário WMS LAB-20261118-000001"
+  });
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
+  await send();
+  assert.deepEqual(requests.at(-1), {
+    method: "POST",
+    pathname: "/Api/v3/estoques",
+    body: {
+      produto: { id: 123 },
+      deposito: { id: 2 },
+      operacao: "E",
+      quantidade: 1,
+      observacoes: "Inventário WMS LAB-20261118-000001"
+    }
+  });
+});
 
 test("Bling token revocation sends refresh and access tokens to OAuth revoke endpoint", async () => {
   const calls = [];
