@@ -8465,21 +8465,20 @@ async function handleWmsStockSubmit(event) {
   }
   if (form.id !== "wmsInventoryForm" && form.id !== "wmsRelocateForm") return;
   event.preventDefault();
+  const isInventory = form.id === "wmsInventoryForm";
   const button = form.querySelector("button[type='submit']");
+  if (button.disabled) return;
   const payload = Object.fromEntries(new FormData(form).entries());
   button.disabled = true;
   form.querySelector("[data-wms-form-error]")?.remove();
   try {
-    if (form.id === "wmsInventoryForm") {
+    if (isInventory) {
       const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const first = result.units?.[0] || {};
       const notice = result.blingEntryQueued ? wmsBlingEntryLabel("pending") : result.warning || (result.blingValidated === false ? "SKU sem validação no Bling" : "");
       const note = notice ? ` (${notice})` : "";
       $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
       playTransferReadSound();
-      form.elements.code.value = "";
-      form.elements.quantity.value = "1";
-      form.elements.code.focus();
     } else {
       const result = await api("/api/wms/relocate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       showWmsStockMessage(`${result.moved} unidade(s) movida(s) de ${result.from} para ${result.to}.`, true);
@@ -8501,6 +8500,11 @@ async function handleWmsStockSubmit(event) {
     inline.scrollIntoView({ block: "nearest" });
   } finally {
     button.disabled = false;
+    if (isInventory) {
+      form.elements.code.value = "";
+      form.elements.quantity.value = "1";
+      form.elements.code.focus({ preventScroll: true });
+    }
   }
 }
 
