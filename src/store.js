@@ -4640,6 +4640,7 @@ export async function registerWmsInventory({ userId, depositName, location, code
   const now = new Date().toISOString();
   let units = [];
   let blingEntryJob = null;
+  let blingMissing = false;
 
   if (triageCode) {
     const triageItem = await findTriageItemByCode(userId, triageCode);
@@ -4684,10 +4685,12 @@ export async function registerWmsInventory({ userId, depositName, location, code
     let product = null;
     let blingValidated = null;
     if (lookupProduct) {
+      // SKU fora do Bling tambem e guardado: fica marcado como pendente (blingValidated = false)
+      // ate ser cadastrado e revalidado em "Revalidar pendentes".
       try {
         product = await lookupProduct(normalizedCode);
-        if (!product) throw new Error(`SKU ${normalizedCode} nao esta cadastrado no Bling.`);
-        blingValidated = true;
+        blingValidated = Boolean(product);
+        blingMissing = !product;
       } catch (error) {
         if (error.wmsLookupUnavailable !== true) throw error;
         blingValidated = false;
@@ -4717,9 +4720,44 @@ export async function registerWmsInventory({ userId, depositName, location, code
     const movements = units.map((unit) => buildWmsMovement({ userId, unit, type: "inventario", toLocation: unit.location, code: normalizedCode, operatorName, now }));
     return {
       changes: { units: { insert: units }, movements: { insert: movements }, blingJobs: blingEntryJob ? { insert: [blingEntryJob] } : null },
-      result: { units, blingValidated: units[0]?.blingValidated ?? null, blingEntryQueued: Boolean(blingEntryJob) }
+      result: { units, blingValidated: units[0]?.blingValidated ?? null, blingMissing, blingEntryQueued: Boolean(blingEntryJob) }
     };
   });
+}
+
+// Reconsulta no Bling os SKUs guardados como pendentes (nao cadastrados ou sem resposta do Bling)
+// e tira a marca dos que ja foram cadastrados. As consultas ficam fora da transacao.
+export async function revalidateWmsPendingSkus({ userId, depositName = "", lookupProduct, maxSkus = 100 }) {
+  const deposit = String(depositName || "").trim();
+  const isPending = (unit) => unit.blingValidated === false && unit.sku && (!deposit || unit.depositName === deposit);
+  const pendingSkus = await runWmsOperation(userId, async (state) => ({
+    result: [...new Set(state.units.filter(isPending).map((unit) => unit.sku))]
+  }), { readOnly: true });
+  const skus = pendingSkus.slice(0, maxSkus);
+  const found = new Set();
+  const failed = [];
+  for (const sku of skus) {
+    try {
+      if (await lookupProduct(sku)) found.add(sku);
+    } catch {
+      failed.push(sku);
+    }
+  }
+  const unitsUpdated = found.size ? await runWmsOperation(userId, async (state) => {
+    const now = new Date().toISOString();
+    const units = state.units
+      .filter((unit) => isPending(unit) && found.has(unit.sku))
+      .map((unit) => ({ ...unit, blingValidated: true, updatedAt: now }));
+    return { changes: { units: { update: units } }, result: units.length };
+  }) : 0;
+  return {
+    checked: skus.length,
+    registered: [...found],
+    stillPending: skus.filter((sku) => !found.has(sku) && !failed.includes(sku)),
+    failed,
+    unitsUpdated,
+    truncated: pendingSkus.length > skus.length
+  };
 }
 
 // Reenderecar: move unidades de uma posicao para outra (laudo especifico ou N unidades do SKU).

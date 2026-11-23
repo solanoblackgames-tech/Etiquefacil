@@ -8832,6 +8832,11 @@ h3 {
   margin: 4px 0;
 }
 
+.wms-stock-log p.wms-log-pending {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 /* Sem isso a tabela de saldos (min-width) alarga a tela inteira no coletor e o mapa sai da tela. */
 #stockTab {
   grid-template-columns: minmax(0, 1fr);

@@ -129,6 +129,7 @@ import {
   listWmsMovements,
   listWmsStock,
   registerWmsInventory,
+  revalidateWmsPendingSkus,
   transitionWmsBlingEntry,
   WMS_BLING_ENTRY_JOB,
   relocateWmsUnits,
@@ -220,9 +221,6 @@ const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const ADMIN_PASSWORD_HASH = String(process.env.ADMIN_PASSWORD_HASH || "").trim();
 const EXPEDITION_LABEL_CACHE_MS = 30 * 60 * 1000;
 const WMS_BLING_LOOKUP_TIMEOUT_MS = 6000;
-// Liberacao pontual: neste dia (horario de Brasilia) o Inventario WMS aceita SKU que nao existe no Bling;
-// a unidade entra como "nao validada" para conferir depois. Fora da data volta a exigir o cadastro.
-const WMS_ALLOW_UNREGISTERED_SKU_DATES = ["2026-11-03", "2026-11-04"];
 const WMS_BLING_COMPARE_MAX_SKUS = 500;
 const expeditionLabelCache = new Map();
 const LOGIN_MAX_FAILURES = 5;
@@ -1302,25 +1300,7 @@ app.get("/api/public/transfer-lots/:transferLotId/wms-suggestion", async (req, r
 app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   try {
     const userId = workspaceUserId(req);
-    const account = await blingAccountForWmsDeposit(userId, req.body?.depositName);
-    const integration = await getRequiredBlingAccountCredentials(userId, account).catch(() => null);
-    const lookupProduct = async (code) => {
-      if (!integration) throw Object.assign(new Error("Bling nao conectado."), { wmsLookupUnavailable: true });
-      try {
-        const product = await withTimeout(
-          findBlingProductForWms({ integration, code, saveIntegration: blingAccountSaver(userId, account) }),
-          WMS_BLING_LOOKUP_TIMEOUT_MS
-        );
-        const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-        if (!product && WMS_ALLOW_UNREGISTERED_SKU_DATES.includes(today)) {
-          req.wmsSkuWarning = "Este SKU nao esta no Bling. Liberado excepcionalmente em 03 e 04/11/2026.";
-          throw Object.assign(new Error(req.wmsSkuWarning), { wmsLookupUnavailable: true });
-        }
-        return product;
-      } catch (error) {
-        throw Object.assign(error, { wmsLookupUnavailable: true });
-      }
-    };
+    const lookupProduct = await wmsBlingProductLookup(userId, req.body?.depositName);
     const result = await registerWmsInventory({
       userId,
       depositName: req.body?.depositName,
@@ -1332,11 +1312,53 @@ app.post("/api/wms/inventory", requireAuth, requireTransferViewOrAcceptanceAcces
     });
     await recordOperatorActivity(req.session.user, "wms_inventory", { location: req.body?.location, code: req.body?.code, quantity: result.units.length });
     if (result.blingEntryQueued) scheduleBlingSyncQueue();
-    res.json({ ...result, warning: req.wmsSkuWarning || "" });
+    res.json({ ...result, warning: result.blingMissing ? "SKU nao cadastrado no Bling - guardado e marcado como pendente" : "" });
   } catch (error) {
     sendError(res, error);
   }
 });
+
+// Reconsulta no Bling os SKUs pendentes (guardados sem cadastro) e tira a marca dos que ja foram cadastrados.
+app.post("/api/wms/revalidate-bling", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const depositName = String(req.body?.depositName || "").trim();
+    const settings = await getUserTriageTransferSettings(userId);
+    const deposits = depositName ? [depositName] : (settings.wmsDeposits || []).map((deposit) => deposit.depositName).filter(Boolean);
+    const summary = { checked: 0, registered: [], stillPending: [], failed: [], unitsUpdated: 0, truncated: false };
+    for (const name of deposits) {
+      const lookupProduct = await wmsBlingProductLookup(userId, name);
+      const result = await revalidateWmsPendingSkus({ userId, depositName: name, lookupProduct });
+      summary.checked += result.checked;
+      summary.registered.push(...result.registered);
+      summary.stillPending.push(...result.stillPending);
+      summary.failed.push(...result.failed);
+      summary.unitsUpdated += result.unitsUpdated;
+      summary.truncated ||= result.truncated;
+    }
+    res.json(summary);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Consulta o produto no Bling da conta do deposito. Sem conexao ou sem resposta, o erro sai marcado
+// como wmsLookupUnavailable para a guarda seguir com a unidade pendente de validacao.
+async function wmsBlingProductLookup(userId, depositName) {
+  const account = await blingAccountForWmsDeposit(userId, depositName);
+  const integration = await getRequiredBlingAccountCredentials(userId, account).catch(() => null);
+  return async (code) => {
+    if (!integration) throw Object.assign(new Error("Bling nao conectado."), { wmsLookupUnavailable: true });
+    try {
+      return await withTimeout(
+        findBlingProductForWms({ integration, code, saveIntegration: blingAccountSaver(userId, account) }),
+        WMS_BLING_LOOKUP_TIMEOUT_MS
+      );
+    } catch (error) {
+      throw Object.assign(error, { wmsLookupUnavailable: true });
+    }
+  };
+}
 
 app.post("/api/wms/relocate", requireAuth, requireTransferViewOrAcceptanceAccess, async (req, res) => {
   try {

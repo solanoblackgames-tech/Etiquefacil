@@ -245,10 +245,20 @@ test("WMS inventory registers existing stock by SKU, validated in Bling without 
     assert.equal(result.units.length, 3);
     assert.equal(result.blingValidated, true);
 
-    await assert.rejects(
-      () => store.registerWmsInventory({ userId: "user-1", depositName: "Ecommerce", location: "ECOM-A-1-2", code: "SKU-NOPE", quantity: 1, lookupProduct }),
-      /SKU-NOPE nao esta cadastrado no Bling/
-    );
+    // SKU fora do Bling tambem e guardado, marcado como pendente ate ser cadastrado.
+    const missing = await store.registerWmsInventory({ userId: "user-1", depositName: "Ecommerce", location: "ECOM-A-1-2", code: "SKU-NOPE", quantity: 2, lookupProduct });
+    assert.equal(missing.units.length, 2);
+    assert.equal(missing.blingValidated, false);
+    assert.equal(missing.blingMissing, true);
+
+    const stillMissing = await store.revalidateWmsPendingSkus({ userId: "user-1", depositName: "Ecommerce", lookupProduct });
+    assert.deepEqual(stillMissing.stillPending, ["SKU-NOPE"]);
+    assert.equal(stillMissing.unitsUpdated, 0);
+    const registeredLater = async (code) => (code === "SKU-NOPE" ? { sku: "SKU-NOPE" } : lookupProduct(code));
+    const revalidated = await store.revalidateWmsPendingSkus({ userId: "user-1", depositName: "Ecommerce", lookupProduct: registeredLater });
+    assert.deepEqual(revalidated.registered, ["SKU-NOPE"]);
+    assert.equal(revalidated.unitsUpdated, 2);
+    assert.equal((await store.listWmsStock("user-1", { depositName: "Ecommerce" })).totals.notValidated, 0);
     const offline = async () => { throw Object.assign(new Error("Bling fora"), { wmsLookupUnavailable: true }); };
     const pending = await store.registerWmsInventory({ userId: "user-1", depositName: "Ecommerce", location: "ECOM-A-2-1", code: "SKU-X", quantity: 1, lookupProduct: offline });
     assert.equal(pending.blingValidated, false);
@@ -264,7 +274,7 @@ test("WMS inventory registers existing stock by SKU, validated in Bling without 
     );
 
     const stock = await store.listWmsStock("user-1");
-    assert.equal(stock.totals.units, 5);
+    assert.equal(stock.totals.units, 7);
     assert.equal(stock.totals.notValidated, 1);
   });
 });

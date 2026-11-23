@@ -8337,7 +8337,7 @@ function renderWmsStock() {
     metric("Reservadas", (totals.reserved || 0) + (totals.picked || 0)),
     metric("Posicoes", totals.positions || 0),
     metric("Sem laudo", totals.withoutLaudo || 0, "inventario inicial"),
-    metric("Nao validadas", totals.notValidated || 0, "Bling nao respondeu")
+    metric("Pendentes no Bling", totals.notValidated || 0, "sem cadastro ou sem validacao")
   ].join("");
   const rows = data.rows || [];
   $("#wmsStockRows").innerHTML = rows.length ? `
@@ -8361,7 +8361,7 @@ function renderWmsStock() {
               }).join("") : '<span class="muted">-</span>'}</td>
               <td>${[
                 row.withoutLaudo ? `<span class="badge excess">${row.withoutLaudo} sem laudo</span>` : "",
-                row.notValidated ? `<span class="badge danger">${row.notValidated} nao validada(s)</span>` : ""
+                row.notValidated ? `<span class="badge danger" title="Cadastre o SKU no Bling e use Revalidar pendentes">${row.notValidated} pendente(s) no Bling</span>` : ""
               ].join(" ")}</td>
             </tr>
           `).join("")}
@@ -8475,10 +8475,16 @@ async function handleWmsStockSubmit(event) {
     if (isInventory) {
       const result = await api("/api/wms/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const first = result.units?.[0] || {};
-      const notice = result.blingEntryQueued ? wmsBlingEntryLabel("pending") : result.warning || (result.blingValidated === false ? "SKU sem validação no Bling" : "");
+      const notice = result.blingEntryQueued ? wmsBlingEntryLabel("pending") : result.warning || (result.blingValidated === false ? "Bling nao respondeu - marcado como pendente" : "");
       const note = notice ? ` (${notice})` : "";
-      $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
+      const pendingClass = result.blingValidated === false ? ' class="wms-log-pending"' : "";
+      $("#wmsInventoryLog").insertAdjacentHTML("afterbegin", `<p${pendingClass}>${escapeHtml(`${result.units.length}x ${first.sku}${first.triageCode ? ` (${first.triageCode})` : ""} guardado em ${first.location}${note}`)}</p>`);
       playTransferReadSound();
+      // Guardou: limpa tudo e volta para a posicao, pronto para o proximo item.
+      form.elements.location.value = "";
+      form.elements.code.value = "";
+      form.elements.quantity.value = "1";
+      form.elements.location.focus({ preventScroll: true });
     } else {
       const result = await api("/api/wms/relocate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       showWmsStockMessage(`${result.moved} unidade(s) movida(s) de ${result.from} para ${result.to}.`, true);
@@ -8498,13 +8504,14 @@ async function handleWmsStockSubmit(event) {
     }
     inline.textContent = error.message;
     inline.scrollIntoView({ block: "nearest" });
-  } finally {
-    button.disabled = false;
     if (isInventory) {
+      // Erro: mantem a posicao e pede para bipar o item de novo.
       form.elements.code.value = "";
       form.elements.quantity.value = "1";
       form.elements.code.focus({ preventScroll: true });
     }
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -8649,6 +8656,29 @@ async function handleWmsStockClick(event) {
   }
   if (event.target.closest("[data-wms-compare]")) {
     await compareWmsStockWithBling();
+    return;
+  }
+  const revalidate = event.target.closest("[data-wms-revalidate]");
+  if (revalidate) await revalidateWmsPendingSkus(revalidate);
+}
+
+// Depois de cadastrar no Bling os SKUs guardados como pendentes, reconsulta e tira a marca.
+async function revalidateWmsPendingSkus(button) {
+  if (button.disabled) return;
+  const depositName = $("#wmsStockFilterForm").elements.deposit.value || "";
+  button.disabled = true;
+  showWmsStockMessage("Consultando os SKUs pendentes no Bling...", true);
+  try {
+    const result = await api("/api/wms/revalidate-bling", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ depositName }) });
+    const parts = [`${result.registered.length} SKU(s) ja cadastrado(s) no Bling`];
+    if (result.stillPending.length) parts.push(`ainda sem cadastro: ${result.stillPending.join(", ")}`);
+    if (result.failed.length) parts.push(`sem resposta do Bling: ${result.failed.join(", ")}`);
+    showWmsStockMessage(result.checked ? `${parts.join(" · ")}.${result.truncated ? " Rode de novo para conferir o restante." : ""}` : "Nenhum SKU pendente no Bling.", true);
+    await loadWmsStock();
+  } catch (error) {
+    showWmsStockMessage(error.message, false);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -8704,7 +8734,7 @@ function exportWmsStock() {
     unit.depositName, unit.location, unit.sku, unit.codigoMl, unit.ean, unit.descricao, unit.triageCode,
     statusLabel[unit.status] || unit.status, unit.source === "inventory" ? "Inventario" : "Transferencia",
     unit.source === "inventory" && !unit.triageCode ? "" : String(unit.fifoAt || "").slice(0, 10),
-    unit.blingValidated === false ? "Nao" : "Sim"
+    unit.blingValidated === false ? "Pendente" : "Sim"
   ]);
   const csv = [header, ...lines].map((line) => line.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const url = URL.createObjectURL(new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" }));
