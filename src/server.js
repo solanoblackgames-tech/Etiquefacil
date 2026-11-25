@@ -19,9 +19,11 @@ import { hasPrivateClassAccess, registerPrivateClassLot, withClassState } from "
 import { syncClassLotSupplier } from "./class-lot-supplier.js";
 import "dotenv/config";
 import {
+  blingCategoryMappingKey,
   deleteBlingProductBySku,
   createBlingAuctionKit,
   listBlingDeposits,
+  listBlingProductCategories,
   listBlingSalesOrdersForStore,
   getBlingShippingLabelPdf,
   getBlingStockBalancesForSkus,
@@ -124,8 +126,10 @@ import {
   deleteBlingAccountIntegration,
   getBlingAccountCredentials,
   getBlingAccountIntegration,
+  getBlingCategoryMappings,
   normalizeBlingAccount,
   saveBlingAccountIntegration,
+  saveBlingCategoryMappings,
   listWmsMovements,
   listWmsStock,
   registerWmsInventory,
@@ -2093,6 +2097,61 @@ app.get("/api/integrations/bling/accounts", requireAuth, requireOwner, async (re
   }
 });
 
+app.get("/api/integrations/bling/accounts/:account/categories", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const account = normalizeBlingAccount(req.params.account);
+    const [mappings, categories] = await Promise.all([
+      getBlingCategoryMappings(userId, account),
+      readBlingProductCategories(userId, account)
+    ]);
+    res.json({ categories, mappings });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.put("/api/integrations/bling/accounts/:account/categories", requireAuth, requireOwner, async (req, res) => {
+  try {
+    const userId = workspaceUserId(req);
+    const account = normalizeBlingAccount(req.params.account);
+    if (!Array.isArray(req.body?.mappings)) throw new Error("Informe os vínculos de categorias.");
+    const keys = new Set();
+    const mappings = req.body.mappings.map((mapping) => {
+      const category = typeof mapping?.category === "string" ? mapping.category.trim() : "";
+      const subcategory = typeof mapping?.subcategory === "string" ? mapping.subcategory.trim() : "";
+      const blingCategoryId = mapping?.blingCategoryId;
+      if (!category || !Number.isSafeInteger(blingCategoryId) || blingCategoryId <= 0) {
+        throw new Error("Informe a categoria do EtiqueFácil e selecione uma categoria do Bling em cada vínculo.");
+      }
+      const key = blingCategoryMappingKey(category, subcategory);
+      if (keys.has(key)) throw new Error("Já existe um vínculo para esta categoria e subcategoria do EtiqueFácil.");
+      keys.add(key);
+      return { category, subcategory, blingCategoryId };
+    });
+    if (mappings.length) {
+      const categories = await readBlingProductCategories(userId, account);
+      const ids = new Set(categories.map(({ id }) => id));
+      if (mappings.some(({ blingCategoryId }) => !ids.has(blingCategoryId))) {
+        throw new Error("Uma categoria selecionada não existe mais nesta conta do Bling. Atualize ou remova o vínculo.");
+      }
+    }
+    res.json({ mappings: await saveBlingCategoryMappings(userId, account, mappings) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+async function readBlingProductCategories(userId, account) {
+  const integration = await getRequiredBlingAccountCredentials(userId, account);
+  try {
+    return await listBlingProductCategories({ integration, saveIntegration: blingAccountSaver(userId, account) });
+  } catch (error) {
+    if (error.status === 403) throw new Error("O aplicativo Bling precisa de permissão para consultar Categorias de Produtos. Habilite essa permissão e reconecte a conta.");
+    throw error;
+  }
+}
+
 // Aplicativo proprio (Client ID/Secret) para uma conta extra. Sem isso, usa o mesmo app da principal.
 app.post("/api/integrations/bling/accounts/:account/config", requireAuth, requireOwner, async (req, res) => {
   try {
@@ -3915,7 +3974,12 @@ async function getRequiredBlingAccountCredentials(userId, account) {
     throw new Error(`Autorize a conta Bling ${normalized === "ecommerce" ? "Ecommerce" : normalized} na aba Perfil antes de continuar.`);
   }
   const blingApp = await getBlingAccountAppCredentials(userId, normalized);
-  return { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret };
+  return {
+    ...integration,
+    clientId: blingApp.clientId,
+    clientSecret: blingApp.clientSecret,
+    getCategoryMappings: () => getBlingCategoryMappings(userId, normalized)
+  };
 }
 
 // Conta Bling do deposito WMS (configurada no deposito; padrao: principal).
@@ -3953,7 +4017,12 @@ async function getRequiredBlingCredentials(userId) {
     throw new Error("Autorize a integracao Bling na aba Perfil antes de enviar dados.");
   }
   const blingApp = await getBlingAppCredentials(userId);
-  return { ...integration, clientId: blingApp.clientId, clientSecret: blingApp.clientSecret };
+  return {
+    ...integration,
+    clientId: blingApp.clientId,
+    clientSecret: blingApp.clientSecret,
+    getCategoryMappings: () => getBlingCategoryMappings(userId, BLING_PRIMARY_ACCOUNT)
+  };
 }
 
 function getBlingRedirectUri(req) {

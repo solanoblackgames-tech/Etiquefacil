@@ -1786,8 +1786,11 @@ function tvSalesCacheKey(account) {
 }
 
 export async function getTvSalesCache(userId, account) {
+  return getUserSettingValue(userId, tvSalesCacheKey(account));
+}
+
+async function getUserSettingValue(userId, key) {
   await ensureStore();
-  const key = tvSalesCacheKey(account);
   if (hasPostgres()) {
     const result = await query("select value from user_settings where user_id = $1 and key = $2 limit 1", [userId, key]);
     return result.rows[0]?.value || null;
@@ -1797,8 +1800,11 @@ export async function getTvSalesCache(userId, account) {
 }
 
 export async function saveTvSalesCache(userId, account, value) {
+  return saveUserSettingValue(userId, tvSalesCacheKey(account), value);
+}
+
+async function saveUserSettingValue(userId, key, value) {
   await ensureStore();
-  const key = tvSalesCacheKey(account);
   const now = new Date().toISOString();
   if (hasPostgres()) {
     await query(
@@ -2961,6 +2967,19 @@ export function normalizeBlingAccount(value) {
   if (!account || account === BLING_PRIMARY_ACCOUNT) return BLING_PRIMARY_ACCOUNT;
   if (!BLING_EXTRA_ACCOUNTS.includes(account)) throw new Error(`Conta Bling desconhecida: ${account}.`);
   return account;
+}
+
+export async function getBlingCategoryMappings(userId, account) {
+  return (await getUserSettingValue(userId, blingCategoryMappingsKey(account)))?.mappings || [];
+}
+
+export async function saveBlingCategoryMappings(userId, account, mappings) {
+  await saveUserSettingValue(userId, blingCategoryMappingsKey(account), { mappings });
+  return mappings;
+}
+
+function blingCategoryMappingsKey(account) {
+  return "bling_category_mappings_" + normalizeBlingAccount(account);
 }
 
 export async function getBlingAccountCredentials(userId, account) {

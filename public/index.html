@@ -294,6 +294,26 @@
             </details>
             <p id="blingEcommerceStatus" class="message"></p>
           </section>
+          <details id="blingCategorySettings" class="entry-panel">
+            <summary><strong>Vínculos de categorias do Bling</strong></summary>
+            <p class="muted">Use os nomes cadastrados no EtiqueFácil. Deixe a subcategoria em branco para aplicar o vínculo quando não houver um vínculo específico.</p>
+            <div class="settings-form conference-settings-form">
+              <label>Conta Bling
+                <select id="blingCategoryAccount">
+                  <option value="principal">Principal</option>
+                  <option value="ecommerce" hidden>Ecommerce</option>
+                </select>
+              </label>
+              <form id="blingCategoryForm" class="settings-form conference-settings-form hidden">
+                <div id="blingCategoryRows" class="settings-form conference-settings-form"></div>
+                <div class="settings-actions">
+                  <button id="blingCategoryAdd" type="button" class="ghost">Adicionar vínculo</button>
+                  <button type="submit">Salvar vínculos</button>
+                </div>
+              </form>
+            </div>
+            <p id="blingCategoryStatus" class="message" role="status"></p>
+          </details>
         </section>
 
         <section id="profileConferenceSettings" class="settings-shell profile-section hidden">
@@ -904,6 +924,6 @@
       </form>
     </section>
 
-    <script src="/app.js?v=20261119-wms-rescan" type="module"></script>
+    <script src="/app.js?v=20261124-bling-categories" type="module"></script>
   </body>
 </html>

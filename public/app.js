@@ -476,6 +476,21 @@ function bindEvents() {
   $("#stockTab")?.addEventListener("submit", handleWmsStockSubmit);
   $("#blingEcommerceDelete")?.addEventListener("click", deleteBlingEcommerceAccount);
   $("#blingEcommerceAppForm")?.addEventListener("submit", saveBlingEcommerceApp);
+  $("#blingCategorySettings")?.addEventListener("toggle", (event) => {
+    if (event.currentTarget.open) loadBlingCategorySettings();
+  });
+  $("#blingCategoryAccount")?.addEventListener("change", loadBlingCategorySettings);
+  $("#blingCategoryForm")?.addEventListener("submit", saveBlingCategorySettings);
+  $("#blingCategoryAdd")?.addEventListener("click", () => {
+    const rows = $("#blingCategoryRows");
+    rows.insertAdjacentHTML("beforeend", renderBlingCategoryRow());
+    rows.lastElementChild.querySelector("input").focus();
+  });
+  $("#blingCategoryRows")?.addEventListener("click", (event) => {
+    if (event.target.matches("[data-remove-bling-category]")) {
+      event.target.closest("fieldset").remove();
+    }
+  });
   $("#stockTab")?.addEventListener("click", handleWmsStockClick);
   $("#stockTab")?.addEventListener("change", (event) => {
     const select = event.target.closest("[data-wms-map-deposit]");
@@ -2890,6 +2905,93 @@ async function loadBlingAccounts() {
     renderBlingEcommerceAccount(accounts.find((account) => account.account === "ecommerce"));
   } catch (error) {
     $("#blingEcommerceStatus").textContent = error.message;
+  }
+}
+
+let blingCategoryOptions = [];
+
+async function loadBlingCategorySettings() {
+  const account = $("#blingCategoryAccount");
+  if (account.disabled) return;
+  const form = $("#blingCategoryForm");
+  const status = $("#blingCategoryStatus");
+  const ecommerce = canUseBlingEcommerceAccount();
+  account.querySelector('[value="ecommerce"]').hidden = !ecommerce;
+  if (!ecommerce) account.value = "principal";
+  account.disabled = true;
+  form.classList.add("hidden");
+  status.textContent = "Carregando categorias do Bling…";
+  try {
+    const { categories, mappings } = await api("/api/integrations/bling/accounts/" + account.value + "/categories");
+    const byId = new Map(categories.map((category) => [category.id, category]));
+    blingCategoryOptions = categories.map(({ id, name, parentId }) => {
+      const parts = [name];
+      const visited = new Set([id]);
+      while (byId.has(parentId) && !visited.has(parentId)) {
+        const parent = byId.get(parentId);
+        parts.unshift(parent.name);
+        visited.add(parentId);
+        parentId = parent.parentId;
+      }
+      return { id, label: parts.join(" / ") };
+    }).sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+    $("#blingCategoryRows").innerHTML = mappings.map(renderBlingCategoryRow).join("");
+    $("#blingCategoryAdd").disabled = !categories.length;
+    form.classList.toggle("hidden", !categories.length && !mappings.length);
+    status.textContent = categories.length ? "" : "Cadastre as categorias de produtos nesta conta do Bling.";
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    account.disabled = false;
+  }
+}
+
+function renderBlingCategoryRow({ category = "", subcategory = "", blingCategoryId = null } = {}) {
+  const options = blingCategoryOptions.map(({ id, label }) =>
+    `<option value="${id}" ${id === blingCategoryId ? "selected" : ""}>${escapeHtml(label)}</option>`
+  ).join("");
+  const unavailable = blingCategoryId && !blingCategoryOptions.some(({ id }) => id === blingCategoryId);
+  return `
+    <fieldset class="settings-form">
+      <label>Categoria EtiqueFácil<input name="category" value="${escapeHtml(category)}" required /></label>
+      <label>Subcategoria EtiqueFácil<input name="subcategory" value="${escapeHtml(subcategory)}" /></label>
+      <label>Categoria Bling
+        <select name="blingCategoryId" required>
+          <option value="">Selecione</option>
+          ${unavailable ? '<option value="" selected>Categoria indisponível</option>' : ""}
+          ${options}
+        </select>
+      </label>
+      <div><button type="button" class="ghost" data-remove-bling-category>Remover vínculo</button></div>
+    </fieldset>
+  `;
+}
+
+async function saveBlingCategorySettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const account = $("#blingCategoryAccount");
+  const status = $("#blingCategoryStatus");
+  const mappings = [...form.querySelectorAll("fieldset")].map((row) => ({
+    category: row.querySelector('[name="category"]').value,
+    subcategory: row.querySelector('[name="subcategory"]').value,
+    blingCategoryId: Number(row.querySelector('[name="blingCategoryId"]').value)
+  }));
+  account.disabled = true;
+  form.inert = true;
+  status.textContent = "Salvando vínculos…";
+  try {
+    await api("/api/integrations/bling/accounts/" + account.value + "/categories", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mappings })
+    });
+    status.textContent = "Vínculos salvos. Serão usados nos próximos envios de cadastro ao Bling.";
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    form.inert = false;
+    account.disabled = false;
   }
 }
 

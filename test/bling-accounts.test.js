@@ -28,6 +28,21 @@ function jsonResponse(payload) {
   return { ok: true, status: 200, headers: new Headers(), json: async () => payload };
 }
 
+test("Bling category mappings are isolated by workspace and account", async () => {
+  await withTempStore("bling-category-mappings", async (store) => {
+    const principal = [{ category: "Casa", subcategory: "", blingCategoryId: 1 }];
+    const ecommerce = [{ category: "Casa", subcategory: "", blingCategoryId: 2 }];
+    await store.saveBlingCategoryMappings("user-1", "principal", principal);
+    await store.saveBlingCategoryMappings("user-1", "ecommerce", ecommerce);
+    assert.deepEqual(await store.getBlingCategoryMappings("user-1", "principal"), principal);
+    assert.deepEqual(await store.getBlingCategoryMappings("user-1", "ecommerce"), ecommerce);
+    assert.deepEqual(await store.getBlingCategoryMappings("user-2", "principal"), []);
+    await store.saveBlingCategoryMappings("user-1", "principal", []);
+    assert.deepEqual(await store.getBlingCategoryMappings("user-1", "principal"), []);
+    assert.deepEqual(await store.getBlingCategoryMappings("user-1", "ecommerce"), ecommerce);
+  });
+});
+
 test("Ecommerce Bling account is stored apart from the primary account", async () => {
   await withTempStore("bling-accounts", async (store) => {
     await store.writeDb({ users: [{ id: "user-1", name: "Usuario", email: "u@example.com" }] });

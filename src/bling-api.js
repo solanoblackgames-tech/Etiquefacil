@@ -124,7 +124,7 @@ async function requestBlingTokenRefresh(integration, fetchImpl) {
   };
 }
 
-export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [] } = {}) {
+export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFields = [], categoryMappings = [] } = {}) {
   const midia = buildBlingMediaPayload(product.foto);
   const invalidFields = new Set(zeroInvalidFields);
   const tributacao = buildBlingTaxPayload(product, existing.tributacao, { zeroNcm: invalidFields.has("ncm") });
@@ -137,6 +137,7 @@ export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFi
     tipo: "P",
     situacao: "A",
     formato: "S",
+    categoria: blingProductCategory(product, existing, categoryMappings),
     unidade: "UN",
     gtin: ean,
     gtinEmbalagem: ean,
@@ -156,6 +157,21 @@ export function buildBlingProductPayload(product, existing = {}, { zeroInvalidFi
     dimensoes: buildBlingDimensionsPayload(product),
     tributacao
   });
+}
+
+export function blingCategoryMappingKey(category, subcategory) {
+  return JSON.stringify([normalizeText(category), normalizeText(subcategory)]);
+}
+
+function blingProductCategory(product, existing, mappings) {
+  const exactKey = blingCategoryMappingKey(product.categoria, product.subcategoria);
+  const parentKey = blingCategoryMappingKey(product.categoria, "");
+  const exact = mappings.find(({ category, subcategory }) => blingCategoryMappingKey(category, subcategory) === exactKey);
+  const parent = exact || exactKey === parentKey ? null : mappings.find(({ category, subcategory }) =>
+    blingCategoryMappingKey(category, subcategory) === parentKey
+  );
+  const id = Number((exact || parent)?.blingCategoryId || existing.categoria?.id);
+  return Number.isSafeInteger(id) && id > 0 ? { id } : undefined;
 }
 
 export function buildBlingProductSupplierPayload(product, { productId, supplierId } = {}) {
@@ -477,6 +493,22 @@ export function isRejectedBlingStockEntry(error) {
   return error instanceof BlingApiError && [400, 401, 403, 404, 422, 429].includes(error.status);
 }
 
+export async function listBlingProductCategories({ integration, saveIntegration }) {
+  const client = new BlingApiClient(integration, saveIntegration);
+  const categories = [];
+  const limite = 100;
+  for (let pagina = 1; ; pagina += 1) {
+    const { data } = await client.request("/categorias/produtos", { query: { pagina, limite } });
+    if (!Array.isArray(data)) throw new Error("O Bling retornou uma lista de categorias inválida.");
+    for (const { id, descricao, categoriaPai } of data) {
+      if (Number.isSafeInteger(id) && id > 0 && descricao) {
+        categories.push({ id, name: descricao, parentId: categoriaPai?.id || null });
+      }
+    }
+    if (data.length < limite) return categories;
+  }
+}
+
 export async function listBlingDeposits({ integration, saveIntegration }) {
   const client = new BlingApiClient(integration, saveIntegration);
   return client.listDeposits();
@@ -776,6 +808,12 @@ class BlingApiClient {
     this.saveIntegration = saveIntegration;
     this.rateLimiter = getBlingRateLimiter(integration);
     this.supplierContactType = null;
+  }
+
+  async getCategoryMappings(product) {
+    if (!normalizeText(product.categoria)) return [];
+    this.categoryMappings ??= this.integration.getCategoryMappings?.() || Promise.resolve([]);
+    return this.categoryMappings;
   }
 
   async findProductBySku(sku, { detail = false, supplierCost: includeSupplierCost = true } = {}) {
@@ -1309,7 +1347,8 @@ class BlingHomologationClient {
 }
 
 async function saveProductWithBlingFallback(client, { operation, product, existing = {}, productId = null, allowExistingOnDuplicateCode = false }) {
-  const payload = buildBlingProductPayload(product, existing);
+  const categoryMappings = await client.getCategoryMappings(product);
+  const payload = buildBlingProductPayload(product, existing, { categoryMappings });
   try {
     const response = operation === "update"
       ? await client.updateProduct(productId, payload)
@@ -1332,7 +1371,7 @@ async function saveProductWithBlingFallback(client, { operation, product, existi
     const invalidFields = invalidBlingProductFields(error);
     if (!invalidFields.length) throw error;
 
-    const fallbackPayload = buildBlingProductPayload(product, existing, { zeroInvalidFields: invalidFields });
+    const fallbackPayload = buildBlingProductPayload(product, existing, { categoryMappings, zeroInvalidFields: invalidFields });
     const response = operation === "update"
       ? await client.updateProduct(productId, fallbackPayload)
       : await client.createProduct(fallbackPayload);

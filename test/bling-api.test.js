@@ -9,6 +9,7 @@ import {
   buildBlingStockTransferPayload,
   blingProductToTriageLookup,
   deleteBlingProductBySku,
+  listBlingProductCategories,
   listBlingSalesOrdersForStore,
   createBlingSalesReader,
   lookupBlingProductForTriage,
@@ -20,6 +21,63 @@ import {
   syncBlingStockMovement,
   updateExistingBlingProducts
 } from "../src/bling-api.js";
+
+test("lists Bling product categories with their parent across pages", async (t) => {
+  const pages = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    const request = new URL(url);
+    assert.equal(request.pathname, "/Api/v3/categorias/produtos");
+    assert.equal(request.searchParams.get("limite"), "100");
+    const page = request.searchParams.get("pagina");
+    pages.push(page);
+    const data = page === "1"
+      ? Array.from({ length: 100 }, (_, index) => ({ id: index + 1, descricao: "Categoria " + (index + 1) }))
+      : [{ id: 101, descricao: "TVs", categoriaPai: { id: 1 } }];
+    return Response.json({ data });
+  });
+  const categories = await listBlingProductCategories({ integration: { accessToken: "category-list-test" } });
+  assert.deepEqual(pages, ["1", "2"]);
+  assert.equal(categories.length, 101);
+  assert.deepEqual(categories.at(-1), { id: 101, name: "TVs", parentId: 1 });
+});
+
+test("Bling product updates prefer the subcategory mapping and preserve the existing category without a match", async (t) => {
+  const writes = [];
+  let mappingsRead = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const { pathname, searchParams } = new URL(url);
+    if (options.method === "PUT") {
+      writes.push(JSON.parse(options.body).categoria);
+      return Response.json({ data: { id: 123 } });
+    }
+    if (pathname.endsWith("/produtos")) {
+      return Response.json({ data: [{ id: 123, codigo: searchParams.get("codigos[]") }] });
+    }
+    assert.ok(pathname.endsWith("/produtos/123"));
+    return Response.json({ data: { categoria: { id: 99, descricao: "Atual" } } });
+  });
+  const result = await updateExistingBlingProducts({
+    integration: {
+      accessToken: "category-sync-test",
+      getCategoryMappings: async () => {
+        mappingsRead += 1;
+        return [
+          { category: "Eletrônicos", subcategory: "", blingCategoryId: 10 },
+          { category: "Eletrônicos", subcategory: "TVs", blingCategoryId: 11 }
+        ];
+      }
+    },
+    products: [
+      { sku: "TV-1", categoria: "  ELETRONICOS ", subcategoria: "tvs" },
+      { sku: "AUDIO-1", categoria: "Eletrônicos", subcategoria: "Áudio" },
+      { sku: "CASA-1", categoria: "Casa", subcategoria: "TVs" },
+      { sku: "SEM-1" }
+    ]
+  });
+  assert.equal(result.updated, 4);
+  assert.equal(mappingsRead, 1);
+  assert.deepEqual(writes, [{ id: 11 }, { id: 10 }, { id: 99 }, { id: 99 }]);
+});
 
 test("WMS inventory posts exactly one unit to the matching deposit without editing the product", async (t) => {
   const requests = [];
@@ -735,8 +793,11 @@ test("Bling product sync retries with zeroed EAN when Bling rejects GTIN", async
 
   try {
     const result = await syncBlingProducts({
-      integration: { accessToken: "token" },
-      products: [{ sku: "AMZ04L0001", descricao: "Produto novo", valorUnit: 10, ean: "789INVALIDO" }]
+      integration: {
+        accessToken: "token",
+        getCategoryMappings: async () => [{ category: "Casa", subcategory: "", blingCategoryId: 42 }]
+      },
+      products: [{ sku: "AMZ04L0001", descricao: "Produto novo", valorUnit: 10, ean: "789INVALIDO", categoria: "Casa" }]
     });
 
     assert.equal(result.created, 1);
@@ -745,6 +806,8 @@ test("Bling product sync retries with zeroed EAN when Bling rejects GTIN", async
     assert.equal(calls[1].body.gtin, "789INVALIDO");
     assert.equal(calls[2].body.gtin, "0");
     assert.equal(calls[2].body.gtinEmbalagem, "0");
+    assert.deepEqual(calls[1].body.categoria, { id: 42 });
+    assert.deepEqual(calls[2].body.categoria, { id: 42 });
   } finally {
     globalThis.fetch = originalFetch;
   }
