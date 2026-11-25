@@ -1983,10 +1983,15 @@ function isNoSheetLot(lot) {
 }
 
 function usesPalletProductionPage(lot, codigoRz) {
-  if (isNoSheetLot(lot)) return true;
   const normalizedRz = normalizeCode(codigoRz);
-  if (!normalizedRz) return false;
+  if (!normalizedRz) return isNoSheetLot(lot);
   const items = (lot?.items || []).filter((item) => normalizeCode(item.codigoRz) === normalizedRz);
+  const hasImportedItems = items.some((item) =>
+    item.tipoItem === "esperado" ||
+    (item.tipoItem === "excedente_outro_rz" && Number(item.qtdEsperada) > 0)
+  );
+  if (hasImportedItems) return false;
+  if (isNoSheetLot(lot)) return true;
   if (!items.length) return true;
   return items.some((item) => isNoSheetItem(item));
 }

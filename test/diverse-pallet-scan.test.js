@@ -7,6 +7,31 @@ const source = await readFile(new URL("../public/app.js", import.meta.url), "utf
 const handler = source.slice(source.indexOf("async function addDiverseItem(event)"), source.indexOf("async function loadNoSheetSuggestionMatches("));
 const membership = source.slice(source.indexOf("function diverseProductBelongsToRz("), source.indexOf("function findExistingDiverseProductByDescription("));
 
+test("an imported pallet uses conference scanning inside a lot without a spreadsheet", () => {
+  const routing = source.slice(source.indexOf("function isNoSheetLot("), source.indexOf("function renderDiverseRzControls("));
+  const itemType = source.slice(source.indexOf("function isNoSheetItem("), source.indexOf("function isDiversePanelItem("));
+  const context = vm.createContext({
+    normalizeCode: (value) => String(value || "").trim().toUpperCase()
+  });
+  vm.runInContext(routing + itemType, context);
+
+  const imported = { codigoRz: "RZ-001", tipoItem: "esperado", qtdEsperada: 124 };
+  const lot = {
+    tipoCusto: "variable",
+    percentualArremate: 0,
+    items: [
+      imported,
+      { codigoRz: "RZ-001", tipoItem: "lote_sem_planilha_manual", qtdEsperada: 0 },
+      { codigoRz: "BAG-002", tipoItem: "lote_sem_planilha", qtdEsperada: 0 }
+    ]
+  };
+  assert.equal(context.usesPalletProductionPage(lot, "RZ-001"), false);
+  imported.tipoItem = "excedente_outro_rz";
+  assert.equal(context.usesPalletProductionPage(lot, "RZ-001"), false);
+  assert.equal(context.usesPalletProductionPage(lot, "BAG-002"), true);
+  assert.equal(context.usesPalletProductionPage(lot, "BAG-003"), true);
+});
+
 async function scan({ activePallet, byDescription = false, privateLabel = false, classLot = privateLabel, simultaneous = false }) {
   const product = { id: "product-1", codigoMl: "ML1", sku: "SKU1" };
   const lot = { id: "lot-1", classMode: classLot, products: [product], items: [{ productId: product.id, codigoRz: "PALLET-1", qtdConferida: 3 }] };
