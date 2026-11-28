@@ -944,9 +944,9 @@ async function addDiverseItem(event) {
   }
 }
 
-async function loadNoSheetSuggestionMatches(query) {
-  if (!state.selectedDiverseLotId) return [];
-  const response = await api(`/api/lots/${encodeURIComponent(state.selectedDiverseLotId)}/no-sheet-suggestions?q=${encodeURIComponent(query)}`);
+async function loadNoSheetSuggestionMatches(query, lotId = state.selectedDiverseLotId) {
+  if (!lotId) return [];
+  const response = await api(`/api/lots/${encodeURIComponent(lotId)}/no-sheet-suggestions?q=${encodeURIComponent(query)}`);
   return response.suggestions || [];
 }
 
@@ -1070,9 +1070,9 @@ async function findNoSheetSuggestionForProduct(product = {}) {
   return matchedSuggestion || null;
 }
 
-function findNoSheetSuggestionByDescription(description) {
+function findNoSheetSuggestionByDescription(description, lotId = state.selectedDiverseLotId) {
   const key = normalizeSearchText(description);
-  if (!key) return null;
+  if (!key || state.selectedDiverseLot?.id !== lotId) return null;
   return (state.selectedDiverseLot?.noSheetSuggestions || []).find((suggestion) => normalizeSearchText(suggestion.descricao) === key) || null;
 }
 
@@ -1279,6 +1279,7 @@ function askManualProduct(codigoMl, focusSelector, initialValues = {}, options =
 
 function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm input[name='codigoMl']", initialValues = {}, options = {}) {
   return new Promise((resolve) => {
+    const lotId = options.lotId ?? state.selectedDiverseLotId;
     const includeLogisticsFields = options.includeLogisticsFields === true;
     const modal = $("#manualProductModal");
     const form = $("#manualProductForm");
@@ -1406,7 +1407,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       }
       state.noSheetSuggestionTimer = window.setTimeout(async () => {
         try {
-          const suggestions = await loadNoSheetSuggestionMatches(query);
+          const suggestions = await loadNoSheetSuggestionMatches(query, lotId);
           if (Date.now() < Number(state.manualSuggestionSuppressUntil || 0)) return;
           if (description.value.trim() !== query) return;
           renderManualDescriptionSuggestions(suggestions);
@@ -1419,9 +1420,9 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
     const fillSuggestedPriceFromDescription = async ({ showMessage = false } = {}) => {
       const descricao = description.value.trim();
       if (!descricao) return false;
-      let matchedSuggestion = findNoSheetSuggestionByDescription(descricao);
+      let matchedSuggestion = findNoSheetSuggestionByDescription(descricao, lotId);
       if (!matchedSuggestion) {
-        const matches = await loadNoSheetSuggestionMatches(descricao).catch(() => []);
+        const matches = await loadNoSheetSuggestionMatches(descricao, lotId).catch(() => []);
         const key = normalizeSearchText(descricao);
         matchedSuggestion = matches.find((suggestion) => normalizeSearchText(suggestion.descricao) === key) || null;
       }
@@ -1443,7 +1444,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       state.manualSuggestionSuppressUntil = Date.now() + 1200;
       description.value = suggestion.descricao || "";
       selectedSuggestedQuantity = manualSuggestionQuantityValue(suggestion);
-      const lotSuggestion = findNoSheetSuggestionByDescription(description.value);
+      const lotSuggestion = findNoSheetSuggestionByDescription(description.value, lotId);
       const suggestedPrice = parseMoneyInput(button.dataset.suggestedPrice || manualSuggestionPriceText(suggestion) || manualSuggestionPriceText(lotSuggestion));
       if (Number.isFinite(suggestedPrice) && suggestedPrice > 0) {
         price.value = String(suggestedPrice).replace(".", ",");
@@ -1534,7 +1535,7 @@ function openManualProductModal(codigoMl, focusSelector = "#diverseScanForm inpu
       if (isConferenceFieldRequired("stockLocation") && requireTextField(localizacaoEstoque, "Informe a localizacao no estoque.", error)) return;
       if (isConferenceFieldRequired("ean") && requireTextField(ean, "Informe o EAN.", error)) return;
       if (selectedSuggestedQuantity <= 1) {
-        selectedSuggestedQuantity = manualSuggestionQuantityValue(findNoSheetSuggestionByDescription(descricao));
+        selectedSuggestedQuantity = manualSuggestionQuantityValue(findNoSheetSuggestionByDescription(descricao, lotId));
       }
       const result = {
         descricao,
@@ -10760,7 +10761,7 @@ async function createManualExternalExcessFromScan(lotId, codigoRz, codigoMl) {
   const message = $("#scanMessage");
   const input = $("#scanInput");
   try {
-    const manualProduct = await promptManualProduct(codigoMl, "#scanInput", await findManualProductInitialValues(codigoMl), { includeLogisticsFields: false });
+    const manualProduct = await promptManualProduct(codigoMl, "#scanInput", await findManualProductInitialValues(codigoMl), { lotId });
     if (!manualProduct) {
       message.textContent = "ML nao encontrado neste lote nem no historico do usuario.";
       input?.select();

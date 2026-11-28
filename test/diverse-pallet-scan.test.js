@@ -7,6 +7,72 @@ const source = await readFile(new URL("../public/app.js", import.meta.url), "utf
 const handler = source.slice(source.indexOf("async function addDiverseItem(event)"), source.indexOf("async function loadNoSheetSuggestionMatches("));
 const membership = source.slice(source.indexOf("function diverseProductBelongsToRz("), source.indexOf("function findExistingDiverseProductByDescription("));
 
+test("manual registration from conference scanning shows the active lot's suggestions", async () => {
+  const elements = new Map();
+  const timers = new Map();
+  const calls = [];
+  const suggestion = { descricao: "Fogão Atlas Mônaco", valorUnit: 704, quantidade: 2, source: "lista_lote" };
+  const missingFields = new Set(["AlturaCaixa", "LarguraCaixa", "ComprimentoCaixa", "PesoCaixa", "LocalizacaoEstoque", "Categoria", "Subcategoria", "Ncm", "DataValidade"]);
+  const context = vm.createContext({
+    state: { selectedDiverseLotId: null },
+    $: (selector) => {
+      if (missingFields.has(selector.replace("#manualProduct", ""))) return null;
+      if (!elements.has(selector)) {
+        const classes = new Set(["hidden"]);
+        elements.set(selector, {
+          value: "",
+          style: {},
+          classList: {
+            add: (name) => classes.add(name),
+            remove: (name) => classes.delete(name),
+            contains: (name) => classes.has(name)
+          },
+          reset() {},
+          focus() {},
+          select() {},
+          closest: () => null
+        });
+      }
+      return elements.get(selector);
+    },
+    window: {
+      setTimeout: (callback, delay) => (timers.set(delay, callback), delay),
+      clearTimeout: (delay) => timers.delete(delay)
+    },
+    setTimeout() {},
+    normalizeConferenceSettings: () => ({ ncmByCategory: [] }),
+    isConferenceFieldEnabled: () => false,
+    findManualProductInitialValues: async () => ({}),
+    escapeHtml: String,
+    money: String,
+    parseMoneyInput: Number,
+    api: async (url) => {
+      calls.push(url);
+      return { suggestions: [suggestion] };
+    }
+  });
+  const suggestions = source.slice(source.indexOf("async function loadNoSheetSuggestionMatches("), source.indexOf("function diverseProductBelongsToRz("));
+  const prompt = source.slice(source.indexOf("function promptManualProduct("), source.indexOf("async function findManualProductInitialValues("));
+  const modal = source.slice(source.indexOf("function askManualProduct("), source.indexOf("function openDecisionModal("));
+  const conference = source.slice(source.indexOf("async function createManualExternalExcessFromScan("), source.indexOf("async function decrementCurrent("));
+  vm.runInContext(suggestions + prompt + modal + conference, context);
+
+  const pending = context.createManualExternalExcessFromScan("bumper-jz", "PALLET-1", "UNKNOWN");
+  await new Promise((resolve) => setImmediate(resolve));
+  const description = elements.get("#manualProductDescription");
+  description.value = "atlas";
+  description.oninput();
+  await timers.get(220)();
+
+  assert.deepEqual(calls, ["/api/lots/bumper-jz/no-sheet-suggestions?q=atlas"]);
+  const menu = elements.get("#manualProductDescriptionSuggestions");
+  assert.equal(menu.classList.contains("hidden"), false);
+  assert.match(menu.innerHTML, /Fogão Atlas Mônaco/);
+  assert.match(menu.innerHTML, /Lista do lote/);
+  elements.get("#manualProductCancel").onclick();
+  await pending;
+});
+
 test("an imported pallet uses conference scanning inside a lot without a spreadsheet", () => {
   const routing = source.slice(source.indexOf("function isNoSheetLot("), source.indexOf("function renderDiverseRzControls("));
   const itemType = source.slice(source.indexOf("function isNoSheetItem("), source.indexOf("function isDiversePanelItem("));
